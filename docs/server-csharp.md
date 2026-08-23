@@ -6,16 +6,16 @@
 
 ## 技术选型
 
-| 职责 | 选型 | 实现要点 |
-|---|---|---|
-| HTTP 框架 | ASP.NET Core Minimal API | |
-| 文件监听 | FileSystemWatcher | 内置 |
-| 索引 | 内存索引 | 启动时并行加载 `metadata/` 全量 TOML；watcher 增量更新 |
-| 哈希 | Blake3.NET | |
-| 图像处理 | ImageSharp | 解码 JPEG/PNG/GIF/WebP/TIFF/BMP，缩放生成缩略图 |
-| 配置 | Tomlyn | TOML 解析 |
-| OpenAPI | Microsoft.AspNetCore.OpenApi | 从代码生成 schema |
-| 日志 | ILogger（Serilog Provider） | |
+| 职责      | 选型                         | 实现要点                                               |
+| --------- | ---------------------------- | ------------------------------------------------------ |
+| HTTP 框架 | ASP.NET Core Minimal API     |                                                        |
+| 文件监听  | FileSystemWatcher            | 内置                                                   |
+| 索引      | 内存索引                     | 启动时并行加载 `metadata/` 全量 TOML；watcher 增量更新 |
+| 哈希      | Blake3.NET                   |                                                        |
+| 图像处理  | ImageSharp                   | 解码 JPEG/PNG/GIF/WebP/TIFF/BMP，缩放生成缩略图        |
+| 配置      | Tomlyn                       | TOML 解析                                              |
+| OpenAPI   | Microsoft.AspNetCore.OpenApi | 从代码生成 schema                                      |
+| 日志      | ILogger（Serilog Provider）  |                                                        |
 
 ## 发布
 
@@ -28,7 +28,7 @@ MVP 用 ImageSharp 覆盖常见格式。图像解码收在一个接口后面，R
 ## 启动顺序
 
 1. 启动文件监听（事件先入缓冲队列）
-2. 并行批量加载 `metadata/` 全量 TOML，构建内存索引
+2. 扫描素材目录并加载 `metadata/`，按路径与 size/mtime 比对，仅对新增或变动的文件计算哈希
 3. 重放缓冲事件，与加载结果合并去重
 4. 就绪后开放 `/health`
 

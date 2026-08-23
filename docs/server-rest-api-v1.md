@@ -60,10 +60,10 @@
 }
 ```
 
-| 字段     | 类型   | 说明                          |
-| -------- | ------ | ----------------------------- |
-| version  | string | 后端版本号                    |
-| platform | string | `windows` / `macos` / `linux` |
+| 字段      | 类型   | 说明                          |
+| --------- | ------ | ----------------------------- |
+| version   | string | 后端版本号                    |
+| platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
 
 ### health
@@ -76,9 +76,10 @@
 
 hawk-server 单实例对应单个素材库。
 
-| 方法 | 端点                   | 说明               |
-| ---- | ---------------------- | ------------------ |
-| GET  | `/api/v1/library/info` | 获取当前素材库信息 |
+| 方法 | 端点                      | 说明               |
+| ---- | ------------------------- | ------------------ |
+| GET  | `/api/v1/library/info`    | 获取当前素材库信息 |
+| POST | `/api/v1/library/reindex` | 全量重建索引       |
 
 ### info
 
@@ -100,16 +101,29 @@ hawk-server 单实例对应单个素材库。
 }
 ```
 
+### reindex
+
+`POST /api/v1/library/reindex`
+
+全量重建索引：重新扫描素材目录并对所有文件重算哈希。异步执行，立即返回；过程中的变更照常通过 `events` 推送。用于 hawk 未运行期间直接改动过素材目录、或对索引状态存疑时手动触发。
+
+#### 响应
+
+```json
+{ "status": "success" }
+```
+
 ## folder
 
 folder 即素材库中的真实目录。对 folder 的操作会直接操作文件系统，由文件监听同步到索引。
 
-| 方法 | 端点                    | 说明         |
-| ---- | ----------------------- | ------------ |
-| GET  | `/api/v1/folder/list`   | 列出文件夹树 |
-| POST | `/api/v1/folder/create` | 创建文件夹   |
-| POST | `/api/v1/folder/update` | 更新文件夹   |
-| POST | `/api/v1/folder/delete` | 删除文件夹   |
+| 方法 | 端点                     | 说明         |
+| ---- | ------------------------ | ------------ |
+| GET  | `/api/v1/folder/list`    | 列出文件夹树 |
+| POST | `/api/v1/folder/create`  | 创建文件夹   |
+| POST | `/api/v1/folder/update`  | 更新文件夹   |
+| POST | `/api/v1/folder/delete`  | 删除文件夹   |
+| POST | `/api/v1/folder/restore` | 恢复文件夹   |
 
 ### list
 
@@ -123,9 +137,9 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 
 #### 请求
 
-| 参数        | 类型   | 必填 | 说明                                           |
-| ----------- | ------ | ---- | ---------------------------------------------- |
-| name        | string | 是   | 文件夹名称                                     |
+| 参数        | 类型   | 必填 | 说明                                         |
+| ----------- | ------ | ---- | -------------------------------------------- |
+| name        | string | 是   | 文件夹名称                                   |
 | parent_path | string | 否   | 父文件夹路径（相对库根目录），缺省为库根目录 |
 
 #### 响应
@@ -176,36 +190,54 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 { "status": "success" }
 ```
 
+### restore
+
+`POST /api/v1/folder/restore`
+
+从回收站恢复文件夹：按原路径放回。原路径已被占用时返回 `FILE_EXISTS`。
+
+#### 请求
+
+| 参数 | 类型   | 必填 | 说明           |
+| ---- | ------ | ---- | -------------- |
+| path | string | 是   | 原库内相对路径 |
+
+#### 响应
+
+```json
+{ "status": "success" }
+```
+
 ## item
 
-| 方法 | 端点                             | 说明                |
-| ---- | -------------------------------- | ------------------- |
-| POST | `/api/v1/item/list`              | 查询 item 列表      |
-| GET  | `/api/v1/item/detail`            | 获取单个 item       |
-| GET  | `/api/v1/item/count`             | 获取 item 总数      |
-| POST | `/api/v1/item/add`               | 添加新 item         |
-| POST | `/api/v1/item/update`            | 更新 item           |
-| POST | `/api/v1/item/delete`            | 移入回收站          |
-| POST | `/api/v1/item/restore`           | 从回收站恢复        |
-| GET  | `/api/v1/item/thumbnail`         | 获取缩略图          |
-| POST | `/api/v1/item/refresh_thumbnail` | 重新生成缩略图      |
+| 方法 | 端点                             | 说明           |
+| ---- | -------------------------------- | -------------- |
+| POST | `/api/v1/item/list`              | 查询 item 列表 |
+| GET  | `/api/v1/item/detail`            | 获取单个 item  |
+| GET  | `/api/v1/item/count`             | 获取 item 总数 |
+| POST | `/api/v1/item/add`               | 添加新 item    |
+| POST | `/api/v1/item/update`            | 更新 item      |
+| POST | `/api/v1/item/delete`            | 移入回收站     |
+| POST | `/api/v1/item/restore`           | 从回收站恢复   |
+| GET  | `/api/v1/item/thumbnail`         | 获取缩略图     |
+| POST | `/api/v1/item/refresh_thumbnail` | 重新生成缩略图 |
 
 ### Item 对象
 
-| 字段             | 类型     | 说明                   |
-| ---------------- | -------- | ---------------------- |
-| id               | string   | 内容哈希（BLAKE3 hex） |
-| name             | string   | 文件名（不含扩展名），取主路径 |
-| ext              | string   | 扩展名，小写，不含点   |
-| width / height   | number   | 像素尺寸               |
-| size             | number   | 文件大小（字节）       |
-| url              | string   | 来源网址，可为空       |
-| tags             | string[] | 标签列表               |
-| paths            | string[] | 所有文件位置（库内相对路径），首个为主路径 |
-| folders          | string[] | 所在文件夹路径列表（由 paths 派生） |
-| star             | number   | 评分 0–5               |
-| annotation       | string   | 备注                   |
-| modification_time | number  | 修改时间（Unix 毫秒）  |
+| 字段              | 类型     | 说明                                       |
+| ----------------- | -------- | ------------------------------------------ |
+| id                | string   | 内容哈希（BLAKE3 hex）                     |
+| name              | string   | 文件名（不含扩展名），取主路径             |
+| ext               | string   | 扩展名，小写，不含点                       |
+| width / height    | number   | 像素尺寸                                   |
+| size              | number   | 文件大小（字节）                           |
+| url               | string   | 来源网址，可为空                           |
+| tags              | string[] | 标签列表                                   |
+| paths             | string[] | 所有文件位置（库内相对路径），首个为主路径 |
+| folders           | string[] | 所在文件夹路径列表（由 paths 派生）        |
+| star              | number   | 评分 0–5                                   |
+| annotation        | string   | 备注                                       |
+| modification_time | number   | 修改时间（Unix 毫秒）                      |
 
 > **同内容去重**：内容相同的文件共享一个 item，`paths` 记录所有文件位置。
 >
@@ -219,21 +251,21 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 
 #### 请求
 
-| 参数       | 类型     | 说明                       |
-| ---------- | -------- | -------------------------- |
-| ids        | string[] | 按 id 列表匹配             |
-| keywords   | string[] | 关键词（匹配名称、备注）   |
-| tags       | string[] | 按标签过滤                 |
-| star       | number   | 按评分过滤                 |
-| folders    | string[] | 按文件夹路径过滤           |
-| ext        | string   | 按扩展名过滤               |
-| annotation | string   | 按备注文本过滤             |
-| url        | string   | 按来源网址过滤             |
-| in_trash   | boolean  | 是否只查回收站中的 item，默认 false |
+| 参数       | 类型     | 说明                                                            |
+| ---------- | -------- | --------------------------------------------------------------- |
+| ids        | string[] | 按 id 列表匹配                                                  |
+| keywords   | string[] | 关键词（匹配名称、备注）                                        |
+| tags       | string[] | 按标签过滤                                                      |
+| star       | number   | 按评分过滤                                                      |
+| folders    | string[] | 按文件夹路径过滤（含子目录）                                    |
+| ext        | string   | 按扩展名过滤                                                    |
+| annotation | string   | 按备注文本过滤                                                  |
+| url        | string   | 按来源网址过滤                                                  |
+| in_trash   | boolean  | 是否只查回收站中的 item，默认 false                             |
 | order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` |
-| order      | string   | 排序方向：`desc`（默认）/ `asc` |
-| offset     | number   | 分页偏移，默认 0           |
-| limit      | number   | 分页大小，默认 50          |
+| order      | string   | 排序方向：`desc`（默认）/ `asc`                                 |
+| offset     | number   | 分页偏移，默认 0                                                |
+| limit      | number   | 分页大小，默认 50                                               |
 
 #### 响应
 
@@ -275,6 +307,8 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 
 `GET /api/v1/item/count`
 
+返回库内 item 总数（不含回收站）。
+
 #### 响应
 
 ```json
@@ -289,19 +323,35 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 
 #### 请求
 
-| 参数       | 类型     | 必填   | 说明                                   |
-| ---------- | -------- | ------ | -------------------------------------- |
-| path       | string   | 三选一 | 本地文件路径，导入该文件               |
-| url        | string   | 三选一 | 下载该 URL 的文件入库                  |
-| img_base64 | string   | 三选一 | Base64 编码的图像数据                  |
-| name       | string   | 否     | 文件名（不含扩展名），缺省取来源文件名 |
+| 参数        | 类型     | 必填   | 说明                                   |
+| ----------- | -------- | ------ | -------------------------------------- |
+| path        | string   | 三选一 | 本地文件路径，导入该文件               |
+| url         | string   | 三选一 | 下载该 URL 的文件入库                  |
+| img_base64  | string   | 三选一 | Base64 编码的图像数据                  |
+| name        | string   | 否     | 文件名（不含扩展名），缺省取来源文件名 |
 | folder_path | string   | 否     | 目标文件夹路径，缺省为库根目录         |
-| tags       | string[] | 否     | 标签                                   |
-| annotation | string   | 否     | 备注                                   |
+| tags        | string[] | 否     | 标签                                   |
+| annotation  | string   | 否     | 备注                                   |
 
 #### 响应
 
-Item 对象。`id` 在索引完成后生成，若内容已存在则返回已有 item。
+Item 对象，并附带 `already_existed` 标志：
+
+- 内容不存在：写入文件并索引，返回新 item，`already_existed: false`
+- 内容已存在（同哈希）：仍将文件复制到 `folder_path` 目标位置，已有 item 的 `paths` 追加新路径，返回该 item，`already_existed: true`——客户端可据此提示「内容已存在，已关联到现有条目」
+
+```json
+{
+  "status": "success",
+  "data": {
+    "item": {
+      "id": "9b1f2c...",
+      "paths": ["icons/cat.jpg", "posters/2024/cat.jpg"]
+    },
+    "already_existed": true
+  }
+}
+```
 
 ### update
 
@@ -311,16 +361,16 @@ Item 对象。`id` 在索引完成后生成，若内容已存在则返回已有 
 
 #### 请求
 
-| 参数       | 类型     | 必填 | 说明                             |
-| ---------- | -------- | ---- | -------------------------------- |
-| id         | string   | 是   | item id                          |
-| path       | string   | 否   | 指定操作的文件位置（同内容多路径时），缺省为主路径 |
-| name       | string   | 否   | 重命名文件（同步修改真实文件名） |
-| tags       | string[] | 否   | 标签（整体替换）                 |
-| folder_path | string   | 否   | 移动到新文件夹（移动真实文件）   |
-| star       | number   | 否   | 评分 0–5                         |
-| annotation | string   | 否   | 备注                             |
-| url        | string   | 否   | 来源网址                         |
+| 参数        | 类型     | 必填 | 说明                                               |
+| ----------- | -------- | ---- | -------------------------------------------------- |
+| id          | string   | 是   | item id                                            |
+| path        | string   | 否   | 指定操作的文件位置（同内容多路径时），缺省为主路径 |
+| name        | string   | 否   | 重命名文件（同步修改真实文件名）                   |
+| tags        | string[] | 否   | 标签（整体替换）                                   |
+| folder_path | string   | 否   | 移动到新文件夹（移动真实文件）                     |
+| star        | number   | 否   | 评分 0–5                                           |
+| annotation  | string   | 否   | 备注                                               |
+| url         | string   | 否   | 来源网址                                           |
 
 #### 响应
 
@@ -334,9 +384,9 @@ Item 对象。`id` 在索引完成后生成，若内容已存在则返回已有 
 
 #### 请求
 
-| 参数 | 类型   | 必填 | 说明                                       |
-| ---- | ------ | ---- | ------------------------------------------ |
-| id   | string | 是   | item id                                    |
+| 参数 | 类型   | 必填 | 说明                                         |
+| ---- | ------ | ---- | -------------------------------------------- |
+| id   | string | 是   | item id                                      |
 | path | string | 否   | 指定文件位置（同内容多路径时），缺省为主路径 |
 
 #### 响应
@@ -353,9 +403,9 @@ Item 对象。`id` 在索引完成后生成，若内容已存在则返回已有 
 
 #### 请求
 
-| 参数 | 类型   | 必填 | 说明                                       |
-| ---- | ------ | ---- | ------------------------------------------ |
-| id   | string | 是   | item id                                    |
+| 参数 | 类型   | 必填 | 说明                                         |
+| ---- | ------ | ---- | -------------------------------------------- |
+| id   | string | 是   | item id                                      |
 | path | string | 否   | 指定文件位置（同内容多路径时），缺省为主路径 |
 
 #### 响应
@@ -386,6 +436,26 @@ Item 对象。`id` 在索引完成后生成，若内容已存在则返回已有 
 { "status": "success" }
 ```
 
+## trash
+
+回收站内容通过 `item/list`（`in_trash: true`）查询。
+
+| 方法 | 端点                  | 说明       |
+| ---- | --------------------- | ---------- |
+| POST | `/api/v1/trash/clear` | 清空回收站 |
+
+### clear
+
+`POST /api/v1/trash/clear`
+
+彻底删除回收站中的全部文件，并清理对应的元数据与缩略图。不可恢复。
+
+#### 响应
+
+```json
+{ "status": "success" }
+```
+
 ## events
 
 `GET /api/v1/events?token=<token>`
@@ -394,8 +464,10 @@ Server-Sent Events 订阅素材库变更，前端据此增量刷新界面。`Eve
 
 事件类型：
 
-| 事件           | data              | 说明             |
-| -------------- | ----------------- | ---------------- |
-| `item.added`   | Item 对象         | 新文件入库       |
-| `item.updated` | Item 对象         | 元数据或文件变更 |
-| `item.deleted` | `{ "id": "..." }` | 文件删除         |
+| 事件            | data              | 说明             |
+| --------------- | ----------------- | ---------------- |
+| `item.added`    | Item 对象         | 新文件入库       |
+| `item.updated`  | Item 对象         | 元数据或文件变更 |
+| `item.trashed`  | `{ "id": "..." }` | 移入回收站       |
+| `item.restored` | Item 对象         | 从回收站恢复     |
+| `item.removed`  | `{ "id": "..." }` | 彻底删除         |
