@@ -22,7 +22,7 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 
 ### 前后端解耦
 
-后端是独立的 Rust 服务，前端只通过 REST API 通信。桌面版用 Electron 壳拉起后端进程；同一套后端未来可直接部署为多人使用的服务器版本。
+后端是独立的 C# 服务，前端只通过 REST API 通信。桌面版用 Electron 壳拉起后端进程；同一套后端未来可直接部署为多人使用的服务器版本。
 
 ### 开放 REST API
 
@@ -41,5 +41,6 @@ POST http://localhost:8080/api/files/abc123/tags
 ## 文档
 
 - [架构设计](docs/architecture.md)：进程模型、桌面/服务器部署形态、仓库结构
-- [技术栈](docs/tech-stack.md)：语言与框架选型及理由
+- [技术栈](docs/tech-stack.md)：语言与框架选型
+- [hawk-server（C# 过渡实现）](docs/server-csharp.md)：第一版后端实现细节
 - [存储设计](docs/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存

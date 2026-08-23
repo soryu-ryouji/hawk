@@ -17,16 +17,18 @@ hawk 前后端完全解耦，通过 HTTP API 通信。桌面版中 Electron 只�
                        │ 文件系统监听 / 读写
                        ▼
 ┌──────────────────────────────────────────────────────┐
-│                 hawk-server (Rust)                    │
+│                 hawk-server (C#)                            │
 │  ┌───────────┐  ┌───────────┐  ┌───────────────────┐  │
 │  │ Watcher   │  │ Hash      │  │ Thumbnail         │  │
-│  │ (notify)  │  │ (blake3)  │  │ (image)           │  │
+│  │(FileSystem│  │(Blake3.NET)│  │ (ImageSharp)      │  │
+│  │ Watcher)  │  │           │  │                   │  │
 │  └───────────┘  └───────────┘  └───────────────────┘  │
 │  ┌───────────┐  ┌───────────┐                          │
 │  │ Index     │  │ Search    │                          │
-│  │ (rusqlite)│  │ (FTS5)    │                          │
+│  │(Microsoft.│  │ (FTS5)    │                          │
+│  │Data.Sqlite)│  │           │                          │
 │  └───────────┘  └───────────┘                          │
-│        REST API (axum, OpenAPI 由 utoipa 生成)          │
+│       REST API (ASP.NET Core, 生成 OpenAPI schema)       │
 └──────────────────────┬───────────────────────────────┘
                        │ HTTP
           ┌────────────┼────────────┐
@@ -47,11 +49,11 @@ Web 前端不依赖 Electron IPC，只通过 REST API 通信。
 
 **2. 后端不依赖 Electron**
 
-后端是独立的 Rust 二进制，不依赖任何桌面端代码。
+后端是独立的 C# 二进制，不依赖任何桌面端代码。
 
 **3. API 契约先行**
 
-REST API 由 OpenAPI schema 定义（Rust 侧用 utoipa 从代码生成），TypeScript 类型从 schema 生成，前后端不允许手写对接口。
+REST API 由 OpenAPI schema 定义（后端从代码生成），TypeScript 类型从 schema 生成，前后端不允许手写对接口。
 
 ## 部署形态
 
@@ -88,10 +90,7 @@ Electron 退出
 
 ```text
 hawk/
-├── apps/
-│   └── desktop/     ← Electron 壳（TypeScript）
-├── server/          ← Rust 后端（桌面版与服务器版共用）
-├── web/             ← React 前端，只走 HTTP
-├── api/             ← OpenAPI 契约 + 生成的 TS 类型
+├── hawk-server/     ← C# 后端（桌面版与服务器版共用）
+├── hawk-app/        ← 桌面应用（Electron 壳 + 前端，具体实现待定）
 └── docs/            ← 设计文档
 ```
