@@ -43,4 +43,5 @@ POST http://localhost:8080/api/files/abc123/tags
 - [架构设计](docs/architecture.md)：进程模型、桌面/服务器部署形态、仓库结构
 - [技术栈](docs/tech-stack.md)：语言与框架选型
 - [hawk-server（C# 过渡实现）](docs/server-csharp.md)：第一版后端实现细节
+- [REST API V1](docs/server-rest-api-v1.md)：接口定义
 - [存储设计](docs/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存
