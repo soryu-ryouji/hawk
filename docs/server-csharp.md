@@ -9,8 +9,8 @@
 | 职责 | 选型 | 实现要点 |
 |---|---|---|
 | HTTP 框架 | ASP.NET Core Minimal API | |
-| SQLite | Microsoft.Data.Sqlite | 内置 e_sqlite3，开启 FTS5 |
 | 文件监听 | FileSystemWatcher | 内置 |
+| 索引 | 内存索引 | 启动时并行加载 `metadata/` 全量 TOML；watcher 增量更新 |
 | 哈希 | Blake3.NET | |
 | 图像处理 | ImageSharp | 解码 JPEG/PNG/GIF/WebP/TIFF/BMP，缩放生成缩略图 |
 | 配置 | Tomlyn | TOML 解析 |
@@ -31,6 +31,6 @@ MVP 用 ImageSharp 覆盖常见格式。图像解码收在一个接口后面，R
 
 ## 替换为 Rust 时的注意点
 
-- 目标栈：axum、rusqlite（FTS5）、notify、blake3、image + fast_image_resize
+- 目标栈：axum、notify、blake3、image + fast_image_resize，索引同样在内存中维护
 - 行为对齐以 OpenAPI schema 为准，不逐行翻译 C# 代码
-- `.hawk/` 存储格式（metadata TOML、hawk.db 结构、缩略图命名）属于持久化契约，Rust 版必须兼容
+- `.hawk/` 存储格式（metadata TOML、缩略图命名、trash 结构）属于持久化契约，Rust 版必须兼容

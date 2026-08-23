@@ -14,7 +14,7 @@
 分两阶段：
 
 1. **过渡实现（当前）**：C#，见 [hawk-server（C# 过渡实现）](server-csharp.md)
-2. **目标实现**：Rust。待 API 设计验证完成、C# 版本跑通后整体替换。目标栈：axum、rusqlite（FTS5）、notify、blake3、image + fast_image_resize
+2. **目标实现**：Rust。待 API 设计验证完成、C# 版本跑通后整体替换。目标栈：axum、notify、blake3、image + fast_image_resize，索引同样在内存中维护
 
 ## 前端与桌面壳：hawk-app/
 
