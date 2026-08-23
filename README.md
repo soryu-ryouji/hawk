@@ -28,14 +28,15 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 
 ```text
 # 搜索素材
-GET http://localhost:8080/api/search?q=logo&tags=品牌&rating=5
+POST http://localhost:27371/api/v1/item/list
+{ "keywords": ["logo"], "tags": ["品牌"], "star": 5 }
 
 # 获取缩略图
-GET http://localhost:8080/api/thumb/abc123?size=256
+GET http://localhost:27371/api/v1/item/thumbnail?id=abc123&size=256
 
-# 添加标签
-POST http://localhost:8080/api/files/abc123/tags
-{ "name": "待审核", "color": "#FF0000" }
+# 更新标签
+POST http://localhost:27371/api/v1/item/update
+{ "id": "abc123", "tags": ["待审核"] }
 ```
 
 ## 文档

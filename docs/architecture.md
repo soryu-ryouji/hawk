@@ -63,7 +63,7 @@ Electron 壳与后端二进制一起打包发行（electron-builder 的 `extraRe
 ```text
 Electron 启动
   → spawn hawk-server 子进程
-      - 端口动态分配（传 0 由系统分配）
+      - 默认监听 27371 端口，被占用时回退为动态分配
       - 生成随机 token，经环境变量传入
   → 轮询 /health 直到就绪
   → 加载前端页面（请求携带 token）
@@ -71,7 +71,7 @@ Electron 退出
   → 回收 hawk-server 子进程（防止孤儿进程残留）
 ```
 
-**本地 API 安全**：localhost 端口任何本机进程都能访问，因此所有请求必须携带启动时生成的随机 token。token 只存在于进程环境变量中，不落盘。
+**本地 API 安全**：localhost 端口任何本机进程都能访问，因此所有请求必须携带启动时生成的随机 token。token 只存在于进程环境变量中，不落盘。生态客户端（浏览器插件等）通过默认端口 27371 连接，token 可在应用设置中查看。
 
 ### 服务器版（未来）
 

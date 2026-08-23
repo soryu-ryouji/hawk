@@ -25,6 +25,13 @@
 
 MVP 用 ImageSharp 覆盖常见格式。图像解码收在一个接口后面，RAW、HEIC 等格式后续再定实现方案。
 
+## 启动顺序
+
+1. 启动文件监听（事件先入缓冲队列）
+2. 并行批量加载 `metadata/` 全量 TOML，构建内存索引
+3. 重放缓冲事件，与加载结果合并去重
+4. 就绪后开放 `/health`
+
 ## 并发模型
 
 索引流水线（监听 → 哈希 → 缩略图 → 入库）用 `System.Threading.Channels` 串联，有界 channel 提供背压；HTTP 层由 ASP.NET Core 处理。

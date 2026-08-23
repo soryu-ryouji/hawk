@@ -26,14 +26,14 @@
 ### ID 规范
 
 - **item id**：文件内容的 BLAKE3 哈希（hex），与存储设计一致
-- **library id**：UUID
+- **library**：不使用合成 id，以素材库根目录路径区分；显示名取 `config.toml` 的 `name`，缺省为库目录名
 - **folder**：不使用合成 id，直接以相对素材库根目录的真实目录路径标识（如 `posters/2024`）
 
 ### 其他
 
 - 时间戳均为 Unix 毫秒
 - 分页参数：`offset`（默认 0）、`limit`（默认 50）
-- 桌面版所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 无法设置请求头，改用查询参数 `?token=`
+- 桌面版默认监听 `27371` 端口（被占用时回退为动态分配），所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 无法设置请求头，改用查询参数 `?token=`
 
 ## app
 
@@ -84,7 +84,7 @@ hawk-server 单实例对应单个素材库。
 
 `GET /api/v1/library/info`
 
-获取当前打开的素材库信息与标签组。文件夹树通过 `folder/list` 获取。
+获取当前打开的素材库信息。文件夹树通过 `folder/list` 获取。
 
 #### 响应
 
@@ -92,17 +92,8 @@ hawk-server 单实例对应单个素材库。
 {
   "status": "success",
   "data": {
-    "id": "32455218-9e79-61ca-7e1d-034c0ed9f33b",
     "name": "设计素材库",
     "path": "D:/Assets/Design",
-    "tags_groups": [
-      {
-        "id": "c549d2a8-c187-c612-617f-83fcef4976a2",
-        "name": "Location",
-        "tags": ["Kitchen"],
-        "color": "yellow"
-      }
-    ],
     "modification_time": 1592461625783,
     "application_version": "1.0.0"
   }
@@ -194,6 +185,8 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | GET  | `/api/v1/item/count`             | 获取 item 总数      |
 | POST | `/api/v1/item/add`               | 添加新 item         |
 | POST | `/api/v1/item/update`            | 更新 item           |
+| POST | `/api/v1/item/delete`            | 移入回收站          |
+| POST | `/api/v1/item/restore`           | 从回收站恢复        |
 | GET  | `/api/v1/item/thumbnail`         | 获取缩略图          |
 | POST | `/api/v1/item/refresh_thumbnail` | 重新生成缩略图      |
 
@@ -202,18 +195,20 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | 字段             | 类型     | 说明                   |
 | ---------------- | -------- | ---------------------- |
 | id               | string   | 内容哈希（BLAKE3 hex） |
-| name             | string   | 文件名（不含扩展名）   |
+| name             | string   | 文件名（不含扩展名），取主路径 |
 | ext              | string   | 扩展名，小写，不含点   |
 | width / height   | number   | 像素尺寸               |
 | size             | number   | 文件大小（字节）       |
 | url              | string   | 来源网址，可为空       |
 | tags             | string[] | 标签列表               |
-| folders          | string[] | 所在文件夹路径列表   |
+| paths            | string[] | 所有文件位置（库内相对路径），首个为主路径 |
+| folders          | string[] | 所在文件夹路径列表（由 paths 派生） |
 | star             | number   | 评分 0–5               |
 | annotation       | string   | 备注                   |
-| is_deleted       | boolean  | 是否在回收站           |
 | modification_time | number  | 修改时间（Unix 毫秒）  |
 
+> **同内容去重**：内容相同的文件共享一个 item，`paths` 记录所有文件位置。
+>
 > **id 漂移**：素材文件内容被修改后，内容哈希变化会导致 id 变化。hawk 将素材视为「入库后基本不变」的数据；重建索引时会按「路径 + 文件名」匹配旧元数据，匹配成功则自动将元数据迁移到新 id。该匹配是启发式的，客户端不应假设 id 永久稳定。
 
 ### list
@@ -229,11 +224,12 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | ids        | string[] | 按 id 列表匹配             |
 | keywords   | string[] | 关键词（匹配名称、备注）   |
 | tags       | string[] | 按标签过滤                 |
+| star       | number   | 按评分过滤                 |
 | folders    | string[] | 按文件夹路径过滤           |
 | ext        | string   | 按扩展名过滤               |
 | annotation | string   | 按备注文本过滤             |
 | url        | string   | 按来源网址过滤             |
-| is_deleted | boolean  | 是否只查回收站，默认 false |
+| in_trash   | boolean  | 是否只查回收站中的 item，默认 false |
 | order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` |
 | order      | string   | 排序方向：`desc`（默认）/ `asc` |
 | offset     | number   | 分页偏移，默认 0           |
@@ -255,10 +251,10 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
         "size": 245760,
         "url": "https://example.com/photo.jpg",
         "tags": ["nature", "sunset"],
+        "paths": ["posters/2024/sunset-photo.jpg"],
         "folders": ["posters/2024"],
         "star": 4,
         "annotation": "Beautiful sunset",
-        "is_deleted": false,
         "modification_time": 1700000000000
       }
     ],
@@ -311,24 +307,62 @@ Item 对象。`id` 在索引完成后生成，若内容已存在则返回已有 
 
 `POST /api/v1/item/update`
 
-更新元数据（写入 `.hawk/metadata/`）。`name`、`folder_path`、`is_deleted` 会同步操作真实文件。
+更新元数据（写入 `.hawk/metadata/`）。`name`、`folder_path` 会同步操作真实文件。
 
 #### 请求
 
 | 参数       | 类型     | 必填 | 说明                             |
 | ---------- | -------- | ---- | -------------------------------- |
 | id         | string   | 是   | item id                          |
+| path       | string   | 否   | 指定操作的文件位置（同内容多路径时），缺省为主路径 |
 | name       | string   | 否   | 重命名文件（同步修改真实文件名） |
 | tags       | string[] | 否   | 标签（整体替换）                 |
 | folder_path | string   | 否   | 移动到新文件夹（移动真实文件）   |
 | star       | number   | 否   | 评分 0–5                         |
 | annotation | string   | 否   | 备注                             |
 | url        | string   | 否   | 来源网址                         |
-| is_deleted | boolean  | 否   | 移入/移出回收站（`.hawk/trash/`）  |
 
 #### 响应
 
 更新后的 Item 对象。
+
+### delete
+
+`POST /api/v1/item/delete`
+
+移入回收站：文件移入 `.hawk/trash/`（保留目录结构），元数据保留。
+
+#### 请求
+
+| 参数 | 类型   | 必填 | 说明                                       |
+| ---- | ------ | ---- | ------------------------------------------ |
+| id   | string | 是   | item id                                    |
+| path | string | 否   | 指定文件位置（同内容多路径时），缺省为主路径 |
+
+#### 响应
+
+```json
+{ "status": "success" }
+```
+
+### restore
+
+`POST /api/v1/item/restore`
+
+从回收站恢复：文件移回元数据 `paths` 记录的原路径。原路径已被占用时返回 `FILE_EXISTS`。
+
+#### 请求
+
+| 参数 | 类型   | 必填 | 说明                                       |
+| ---- | ------ | ---- | ------------------------------------------ |
+| id   | string | 是   | item id                                    |
+| path | string | 否   | 指定文件位置（同内容多路径时），缺省为主路径 |
+
+#### 响应
+
+```json
+{ "status": "success" }
+```
 
 ### thumbnail
 
