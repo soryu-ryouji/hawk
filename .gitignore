@@ -3,3 +3,7 @@
 .idea/
 .vs/
 .vscode/
+
+bin/
+obj/
+hawk-server/tools/.tmp/
