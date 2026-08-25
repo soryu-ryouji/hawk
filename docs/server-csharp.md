@@ -1,5 +1,7 @@
 # hawk-server（C# 过渡实现）
 
+> 逐文件的代码职责与流程串联见 [代码导读](server-code-structure.md)。
+
 第一版后端使用 C# 实现，目的是验证 API 设计、跑通完整后端流程。验证完成后将整体替换为 Rust 实现。
 
 替换对前端透明：前端只依赖 OpenAPI 契约，不感知后端语言。因此 C# 阶段就要保证 OpenAPI schema 的准确性和完整性，schema 即契约。
@@ -11,7 +13,7 @@
 | HTTP 框架 | ASP.NET Core Minimal API     |                                                        |
 | 文件监听  | FileSystemWatcher            | 内置                                                   |
 | 索引      | 内存索引                     | 目录扫描 + 路径/size/mtime 比对，仅新增或变动文件算哈希；watcher 增量更新 |
-| 哈希      | Blake3.NET                   |                                                        |
+| 哈希      | Blake3                         |                                                        |
 | 图像处理  | ImageSharp                   | 解码 JPEG/PNG/GIF/WebP/TIFF/BMP，缩放生成缩略图        |
 | 配置      | Tomlyn                       | TOML 解析                                              |
 | OpenAPI   | Microsoft.AspNetCore.OpenApi | 从代码生成 schema                                      |
@@ -34,7 +36,12 @@ MVP 用 ImageSharp 覆盖常见格式。图像解码收在一个接口后面，R
 
 ## 并发模型
 
-索引流水线（监听 → 哈希 → 缩略图 → 入库）用 `System.Threading.Channels` 串联，有界 channel 提供背压；HTTP 层由 ASP.NET Core 处理。
+索引流水线（监听 → 哈希 → 缩略图 → 入库）用 `System.Threading.Channels` 串联，有界 channel 提供背压；HTTP 层由 ASP.NET Core 处理。细节：
+
+- 索引与元数据写入收敛在单消费者循环（单写者）；监听事件幂等，channel 满时置溢出标记，由全量扫描兜底
+- 全量扫描分两阶段：复用判定串行，哈希计算并行（`ProcessorCount/2`），索引应用串行
+- 写入防抖：mtime 距今不足 1 秒的文件延迟重试（去重、上限 120 次），避免对拷贝中的大文件反复哈希
+- 缩略图生成是独立后台 worker 池（1–4 并发），不阻塞索引
 
 ## 替换为 Rust 时的注意点
 
