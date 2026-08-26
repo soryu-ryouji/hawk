@@ -45,5 +45,6 @@ POST http://localhost:27371/api/v1/item/update
 - [技术栈](docs/tech-stack.md)：语言与框架选型
 - [hawk-server（C# 过渡实现）](docs/server-csharp.md)：第一版后端实现细节
 - [hawk-server 代码导读](docs/server-code-structure.md)：逐文件职责与关键流程串联
+- [hawk-app 设计](docs/hawk-app.md)：Electron 壳 + React 前端的界面与接入设计
 - [REST API V1](docs/server-rest-api-v1.md)：接口定义
 - [存储设计](docs/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存

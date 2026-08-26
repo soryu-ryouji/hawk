@@ -18,7 +18,7 @@
 
 ## 前端与桌面壳：hawk-app/
 
-Electron 壳 + React 前端，具体实现方式待定。约束：
+Electron 壳 + React 前端，设计见 [hawk-app 设计](hawk-app.md)。约束：
 
 - 前端只通过 REST API 与后端通信，不依赖 Electron IPC
 - Electron 主进程只负责：创建窗口、拉起/回收后端进程、注入 token
