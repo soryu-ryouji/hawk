@@ -5,7 +5,7 @@ namespace Hawk.Server.Api;
 
 public static class ItemEndpoints
 {
-    public sealed record ListRequest
+    public sealed record ItemListRequest
     {
         public string[]? Ids { get; init; }
         public string[]? Keywords { get; init; }
@@ -22,9 +22,9 @@ public static class ItemEndpoints
         public int Limit { get; init; } = 50;
     }
 
-    public sealed record ListResponse(ItemDto[] Items, int Total, int Offset, int Limit);
+    public sealed record ItemListResponse(ItemDto[] Items, int Total, int Offset, int Limit);
 
-    public sealed record AddRequest
+    public sealed record ItemAddRequest
     {
         public string? Path { get; init; }
         public string? Url { get; init; }
@@ -35,9 +35,9 @@ public static class ItemEndpoints
         public string? Annotation { get; init; }
     }
 
-    public sealed record AddResponse(ItemDto Item, bool AlreadyExisted);
+    public sealed record ItemAddResponse(ItemDto Item, bool AlreadyExisted);
 
-    public sealed record UpdateRequest
+    public sealed record ItemUpdateRequest
     {
         public required string Id { get; init; }
         public string? Path { get; init; }
@@ -49,8 +49,8 @@ public static class ItemEndpoints
         public string? Url { get; init; }
     }
 
-    public sealed record IdRequest(string Id, string? Path);
-    public sealed record RefreshRequest(string Id);
+    public sealed record ItemIdRequest(string Id, string? Path);
+    public sealed record ItemRefreshThumbnailRequest(string Id);
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
@@ -58,9 +58,9 @@ public static class ItemEndpoints
     {
         var group = app.MapGroup("/api/v1/item").WithTags("item");
 
-        group.MapPost("/list", (ListRequest? req, ItemIndex index) =>
+        group.MapPost("/list", (ItemListRequest? req, ItemIndex index) =>
         {
-            req ??= new ListRequest();
+            req ??= new ItemListRequest();
             var query = new ItemQuery
             {
                 Ids = req.Ids, Keywords = req.Keywords, Tags = req.Tags, Star = req.Star,
@@ -69,8 +69,8 @@ public static class ItemEndpoints
                 Offset = req.Offset, Limit = req.Limit,
             };
             var items = index.Query(query, out var total);
-            var response = new ListResponse(items.ToArray(), total, query.Offset, query.Limit);
-            return TypedResults.Ok(Envelope<ListResponse>.Ok(response));
+            var response = new ItemListResponse(items.ToArray(), total, query.Offset, query.Limit);
+            return TypedResults.Ok(Envelope<ItemListResponse>.Ok(response));
         });
 
         group.MapGet("/detail", (string id, ItemIndex index) =>
@@ -107,7 +107,7 @@ public static class ItemEndpoints
             return TypedResults.File(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read), "image/webp");
         });
 
-        group.MapPost("/refresh_thumbnail", async (RefreshRequest req, ItemIndex index, ThumbnailService thumbnails, LibraryConfig config, LibraryPaths paths) =>
+        group.MapPost("/refresh_thumbnail", async (ItemRefreshThumbnailRequest req, ItemIndex index, ThumbnailService thumbnails, LibraryConfig config, LibraryPaths paths) =>
         {
             var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
             var source = SourceFile(item, paths) ?? throw ApiException.InvalidParam("item 没有可用的文件位置");
@@ -118,7 +118,7 @@ public static class ItemEndpoints
 
     // ---------- add ----------
 
-    private static async Task<IResult> AddAsync(AddRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline, CancellationToken ct)
+    private static async Task<IResult> AddAsync(ItemAddRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline, CancellationToken ct)
     {
         if (req.Path is null && req.Url is null && req.ImgBase64 is null)
         {
@@ -264,7 +264,7 @@ public static class ItemEndpoints
             }
 
             var item = index.Get(hash)!;
-            return TypedResults.Ok(Envelope<AddResponse>.Ok(new AddResponse(item.ToDto(trashView: false), alreadyExisted)));
+            return TypedResults.Ok(Envelope<ItemAddResponse>.Ok(new ItemAddResponse(item.ToDto(trashView: false), alreadyExisted)));
         }
         finally
         {
@@ -277,7 +277,7 @@ public static class ItemEndpoints
 
     // ---------- update ----------
 
-    private static async Task<IResult> UpdateAsync(UpdateRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
+    private static async Task<IResult> UpdateAsync(ItemUpdateRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
     {
         var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
         var loc = FindLocation(item, req.Path, wantTrash: null)
@@ -382,7 +382,7 @@ public static class ItemEndpoints
 
     // ---------- delete / restore ----------
 
-    private static async Task<IResult> DeleteAsync(IdRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
+    private static async Task<IResult> DeleteAsync(ItemIdRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
     {
         var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
         var loc = FindLocation(item, req.Path, wantTrash: false)
@@ -396,7 +396,7 @@ public static class ItemEndpoints
         return TypedResults.Ok(new Envelope<object>("success", null));
     }
 
-    private static async Task<IResult> RestoreAsync(IdRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
+    private static async Task<IResult> RestoreAsync(ItemIdRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
     {
         var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
         var loc = FindLocation(item, req.Path, wantTrash: true)

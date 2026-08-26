@@ -9,9 +9,9 @@ public static class FolderEndpoints
 {
     public sealed record FolderNode(string Path, string Name, FolderNode[] Children, long ModificationTime);
 
-    public sealed record CreateRequest(string Name, string? ParentPath);
-    public sealed record UpdateRequest(string Path, string? Name, string? ParentPath);
-    public sealed record PathRequest(string Path);
+    public sealed record FolderCreateRequest(string Name, string? ParentPath);
+    public sealed record FolderUpdateRequest(string Path, string? Name, string? ParentPath);
+    public sealed record FolderPathRequest(string Path);
 
     public static void MapFolderEndpoints(this IEndpointRouteBuilder app)
     {
@@ -20,7 +20,7 @@ public static class FolderEndpoints
         group.MapGet("/list", (LibraryPaths paths, LibraryConfig config) =>
             TypedResults.Ok(Envelope<FolderNode>.Ok(BuildTree(paths, config))));
 
-        group.MapPost("/create", async (CreateRequest req, LibraryPaths paths, LibraryConfig config) =>
+        group.MapPost("/create", async (FolderCreateRequest req, LibraryPaths paths, LibraryConfig config) =>
         {
             if (!LibraryFs.IsValidName(req.Name))
             {
@@ -39,7 +39,7 @@ public static class FolderEndpoints
             return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, targetAbs)));
         });
 
-        group.MapPost("/update", async (UpdateRequest req, LibraryPaths paths, LibraryConfig config, IndexPipeline pipeline) =>
+        group.MapPost("/update", async (FolderUpdateRequest req, LibraryPaths paths, LibraryConfig config, IndexPipeline pipeline) =>
         {
             if (!LibraryPaths.IsValidLibraryPath(req.Path))
             {
@@ -84,7 +84,7 @@ public static class FolderEndpoints
         });
 
         // 删除：整体移入 .hawk/trash/（保留目录结构）
-        group.MapPost("/delete", async (PathRequest req, LibraryPaths paths, IndexPipeline pipeline) =>
+        group.MapPost("/delete", async (FolderPathRequest req, LibraryPaths paths, IndexPipeline pipeline) =>
         {
             if (!LibraryPaths.IsValidLibraryPath(req.Path))
             {
@@ -105,7 +105,7 @@ public static class FolderEndpoints
         });
 
         // 恢复：按原路径放回，被占用时报 FILE_EXISTS
-        group.MapPost("/restore", async (PathRequest req, LibraryPaths paths, IndexPipeline pipeline) =>
+        group.MapPost("/restore", async (FolderPathRequest req, LibraryPaths paths, IndexPipeline pipeline) =>
         {
             if (!LibraryPaths.IsValidLibraryPath(req.Path))
             {

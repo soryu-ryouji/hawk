@@ -1,0 +1,19 @@
+# electron-builder 配置。打包前先执行 scripts/build-server.sh 产出当前平台的 hawk-server 二进制。
+appId: com.hawk.app
+productName: hawk
+directories:
+  output: dist
+files:
+  - electron/**/*
+  - web/dist/**/*
+extraResources:
+  # 各平台 hawk-server 自包含单文件（dotnet publish，见 scripts/build-server.sh）
+  - from: resources/hawk-server
+    to: hawk-server
+mac:
+  category: public.app-category.graphics-design
+  target: dmg
+win:
+  target: nsis
+linux:
+  target: AppImage

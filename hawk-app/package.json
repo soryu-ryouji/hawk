@@ -1,0 +1,29 @@
+{
+  "name": "hawk-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "hawk 桌面应用（Electron 壳 + Vue 前端）",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "gen:types": "node scripts/gen-types.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "build": "vue-tsc --noEmit -p web/tsconfig.json && vite build",
+    "pack": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@vueuse/core": "^14.4.0",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.41"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2",
+    "vue-tsc": "^3.3.11"
+  }
+}

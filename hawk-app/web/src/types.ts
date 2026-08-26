@@ -1,0 +1,35 @@
+import type { components } from './api/schema';
+
+// 契约类型一律从生成的 schema 取，不另写
+export type Item = components['schemas']['ItemDto'];
+export type FolderNode = components['schemas']['FolderNode'];
+export type LibraryInfo = components['schemas']['LibraryInfo'];
+export type ItemListRequest = components['schemas']['ItemListRequest'];
+
+// 业务自有类型
+export type ViewState = { kind: 'all' } | { kind: 'folder'; path: string } | { kind: 'trash' };
+
+export interface QueryState {
+  keywords: string[];
+  star?: number;
+  orderBy: 'modification_time' | 'name' | 'size' | 'star';
+  order: 'asc' | 'desc';
+}
+
+export interface MenuItem {
+  label: string;
+  danger?: boolean;
+  separator?: boolean;
+  action?: () => void;
+}
+
+/** Electron preload 注入的白名单通道（浏览器纯前端调试时不存在） */
+declare global {
+  interface Window {
+    hawkShell?: {
+      selectLibrary(): Promise<boolean>;
+      showInFinder(relPath: string): Promise<void>;
+      getPathForFile(file: File): string;
+    };
+  }
+}

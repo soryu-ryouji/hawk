@@ -83,6 +83,8 @@ for _ in $(seq 1 20); do
   sleep 0.5
 done
 check "thumbnail content-type" "$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256")" "image/webp"
+check "thumbnail 支持 ?token=（<img> 场景）" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256&token=$TOKEN")" 200
+check "thumbnail 错误 token 返回 401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&token=wrong")" 401
 check "thumbnail cache-control" "$(curl -s -D - -o /dev/null -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID" | grep -i cache-control | tr -d '\r' | tr 'A-Z' 'a-z')" "cache-control: public, max-age=31536000, immutable"
 check "thumbnail 不可缓存尺寸 400" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=400")" 400
 check "refresh_thumbnail" "$(curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/refresh_thumbnail" -H 'Content-Type: application/json' -d "{\"id\":\"$SUNSET_ID\"}" | jq -r .status)" success

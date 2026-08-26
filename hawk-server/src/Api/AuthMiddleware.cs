@@ -45,7 +45,9 @@ public sealed class TokenAuthMiddleware
             return true;
         }
 
-        return context.Request.Path == "/api/v1/events" &&
-               string.Equals(context.Request.Query["token"], _token, StringComparison.Ordinal);
+        // EventSource 与 <img> 均无法设置请求头，这两个 GET 端点放行查询参数 token
+        var allowQueryToken = HttpMethods.IsGet(context.Request.Method) &&
+            (context.Request.Path == "/api/v1/events" || context.Request.Path == "/api/v1/item/thumbnail");
+        return allowQueryToken && string.Equals(context.Request.Query["token"], _token, StringComparison.Ordinal);
     }
 }

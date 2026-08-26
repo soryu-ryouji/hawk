@@ -68,19 +68,19 @@ public sealed class ThumbnailService
 
     /// <summary>
     /// 为指定内容生成全部配置尺寸的缩略图；已存在的跳过（force 时强制重建）。
-    /// 源文件不是图像或已消失时静默跳过——缩略图是尽力而为的缓存。
+    /// 源文件不是图像或已消失时静默跳过——缩略图是尽力而为的缓存。返回是否实际生成了文件。
     /// </summary>
-    public async Task GenerateAsync(string hash, string sourceAbs, IEnumerable<int> sizes, bool force = false, CancellationToken ct = default)
+    public async Task<bool> GenerateAsync(string hash, string sourceAbs, IEnumerable<int> sizes, bool force = false, CancellationToken ct = default)
     {
         if (!File.Exists(sourceAbs))
         {
-            return;
+            return false;
         }
 
         var pending = sizes.Where(s => force || !Exists(hash, s)).ToArray();
         if (pending.Length == 0)
         {
-            return;
+            return false;
         }
 
         try
@@ -100,6 +100,8 @@ public sealed class ThumbnailService
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 await clone.SaveAsWebpAsync(target, new WebpEncoder { Quality = 80 }, ct);
             }
+
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -108,6 +110,7 @@ public sealed class ThumbnailService
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "生成缩略图失败: {Path}", sourceAbs);
+            return false;
         }
     }
 

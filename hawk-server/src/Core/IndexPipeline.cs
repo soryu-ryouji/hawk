@@ -784,9 +784,16 @@ public sealed class IndexPipeline : IDisposable
             try
             {
                 var sizes = _config.Current.ThumbnailSizes.Where(s => !_thumbnails.Exists(job.Hash, s)).ToArray();
-                if (sizes.Length > 0)
+                if (sizes.Length == 0)
                 {
-                    await _thumbnails.GenerateAsync(job.Hash, job.SourceAbs, sizes, ct: ct);
+                    continue;
+                }
+
+                // 生成完成后补发 item.updated：前端缩略图此前的 404 占位据此重建 <img>
+                if (await _thumbnails.GenerateAsync(job.Hash, job.SourceAbs, sizes, ct: ct)
+                    && _index.Get(job.Hash) is { } item)
+                {
+                    _bus.Publish("item.updated", item.ToDto(trashView: !item.HasLibraryLocations));
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

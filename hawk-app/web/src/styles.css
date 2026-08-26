@@ -1,0 +1,138 @@
+/* 深色主题变量与全局样式（组件样式一律 <style scoped>，此处只放变量与 reset） */
+:root {
+  --bg-0: #1e1e1e; /* 主区 */
+  --bg-1: #252526; /* 侧栏 */
+  --bg-2: #2d2d30; /* 检查器/卡片 */
+  --bg-3: #3a3a3d; /* 悬浮/菜单 */
+  --fg-0: #e8e8e8;
+  --fg-1: #9d9d9d;
+  --accent: #4f8cff;
+  --danger: #e5534b;
+  --border: #3c3c3c;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: var(--fg-0);
+  background: var(--bg-0);
+  user-select: none;
+  overflow: hidden;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+button {
+  cursor: pointer;
+  padding: 4px 12px;
+}
+
+button:hover {
+  background: var(--bg-3);
+}
+
+button.danger {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+/* 布局骨架：侧栏 | (工具栏 + 网格) | 检查器，底部状态栏通栏 */
+.app {
+  display: grid;
+  height: 100%;
+  grid-template-columns: 220px 1fr 280px;
+  grid-template-rows: 48px 1fr 26px;
+  grid-template-areas:
+    "sidebar toolbar inspector"
+    "sidebar main inspector"
+    "status status status";
+}
+
+.app > .sidebar {
+  grid-area: sidebar;
+}
+
+.app > .toolbar {
+  grid-area: toolbar;
+}
+
+.app > .grid-scroll {
+  grid-area: main;
+}
+
+.app > .inspector {
+  grid-area: inspector;
+}
+
+.app > .statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--fg-1);
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  font-size: 12px;
+}
+
+.toast {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 20px;
+  border-radius: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 300;
+}
+
+.boot-error {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--fg-1);
+}

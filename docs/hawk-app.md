@@ -126,6 +126,8 @@ web/
     │   ├── Inspector.vue
     │   ├── TagEditor.vue      # 标签 chip 编辑器（Inspector 的子组件）
     │   ├── StarRating.vue     # 点星评分（Inspector/右键菜单共用）
+    │   ├── PromptDialog.vue   # 文本输入模态（添加标签/新建文件夹）
+    │   ├── FolderPickerDialog.vue # 文件夹选择模态（移动到文件夹）
     │   ├── PreviewOverlay.vue
     │   ├── ContextMenu.vue    # 全局单例自绘菜单
     │   └── EmptyState.vue     # 空库/空结果占位
@@ -275,6 +277,8 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `Inspector.vue` | — | — | 单选：1024 预览 + 可编辑字段（失焦/回车提交 updateItem）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；输入回车新增（trim 去重） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
+| `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
+| `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
 | `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏 1024 图；Esc/点遮罩关闭；←/→ 切换 |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
@@ -319,13 +323,13 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 ## 功能清单 v1（验收标准）
 
-1. 启动选库：首次启动弹目录选择；记住上次库；菜单可更换库
-2. 侧栏：全部素材 / 文件夹树（展开收起、右键新建/重命名/删除，删除进回收站）/ 回收站
+1. 启动选库：首次启动弹目录选择；记住上次素材库与上次浏览的文件夹视图（按库路径存 localStorage，文件夹已删则回退全部素材）；菜单可更换库
+2. 侧栏：全部素材 / 文件夹树（「＋」按钮或树空白处右键新建根文件夹，节点右键新建/重命名/删除，删除进回收站）/ 回收站
 3. 网格：缩略图懒加载、无限滚动、单选/Shift 连选/Cmd 点选、双击预览浮层
 4. 搜索与筛选：关键词（命中名称/备注）、star 精确筛选、四种排序双向
 5. 检查器：1024 预览；名称、标签（chip 增删）、评分（点星）、备注、URL 编辑即存（失焦/回车提交）；只读信息：尺寸、大小、mtime、全部路径
 6. 导入：拖拽文件/文件夹到网格 → `item/add`（folder 路径取当前文件夹；文件夹由前端递归展开为文件逐个导入）
-7. 右键菜单：回收 / 恢复 / 在 Finder 显示 / 评分 0–5
+7. 右键菜单：添加标签 / 移动到文件夹 / 在 Finder 显示 / 评分 0–5 / 回收（回收站视图为恢复、清空）
 8. 回收站：查看、单项或批量恢复、清空（二次确认）
 9. 实时性：另一进程改动库目录（或第二窗口操作）经 SSE 反映到界面
 10. 快捷键：`Delete` 回收/恢复、`Esc` 关浮层、`Cmd/Ctrl+A` 全选

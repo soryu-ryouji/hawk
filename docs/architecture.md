@@ -90,6 +90,6 @@ Electron 退出
 ```text
 hawk/
 ├── hawk-server/     ← C# 后端（桌面版与服务器版共用）
-├── hawk-app/        ← 桌面应用（Electron 壳 + 前端，具体实现待定）
+├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/hawk-app.md）
 └── docs/            ← 设计文档
 ```

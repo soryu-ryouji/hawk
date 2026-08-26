@@ -1,0 +1,59 @@
+// 拖拽导入：drop 到窗口任意处；文件夹经 webkitGetAsEntry 递归展开为文件，
+// 再经 preload 的 webUtils.getPathForFile 取绝对路径逐个入库。
+import { useDropZone } from '@vueuse/core';
+import { useLibraryStore } from '../stores/library';
+
+async function* walkEntry(entry: FileSystemEntry): AsyncGenerator<File> {
+  if (entry.isFile) {
+    yield await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject));
+    return;
+  }
+  if (entry.isDirectory) {
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    // readEntries 每批最多 100 条，必须循环读到空
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+      if (batch.length === 0) {
+        break;
+      }
+      for (const child of batch) {
+        yield* walkEntry(child);
+      }
+    }
+  }
+}
+
+export function useDragImport() {
+  const store = useLibraryStore();
+
+  useDropZone(document, {
+    onDrop: async (_files, event) => {
+      const shell = window.hawkShell;
+      if (!shell) {
+        store.showToast('浏览器模式不支持导入（无法取文件路径）');
+        return;
+      }
+
+      const entries = [...(event.dataTransfer?.items ?? [])]
+        .map((item) => item.webkitGetAsEntry())
+        .filter((entry): entry is FileSystemEntry => entry !== null);
+
+      const paths: string[] = [];
+      for (const entry of entries) {
+        for await (const file of walkEntry(entry)) {
+          const abs = shell.getPathForFile(file);
+          if (abs) {
+            paths.push(abs);
+          }
+        }
+      }
+      await store.importPaths(paths);
+    },
+    // 仅库内视图可导入
+    onOver: (_files, event) => {
+      if (store.isTrash) {
+        event.dataTransfer && (event.dataTransfer.dropEffect = 'none');
+      }
+    },
+  });
+}
