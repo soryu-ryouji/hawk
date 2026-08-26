@@ -1,6 +1,6 @@
-# hawk-app 设计（Electron 壳 + React 前端）
+# hawk-app 设计（Electron 壳 + Vue 前端）
 
-桌面版应用的设计文档。约束来源：[architecture.md](architecture.md)（sidecar 进程模型）、[tech-stack.md](tech-stack.md)（React + TypeScript + Vite）、[server-rest-api-v1.md](server-rest-api-v1.md)（接口契约）。
+桌面版应用的设计文档。约束来源：[architecture.md](architecture.md)（sidecar 进程模型）、[tech-stack.md](tech-stack.md)（Vue 3 + TypeScript + Vite）、[server-rest-api-v1.md](server-rest-api-v1.md)（接口契约）。
 
 ## 目标
 
@@ -96,36 +96,213 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 当前位置（全部/文件夹路径/回收站）体现在侧栏选中态；回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。
 
-### 组件划分
+### 目录结构（web/src）
 
 ```text
-App
-├── TitleBar?（不自定义标题栏，用系统原生）
-├── Toolbar          搜索输入、star 筛选、排序、缩略图尺寸
-├── Sidebar
-│   └── FolderTreeNode（递归，右键：新建/重命名/删除）
-├── ItemGrid
-│   └── ItemCard × N（缩略图、名称、评分角标、选中态）
-├── Inspector        单选编辑；多选显示数量与批量操作（回收/评分）
-├── PreviewOverlay   全屏预览
-└── ContextMenu      自绘（Electron 原生菜单在 Windows/macOS 表现不一，自绘统一）
+web/
+├── index.html
+├── tsconfig.json
+└── src/
+    ├── main.ts                # 入口：解析 hash 注入 api/token、创建 Pinia、挂载 App
+    ├── App.vue                # 布局骨架；挂载全局 composables（快捷键/拖拽导入）与浮层
+    ├── types.ts               # 业务类型（ViewState/QueryState/MenuItem）；Item 等从 schema.d.ts 别名导出
+    ├── api/
+    │   ├── client.ts          # request 封装：baseURL、Bearer 头、信封解包、ApiError
+    │   ├── endpoints.ts       # 全部端点的强类型函数（api.itemList(...) 等）
+    │   ├── events.ts          # SSE 连接管理：订阅、重连、分发
+    │   └── schema.d.ts        # openapi-typescript 生成（入库，勿手改）
+    ├── stores/
+    │   └── library.ts         # Pinia 主 store（见下）
+    ├── composables/           # 只放业务 composable；通用能力直接用 @vueuse/core
+    │   ├── useContextMenu.ts  # 右键菜单状态（visible/x/y/items）
+    │   ├── useDragImport.ts   # 拖拽导入（文件夹递归展开 + 对接 store.importPaths）
+    │   └── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
+    ├── components/
+    │   ├── Toolbar.vue
+    │   ├── Sidebar.vue
+    │   ├── FolderTreeNode.vue
+    │   ├── ItemGrid.vue
+    │   ├── ItemCard.vue
+    │   ├── Inspector.vue
+    │   ├── TagEditor.vue      # 标签 chip 编辑器（Inspector 的子组件）
+    │   ├── StarRating.vue     # 点星评分（Inspector/右键菜单共用）
+    │   ├── PreviewOverlay.vue
+    │   ├── ContextMenu.vue    # 全局单例自绘菜单
+    │   └── EmptyState.vue     # 空库/空结果占位
+    └── styles.css             # 深色主题 CSS 变量与全局样式
 ```
 
-### 状态管理
+界面文案中文硬编码，v1 不做 i18n。
 
-单个 zustand store，服务端状态不进 store 持久层，列表数据按查询缓存于内存：
+### 类型层（types.ts）
 
 ```ts
-{
-  view: { kind: 'all' } | { kind: 'folder', path } | { kind: 'trash' },
-  query: { keywords: string[], star?: number, orderBy, order },
-  items: Item[], total: number, loading: boolean,
-  selection: Set<string>,          // 选中 item id
-  folders: FolderNode[],           // 文件夹树
-  library: LibraryInfo,
-  // actions：fetchItems(重置/翻页)、select*、updateItem、trash/restore、clearTrash、importFiles、refreshFolders
+import type { components } from './api/schema';
+
+// 契约类型一律从生成的 schema 取，不另写
+export type Item = components['schemas']['ItemDto'];
+export type FolderNode = components['schemas']['FolderNode'];
+export type LibraryInfo = components['schemas']['LibraryInfo'];
+
+// 业务自有类型
+export type ViewState = { kind: 'all' } | { kind: 'folder'; path: string } | { kind: 'trash' };
+export interface QueryState {
+  keywords: string[];
+  star?: number;
+  orderBy: 'modification_time' | 'name' | 'size' | 'star';
+  order: 'asc' | 'desc';
 }
+export interface MenuItem { label: string; danger?: boolean; separator?: boolean; action?: () => void }
 ```
+
+### API 层
+
+**client.ts**——模块级单例，启动时从 `location.hash` 解析：
+
+```ts
+export class ApiError extends Error {
+  constructor(public code: string, message: string, public httpStatus: number) { super(message); }
+}
+export function initApiFromLocation(): { api: string; token: string } | null
+// 优先解析 location.hash（#api=...&token=...，Electron 注入）；
+// 无 hash 时回退 import.meta.env 的 VITE_HAWK_API / VITE_HAWK_TOKEN（纯前端调试）；都缺 → null（启动失败态）
+export async function request<T>(method: string, path: string,
+  opts?: { body?: unknown; query?: Record<string, string> }): Promise<T>
+// 行为：拼 Bearer 头；信封解包（status==='error' → throw ApiError）；网络错误 → ApiError('NETWORK')；无 data → undefined
+```
+
+**endpoints.ts**——端点一一对应 server-rest-api-v1.md，签名即契约：
+
+```ts
+export const api = {
+  appInfo(): Promise<AppInfo>;
+  libraryInfo(): Promise<LibraryInfo>;
+  reindex(): Promise<void>;
+  folderList(): Promise<FolderNode>;
+  folderCreate(name: string, parentPath?: string): Promise<FolderNode>;
+  folderUpdate(path: string, patch: { name?: string; parent_path?: string }): Promise<FolderNode>;
+  folderDelete(path: string): Promise<void>;
+  folderRestore(path: string): Promise<void>;
+  itemList(params: ItemListParams): Promise<{ items: Item[]; total: number; offset: number; limit: number }>;
+  itemDetail(id: string): Promise<Item>;
+  itemCount(): Promise<number>;
+  itemAddByPath(path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }): Promise<{ item: Item; already_existed: boolean }>;
+  itemUpdate(id: string, patch: { name?; tags?; star?; annotation?; url?; folder_path? }, path?: string): Promise<Item>;
+  itemDelete(id: string, path?: string): Promise<void>;
+  itemRestore(id: string, path?: string): Promise<void>;
+  refreshThumbnail(id: string): Promise<void>;
+  trashClear(): Promise<void>;
+  thumbnailUrl(id: string, size?: 256 | 1024): string;  // 拼 ?token= 的 <img> URL
+};
+```
+
+**缩略图的鉴权**：`<img>` 无法带请求头，采用 `?token=` 查询参数。需后端配合：`TokenAuthMiddleware` 对 `GET /api/v1/item/thumbnail` 放行查询参数 token（与 events 同款，实现期顺手改）。缩略图 URL 因此稳定，配合 `Cache-Control: immutable` 获得浏览器级缓存。检查器 1024 大图同理。
+
+**events.ts**：
+
+```ts
+export function connectEvents(handlers: {
+  onAdded(item: Item): void; onUpdated(item: Item): void;
+  onTrashed(id: string): void; onRestored(item: Item): void; onRemoved(id: string): void;
+  onReconnect(): void;   // EventSource 断线重连成功后全量对齐
+}): () => void;           // 返回断开函数（App 卸载/换库时调）
+```
+
+### Pinia store（stores/library.ts）
+
+单一 store `useLibraryStore`，组件不直接调 api（除缩略图 URL 拼接），一切经 action：
+
+```ts
+// ---- state ----
+view: ViewState;                 // 默认 all
+query: QueryState;               // 默认 { keywords: [], orderBy: 'modification_time', order: 'desc' }
+items: Item[];                   // 当前视图已加载页（无限滚动累加）
+total: number; loading: boolean; endReached: boolean;
+selection: string[];             // 选中 id，有序；末位为主选中/连选锚点
+folders: FolderNode | null;      // 完整树（含根）
+library: LibraryInfo | null;
+thumbSize: number;               // 网格卡片边长偏好（默认 160，内存态不持久化）
+previewId: string | null;        // 预览浮层
+toast: string | null;            // 轻提示（3s 自动清除）
+
+// ---- getters ----
+isTrash: boolean;                // view.kind === 'trash'
+currentFolderPath: string | null;
+selectedItems: Item[];
+primarySelected: Item | null;    // selection 末位对应的 item
+previewItem / previewPrevId / previewNextId: 浮层与左右切换
+
+// ---- actions ----
+init(): Promise<void>;           // libraryInfo + folders + resetList；失败进启动失败态
+setView(v: ViewState): void;                       // 切视图：清空选择 → resetList
+setQuery(patch: Partial<QueryState>): void;        // → resetList
+resetList(): Promise<void>;      // items 清空 → fetchMore 第一页
+fetchMore(): Promise<void>;      // offset=items.length, limit=100；in_trash/folders 由 view 派生
+refresh(): Promise<void>;        // 重查已加载范围并替换（SSE 用，保滚动位置）
+select(id: string, mod?: 'range' | 'toggle'): void;
+selectAll(): void; clearSelection(): void;
+updateItem(id: string, patch): Promise<void>;      // 就地更新 items；ApiError → toast
+trashSelected(): Promise<void>; restoreSelected(): Promise<void>;
+clearTrash(): Promise<void>;                       // 调用方先二次确认
+importPaths(paths: string[]): Promise<void>;       // 逐个 itemAddByPath；汇总 toast（成功 n，已存在 m）
+refreshFolders(): Promise<void>;
+openPreview(id): void; closePreview(): void; navigatePreview(step: 1 | -1): void;
+showToast(msg: string): void;
+applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略见下节）
+```
+
+### Vue 实践基线
+
+- SFC 一律 `<script setup lang="ts">`；props/emits 用类型式声明（`defineProps<{...}>()` / `defineEmits<{...}>()`）
+- 组件样式一律 `<style scoped>`；全局样式只有 styles.css 的变量与 reset
+- 浮层类（PreviewOverlay/ContextMenu/toast）经 `<Teleport to="body">` 挂载，避免层叠上下文与 overflow 裁切
+- 列表 `v-for` 必须绑定 `:key="item.id"`
+- 全局监听/观察器一律走 @vueuse/core（随组件卸载自动清理），不手写 `addEventListener`
+- 组件不直接调 api，一切经 Pinia action；跨组件共享逻辑才抽 composable
+- 组件局部状态用 `ref`；items 大数组只做整体替换，不依赖深度响应式
+- 构建先过类型检查：`vue-tsc --noEmit && vite build`
+
+### 组件契约
+
+| 组件 | props | emits | 职责与内部状态 |
+| ---- | ----- | ----- | -------------- |
+| `App.vue` | — | — | 布局骨架；`onMounted`：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast |
+| `Toolbar.vue` | — | — | 读写 store.query：搜索框（回车按空格拆 keywords）、star 筛选下拉、排序下拉（字段+方向）、缩略图滑杆（store.thumbSize） |
+| `Sidebar.vue` | — | — | 「全部素材」、FolderTreeNode 递归、「回收站」；选中态反映 store.view |
+| `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
+| `ItemGrid.vue` | — | — | 滚动容器渲染 store.items；sentinel 翻页；空态 EmptyState；右键/双击/点选转发 store |
+| `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标 |
+| `Inspector.vue` | — | — | 单选：1024 预览 + 可编辑字段（失焦/回车提交 updateItem）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径） |
+| `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；输入回车新增（trim 去重） |
+| `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
+| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏 1024 图；Esc/点遮罩关闭；←/→ 切换 |
+| `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭 |
+| `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
+
+### composables
+
+通用能力不重复造：无限滚动用 VueUse `useIntersectionObserver` 直接写在 ItemGrid.vue（观察底部哨兵，`!loading && !endReached` 时翻页）；拖拽用 `useDropZone`；全局监听用 `useEventListener`。业务 composable 只保留三个：
+
+| composable | 签名与行为 |
+| ---------- | ---------- |
+| `useContextMenu()` | 模块级单例响应式状态 `{visible, x, y, items}`（全局唯一菜单）；`open(items, MouseEvent)` 定位（防出屏翻转）；`close()` |
+| `useDragImport()` | `useDropZone` 接 drop → `webkitGetAsEntry()` 递归展开文件夹 → `webUtils.getPathForFile` 取绝对路径 → store.importPaths |
+| `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview |
+
+### 样式约定
+
+深色主题，CSS 变量集中 `styles.css :root`：
+
+```css
+--bg-0: #1e1e1e;  /* 主区 */  --bg-1: #252526;  /* 侧栏 */  --bg-2: #2d2d30;  /* 检查器/卡片 */
+--fg-0: #e8e8e8;  --fg-1: #9d9d9d;  --accent: #4f8cff;  --danger: #e5534b;  --border: #3c3c3c;
+```
+
+布局用 CSS Grid（列 `220px 1fr 280px`，行 `48px 1fr 26px`）；网格卡片 `repeat(auto-fill, minmax(var(--thumb-size), 1fr))`，卡片内缩略图定高 + `object-fit: contain`。
+
+### 错误处理
+
+ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文案映射：`FILE_EXISTS`→「同名文件已存在」、`ITEM_NOT_FOUND`→「素材不存在或已被移除」……其余透传 message）。toast 固定底部居中，3s 自动消失。启动级失败（无 token / 连不上 server）渲染整页错误态而非 toast。
 
 ### SSE 增量刷新策略
 
@@ -147,7 +324,7 @@ App
 3. 网格：缩略图懒加载、无限滚动、单选/Shift 连选/Cmd 点选、双击预览浮层
 4. 搜索与筛选：关键词（命中名称/备注）、star 精确筛选、四种排序双向
 5. 检查器：1024 预览；名称、标签（chip 增删）、评分（点星）、备注、URL 编辑即存（失焦/回车提交）；只读信息：尺寸、大小、mtime、全部路径
-6. 导入：拖拽文件/文件夹到网格 → `item/add`（folder 路径取当前文件夹）
+6. 导入：拖拽文件/文件夹到网格 → `item/add`（folder 路径取当前文件夹；文件夹由前端递归展开为文件逐个导入）
 7. 右键菜单：回收 / 恢复 / 在 Finder 显示 / 评分 0–5
 8. 回收站：查看、单项或批量恢复、清空（二次确认）
 9. 实时性：另一进程改动库目录（或第二窗口操作）经 SSE 反映到界面
@@ -156,7 +333,7 @@ App
 ## 非目标（v1 明确不做）
 
 - 瀑布流不等高布局、框选、颜色标签、标签云
-- 虚拟滚动（十万级素材再上 react-window；无限滚动 + 懒加载先行）
+- 虚拟滚动（十万级素材再上 vue-virtual-scroller；无限滚动 + 懒加载先行）
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
 - 自定义标题栏、托盘
@@ -181,14 +358,7 @@ hawk-app/
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   └── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
-└── web/
-    ├── index.html
-    └── src/
-        ├── main.tsx / App.tsx
-        ├── api/            # client.ts（信封/错误/token）、schema.d.ts（生成）、events.ts（SSE）
-        ├── store.ts        # zustand
-        ├── components/     # Toolbar / Sidebar / ItemGrid / ItemCard / Inspector / PreviewOverlay / ContextMenu
-        └── styles.css      # 深色主题，CSS 变量
+└── web/                    # Vue 3 + Vite 前端，src/ 详档见「前端信息架构 · 目录结构」
 ```
 
 ## 开发工作流
@@ -197,17 +367,23 @@ hawk-app/
 npm install
 npm run gen:types   # 生成/更新 API 类型（需 hawk-server 已 dotnet build）
 npm run dev         # vite(5173) + electron；server 由 electron 拉起（dotnet dll）
+npm run build       # vue-tsc --noEmit && vite build
 ```
+
+关键依赖：`vue@3`、`pinia`、`@vueuse/core`、`vite`、`@vitejs/plugin-vue`、`vue-tsc`、`electron`、`electron-builder`、`openapi-typescript`。
+
+纯前端调试（不启 Electron）：`VITE_HAWK_API=http://127.0.0.1:27371 VITE_HAWK_TOKEN=<token> npm run dev:web`，hash 无参数时回退读这两个环境变量。
 
 自检手段：`HAWK_SCREENSHOT=<路径>` 环境变量启动时，主进程在页面加载完成后截图落盘，供无头验证渲染结果。
 
 ## 已知缺口与风险
 
 1. **文件夹树无 SSE 事件**：外部进程增删文件夹时前端不自动刷新。v1 缓解：item 事件时防抖重拉文件夹树；后续建议后端补 `folder.changed` 事件（开放问题，实现前定）
-2. **大图库网格性能**：无限滚动不卸载已渲染节点，数千项后 DOM 变大；`loading=lazy` 控制解码开销。超十万级需虚拟滚动，届时评估 react-window
+2. **大图库网格性能**：无限滚动不卸载已渲染节点，数千项后 DOM 变大；`loading=lazy` 控制解码开销。超十万级需虚拟滚动，届时评估 vue-virtual-scroller
 3. **格式兜底**：后端暂不支持的格式（RAW/HEIC）无缩略图，前端渲染占位图（ext 角标）
 4. **token 暴露面**：localhost + hash 注入 + 内存保存，本机风险可控；不写盘
-5. **macOS 公证/Windows 签名**：打包分发阶段再处理，v1 不涉及
+5. **后端配合点**：`TokenAuthMiddleware` 需对 `GET /api/v1/item/thumbnail` 放行 `?token=`（`<img>` 无法带请求头，与 events 同款处理）——实现期修改，仅此一处
+6. **macOS 公证/Windows 签名**：打包分发阶段再处理，v1 不涉及
 
 ## 里程碑
 

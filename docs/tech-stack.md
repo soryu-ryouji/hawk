@@ -4,7 +4,7 @@
 
 ```text
 后端：C#（过渡）→ Rust（目标）
-前端：React + TypeScript (Vite)，只走 HTTP
+前端：Vue 3 + TypeScript (Vite)，只走 HTTP
 桌面壳：Electron，sidecar 拉起后端
 契约：OpenAPI
 ```
@@ -18,7 +18,7 @@
 
 ## 前端与桌面壳：hawk-app/
 
-Electron 壳 + React 前端，设计见 [hawk-app 设计](hawk-app.md)。约束：
+Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），设计见 [hawk-app 设计](hawk-app.md)。约束：
 
 - 前端只通过 REST API 与后端通信，不依赖 Electron IPC
 - Electron 主进程只负责：创建窗口、拉起/回收后端进程、注入 token
