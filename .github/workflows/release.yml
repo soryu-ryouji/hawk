@@ -1,0 +1,92 @@
+# CI 发版：
+# - 推 v* tag：正式 Release
+# - main 分支提交信息以 feat/fix 开头（conventional commits）：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
+# - 手动触发：只构建上传 Artifacts，不创建 Release
+# 压缩级别：CI 固定 mx=9（最小体积）；本地 npm run pack 默认 mx=5（见 scripts/pack.mjs）。
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# nightly 滚动覆盖同一 Release，串行执行避免并发竞争
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    # tag 推送 / 手动 / main 上 feat、fix 开头的提交
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/') ||
+      startsWith(github.event.head_commit.message, 'feat') ||
+      startsWith(github.event.head_commit.message, 'fix')
+    defaults:
+      run:
+        working-directory: hawk-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: hawk-app/package-lock.json
+
+      - run: npm ci
+
+      - name: Pack
+        run: npm run pack
+        env:
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: 9
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hawk-windows-portable
+          path: hawk-app/dist/hawk.exe
+          if-no-files-found: error
+
+      # ---- 正式版：v* tag ----
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hawk-app/dist/hawk.exe
+
+      # ---- nightly：main 分支 feat/fix 提交 ----
+
+      - name: Rotate nightly release
+        id: nightly
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          gh release delete nightly --yes --cleanup-tag || true
+          git push origin --delete refs/tags/nightly || true
+
+      - name: Create Nightly Release
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly ${{ steps.nightly.outputs.sha }}
+          body: ${{ github.event.head_commit.message }}
+          prerelease: true
+          files: hawk-app/dist/hawk.exe

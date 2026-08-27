@@ -26,6 +26,7 @@ fs.rmSync(out, { recursive: true, force: true });
 const result = spawnSync('dotnet', [
   'publish', path.join(root, '..', 'hawk-server', 'hawk-server.csproj'),
   '-c', 'Release', '-r', rid, '--self-contained',
+  // 不开启 EnableCompressionInSingleFile：portable 打包时 NSIS 还会整体压缩，预压缩反而使最终 exe 变大
   '-p:PublishSingleFile=true', '-o', out,
 ], { stdio: 'inherit' });
 

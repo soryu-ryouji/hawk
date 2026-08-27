@@ -33,3 +33,13 @@ npm run pack   # 一条命令：build 前端 + 发布当前平台 hawk-server �
 export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 ```
+
+压缩级别权衡（ELECTRON_BUILDER_COMPRESSION_LEVEL，默认 5）：9=2分钟/最小体积，5=约1分钟/+11MB，3=约20秒/+27MB。
+
+## CI 发版
+
+`.github/workflows/release.yml`（windows runner，mx=9 压缩）：
+
+- 推 `v*` tag：正式 Release 附 hawk.exe：`git tag v1.0.0 && git push origin v1.0.0`
+- main 分支提交信息以 `feat`/`fix` 开头（conventional commits）：滚动覆盖 `nightly` 预发布（PR 合并想触发请用 squash merge）
+- Actions 页手动触发：只传 Artifacts，用于验证流程

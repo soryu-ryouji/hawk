@@ -3,6 +3,10 @@ appId: com.hawk.app
 productName: hawk
 # 产物固定为 hawk.exe / hawk.dmg / hawk.AppImage，不带版本号
 artifactName: ${productName}.${ext}
+# 只保留中英 Chromium 语言包（默认携带全部 55 种，约 49MB）
+electronLanguages:
+  - zh-CN
+  - en-US
 directories:
   output: dist
 files:
