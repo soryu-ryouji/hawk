@@ -98,6 +98,8 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     backgroundColor: '#1e1e1e',
+    // 开发态 / Linux 的窗口图标；打包后各平台图标由 electron-builder 嵌入
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
     },

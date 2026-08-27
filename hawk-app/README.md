@@ -5,7 +5,7 @@
 ## 开发
 
 ```bash
-npm install            # 首次；若 electron 二进制下载慢：export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+npm install            # 首次（electron 二进制镜像已配在 .npmrc）
 dotnet build ../hawk-server   # 后端产物（Electron 开发态直接 dotnet 运行它）
 npm run gen:types      # 从 hawk-server 的 OpenAPI schema 生成 TS 类型（web/src/api/schema.d.ts）
 npm run dev            # vite + electron 一键起（server 由 electron 拉起）
@@ -22,6 +22,14 @@ node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断
 ## 打包
 
 ```bash
-scripts/build-server.sh    # 发布当前平台 hawk-server 单文件（可传 RID 交叉编译）
-npm run pack               # electron-builder 出安装包（dist/）
+npm run pack   # 一条命令：build 前端 + 发布当前平台 hawk-server 单文件 + electron-builder 出包（dist/，Windows 为免安装 portable exe）
+```
+
+交叉编译其他平台的 server：node scripts/build-server.mjs <RID>（如 osx-arm64），再单独跑 electron-builder。
+
+国内网络首次 pack 需镜像（下载过的会进 electron-builder 缓存，之后不再需要）：
+
+```bash
+export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 ```

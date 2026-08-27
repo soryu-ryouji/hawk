@@ -13,7 +13,8 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.11" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="4.1.1" />
+    <!-- 锁定 3.x：4.x 起改为收费 License，Release 构建强制校验 license key -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
     <PackageReference Include="Tomlyn" Version="2.10.1" />
   </ItemGroup>
 

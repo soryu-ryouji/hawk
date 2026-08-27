@@ -1,19 +1,22 @@
-# electron-builder 配置。打包前先执行 scripts/build-server.sh 产出当前平台的 hawk-server 二进制。
+# electron-builder 配置。npm run pack 会先执行 build:server（scripts/build-server.mjs）产出当前平台的 hawk-server 二进制。
 appId: com.hawk.app
 productName: hawk
+# 产物固定为 hawk.exe / hawk.dmg / hawk.AppImage，不带版本号
+artifactName: ${productName}.${ext}
 directories:
   output: dist
 files:
   - electron/**/*
   - web/dist/**/*
 extraResources:
-  # 各平台 hawk-server 自包含单文件（dotnet publish，见 scripts/build-server.sh）
+  # 各平台 hawk-server 自包含单文件（dotnet publish，见 scripts/build-server.mjs）
   - from: resources/hawk-server
     to: hawk-server
 mac:
   category: public.app-category.graphics-design
   target: dmg
 win:
-  target: nsis
+  # 绿色软件：单文件 portable exe，免安装双击即用
+  target: portable
 linux:
   target: AppImage

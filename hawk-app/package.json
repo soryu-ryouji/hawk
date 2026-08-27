@@ -10,7 +10,8 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "build": "vue-tsc --noEmit -p web/tsconfig.json && vite build",
-    "pack": "npm run build && electron-builder"
+    "build:server": "node scripts/build-server.mjs",
+    "pack": "npm run build && npm run build:server && electron-builder"
   },
   "dependencies": {
     "@vueuse/core": "^14.4.0",
