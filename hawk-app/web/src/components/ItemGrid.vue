@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch, watchEffect } from 'vue';
 import { useIntersectionObserver, useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import { gridNavRows } from '../composables/useGridNav';
 import { showInFileManagerLabel } from '../platform';
 import type { Item } from '../types';
 import ItemCard from './ItemCard.vue';
@@ -70,6 +71,28 @@ const gridRows = computed<GridCell[][]>(() => {
   return rows;
 });
 
+// 发布方向键导航所需的行布局（每项的视觉中心 x）
+watchEffect(() => {
+  gridNavRows.value = gridRows.value.map((row) => {
+    let x = 0;
+    return row.map((cell) => {
+      const cx = x + cell.width / 2;
+      x += cell.width + GAP;
+      return { id: cell.item.id, cx };
+    });
+  });
+});
+
+// 键盘移动选中框时滚动到可见区域
+watch(
+  () => store.primarySelected?.id,
+  (id) => {
+    if (id) {
+      document.querySelector(`[data-item-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+    }
+  },
+);
+
 const sentinel = ref<HTMLElement | null>(null);
 useIntersectionObserver(sentinel, ([entry]) => {
   if (entry.isIntersecting) {
@@ -134,6 +157,7 @@ function onMenu(item: Item, e: MouseEvent) {
           v-for="cell in row"
           :key="cell.item.id"
           :item="cell.item"
+          :data-item-id="cell.item.id"
           :selected="store.selection.includes(cell.item.id)"
           :width="cell.width"
           :height="cell.height"

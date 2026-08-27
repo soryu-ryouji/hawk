@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.StaticFiles;
 using Hawk.Server.Core;
 
 namespace Hawk.Server.Api;
@@ -112,6 +113,24 @@ public static class ItemEndpoints
             // item id 是内容哈希，缩略图内容永不变，客户端可永久缓存
             ctx.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
             return TypedResults.File(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read), "image/webp");
+        });
+
+        // 原图：预览浮层用。<img> 无法带请求头，token 走查询参数（AuthMiddleware 放行）
+        group.MapGet("/file", (string id, HttpContext ctx, ItemIndex index, LibraryPaths paths) =>
+        {
+            var item = index.Get(id) ?? throw ApiException.ItemNotFound(id);
+            var file = SourceFile(item, paths) ?? throw ApiException.InvalidParam("item 没有可用的文件位置");
+            if (!File.Exists(file))
+            {
+                throw ApiException.ItemNotFound($"file {id}");
+            }
+
+            // item id 是内容哈希，文件内容永不变，客户端可永久缓存
+            ctx.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+            var contentType = new FileExtensionContentTypeProvider().TryGetContentType(file, out var ct)
+                ? ct
+                : "application/octet-stream";
+            return TypedResults.File(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read), contentType);
         });
 
         group.MapPost("/refresh_thumbnail", async (ItemRefreshThumbnailRequest req, ItemIndex index, ThumbnailService thumbnails, LibraryConfig config, LibraryPaths paths) =>

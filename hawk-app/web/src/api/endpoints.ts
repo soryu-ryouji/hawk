@@ -65,4 +65,10 @@ export const api = {
     const { api: base, token } = apiConfig();
     return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&size=${size}&token=${encodeURIComponent(token)}`;
   },
+
+  /** 原图 URL：预览浮层用；token 同样走查询参数 */
+  fileUrl(id: string): string {
+    const { api: base, token } = apiConfig();
+    return `${base}/api/v1/item/file?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`;
+  },
 };

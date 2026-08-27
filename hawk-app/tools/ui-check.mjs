@@ -84,17 +84,32 @@ function check(name, actual, expected) {
 fs.rmSync(tmp, { recursive: true, force: true });
 fs.mkdirSync(path.join(lib, '海报'), { recursive: true });
 fs.writeFileSync(path.join(lib, 'sunset.png'), png(4, 2, [255, 0, 0]));
+fs.writeFileSync(path.join(lib, 'big.png'), png(1600, 1200, [128, 128, 128])); // 原图预览断言用（宽 > 1024 缩略图）
+for (let i = 1; i <= 6; i++) {
+  fs.writeFileSync(path.join(lib, `f${i}.png`), png(4, 2, [255, i * 30, 0])); // 填充多行网格
+}
 fs.writeFileSync(path.join(lib, '海报', 'cat.png'), png(2, 4, [0, 255, 0]));
 fs.writeFileSync(path.join(lib, '海报', 'logo.png'), png(8, 8, [0, 0, 255]));
 
-// 预设素材库配置，跳过目录选择框
-const configDir = path.join(os.homedir(), 'Library', 'Application Support', 'hawk-app');
+// 预设素材库配置，跳过目录选择框（按平台取 userData；跑完恢复原配置）
+const configDir =
+  process.platform === 'win32'
+    ? path.join(process.env.APPDATA, 'hawk-app')
+    : path.join(os.homedir(), 'Library', 'Application Support', 'hawk-app');
 fs.mkdirSync(configDir, { recursive: true });
-fs.writeFileSync(path.join(configDir, 'hawk-app.json'), JSON.stringify({ libraryPath: lib }));
+const configFile = path.join(configDir, 'hawk-app.json');
+const configBackup = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null;
+// 任何退出路径（含 spawn 失败导致的进程崩溃）都恢复原配置
+process.on('exit', () => {
+  if (configBackup !== null) {
+    fs.writeFileSync(configFile, configBackup);
+  }
+});
+fs.writeFileSync(configFile, JSON.stringify({ libraryPath: lib }));
 
 // ---------- 启动 vite + electron ----------
 
-const vite = spawn('npm', ['run', 'dev:web'], { cwd: root, stdio: 'ignore' });
+const vite = spawn('npm', ['run', 'dev:web'], { cwd: root, stdio: 'ignore', shell: process.platform === 'win32' });
 let electron;
 
 try {
@@ -160,15 +175,15 @@ try {
   // 初始渲染：网格、侧栏、工具栏
   const cardCount = await waitFor(async () => {
     const n = await evaljs(`document.querySelectorAll('.card').length`);
-    return n >= 3 ? n : null;
+    return n >= 10 ? n : null;
   }, 30_000);
-  check('网格渲染 3 个素材卡片', cardCount, 3);
+  check('网格渲染 10 个素材卡片', cardCount, 10);
   check('侧栏显示文件夹', await evaljs(`document.querySelector('.sidebar .tree')?.textContent?.includes('海报') ?? false`), true);
   check('侧栏入口', await evaljs(`document.querySelector('.sidebar')?.textContent?.includes('回收站') ?? false`), true);
   check('位置标题为全部素材', await evaljs(`document.querySelector('.toolbar .title')?.textContent`), '全部素材');
   const badge = await waitFor(async () => {
     const value = await evaljs(`document.querySelector('.sidebar .entry .count')?.textContent`);
-    return value === '3' ? value : null;
+    return value === '10' ? value : null;
   }, 10_000).catch(async () => {
     // 诊断：后端 folder/list 的 count 与侧栏 HTML，定位是数据问题还是渲染/时序问题
     const count = await evaljs(`fetch(new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/folder/list', { headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token') } }).then((r) => r.json()).then((e) => e.data.count).catch(() => 'ERR')`);
@@ -176,17 +191,29 @@ try {
     console.log(`  [诊断] folder/list count=${count}，首个 .entry 尾部 HTML=${html}`);
     return null;
   });
-  check('全部素材计数徽章', badge, '3');
+  check('全部素材计数徽章', badge, '10');
 
-  // ---- 齐行网格：行内等高、宽度按宽高比分配 ----
+  // ---- 齐行网格：同一行内等高、每张卡宽高比与原图一致 ----
   const layout = await evaljs(`(() => {
-    const rect = (name) => [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith(name + '.'))?.querySelector('.thumb')?.getBoundingClientRect();
-    const s = rect('sunset'), c = rect('cat'), l = rect('logo');
-    return { sunset: { w: s.width, h: s.height }, cat: { w: c.width, h: c.height }, logo: { w: l.width, h: l.height } };
+    const thumbs = [...document.querySelectorAll('.card .thumb')];
+    const byTop = new Map();
+    for (const t of thumbs) {
+      const r = t.getBoundingClientRect();
+      const key = Math.round(r.top);
+      if (!byTop.has(key)) byTop.set(key, []);
+      byTop.get(key).push(r);
+    }
+    const rowEqual = [...byTop.values()].every((row) => row.every((r) => Math.abs(r.height - row[0].height) <= 1));
+    const ratioOf = (name) => {
+      const r = thumbs.find((t) => t.closest('.card').querySelector('.name')?.textContent?.startsWith(name + '.')).getBoundingClientRect();
+      return r.width / r.height;
+    };
+    return { rowEqual, sunset: ratioOf('sunset'), cat: ratioOf('cat'), logo: ratioOf('logo') };
   })()`);
-  check('齐行：行内等高', Math.abs(layout.sunset.h - layout.cat.h) <= 1, true);
-  check('齐行：宽度按宽高比（4×2 与 2×4 宽度比 ≈ 4）', Math.abs(layout.sunset.w / layout.cat.w - 4) < 0.3, true);
-  check('齐行：方形图宽高相等', Math.abs(layout.logo.w - layout.logo.h) <= 1, true);
+  check('齐行：行内等高', layout.rowEqual, true);
+  check('齐行：宽高比跟随原图（4×2 ≈ 2）', Math.abs(layout.sunset - 2) < 0.1, true);
+  check('齐行：宽高比跟随原图（2×4 ≈ 0.5）', Math.abs(layout.cat - 0.5) < 0.05, true);
+  check('齐行：方形图宽高相等', Math.abs(layout.logo - 1) < 0.05, true);
 
   // 缩略图真实加载（自然宽度 > 0）
   await new Promise((r) => setTimeout(r, 2000));
@@ -196,6 +223,47 @@ try {
     true,
   );
   await screenshot('ui-grid.png');
+
+  // ---- 预览浮层：空格展开原图、滚轮缩放、双击复位、预览内 ←→ 切换 ----
+  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('big.'))?.click()`);
+  await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }))`);
+  const overlayReady = await waitFor(async () => evaljs(`!!document.querySelector('.overlay .image')`), 5_000);
+  check('空格展开预览浮层', overlayReady, true);
+  check('预览使用原图端点', await evaljs(`document.querySelector('.overlay .image').src.includes('/api/v1/item/file')`), true);
+  const naturalWidth = await waitFor(async () => {
+    const w = await evaljs(`document.querySelector('.overlay .image').naturalWidth`);
+    return w > 0 ? w : null;
+  }, 10_000);
+  check('预览加载原图（1600px，非 1024 缩略图）', naturalWidth, 1600);
+
+  await evaljs(`document.querySelector('.overlay').dispatchEvent(new WheelEvent('wheel', { deltaY: -240, clientX: 720, clientY: 450, bubbles: true, cancelable: true }))`);
+  const transform = await evaljs(`document.querySelector('.overlay .image').style.transform`);
+  check('滚轮放大（scale > 1）', Number(transform.match(/scale\(([\d.]+)\)/)?.[1]) > 1, true);
+  await evaljs(`document.querySelector('.overlay .image').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  check('双击复位缩放', await evaljs(`document.querySelector('.overlay .image').style.transform.includes('scale(1)')`), true);
+
+  const caption0 = await evaljs(`document.querySelector('.overlay .caption')?.textContent ?? ''`);
+  await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }))`);
+  const caption1 = await waitFor(async () => {
+    const t = await evaljs(`document.querySelector('.overlay .caption')?.textContent ?? ''`);
+    return t !== '' && t !== caption0 ? t : null;
+  }, 5_000).catch(() => '');
+  check('预览中 → 切换下一张', caption1 !== '' && caption1 !== caption0, true);
+  await screenshot('ui-preview.png');
+  await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+  check('Esc 关闭预览', await evaljs(`!document.querySelector('.overlay')`), true);
+
+  // ---- 方向键移动选中框 ----
+  await evaljs(`document.querySelectorAll('.card')[0].click()`);
+  const selId0 = await evaljs(`document.querySelector('.card.selected')?.dataset.itemId ?? ''`);
+  await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }))`);
+  const selId1 = await evaljs(`document.querySelector('.card.selected')?.dataset.itemId ?? ''`);
+  check('→ 选中移到下一项', selId1 !== '' && selId1 !== selId0, true);
+  await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))`);
+  check('← 选中移回上一项', await evaljs(`document.querySelector('.card.selected')?.dataset.itemId ?? ''`), selId0);
+  await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))`);
+  const selIdDown = await evaljs(`document.querySelector('.card.selected')?.dataset.itemId ?? ''`);
+  check('↓ 选中移到下一行', selIdDown !== '' && selIdDown !== selId0, true);
 
   // 选中 → 检查器
   await evaljs(`document.querySelector('.card').click()`);
@@ -226,11 +294,11 @@ try {
 
   // SSE：另一进程写入文件 → 界面自动出现（先回全部素材）
   await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('全部素材'))?.click()`);
-  await waitFor(async () => (await evaljs(`document.querySelectorAll('.card').length`)) === 3, 5_000);
+  await waitFor(async () => (await evaljs(`document.querySelectorAll('.card').length`)) === 10, 5_000);
   fs.writeFileSync(path.join(lib, 'sse-new.png'), png(3, 3, [255, 255, 0]));
   const sseCount = await waitFor(async () => {
     const n = await evaljs(`document.querySelectorAll('.card').length`);
-    return n === 4 ? n : null;
+    return n === 11 ? n : null;
   }, 15_000).catch(async () => {
     // 诊断：区分 SSE/刷新问题与监听丢事件——文件在盘上但后端没索引则探一下 reindex
     const cards = await evaljs(`document.querySelectorAll('.card').length`);
@@ -242,7 +310,7 @@ try {
     console.log(`  [诊断] 卡片数=${cards}，后端 item 数=${before}，reindex 后=${after}（reindex 能补上 → 监听静默丢事件）`);
     return null;
   });
-  check('SSE 实时新增素材', sseCount, 4);
+  check('SSE 实时新增素材', sseCount, 11);
 
   // ---- 辅助：从卡片名取 item id（缩略图 URL 的 id 参数）与后端 detail ----
   const idByName = (name) =>
@@ -523,7 +591,7 @@ try {
   check('回收站空态', trashEmpty, '回收站为空');
 
   // 主进程素材库记忆：userData 配置应已写入当前库路径
-  const cfg = JSON.parse(fs.readFileSync(path.join(configDir, 'hawk-app.json'), 'utf8'));
+  const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
   check('素材库路径已持久化', cfg.libraryPath === lib, true);
   await screenshot('ui-trash.png');
 

@@ -33,7 +33,7 @@
 
 - 时间戳均为 Unix 毫秒
 - 分页参数：`offset`（默认 0）、`limit`（默认 50）
-- 桌面版默认监听 `27371` 端口（被占用时回退为动态分配），所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 无法设置请求头，改用查询参数 `?token=`
+- 桌面版默认监听 `27371` 端口（被占用时回退为动态分配），所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 与 `<img>` 直链（thumbnail、file）无法设置请求头，改用查询参数 `?token=`
 
 ## app
 
@@ -220,6 +220,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | POST | `/api/v1/item/delete`            | 移入回收站     |
 | POST | `/api/v1/item/restore`           | 从回收站恢复   |
 | GET  | `/api/v1/item/thumbnail`         | 获取缩略图     |
+| GET  | `/api/v1/item/file`              | 获取原图文件   |
 | POST | `/api/v1/item/refresh_thumbnail` | 重新生成缩略图 |
 
 ### Item 对象
@@ -424,6 +425,12 @@ Item 对象，并附带 `already_existed` 标志：
 `GET /api/v1/item/thumbnail?id=<hash>&size=256|1024`
 
 返回缩略图二进制（`image/webp`）。`size` 缺省为 256，可取值来自项目配置的 `thumbnail_sizes`。响应带 `Cache-Control: immutable`——item id 是内容哈希，缩略图内容永不变，客户端可永久缓存。缩略图不存在时返回 404（首次索引完成前可能出现）。
+
+### file
+
+`GET /api/v1/item/file?id=<hash>`
+
+返回原图文件二进制，Content-Type 按扩展名推断（无法识别时为 `application/octet-stream`）。桌面端预览浮层用它展示原图（缩略图是压缩过的 WebP）。文件位置取 item 主位置（优先非回收站位置）；文件已缺失时返回 404。与缩略图同理带 `Cache-Control: immutable`。`<img>` 直链无法设置请求头，与 thumbnail 一样放行查询参数 `?token=`。
 
 ### refresh_thumbnail
 

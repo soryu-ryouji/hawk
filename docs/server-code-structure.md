@@ -85,7 +85,7 @@ Program.cs 做的事（按执行顺序）：
 | `AppEndpoints.cs` | `GET /health`（探活）、`GET /api/v1/app/info`（版本/平台/可执行路径） |
 | `LibraryEndpoints.cs` | `library/info`（显示名取 config 的 name，缺省为目录名）、`library/reindex`（入队全量重哈希扫描，立即返回） |
 | `FolderEndpoints.cs` | folder 五端点。folder 即真实目录：list 实时从文件系统建树（排除 `.hawk` 与 ignore 目录）；create/update/delete/restore 先做校验（名称合法、父目录存在、目标占用 → `FILE_EXISTS`、禁止移入自身子目录），再做真实目录操作，最后 `SubmitDirMoveAsync` 同步索引 |
-| `ItemEndpoints.cs` | item 九端点，逻辑最重，见下节 |
+| `ItemEndpoints.cs` | item 十端点，逻辑最重，见下节 |
 | `TrashEndpoints.cs` | `trash/clear`：物理删除 `.hawk/trash/` 全部内容，再提交 `ClearTrashJob` 清理元数据与缩略图 |
 | `EventsEndpoints.cs` | SSE 订阅端点：循环读 EventBus channel 写 `event:`/`data:` 帧；断连时注销订阅；流式响应不纳入 OpenAPI schema |
 
@@ -96,6 +96,7 @@ Program.cs 做的事（按执行顺序）：
 - **update**：定位操作位置（`path` 指定或主位置；回收站位置用原库内路径匹配）→ 回收站中的文件禁止改名/移动 → `name`/`folder_path` 做真实文件移动并 `SubmitMoveAsync` → tags/star/annotation/url 走 `SubmitMetadataAsync`（star 校验 0–5）
 - **delete / restore**：delete 把文件移入 `.hawk/trash/`（保留目录结构，冲突加 ` (n)` 后缀）；restore 按回收站实际名称去掉前缀后的路径放回，被占用报 `FILE_EXISTS`
 - **thumbnail**：尺寸必须在 `thumbnail_sizes` 白名单内；响应 `Cache-Control: immutable`（id 是内容哈希，内容永不变）；缩略图未生成时 404
+- **file**：原图二进制，取主位置（优先非回收站），Content-Type 按扩展名推断；同样 immutable 缓存；与 thumbnail 一样放行查询参数 token（`<img>` 直链）
 - **refresh_thumbnail**：取一个可读位置（优先库内）强制重建全部尺寸
 
 ### 工程与测试文件

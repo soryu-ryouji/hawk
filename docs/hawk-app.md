@@ -87,7 +87,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 │  ───────── │  无限滚动分页（100/页）            │  注释(可改)          │
 │  文件夹树   │  懒加载 <img loading=lazy>        │  URL(可改)          │
 │  (增/删/改) │  多选：Shift 连选 / Cmd 点选       │  标签 chips         │
-│  分类树     │  双击 → 预览浮层（Esc 关闭）        │  分类 chips ＋      │
+│  分类树     │  双击/空格 → 预览浮层（Esc 关闭）   │  分类 chips ＋      │
 │  (增/删/改) │  右键：标签/分类/文件夹/回收        │  文件夹 chips ＋    │
 │  标签列表 N │  拖入文件 → 导入                   │  基本信息(评分并入)  │
 │  (增/删/改) │                                  │  文件位置            │
@@ -122,6 +122,7 @@ web/
     │   ├── useContextMenu.ts  # 右键菜单状态（visible/x/y/items）
     │   ├── useDragImport.ts   # 拖拽导入（文件夹递归展开 + 对接 store.importPaths）
     │   └── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
+    │   └── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
     ├── components/
     │   ├── Toolbar.vue
     │   ├── Sidebar.vue
@@ -200,10 +201,11 @@ export const api = {
   refreshThumbnail(id: string): Promise<void>;
   trashClear(): Promise<void>;
   thumbnailUrl(id: string, size?: 256 | 1024): string;  // 拼 ?token= 的 <img> URL
+  fileUrl(id: string): string;  // 原图 URL（预览浮层用），同样拼 ?token=
 };
 ```
 
-**缩略图的鉴权**：`<img>` 无法带请求头，采用 `?token=` 查询参数。需后端配合：`TokenAuthMiddleware` 对 `GET /api/v1/item/thumbnail` 放行查询参数 token（与 events 同款，实现期顺手改）。缩略图 URL 因此稳定，配合 `Cache-Control: immutable` 获得浏览器级缓存。检查器 1024 大图同理。
+**缩略图与原图的鉴权**：`<img>` 无法带请求头，采用 `?token=` 查询参数。需后端配合：`TokenAuthMiddleware` 对 `GET /api/v1/item/thumbnail`、`GET /api/v1/item/file` 放行查询参数 token（与 events 同款）。缩略图与原图 URL 因此稳定，配合 `Cache-Control: immutable` 获得浏览器级缓存。检查器 1024 大图同理。
 
 **events.ts**：
 
@@ -284,7 +286,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
-| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏 1024 图；Esc/点遮罩关闭；←/→ 切换 |
+| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；滚轮以光标为中心缩放、拖拽平移、双击复位；Esc/点遮罩/空格关闭；←/→ 切换 |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
 
