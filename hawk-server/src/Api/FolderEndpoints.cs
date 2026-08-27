@@ -7,7 +7,7 @@ namespace Hawk.Server.Api;
 /// </summary>
 public static class FolderEndpoints
 {
-    public sealed record FolderNode(string Path, string Name, FolderNode[] Children, long ModificationTime);
+    public sealed record FolderNode(string Path, string Name, FolderNode[] Children, long ModificationTime, int Count);
 
     public sealed record FolderCreateRequest(string Name, string? ParentPath);
     public sealed record FolderUpdateRequest(string Path, string? Name, string? ParentPath);
@@ -17,10 +17,10 @@ public static class FolderEndpoints
     {
         var group = app.MapGroup("/api/v1/folder").WithTags("folder");
 
-        group.MapGet("/list", (LibraryPaths paths, LibraryConfig config) =>
-            TypedResults.Ok(Envelope<FolderNode>.Ok(BuildTree(paths, config))));
+        group.MapGet("/list", (LibraryPaths paths, LibraryConfig config, ItemIndex index) =>
+            TypedResults.Ok(Envelope<FolderNode>.Ok(BuildTree(paths, config, index))));
 
-        group.MapPost("/create", async (FolderCreateRequest req, LibraryPaths paths, LibraryConfig config) =>
+        group.MapPost("/create", async (FolderCreateRequest req, LibraryPaths paths, LibraryConfig config, ItemIndex index) =>
         {
             if (!LibraryFs.IsValidName(req.Name))
             {
@@ -36,10 +36,10 @@ public static class FolderEndpoints
             }
 
             Directory.CreateDirectory(targetAbs);
-            return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, targetAbs)));
+            return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, index, targetAbs)));
         });
 
-        group.MapPost("/update", async (FolderUpdateRequest req, LibraryPaths paths, LibraryConfig config, IndexPipeline pipeline) =>
+        group.MapPost("/update", async (FolderUpdateRequest req, LibraryPaths paths, LibraryConfig config, ItemIndex index, IndexPipeline pipeline) =>
         {
             if (!LibraryPaths.IsValidLibraryPath(req.Path))
             {
@@ -63,7 +63,7 @@ public static class FolderEndpoints
             var targetRel = JoinRel(newParentRel, newName);
             if (targetRel == req.Path)
             {
-                return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, dirAbs)));
+                return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, index, dirAbs)));
             }
 
             // 不允许移动到自身子目录
@@ -80,7 +80,7 @@ public static class FolderEndpoints
 
             Directory.Move(dirAbs, targetAbs);
             await pipeline.SubmitDirMoveAsync(dirAbs, targetAbs);
-            return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, targetAbs)));
+            return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, index, targetAbs)));
         });
 
         // 删除：整体移入 .hawk/trash/（保留目录结构）
@@ -131,12 +131,13 @@ public static class FolderEndpoints
         });
     }
 
-    /// <summary>实时从文件系统构建文件夹树（排除 .hawk 与被 ignore 的目录）</summary>
-    private static FolderNode BuildTree(LibraryPaths paths, LibraryConfig config) =>
-        ToNode(paths, config, paths.Root);
+    /// <summary>实时从文件系统构建文件夹树（排除 .hawk 与被 ignore 的目录），附库内 item 计数</summary>
+    private static FolderNode BuildTree(LibraryPaths paths, LibraryConfig config, ItemIndex index) =>
+        ToNode(paths, config, index, paths.Root);
 
-    private static FolderNode ToNode(LibraryPaths paths, LibraryConfig config, string absDir)
+    private static FolderNode ToNode(LibraryPaths paths, LibraryConfig config, ItemIndex index, string absDir)
     {
+        var counts = index.FolderCounts();
         var info = new DirectoryInfo(absDir);
         var rel = paths.ToRelative(absDir) ?? "";
         var isRoot = rel == "";
@@ -153,10 +154,10 @@ public static class FolderEndpoints
                 return !config.IsIgnored(childRel);
             })
             .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(d => ToNode(paths, config, d.FullName))
+            .Select(d => ToNode(paths, config, index, d.FullName))
             .ToArray();
 
-        return new FolderNode(rel, isRoot ? info.Name : info.Name, children, LibraryPaths.ToUnixMs(info.LastWriteTimeUtc));
+        return new FolderNode(rel, info.Name, children, LibraryPaths.ToUnixMs(info.LastWriteTimeUtc), counts.GetValueOrDefault(rel));
     }
 
     /// <summary>解析父目录：缺省为库根目录；必须已存在</summary>

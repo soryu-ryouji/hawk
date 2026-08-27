@@ -8,7 +8,7 @@ namespace Hawk.Server.Api;
 /// </summary>
 public static class TaxonomyEndpoints
 {
-    public sealed record CategoryNode(string Path, string Name, CategoryNode[] Children);
+    public sealed record CategoryNode(string Path, string Name, CategoryNode[] Children, int Count);
 
     public sealed record CategoryCreateRequest(string Path);
     public sealed record CategoryUpdateRequest(string Path, string? Name, string? ParentPath);
@@ -30,7 +30,8 @@ public static class TaxonomyEndpoints
         category.MapGet("/list", (CategoryRegistry registry, ItemIndex index) =>
         {
             var paths = registry.Snapshot().Union(index.AllCategories(), StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
-            var tree = new CategoryNode("", "", BuildChildren(paths, ""));
+            var counts = index.CategoryCounts();
+            var tree = new CategoryNode("", "", BuildChildren(paths, counts, ""), 0);
             return TypedResults.Ok(Envelope<CategoryNode>.Ok(tree));
         });
 
@@ -171,9 +172,9 @@ public static class TaxonomyEndpoints
         return trimmed == "" ? throw ApiException.InvalidParam("标签名称不能为空") : trimmed;
     }
 
-    private static CategoryNode[] BuildChildren(HashSet<string> paths, string prefix) =>
+    private static CategoryNode[] BuildChildren(HashSet<string> paths, IReadOnlyDictionary<string, int> counts, string prefix) =>
         paths.Where(p => CategoryPath.ParentOf(p) == prefix)
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .Select(p => new CategoryNode(p, CategoryPath.NameOf(p), BuildChildren(paths, p)))
+            .Select(p => new CategoryNode(p, CategoryPath.NameOf(p), BuildChildren(paths, counts, p), counts.GetValueOrDefault(p)))
             .ToArray();
 }

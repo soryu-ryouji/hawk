@@ -92,6 +92,7 @@ function onContextMenu(e: MouseEvent) {
         @blur="submitEdit"
         @click.stop
       />
+      <span v-if="editing !== 'rename'" class="count">{{ node.count || '' }}</span>
     </div>
 
     <div v-if="editing === 'create'" class="node" :style="{ paddingLeft: 12 + (depth + 1) * 14 + 'px' }">
@@ -149,9 +150,16 @@ function onContextMenu(e: MouseEvent) {
 }
 
 .name {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.count {
+  padding-right: 4px;
+  font-size: 11px;
+  color: var(--fg-1);
 }
 
 .edit {

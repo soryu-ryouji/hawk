@@ -55,12 +55,6 @@ useDragImport();
     <ItemGrid />
     <Inspector class="inspector" />
 
-    <div class="statusbar">
-      共 {{ store.total }} 项
-      <span v-if="store.selection.length">　已选 {{ store.selection.length }} 项</span>
-      <span v-if="store.isTrash">　回收站</span>
-    </div>
-
     <PreviewOverlay
       v-if="store.previewItem"
       :item="store.previewItem"

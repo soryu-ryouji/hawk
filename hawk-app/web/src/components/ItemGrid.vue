@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useIntersectionObserver } from '@vueuse/core';
+import { computed, ref } from 'vue';
+import { useIntersectionObserver, useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import type { Item } from '../types';
@@ -17,22 +17,57 @@ const showTagDialog = ref(false);
 const showFolderDialog = ref(false);
 const showCategoryDialog = ref(false);
 
-/** 为全部选中项追加标签（去重） */
-function addTagToSelected(tag: string) {
-  for (const id of store.selection) {
-    const item = store.items.find((i) => i.id === id);
-    if (item && !(item.tags ?? []).includes(tag)) {
-      void store.updateItem(id, { tags: [...(item.tags ?? []), tag] });
-    }
-  }
+// ---------- 齐行网格（justified layout）：行内等高、宽度按宽高比分配，图片完整显示 ----------
+
+interface GridCell {
+  item: Item;
+  width: number;
+  height: number;
 }
 
-/** 将选中项移动到目标文件夹（空字符串为根目录） */
-function moveSelectedToFolder(path: string) {
-  for (const id of store.selection) {
-    void store.updateItem(id, { folder_path: path });
+const GAP = 10;
+const gridRef = ref<HTMLElement | null>(null);
+const containerWidth = ref(0);
+
+useResizeObserver(gridRef, ([entry]) => {
+  containerWidth.value = entry.contentRect.width;
+});
+
+/** 贪心装行：累计到超出容器即切行；非末行按容器宽精确反推行高（上下限避免极端行） */
+const gridRows = computed<GridCell[][]>(() => {
+  const width = containerWidth.value;
+  if (width <= 0) {
+    return [];
   }
-}
+
+  const targetH = store.thumbSize;
+  const rows: GridCell[][] = [];
+  let row: { item: Item; ratio: number }[] = [];
+  let ratiosSum = 0;
+
+  const flush = (isLast: boolean) => {
+    if (row.length === 0) {
+      return;
+    }
+    const h = isLast
+      ? targetH
+      : Math.min(Math.max((width - (row.length - 1) * GAP) / ratiosSum, targetH * 0.5), targetH * 1.75);
+    rows.push(row.map(({ item, ratio }) => ({ item, width: Math.round(h * ratio), height: Math.round(h) })));
+    row = [];
+    ratiosSum = 0;
+  };
+
+  for (const item of store.items) {
+    const ratio = Number(item.width) > 0 && Number(item.height) > 0 ? Number(item.width) / Number(item.height) : 1;
+    if (row.length > 0 && (ratiosSum + ratio) * targetH + row.length * GAP > width) {
+      flush(false);
+    }
+    row.push({ item, ratio });
+    ratiosSum += ratio;
+  }
+  flush(true);
+  return rows;
+});
 
 const sentinel = ref<HTMLElement | null>(null);
 useIntersectionObserver(sentinel, ([entry]) => {
@@ -92,16 +127,20 @@ function onMenu(item: Item, e: MouseEvent) {
       :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'"
     />
 
-    <div class="grid" :style="{ '--thumb-size': store.thumbSize + 'px' }">
-      <ItemCard
-        v-for="item in store.items"
-        :key="item.id"
-        :item="item"
-        :selected="store.selection.includes(item.id)"
-        @select="onSelect"
-        @open="store.openPreview"
-        @menu="onMenu"
-      />
+    <div ref="gridRef" class="grid">
+      <div v-for="(row, i) in gridRows" :key="i" class="row">
+        <ItemCard
+          v-for="cell in row"
+          :key="cell.item.id"
+          :item="cell.item"
+          :selected="store.selection.includes(cell.item.id)"
+          :width="cell.width"
+          :height="cell.height"
+          @select="onSelect"
+          @open="store.openPreview"
+          @menu="onMenu"
+        />
+      </div>
     </div>
 
     <div ref="sentinel" class="sentinel" />
@@ -113,7 +152,7 @@ function onMenu(item: Item, e: MouseEvent) {
       placeholder="输入标签，回车确认"
       :suggestions="store.tagList.map((t) => t.name)"
       @confirm="
-        addTagToSelected($event);
+        store.addTagToSelected($event);
         showTagDialog = false;
       "
       @cancel="showTagDialog = false"
@@ -131,7 +170,7 @@ function onMenu(item: Item, e: MouseEvent) {
       v-if="showFolderDialog"
       title="移动到文件夹"
       @confirm="
-        moveSelectedToFolder($event);
+        store.moveSelectedToFolder($event);
         showFolderDialog = false;
       "
       @cancel="showFolderDialog = false"
@@ -153,8 +192,13 @@ function onMenu(item: Item, e: MouseEvent) {
 }
 
 .grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-size), 1fr));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
   gap: 10px;
 }
 

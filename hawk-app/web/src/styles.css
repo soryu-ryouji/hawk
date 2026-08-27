@@ -75,16 +75,15 @@ button.danger {
   border-radius: 4px;
 }
 
-/* 布局骨架：侧栏 | (工具栏 + 网格) | 检查器，底部状态栏通栏 */
+/* 布局骨架：侧栏 | (工具栏 + 网格) | 检查器，无底部状态栏（计数在侧栏徽章） */
 .app {
   display: grid;
   height: 100%;
   grid-template-columns: 220px 1fr 280px;
-  grid-template-rows: 48px 1fr 26px;
+  grid-template-rows: 46px 1fr;
   grid-template-areas:
     "sidebar toolbar inspector"
-    "sidebar main inspector"
-    "status status status";
+    "sidebar main inspector";
 }
 
 .app > .sidebar {
@@ -101,17 +100,6 @@ button.danger {
 
 .app > .inspector {
   grid-area: inspector;
-}
-
-.app > .statusbar {
-  grid-area: status;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  color: var(--fg-1);
-  border-top: 1px solid var(--border);
-  background: var(--bg-1);
-  font-size: 12px;
 }
 
 .toast {

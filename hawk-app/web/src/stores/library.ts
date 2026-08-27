@@ -45,6 +45,7 @@ export const useLibraryStore = defineStore('library', () => {
   const folders = ref<FolderNode | null>(null);
   const categories = ref<CategoryNode | null>(null);
   const tagList = ref<TagInfo[]>([]);
+  const trashTotal = ref(0);
   const library = ref<LibraryInfo | null>(null);
   const thumbSize = ref(160);
   const previewId = ref<string | null>(null);
@@ -362,9 +363,14 @@ export const useLibraryStore = defineStore('library', () => {
 
   async function refreshTaxonomy() {
     try {
-      const [categoryTree, tags] = await Promise.all([api.categoryList(), api.tagList()]);
+      const [categoryTree, tags, trash] = await Promise.all([
+        api.categoryList(),
+        api.tagList(),
+        api.itemList({ in_trash: true, limit: 1 }),
+      ]);
       categories.value = categoryTree;
       tagList.value = tags;
+      trashTotal.value = Number(trash.total);
     } catch (e) {
       showToast(errorText(e));
     }
@@ -452,6 +458,23 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** 为全部选中项追加标签（去重，保留已有） */
+  function addTagToSelected(tag: string) {
+    for (const id of selection.value) {
+      const item = items.value.find((i) => i.id === id);
+      if (item && !(item.tags ?? []).includes(tag)) {
+        void updateItem(id, { tags: [...(item.tags ?? []), tag] });
+      }
+    }
+  }
+
+  /** 将全部选中项移动到目标文件夹（空字符串为根目录） */
+  function moveSelectedToFolder(path: string) {
+    for (const id of selection.value) {
+      void updateItem(id, { folder_path: path });
+    }
+  }
+
   function parentOfCategory(path: string): string {
     const idx = path.lastIndexOf('/');
     return idx < 0 ? '' : path.slice(0, idx);
@@ -520,13 +543,13 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, items, total, loading, endReached, selection, folders, categories, tagList, library, thumbSize, previewId, toast,
+    view, query, items, total, loading, endReached, selection, folders, categories, tagList, trashTotal, library, thumbSize, previewId, toast,
     isTrash, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, flatCategories,
     init, setView, setQuery, resetList, fetchMore, refresh,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,
-    refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected,
+    refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder,
     openPreview, closePreview, navigatePreview, showToast, applyEvent,
   };
 });

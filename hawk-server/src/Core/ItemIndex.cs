@@ -178,6 +178,67 @@ public sealed class ItemIndex
         }
     }
 
+    /// <summary>
+    /// 按目录统计库内 item 数（不含回收站）。key 为目录相对路径（"" 为库根）。
+    /// 计数含全部子孙目录；同一 item 在同一目录节点只计一次（与素材计数口径一致）。
+    /// </summary>
+    public IReadOnlyDictionary<string, int> FolderCounts()
+    {
+        lock (_gate)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var item in _byHash.Values)
+            {
+                var dirs = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var loc in item.Locations.Where(l => !l.InTrash))
+                {
+                    for (var dir = LibraryPaths.DirOf(loc.Path); ; dir = LibraryPaths.DirOf(dir))
+                    {
+                        dirs.Add(dir);
+                        if (dir == "")
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                foreach (var dir in dirs)
+                {
+                    counts[dir] = counts.GetValueOrDefault(dir) + 1;
+                }
+            }
+
+            return counts;
+        }
+    }
+
+    /// <summary>按分类节点统计 item 数（含子分类；同一 item 在同一节点只计一次）</summary>
+    public IReadOnlyDictionary<string, int> CategoryCounts()
+    {
+        lock (_gate)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var item in _byHash.Values.Where(i => i.HasLibraryLocations))
+            {
+                var nodes = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var category in item.Categories)
+                {
+                    for (var node = category; node != ""; node = CategoryPath.ParentOf(node))
+                    {
+                        nodes.Add(node);
+                    }
+                }
+
+                foreach (var node in nodes)
+                {
+                    counts[node] = counts.GetValueOrDefault(node) + 1;
+                }
+            }
+
+            return counts;
+        }
+    }
+
     /// <summary>条件查询。在锁内完成过滤、排序、分页与 DTO 投影。</summary>
     public List<ItemDto> Query(ItemQuery q, out int total)
     {

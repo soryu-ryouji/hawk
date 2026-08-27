@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import type { Item } from '../types';
 
-const props = defineProps<{ item: Item; selected: boolean }>();
+const props = withDefaults(
+  defineProps<{ item: Item; selected: boolean; width?: number; height?: number }>(),
+  { width: 0, height: 0 },
+);
 const emit = defineEmits<{
   select: [item: Item, e: MouseEvent];
   open: [id: string];
@@ -19,6 +22,13 @@ watch(
     thumbFailed.value = false;
   },
 );
+
+/** 齐行网格传入的单元尺寸（宽高比与图片一致，图片完整显示不裁切） */
+const thumbStyle = computed(() =>
+  props.width && props.height
+    ? { width: props.width + 'px', height: props.height + 'px' }
+    : { width: '100%', aspectRatio: '1' },
+);
 </script>
 
 <template>
@@ -29,7 +39,7 @@ watch(
     @dblclick="emit('open', item.id)"
     @contextmenu.prevent="emit('menu', item, $event)"
   >
-    <div class="thumb">
+    <div class="thumb" :style="thumbStyle">
       <img
         v-if="!thumbFailed"
         :src="api.thumbnailUrl(item.id)"
@@ -41,13 +51,16 @@ watch(
       <div v-else class="placeholder">{{ item.ext || '?' }}</div>
       <span v-if="Number(item.star) > 0" class="star">★{{ item.star }}</span>
     </div>
-    <div class="name" :title="item.name">{{ item.name }}</div>
+    <div class="meta">
+      <div class="name" :title="`${item.name}.${item.ext}`">{{ item.name }}.{{ item.ext }}</div>
+      <div class="dims">{{ item.width }} × {{ item.height }}</div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .card {
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
   background: var(--bg-2);
   border: 2px solid transparent;
@@ -60,16 +73,16 @@ watch(
 
 .thumb {
   position: relative;
-  aspect-ratio: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: hidden;
+  background: #171717;
 }
 
+/* Eagle 观感：单元格与图片同宽高比，完整显示 */
 .thumb img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .placeholder {
@@ -85,18 +98,29 @@ watch(
 
 .star {
   position: absolute;
-  right: 6px;
-  bottom: 4px;
+  right: 5px;
+  top: 4px;
   color: #f5c518;
   font-size: 11px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.meta {
+  padding: 5px 7px 6px;
+  background: var(--bg-2);
 }
 
 .name {
-  padding: 6px 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--fg-0);
+  font-size: 12px;
+}
+
+.dims {
+  margin-top: 1px;
+  color: var(--fg-1);
+  font-size: 11px;
 }
 </style>

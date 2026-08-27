@@ -5,9 +5,11 @@ import { useLibraryStore } from '../stores/library';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
+import FolderPickerDialog from './FolderPickerDialog.vue';
 
 const store = useLibraryStore();
 const showCategoryPicker = ref(false);
+const showFolderPicker = ref(false);
 
 // 编辑字段为本地副本，切换选中项时重置；失焦/回车提交
 const name = ref('');
@@ -62,30 +64,18 @@ function submitUrl() {
 }
 
 watch(tags, (value) => {
-  if (item.value && JSON.stringify(value) !== JSON.stringify(item.value.tags)) {
+  if (item.value && JSON.stringify(value) !== JSON.stringify(item.value.tags ?? [])) {
     void store.updateItem(item.value.id, { tags: value });
   }
 });
 
 watch(star, (value) => {
-  if (item.value && value !== item.value.star) {
+  if (item.value && value !== Number(item.value.star)) {
     void store.updateItem(item.value.id, { star: value });
   }
 });
 
-function formatSize(bytes: number): string {
-  if (bytes >= 1 << 20) return (bytes / (1 << 20)).toFixed(1) + ' MB';
-  if (bytes >= 1 << 10) return (bytes / (1 << 10)).toFixed(1) + ' KB';
-  return bytes + ' B';
-}
-
-function formatTime(ms: number): string {
-  return new Date(Number(ms)).toLocaleString();
-}
-
-function showInFinder(path: string) {
-  void window.hawkShell?.showInFinder(path);
-}
+// ---- 分类 ----
 
 function removeCategory(category: string) {
   if (item.value) {
@@ -95,23 +85,28 @@ function removeCategory(category: string) {
   }
 }
 
-function addCategory(path: string) {
-  showCategoryPicker.value = false;
-  if (item.value && !(item.value.categories ?? []).includes(path)) {
-    void store.updateItem(item.value.id, { categories: [...(item.value.categories ?? []), path] });
+// ---- 文件夹 ----
+
+function moveToRoot() {
+  if (item.value) {
+    void store.updateItem(item.value.id, { folder_path: '' });
   }
 }
 
-/** 库内相对路径的父文件夹（"" 为根目录） */
-function folderOf(relPath: string): string {
-  const idx = relPath.lastIndexOf('/');
-  return idx < 0 ? '' : relPath.slice(0, idx);
+// ---- 其他 ----
+
+function showInFinder(path: string) {
+  void window.hawkShell?.showInFinder(path);
 }
 
-function submitFolder(path: string) {
-  if (item.value && folderOf(item.value.paths[0]) !== path) {
-    void store.updateItem(item.value.id, { folder_path: path });
-  }
+function formatSize(bytes: number): string {
+  if (bytes >= 1 << 20) return (bytes / (1 << 20)).toFixed(2) + ' MB';
+  if (bytes >= 1 << 10) return (bytes / (1 << 10)).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+function formatTime(ms: number): string {
+  return new Date(Number(ms)).toLocaleString();
 }
 
 function applyStarToAll(value: number) {
@@ -119,99 +114,161 @@ function applyStarToAll(value: number) {
     void store.updateItem(selected.id, { star: value });
   }
 }
+
+// ---- 多选批量 ----
+
+const batchTag = ref('');
+
+const totalSelectedSize = computed(() =>
+  store.selectedItems.reduce((sum, selected) => sum + Number(selected.size), 0),
+);
+
+function applyBatchTag() {
+  const tag = batchTag.value.trim();
+  if (tag) {
+    store.addTagToSelected(tag);
+  }
+  batchTag.value = '';
+}
+
+function batchAddCategory(path: string) {
+  showCategoryPicker.value = false;
+  store.addCategoryToSelected(path);
+}
+
+function batchMoveFolder(path: string) {
+  showFolderPicker.value = false;
+  store.moveSelectedToFolder(path);
+}
 </script>
 
 <template>
   <aside class="inspector">
-    <!-- 单选：完整编辑 -->
+    <!-- 单选：完整编辑（布局参考 Eagle） -->
     <template v-if="item && store.selection.length === 1">
       <div class="preview">
+        <span class="ext-badge">{{ item.ext.toUpperCase() }}</span>
         <img :src="previewUrl" :alt="item.name" draggable="false" />
       </div>
 
       <div class="fields">
         <input v-model="name" class="name-input" title="重命名文件" @keydown.enter="submitName" @blur="submitName" />
 
-        <div class="row">
-          <StarRating v-model="star" />
-        </div>
+        <input v-model="annotation" placeholder="添加注释" @keydown.enter="submitAnnotation" @blur="submitAnnotation" />
 
-        <TagEditor v-model="tags" />
+        <input v-model="url" placeholder="来源网址" @keydown.enter="submitUrl" @blur="submitUrl" />
 
-        <div class="row cats">
-          <span class="row-label">分类</span>
-          <div class="cat-chips">
+        <section>
+          <div class="section-title">标签</div>
+          <TagEditor v-model="tags" />
+        </section>
+
+        <section>
+          <div class="section-title">分类</div>
+          <div class="chips">
             <span v-for="category in item.categories ?? []" :key="category" class="chip">
               {{ category }}
               <button class="remove" title="移出该分类" @click="removeCategory(category)">×</button>
             </span>
-            <button class="add-cat" title="添加到分类" @click="showCategoryPicker = true">＋</button>
+            <button class="add" title="添加到分类" @click="showCategoryPicker = true">＋</button>
           </div>
-        </div>
+        </section>
 
-        <textarea
-          v-model="annotation"
-          class="annotation"
-          placeholder="备注"
-          rows="3"
-          @blur="submitAnnotation"
-        />
+        <section>
+          <div class="section-title">文件夹</div>
+          <div class="chips">
+            <span v-for="folder in item.folders ?? []" :key="folder" class="chip">
+              {{ folder || '（根目录）' }}
+              <button class="remove" title="移到根目录" @click="moveToRoot">×</button>
+            </span>
+            <span v-if="(item.folders ?? []).length === 0" class="chip">（根目录）</span>
+            <button class="add" title="移动到文件夹" @click="showFolderPicker = true">＋</button>
+          </div>
+        </section>
 
-        <input v-model="url" placeholder="来源网址" @keydown.enter="submitUrl" @blur="submitUrl" />
+        <section>
+          <div class="section-title">基本信息</div>
+          <dl class="info">
+            <dt>评分</dt>
+            <dd><StarRating v-model="star" /></dd>
+            <dt>尺寸</dt>
+            <dd>{{ item.width }} × {{ item.height }}</dd>
+            <dt>文件大小</dt>
+            <dd>{{ formatSize(Number(item.size)) }}</dd>
+            <dt>格式</dt>
+            <dd>{{ item.ext.toUpperCase() }}</dd>
+            <dt>修改时间</dt>
+            <dd>{{ formatTime(Number(item.modification_time)) }}</dd>
+            <dt>ID</dt>
+            <dd :title="item.id">{{ item.id.slice(0, 12) }}…</dd>
+          </dl>
+        </section>
 
-        <div class="row">
-          <span class="row-label">文件夹</span>
-          <select
-            class="folder-select"
-            :value="folderOf(item.paths[0])"
-            :disabled="store.isTrash"
-            @change="submitFolder(($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="folder in store.flatFolders" :key="folder.path" :value="folder.path">
-              {{ folder.label }}
-            </option>
-          </select>
-        </div>
-
-        <dl class="info">
-          <dt>尺寸</dt>
-          <dd>{{ item.width }} × {{ item.height }}</dd>
-          <dt>大小</dt>
-          <dd>{{ formatSize(Number(item.size)) }}</dd>
-          <dt>格式</dt>
-          <dd>{{ item.ext }}</dd>
-          <dt>修改时间</dt>
-          <dd>{{ formatTime(Number(item.modification_time)) }}</dd>
-          <dt>ID</dt>
-          <dd :title="item.id">{{ item.id.slice(0, 12) }}…</dd>
-        </dl>
-
-        <div class="paths">
-          <div class="paths-title">文件位置</div>
+        <section>
+          <div class="section-title">文件位置</div>
           <div v-for="path in item.paths" :key="path" class="path-row">
             <span class="path" :title="path">{{ path }}</span>
             <button class="finder" title="在 Finder 中显示" @click="showInFinder(path)">◎</button>
           </div>
-        </div>
+        </section>
       </div>
     </template>
 
-    <!-- 多选：批量操作 -->
+    <!-- 多选：批量操作（参考 Eagle 多选面板） -->
     <div v-else-if="store.selection.length > 1" class="multi">
-      <p>已选 {{ store.selection.length }} 项</p>
-      <StarRating :model-value="0" @update:model-value="applyStarToAll" />
+      <div class="stack">
+        <img
+          v-for="(selected, i) in store.selectedItems.slice(0, 3)"
+          :key="selected.id"
+          :src="api.thumbnailUrl(selected.id)"
+          :style="{ zIndex: 3 - i, transform: `translateX(${i * 18}px) rotate(${(i - 1) * 5}deg)` }"
+          alt=""
+        />
+      </div>
+
+      <p class="multi-title">已选 <b>{{ store.selection.length }}</b> 个文件</p>
+
+      <section>
+        <div class="section-title">标签</div>
+        <input
+          v-model="batchTag"
+          list="batch-tag-suggestions"
+          placeholder="＋ 添加标签（应用到全部选中）"
+          @keydown.enter="applyBatchTag"
+        />
+        <datalist id="batch-tag-suggestions">
+          <option v-for="t in store.tagList" :key="t.name" :value="t.name" />
+        </datalist>
+      </section>
+
+      <section>
+        <div class="section-title">分类</div>
+        <button class="batch-btn" @click="showCategoryPicker = true">＋ 添加到分类</button>
+      </section>
+
+      <section>
+        <div class="section-title">文件夹</div>
+        <button class="batch-btn" @click="showFolderPicker = true">＋ 移动到文件夹</button>
+      </section>
+
+      <section>
+        <div class="section-title">基本信息</div>
+        <dl class="info">
+          <dt>评分</dt>
+          <dd><StarRating :model-value="0" @update:model-value="applyStarToAll" /></dd>
+          <dt>文件大小</dt>
+          <dd>{{ formatSize(totalSelectedSize) }}</dd>
+        </dl>
+      </section>
+
       <button v-if="!store.isTrash" class="danger" @click="store.trashSelected()">移入回收站</button>
       <button v-else @click="store.restoreSelected()">恢复</button>
     </div>
 
     <div v-else class="hint">选择素材查看详情</div>
 
-    <CategoryPickerDialog
-      v-if="showCategoryPicker"
-      title="添加到分类"
-      @confirm="addCategory"
-      @cancel="showCategoryPicker = false"
-    />
+    <CategoryPickerDialog v-if="showCategoryPicker" title="添加到分类" @confirm="batchAddCategory" @cancel="showCategoryPicker = false" />
+    <FolderPickerDialog v-if="showFolderPicker" title="移动到文件夹" @confirm="batchMoveFolder" @cancel="showFolderPicker = false" />
   </aside>
 </template>
 
@@ -223,12 +280,14 @@ function applyStarToAll(value: number) {
 }
 
 .preview {
+  position: relative;
   padding: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 160px;
   max-height: 280px;
+  background: #171717;
 }
 
 .preview img {
@@ -237,47 +296,52 @@ function applyStarToAll(value: number) {
   object-fit: contain;
 }
 
+.ext-badge {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
 .fields {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 0 12px 12px;
+  gap: 12px;
+  padding: 12px;
+}
+
+.fields > input {
+  padding: 5px 8px;
 }
 
 .name-input {
   font-weight: 600;
-  padding: 4px 8px;
 }
 
-.annotation {
-  padding: 6px 8px;
-  resize: vertical;
-}
-
-.row {
+section {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.row-label {
-  flex: none;
+.section-title {
   font-size: 12px;
   color: var(--fg-1);
 }
 
-.cats {
-  align-items: flex-start;
-}
-
-.cat-chips {
+.chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 
-.cat-chips .chip {
+.chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -287,33 +351,23 @@ function applyStarToAll(value: number) {
   font-size: 12px;
 }
 
-.cat-chips .remove {
+.chip .remove {
   padding: 0 4px;
   border: none;
   background: transparent;
   color: var(--fg-1);
 }
 
-.cat-chips .remove:hover {
+.chip .remove:hover {
   color: var(--danger);
   background: transparent;
 }
 
-.add-cat {
+.add {
   padding: 0 8px;
   border-radius: 10px;
   font-size: 12px;
   line-height: 1.6;
-}
-
-.folder-select {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 6px;
-}
-
-.fields > input:not(.name-input) {
-  padding: 4px 8px;
 }
 
 .info {
@@ -326,12 +380,6 @@ function applyStarToAll(value: number) {
 
 .info dd {
   color: var(--fg-0);
-}
-
-.paths-title {
-  font-size: 12px;
-  color: var(--fg-1);
-  margin-bottom: 4px;
 }
 
 .path-row {
@@ -365,8 +413,45 @@ function applyStarToAll(value: number) {
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  align-items: flex-start;
+  gap: 14px;
+}
+
+.stack {
+  position: relative;
+  height: 140px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.stack img {
+  position: absolute;
+  max-width: 120px;
+  max-height: 130px;
+  border-radius: 4px;
+  border: 2px solid var(--bg-2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  object-fit: cover;
+}
+
+.multi-title {
+  text-align: center;
+  font-size: 14px;
+}
+
+.multi-title b {
+  color: var(--accent);
+}
+
+.batch-btn {
+  width: 100%;
+  padding: 7px 10px;
+  text-align: center;
+}
+
+.multi section input {
+  width: 100%;
+  padding: 6px 8px;
 }
 
 .hint {

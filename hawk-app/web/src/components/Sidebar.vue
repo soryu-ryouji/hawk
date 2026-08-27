@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
 import CategoryTreeNode from './CategoryTreeNode.vue';
 import PromptDialog from './PromptDialog.vue';
@@ -13,6 +14,8 @@ const hasShell = !!window.hawkShell;
 const showCreateFolder = ref(false);
 const showCreateCategory = ref(false);
 const showCreateTag = ref(false);
+const showRenameTag = ref(false);
+const renameTarget = ref('');
 
 async function selectLibrary() {
   if (window.hawkShell) {
@@ -35,7 +38,12 @@ function createTag(name: string) {
   void store.tagCreate(name);
 }
 
-/** 树空白处右键：新建根文件夹 */
+function submitRenameTag(newName: string) {
+  showRenameTag.value = false;
+  void store.tagRename(renameTarget.value, newName);
+}
+
+/** 树空白处右键：新建根节点 */
 function onTreeContextMenu(e: MouseEvent) {
   menu.open([{ label: '新建文件夹', action: () => (showCreateFolder.value = true) }], e);
 }
@@ -68,26 +76,24 @@ function onTagContextMenu(name: string, e: MouseEvent) {
     e,
   );
 }
-
-const showRenameTag = ref(false);
-const renameTarget = ref('');
-
-function submitRenameTag(newName: string) {
-  showRenameTag.value = false;
-  void store.tagRename(renameTarget.value, newName);
-}
 </script>
 
 <template>
   <aside class="sidebar">
-    <div class="library-name" :title="store.library?.path">{{ store.library?.name ?? 'hawk' }}</div>
+    <button v-if="hasShell" class="library-name" :title="store.library?.path + '（点击更换素材库）'" @click="selectLibrary">
+      <Icon name="library" />
+      <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
+      <Icon name="chevronDown" :size="12" />
+    </button>
+    <div v-else class="library-name static">
+      <Icon name="library" />
+      <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
+    </div>
 
-    <div
-      class="entry"
-      :class="{ active: store.view.kind === 'all' }"
-      @click="store.setView({ kind: 'all' })"
-    >
-      全部素材
+    <div class="entry" :class="{ active: store.view.kind === 'all' }" @click="store.setView({ kind: 'all' })">
+      <Icon name="all" />
+      <span class="label">全部素材</span>
+      <span class="count">{{ store.folders?.count ?? 0 }}</span>
     </div>
 
     <div class="section">
@@ -95,12 +101,7 @@ function submitRenameTag(newName: string) {
       <button class="add" title="新建文件夹" @click="showCreateFolder = true">＋</button>
     </div>
     <div class="tree" @contextmenu.prevent="onTreeContextMenu">
-      <FolderTreeNode
-        v-for="node in store.folders?.children ?? []"
-        :key="node.path"
-        :node="node"
-        :depth="0"
-      />
+      <FolderTreeNode v-for="node in store.folders?.children ?? []" :key="node.path" :node="node" :depth="0" />
     </div>
 
     <div class="section">
@@ -108,12 +109,7 @@ function submitRenameTag(newName: string) {
       <button class="add" title="新建分类" @click="showCreateCategory = true">＋</button>
     </div>
     <div class="tree" @contextmenu.prevent="onCategoryContextMenu">
-      <CategoryTreeNode
-        v-for="node in store.categories?.children ?? []"
-        :key="node.path"
-        :node="node"
-        :depth="0"
-      />
+      <CategoryTreeNode v-for="node in store.categories?.children ?? []" :key="node.path" :node="node" :depth="0" />
     </div>
 
     <div class="section">
@@ -129,6 +125,7 @@ function submitRenameTag(newName: string) {
         @click="store.setView({ kind: 'tag', name: tag.name })"
         @contextmenu.prevent.stop="onTagContextMenu(tag.name, $event)"
       >
+        <Icon name="tag" :size="13" />
         <span class="tag-name">{{ tag.name }}</span>
         <span class="tag-count">{{ tag.count }}</span>
       </div>
@@ -136,45 +133,17 @@ function submitRenameTag(newName: string) {
 
     <div class="spacer" />
 
-    <div
-      class="entry trash"
-      :class="{ active: store.view.kind === 'trash' }"
-      @click="store.setView({ kind: 'trash' })"
-    >
-      回收站
+    <div class="entry trash" :class="{ active: store.view.kind === 'trash' }" @click="store.setView({ kind: 'trash' })">
+      <Icon name="trash" />
+      <span class="label">回收站</span>
+      <span class="count">{{ store.trashTotal }}</span>
     </div>
-
-    <button v-if="hasShell" class="switch" @click="selectLibrary">更换素材库</button>
-
-    <PromptDialog
-      v-if="showCreateFolder"
-      title="新建文件夹"
-      placeholder="文件夹名称"
-      @confirm="createRootFolder"
-      @cancel="showCreateFolder = false"
-    />
-    <PromptDialog
-      v-if="showCreateCategory"
-      title="新建分类"
-      placeholder="分类路径（如 插画/人物）"
-      @confirm="createRootCategory"
-      @cancel="showCreateCategory = false"
-    />
-    <PromptDialog
-      v-if="showCreateTag"
-      title="新建标签"
-      placeholder="标签名称"
-      @confirm="createTag"
-      @cancel="showCreateTag = false"
-    />
-    <PromptDialog
-      v-if="showRenameTag"
-      title="重命名标签"
-      :placeholder="renameTarget"
-      @confirm="submitRenameTag"
-      @cancel="showRenameTag = false"
-    />
   </aside>
+
+  <PromptDialog v-if="showCreateFolder" title="新建文件夹" placeholder="文件夹名称" @confirm="createRootFolder" @cancel="showCreateFolder = false" />
+  <PromptDialog v-if="showCreateCategory" title="新建分类" placeholder="分类路径（如 插画/人物）" @confirm="createRootCategory" @cancel="showCreateCategory = false" />
+  <PromptDialog v-if="showCreateTag" title="新建标签" placeholder="标签名称" @confirm="createTag" @cancel="showCreateTag = false" />
+  <PromptDialog v-if="showRenameTag" title="重命名标签" :placeholder="renameTarget" @confirm="submitRenameTag" @cancel="showRenameTag = false" />
 </template>
 
 <style scoped>
@@ -188,8 +157,28 @@ function submitRenameTag(newName: string) {
 }
 
 .library-name {
-  padding: 4px 12px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 8px;
+  padding: 5px 6px;
   font-weight: 600;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+}
+
+.library-name:hover {
+  background: var(--bg-2);
+}
+
+.library-name.static {
+  cursor: default;
+}
+
+.lib-text {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -217,14 +206,40 @@ function submitRenameTag(newName: string) {
   background: transparent;
 }
 
-.tags {
-  padding-bottom: 4px;
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.entry:hover {
+  background: var(--bg-2);
+}
+
+.entry.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.entry.active .count {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.label {
+  flex: 1;
+}
+
+.count {
+  font-size: 11px;
+  color: var(--fg-1);
 }
 
 .tag-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 7px;
   padding: 4px 12px;
   cursor: pointer;
   overflow: hidden;
@@ -244,33 +259,15 @@ function submitRenameTag(newName: string) {
 }
 
 .tag-name {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tag-count {
-  flex: none;
   font-size: 11px;
   color: var(--fg-1);
-}
-
-.entry {
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
-.entry:hover {
-  background: var(--bg-2);
-}
-
-.entry.active {
-  background: var(--accent);
-  color: #fff;
-}
-
-.tree {
-  flex: 0 1 auto;
 }
 
 .spacer {
@@ -279,10 +276,5 @@ function submitRenameTag(newName: string) {
 
 .trash {
   border-top: 1px solid var(--border);
-}
-
-.switch {
-  margin: 8px 12px 4px;
-  color: var(--fg-1);
 }
 </style>

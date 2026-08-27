@@ -165,7 +165,28 @@ try {
   check('网格渲染 3 个素材卡片', cardCount, 3);
   check('侧栏显示文件夹', await evaljs(`document.querySelector('.sidebar .tree')?.textContent?.includes('海报') ?? false`), true);
   check('侧栏入口', await evaljs(`document.querySelector('.sidebar')?.textContent?.includes('回收站') ?? false`), true);
-  check('状态栏计数', await evaljs(`document.querySelector('.statusbar')?.textContent?.replace(/\s+/g, ' ').trim()`), '共 3 项');
+  check('位置标题为全部素材', await evaljs(`document.querySelector('.toolbar .title')?.textContent`), '全部素材');
+  const badge = await waitFor(async () => {
+    const value = await evaljs(`document.querySelector('.sidebar .entry .count')?.textContent`);
+    return value === '3' ? value : null;
+  }, 10_000).catch(async () => {
+    // 诊断：后端 folder/list 的 count 与侧栏 HTML，定位是数据问题还是渲染/时序问题
+    const count = await evaljs(`fetch(new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/folder/list', { headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token') } }).then((r) => r.json()).then((e) => e.data.count).catch(() => 'ERR')`);
+    const html = await evaljs(`document.querySelector('.sidebar .entry')?.outerHTML?.slice(-200)`);
+    console.log(`  [诊断] folder/list count=${count}，首个 .entry 尾部 HTML=${html}`);
+    return null;
+  });
+  check('全部素材计数徽章', badge, '3');
+
+  // ---- 齐行网格：行内等高、宽度按宽高比分配 ----
+  const layout = await evaljs(`(() => {
+    const rect = (name) => [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith(name + '.'))?.querySelector('.thumb')?.getBoundingClientRect();
+    const s = rect('sunset'), c = rect('cat'), l = rect('logo');
+    return { sunset: { w: s.width, h: s.height }, cat: { w: c.width, h: c.height }, logo: { w: l.width, h: l.height } };
+  })()`);
+  check('齐行：行内等高', Math.abs(layout.sunset.h - layout.cat.h) <= 1, true);
+  check('齐行：宽度按宽高比（4×2 与 2×4 宽度比 ≈ 4）', Math.abs(layout.sunset.w / layout.cat.w - 4) < 0.3, true);
+  check('齐行：方形图宽高相等', Math.abs(layout.logo.w - layout.logo.h) <= 1, true);
 
   // 缩略图真实加载（自然宽度 > 0）
   await new Promise((r) => setTimeout(r, 2000));
@@ -180,7 +201,7 @@ try {
   await evaljs(`document.querySelector('.card').click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.inspector .fields')`), 5_000);
   check('选中后检查器出现', await evaljs(`!!document.querySelector('.inspector .name-input')`), true);
-  check('状态栏选中计数', await evaljs(`document.querySelector('.statusbar')?.textContent?.includes('已选 1 项')`), true);
+  check('工具栏选中计数', await evaljs(`document.querySelector('.toolbar .selected')?.textContent?.includes('已选 1 项') ?? false`), true);
   await screenshot('ui-inspector.png');
 
   // 点星评分 → 卡片出现评分角标
@@ -188,7 +209,7 @@ try {
   await evaljs(`[...document.querySelectorAll('.inspector .rating .star')][4].click()`);
   const starMarked = await waitFor(async () => {
     const cards = await evaljs(
-      `[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === ${JSON.stringify(firstName)})?.querySelector('.star')?.textContent ?? ''`,
+      `[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith(${JSON.stringify(firstName)} + '.'))?.querySelector('.star')?.textContent ?? ''`,
     );
     return cards === '' ? null : cards;
   }, 5_000);
@@ -201,7 +222,7 @@ try {
     return n === 2 ? n : null;
   }, 5_000);
   check('文件夹视图过滤', folderCount, 2);
-  check('文件夹视图状态栏', await evaljs(`document.querySelector('.statusbar')?.textContent?.replace(/\s+/g, ' ').trim()`), '共 2 项');
+  check('位置标题为文件夹名', await evaljs(`document.querySelector('.toolbar .title')?.textContent`), '海报');
 
   // SSE：另一进程写入文件 → 界面自动出现（先回全部素材）
   await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('全部素材'))?.click()`);
@@ -225,7 +246,7 @@ try {
 
   // ---- 辅助：从卡片名取 item id（缩略图 URL 的 id 参数）与后端 detail ----
   const idByName = (name) =>
-    `[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === ${JSON.stringify(name)})?.querySelector('img')?.src.match(/id=([0-9a-f]+)/)?.[1] ?? ''`;
+    `[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith(${JSON.stringify(name)} + '.'))?.querySelector('img')?.src.match(/id=([0-9a-f]+)/)?.[1] ?? ''`;
   const fetchDetail = (id) =>
     `fetch('${targets.url ? '' : ''}' + new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/item/detail?id=' + ${id}, { headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token') } }).then((r) => r.json()).then((e) => e.data)`;
 
@@ -257,8 +278,8 @@ try {
   check('检查器标签 chip 显示', await evaljs(`[...document.querySelectorAll('.inspector .chip')].some((c) => c.textContent.includes('测试标签'))`), true);
 
   // ---- 右键 → 移动到文件夹（明确选根目录的 sunset，保证结果确定） ----
-  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === 'sunset')?.click()`);
-  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === 'sunset')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }))`);
+  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('sunset.'))?.click()`);
+  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('sunset.'))?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
   await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent.includes('移动到文件夹'))?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.dialog select')`), 5_000);
@@ -302,10 +323,10 @@ try {
   })`);
   const thumbReady = await waitFor(async () => {
     const img = await evaljs(
-      `[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === 'thumbcheck')?.querySelector('img')`,
+      `[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('thumbcheck.'))?.querySelector('img')`,
     );
     if (!img) return null;
-    return evaljs(`(() => { const img = [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === 'thumbcheck')?.querySelector('img'); return img && img.naturalWidth > 0; })()`);
+    return evaljs(`(() => { const img = [...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('thumbcheck.'))?.querySelector('img'); return img && img.naturalWidth > 0; })()`);
   }, 15_000);
   check('导入后缩略图自动刷新', thumbReady, true);
 
@@ -411,7 +432,7 @@ try {
     return detail && (detail.categories ?? []).length === 0 ? true : null;
   }, 5_000);
   check('删除分类清除赋值（服务端）', deleteOk, true);
-  check('删除后视图回全部素材', await evaljs(`document.querySelector('.statusbar')?.textContent?.replace(/\s+/g, ' ').trim()`), '共 5 项');
+  check('删除后视图回全部素材', await evaljs(`document.querySelector('.toolbar .title')?.textContent`), '全部素材');
 
   // 新建空标签 + 重命名跟随
   await evaljs(`[...document.querySelectorAll('.sidebar .section')].find((s) => s.textContent.includes('标签'))?.querySelector('.add')?.click()`);
@@ -450,6 +471,48 @@ try {
     return total === 1 ? true : null;
   }, 5_000);
   check('标签重命名跟随 item（服务端）', tagRenameOk, true);
+
+  // ---- 多选批量：批量添加标签/分类 ----
+  await evaljs(`document.querySelectorAll('.card')[0].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))`);
+  await evaljs(`document.querySelectorAll('.card')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))`);
+  check('多选面板出现', await evaljs(`document.querySelector('.multi-title')?.textContent?.includes('已选 2') ?? false`), true);
+
+  await evaljs(`(() => {
+    const input = document.querySelector('.multi section input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '批量标签');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  const batchTagOk = await waitFor(async () => {
+    const total = await evaljs(`fetch(new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/item/list', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: ['批量标签'] }),
+    }).then((r) => r.json()).then((e) => e.data.total).catch(() => -1)`);
+    return total === 2 ? true : null;
+  }, 5_000);
+  check('批量添加标签生效（服务端）', batchTagOk, true);
+
+  await evaljs(`[...document.querySelectorAll('.multi .batch-btn')].find((b) => b.textContent.includes('添加到分类'))?.click()`);
+  await waitFor(async () => evaljs(`!!document.querySelector('.dialog input')`), 5_000);
+  await evaljs(`(() => {
+    const input = document.querySelector('.dialog input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '批量/测试');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  const batchCatOk = await waitFor(async () => {
+    const total = await evaljs(`fetch(new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/item/list', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories: ['批量'] }),
+    }).then((r) => r.json()).then((e) => e.data.total).catch(() => -1)`);
+    return total === 2 ? true : null;
+  }, 5_000);
+  check('批量添加分类生效（服务端）', batchCatOk, true);
+  await evaljs(`document.body.click()`);
 
   // 回收站视图
   await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('回收站'))?.click()`);

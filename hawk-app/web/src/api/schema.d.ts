@@ -1022,6 +1022,8 @@ export interface components {
             path: string;
             name: string;
             children: components["schemas"]["CategoryNode"][];
+            /** Format: int32 */
+            count: number | string;
         };
         CategoryPathRequest: {
             path: string;
@@ -1078,6 +1080,8 @@ export interface components {
             children: components["schemas"]["FolderNode"][];
             /** Format: int64 */
             modification_time: number | string;
+            /** Format: int32 */
+            count: number | string;
         };
         FolderPathRequest: {
             path: string;
