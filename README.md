@@ -1,10 +1,28 @@
-# hawk
+<p align="center">
+  <img src=".assets/icon.png" width="128" alt="hawk logo">
+</p>
 
-对标 Eagle 的开源图片素材管理工具
+<h1 align="center">hawk</h1>
+
+<p align="center">对标 Eagle 的开源图片素材管理工具</p>
+
+<p align="center">
+  <a href="https://github.com/soryu-ryouji/hawk/actions/workflows/release.yml"><img src="https://github.com/soryu-ryouji/hawk/actions/workflows/release.yml/badge.svg" alt="release"></a>
+  <a href="https://github.com/soryu-ryouji/hawk/releases/latest"><img src="https://img.shields.io/github/v/release/soryu-ryouji/hawk" alt="release version"></a>
+  <a href="https://github.com/soryu-ryouji/hawk/releases/tag/nightly"><img src="https://img.shields.io/badge/nightly-滚动预发布-orange" alt="nightly"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="license"></a>
+</p>
 
 - 非侵入式资源管理：资源以文件夹的形式进行管理，非侵入式
 - 自由开放：开放的 REST API，方便生态接入
 - 免费
+
+## 下载
+
+到 [Releases](https://github.com/soryu-ryouji/hawk/releases) 页面下载：
+
+- **正式版**：`hawk.exe`（绿色单文件，无需安装，双击即用，卸载即删）
+- **Nightly**：[nightly](https://github.com/soryu-ryouji/hawk/releases/tag/nightly) 滚动预发布，每个 `feat`/`fix` 提交自动构建，想尝新可以拿
 
 ## 核心特性
 
@@ -39,6 +57,56 @@ POST http://localhost:27371/api/v1/item/update
 { "id": "abc123", "tags": ["待审核"] }
 ```
 
+## 本地构建与发布
+
+### 环境准备
+
+- [Node.js](https://nodejs.org/) 与 [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- 克隆仓库后安装依赖（Electron 二进制镜像已配置在 `hawk-app/.npmrc`，国内网络无需额外设置）：
+
+```bash
+git clone https://github.com/soryu-ryouji/hawk.git
+cd hawk/hawk-app
+npm install
+dotnet build ../hawk-server
+```
+
+### 开发调试
+
+```bash
+npm run dev   # vite + electron 一键起（后端由 electron 拉起）
+```
+
+更多开发命令见 [hawk-app/README.md](hawk-app/README.md)。
+
+### 发布（打包）
+
+```bash
+cd hawk-app
+npm run pack
+```
+
+一条命令完成：前端构建 → `dotnet publish` 产出当前平台的 hawk-server 自包含单文件 → electron-builder 打包。产物在 `hawk-app/dist/`：
+
+- **Windows**：`hawk.exe`（portable 绿色单文件，约 120MB，拷到任意目录双击即用）
+- macOS / Linux：`hawk.dmg` / `hawk.AppImage`
+
+打包默认使用快速压缩（约 1 分钟）。追求最小体积（发正式版）或最快速度（冒烟验证）可用环境变量调整：
+
+```bash
+ELECTRON_BUILDER_COMPRESSION_LEVEL=9 npm run pack   # 最小体积，约 2 分钟
+ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体积 +27MB）
+```
+
+交叉编译其他平台的后端：`node scripts/build-server.mjs <RID>`（如 `osx-arm64`），再单独执行 `node scripts/pack.mjs`。
+
+### CI 发版
+
+发版一般在 CI 上完成（见 [.github/workflows/release.yml](.github/workflows/release.yml)），无需本地打包：
+
+- 推 `v*` tag（如 `git tag v1.0.0 && git push origin v1.0.0`）：自动构建并创建正式 Release
+- main 分支上 `feat`/`fix` 开头的提交：自动滚动更新 nightly 预发布
+
 ## 文档
 
 - [架构设计](docs/architecture.md)：进程模型、桌面/服务器部署形态、仓库结构
@@ -48,3 +116,7 @@ POST http://localhost:27371/api/v1/item/update
 - [hawk-app 设计](docs/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
 - [REST API V1](docs/server-rest-api-v1.md)：接口定义
 - [存储设计](docs/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存
+
+## 许可证
+
+[AGPL-3.0](LICENSE)

@@ -25,7 +25,7 @@ node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断
 npm run pack   # 一条命令：build 前端 + 发布当前平台 hawk-server 单文件 + electron-builder 出包（dist/，Windows 为免安装 portable exe）
 ```
 
-交叉编译其他平台的 server：node scripts/build-server.mjs <RID>（如 osx-arm64），再单独跑 electron-builder。
+交叉编译其他平台的 server：node scripts/build-server.mjs <RID>（如 osx-arm64），再单独执行 node scripts/pack.mjs。
 
 国内网络首次 pack 需镜像（下载过的会进 electron-builder 缓存，之后不再需要）：
 
