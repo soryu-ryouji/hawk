@@ -91,6 +91,15 @@ function loadMainPage() {
   }
 }
 
+/** 未配置素材库时的引导页：不带连接参数，由页面按钮触发目录选择框 */
+function loadSetupPage() {
+  if (isDev) {
+    mainWindow.loadURL('http://localhost:5173/');
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '..', 'web', 'dist', 'index.html'));
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -165,13 +174,10 @@ ipcMain.handle('hawk:show-in-finder', (_event, relPath) => {
 app.whenReady().then(async () => {
   createWindow();
 
-  let libPath = readConfig().libraryPath;
+  const libPath = readConfig().libraryPath;
   if (!libPath || !fs.existsSync(libPath)) {
-    libPath = await pickLibrary();
-    if (!libPath) {
-      app.quit();
-      return;
-    }
+    loadSetupPage(); // 素材库未配置或已失效：进引导页，不再直接弹目录选择框
+    return;
   }
 
   try {

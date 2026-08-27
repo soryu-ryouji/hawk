@@ -11,13 +11,20 @@ import ItemGrid from './components/ItemGrid.vue';
 import Inspector from './components/Inspector.vue';
 import PreviewOverlay from './components/PreviewOverlay.vue';
 import ContextMenu from './components/ContextMenu.vue';
+import SetupScreen from './components/SetupScreen.vue';
 
 const store = useLibraryStore();
 const bootError = ref<string | null>(null);
+// 无连接参数但在 Electron 内：素材库未配置，进引导页
+const setupMode = ref(false);
 
 onMounted(async () => {
   if (!initApi()) {
-    bootError.value = '缺少后端连接参数';
+    if (window.hawkShell) {
+      setupMode.value = true;
+    } else {
+      bootError.value = '缺少后端连接参数';
+    }
     return;
   }
   try {
@@ -44,7 +51,9 @@ useDragImport();
 </script>
 
 <template>
-  <div v-if="bootError" class="boot-error">
+  <SetupScreen v-if="setupMode" />
+
+  <div v-else-if="bootError" class="boot-error">
     <p>{{ bootError }}</p>
     <p>请从 hawk 桌面端启动本应用</p>
   </div>
