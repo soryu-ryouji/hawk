@@ -23,6 +23,9 @@ public static class ErrorCodes
     public const string FolderNotFound = "FOLDER_NOT_FOUND";
     public const string FileExists = "FILE_EXISTS";
     public const string UnsupportedFormat = "UNSUPPORTED_FORMAT";
+    public const string CategoryNotFound = "CATEGORY_NOT_FOUND";
+    public const string CategoryExists = "CATEGORY_EXISTS";
+    public const string TagNotFound = "TAG_NOT_FOUND";
     public const string Internal = "INTERNAL";
 }
 
@@ -43,6 +46,9 @@ public sealed class ApiException : Exception
     public static ApiException FolderNotFound(string path) => new(ErrorCodes.FolderNotFound, $"folder {path} not found", StatusCodes.Status404NotFound);
     public static ApiException FileExists(string path) => new(ErrorCodes.FileExists, $"file already exists: {path}", StatusCodes.Status409Conflict);
     public static ApiException UnsupportedFormat(string message) => new(ErrorCodes.UnsupportedFormat, message, StatusCodes.Status400BadRequest);
+    public static ApiException CategoryNotFound(string path) => new(ErrorCodes.CategoryNotFound, $"category {path} not found", StatusCodes.Status404NotFound);
+    public static ApiException CategoryExists(string path) => new(ErrorCodes.CategoryExists, $"category already exists: {path}", StatusCodes.Status409Conflict);
+    public static ApiException TagNotFound(string name) => new(ErrorCodes.TagNotFound, $"tag {name} not found", StatusCodes.Status404NotFound);
 }
 
 /// <summary>异常 → 统一错误信封</summary>

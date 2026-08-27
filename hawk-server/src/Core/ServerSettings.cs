@@ -14,6 +14,9 @@ public sealed class ServerSettings
     public int Port { get; init; } = DefaultPort;
     public required string Token { get; init; }
 
+    /// <summary>周期对账扫描间隔（秒），0 关闭。文件监听可能静默丢事件，周期扫描（复用哈希、不读内容）保证最终一致</summary>
+    public int RescanIntervalSeconds { get; init; } = 60;
+
     public static ServerSettings FromArgs(string[] args)
     {
         string? library = Environment.GetEnvironmentVariable("HAWK_LIBRARY");
@@ -54,6 +57,7 @@ public sealed class ServerSettings
             LibraryRoot = Path.GetFullPath(library),
             Port = port ?? DefaultPort,
             Token = token,
+            RescanIntervalSeconds = ParseInt(Environment.GetEnvironmentVariable("HAWK_RESCAN_INTERVAL")) ?? 60,
         };
     }
 

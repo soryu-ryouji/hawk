@@ -35,6 +35,15 @@ public sealed class MetadataStore
         }
     }
 
+    /// <summary>全部元数据条目快照（批量迁移用）</summary>
+    public KeyValuePair<string, ItemMetadata>[] Snapshot()
+    {
+        lock (_gate)
+        {
+            return _byHash.ToArray();
+        }
+    }
+
     /// <summary>按库内路径反查所属内容哈希（元数据 paths 记录）。</summary>
     public string? FindHashByPath(string libraryPath)
     {
@@ -157,6 +166,11 @@ public sealed class MetadataStore
             meta.Tags = tagArr.Cast<object?>().OfType<string>().ToList();
         }
 
+        if (table.TryGetValue("categories", out var cats) && cats is IEnumerable catArr)
+        {
+            meta.Categories = catArr.Cast<object?>().OfType<string>().ToList();
+        }
+
         if (table.TryGetValue("paths", out var paths) && paths is IEnumerable pathArr)
         {
             foreach (var entry in pathArr.Cast<object?>())
@@ -194,6 +208,11 @@ public sealed class MetadataStore
         if (meta.Tags.Count > 0)
         {
             sb.Append("tags = [").Append(string.Join(", ", meta.Tags.Select(TomlString))).AppendLine("]");
+        }
+
+        if (meta.Categories.Count > 0)
+        {
+            sb.Append("categories = [").Append(string.Join(", ", meta.Categories.Select(TomlString))).AppendLine("]");
         }
 
         if (meta.Star > 0)

@@ -4,8 +4,10 @@ import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
+import CategoryPickerDialog from './CategoryPickerDialog.vue';
 
 const store = useLibraryStore();
+const showCategoryPicker = ref(false);
 
 // 编辑字段为本地副本，切换选中项时重置；失焦/回车提交
 const name = ref('');
@@ -35,7 +37,7 @@ watch(item, (fresh) => {
     name.value = fresh.name;
     annotation.value = fresh.annotation ?? '';
     url.value = fresh.url ?? '';
-    tags.value = [...fresh.tags];
+    tags.value = [...(fresh.tags ?? [])];
     star.value = Number(fresh.star);
   }
 });
@@ -85,6 +87,21 @@ function showInFinder(path: string) {
   void window.hawkShell?.showInFinder(path);
 }
 
+function removeCategory(category: string) {
+  if (item.value) {
+    void store.updateItem(item.value.id, {
+      categories: (item.value.categories ?? []).filter((c) => c !== category),
+    });
+  }
+}
+
+function addCategory(path: string) {
+  showCategoryPicker.value = false;
+  if (item.value && !(item.value.categories ?? []).includes(path)) {
+    void store.updateItem(item.value.id, { categories: [...(item.value.categories ?? []), path] });
+  }
+}
+
 /** 库内相对路径的父文件夹（"" 为根目录） */
 function folderOf(relPath: string): string {
   const idx = relPath.lastIndexOf('/');
@@ -120,6 +137,17 @@ function applyStarToAll(value: number) {
         </div>
 
         <TagEditor v-model="tags" />
+
+        <div class="row cats">
+          <span class="row-label">分类</span>
+          <div class="cat-chips">
+            <span v-for="category in item.categories ?? []" :key="category" class="chip">
+              {{ category }}
+              <button class="remove" title="移出该分类" @click="removeCategory(category)">×</button>
+            </span>
+            <button class="add-cat" title="添加到分类" @click="showCategoryPicker = true">＋</button>
+          </div>
+        </div>
 
         <textarea
           v-model="annotation"
@@ -177,6 +205,13 @@ function applyStarToAll(value: number) {
     </div>
 
     <div v-else class="hint">选择素材查看详情</div>
+
+    <CategoryPickerDialog
+      v-if="showCategoryPicker"
+      title="添加到分类"
+      @confirm="addCategory"
+      @cancel="showCategoryPicker = false"
+    />
   </aside>
 </template>
 
@@ -229,6 +264,46 @@ function applyStarToAll(value: number) {
   flex: none;
   font-size: 12px;
   color: var(--fg-1);
+}
+
+.cats {
+  align-items: flex-start;
+}
+
+.cat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.cat-chips .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-3);
+  font-size: 12px;
+}
+
+.cat-chips .remove {
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--fg-1);
+}
+
+.cat-chips .remove:hover {
+  color: var(--danger);
+  background: transparent;
+}
+
+.add-cat {
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .folder-select {

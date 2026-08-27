@@ -12,6 +12,10 @@ public static class ItemEndpoints
         public string[]? Tags { get; init; }
         public int? Star { get; init; }
         public string[]? Folders { get; init; }
+        public string[]? Categories { get; init; }
+        public string? CategoriesMatch { get; init; }
+        public string[]? ExcludeCategories { get; init; }
+        public string[]? ExcludeTags { get; init; }
         public string? Ext { get; init; }
         public string? Annotation { get; init; }
         public string? Url { get; init; }
@@ -45,6 +49,7 @@ public static class ItemEndpoints
         public string[]? Tags { get; init; }
         public string? FolderPath { get; init; }
         public int? Star { get; init; }
+        public string[]? Categories { get; init; }
         public string? Annotation { get; init; }
         public string? Url { get; init; }
     }
@@ -64,7 +69,9 @@ public static class ItemEndpoints
             var query = new ItemQuery
             {
                 Ids = req.Ids, Keywords = req.Keywords, Tags = req.Tags, Star = req.Star,
-                Folders = req.Folders, Ext = req.Ext, Annotation = req.Annotation, Url = req.Url,
+                Folders = req.Folders, Categories = req.Categories, CategoriesMatch = req.CategoriesMatch,
+                ExcludeCategories = req.ExcludeCategories, ExcludeTags = req.ExcludeTags,
+                Ext = req.Ext, Annotation = req.Annotation, Url = req.Url,
                 InTrash = req.InTrash, OrderBy = req.OrderBy, Order = req.Order,
                 Offset = req.Offset, Limit = req.Limit,
             };
@@ -350,13 +357,30 @@ public static class ItemEndpoints
             throw ApiException.InvalidParam("star 取值范围为 0-5");
         }
 
-        if (req.Tags is not null || req.Star is not null || req.Annotation is not null || req.Url is not null)
+        if (req.Tags is not null || req.Star is not null || req.Categories is not null || req.Annotation is not null || req.Url is not null)
         {
+            string[]? categories = null;
+            if (req.Categories is not null)
+            {
+                categories = req.Categories.Select(CategoryPath.Normalize).ToArray()!;
+                if (categories.Any(c => c is null))
+                {
+                    throw ApiException.InvalidParam("包含非法分类路径");
+                }
+
+                categories = categories.Distinct(StringComparer.Ordinal).ToArray();
+            }
+
             await pipeline.SubmitMetadataAsync(req.Id, meta =>
             {
                 if (req.Tags is not null)
                 {
                     meta.Tags = req.Tags.ToList();
+                }
+
+                if (req.Categories is not null)
+                {
+                    meta.Categories = categories!.ToList();
                 }
 
                 if (req.Star is not null)

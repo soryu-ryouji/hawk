@@ -17,6 +17,7 @@ public sealed class ItemMetadata
     public List<PathEntry> Paths { get; } = new();
     public string? Url { get; set; }
     public List<string> Tags { get; set; } = new();
+    public List<string> Categories { get; set; } = new();
     public int Star { get; set; }
     public string? Annotation { get; set; }
 

@@ -18,6 +18,8 @@ public sealed class LibraryPaths
     public string ThumbnailsDir { get; }
     public string TrashDir { get; }
     public string ConfigFile { get; }
+    public string CategoriesFile { get; }
+    public string TagsFile { get; }
 
     public LibraryPaths(string root)
     {
@@ -27,6 +29,8 @@ public sealed class LibraryPaths
         ThumbnailsDir = Path.Combine(HawkDir, "thumbnails");
         TrashDir = Path.Combine(HawkDir, TrashDirName);
         ConfigFile = Path.Combine(HawkDir, "config.toml");
+        CategoriesFile = Path.Combine(HawkDir, "categories.toml");
+        TagsFile = Path.Combine(HawkDir, "tags.toml");
     }
 
     /// <summary>创建 .hawk/ 目录结构，并生成排除缓存目录的 .gitignore</summary>

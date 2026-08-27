@@ -21,7 +21,7 @@
 }
 ```
 
-错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`INTERNAL`
+错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`
 
 ### ID 规范
 
@@ -233,6 +233,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | size              | number   | 文件大小（字节）                           |
 | url               | string   | 来源网址，可为空                           |
 | tags              | string[] | 标签列表                                   |
+| categories        | string[] | 分类路径列表（虚拟分类维度）               |
 | paths             | string[] | 所有文件位置（库内相对路径），首个为主路径 |
 | folders           | string[] | 所在文件夹路径列表（由 paths 派生）        |
 | star              | number   | 评分 0–5                                   |
@@ -255,7 +256,10 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | ---------- | -------- | --------------------------------------------------------------- |
 | ids        | string[] | 按 id 列表匹配                                                  |
 | keywords   | string[] | 关键词（匹配名称、备注）                                        |
-| tags       | string[] | 按标签过滤                                                      |
+| tags       | string[] | 按标签过滤（AND）                                                |
+| categories | string[] | 按分类过滤（含子分类），`categories_match`：`any`（默认）/ `all` |
+| exclude_categories | string[] | 排除分类（任一命中即剔除，含子分类）                    |
+| exclude_tags | string[] | 排除标签（任一命中即剔除）                                |
 | star       | number   | 按评分过滤                                                      |
 | folders    | string[] | 按文件夹路径过滤（含子目录）                                    |
 | ext        | string   | 按扩展名过滤                                                    |
@@ -367,6 +371,7 @@ Item 对象，并附带 `already_existed` 标志：
 | path        | string   | 否   | 指定操作的文件位置（同内容多路径时），缺省为主路径 |
 | name        | string   | 否   | 重命名文件（同步修改真实文件名）                   |
 | tags        | string[] | 否   | 标签（整体替换）                                   |
+| categories  | string[] | 否   | 分类路径（整体替换，自动登记注册表）               |
 | folder_path | string   | 否   | 移动到新文件夹（移动真实文件）                     |
 | star        | number   | 否   | 评分 0–5                                           |
 | annotation  | string   | 否   | 备注                                               |
@@ -435,6 +440,30 @@ Item 对象，并附带 `already_existed` 标志：
 ```json
 { "status": "success" }
 ```
+
+## category
+
+分类是虚拟分类维度：层级路径（`插画/人物`），树由路径派生。注册表（`.hawk/categories.toml`）支持空分类预创建；item 赋值时自动登记。见 [category.md](category.md)。
+
+| 方法 | 端点 | 说明 |
+| ---- | ---- | ---- |
+| GET  | `/api/v1/category/list` | 分类树（注册表 ∪ 全部 item 赋值并集） |
+| POST | `/api/v1/category/create` | `{ "path": "插画/人物" }`，自动补齐祖先；已存在返回 `CATEGORY_EXISTS` |
+| POST | `/api/v1/category/update` | `{ "path", "name"?, "parent_path"? }`，重命名/移动，子树跟随 |
+| POST | `/api/v1/category/delete` | `{ "path" }`，删除节点及子树，全部 item 的相关赋值清除 |
+
+`category/list` 响应：树节点 `{ path, name, children }`（同 folder/list 结构，无 modification_time）。
+
+## tag
+
+标签注册表（`.hawk/tags.toml`）支持空标签预创建；item 赋值时自动登记。
+
+| 方法 | 端点 | 说明 |
+| ---- | ---- | ---- |
+| GET  | `/api/v1/tag/list` | `[{ "name", "count" }]`，count 为库内（不含回收站）item 数 |
+| POST | `/api/v1/tag/create` | `{ "name" }` |
+| POST | `/api/v1/tag/update` | `{ "name", "new_name" }`，重命名，全部 item 跟随；目标已存在时合并 |
+| POST | `/api/v1/tag/delete` | `{ "name" }`，全部 item 的该标签清除 |
 
 ## trash
 

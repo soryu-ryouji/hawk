@@ -77,6 +77,29 @@ check "按 tags 过滤" "$(curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/list" -
 check "按 keywords 过滤" "$(curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/list" -H 'Content-Type: application/json' -d '{"keywords":["beautiful"]}' | jq -r .data.total)" 1
 check "元数据文件已落盘" "$(ls "$LIB/.hawk/metadata/$SUNSET_ID.toml" >/dev/null 2>&1 && echo yes)" yes
 
+# --- 分类（Category） ---
+CAT_API="$BASE/api/v1/category"
+check "创建空分类（含祖先）" "$(curl -s -H "$AUTH" -X POST "$CAT_API/create" -H 'Content-Type: application/json' -d '{"path":"灵感/构图"}' | jq -r .status)" success
+check "空分类出现在分类树" "$(curl -s -H "$AUTH" "$CAT_API/list" | jq -r '.data.children[] | select(.name=="灵感") | .children[0].name')" "构图"
+check "重复创建分类返回 CATEGORY_EXISTS" "$(curl -s -H "$AUTH" -X POST "$CAT_API/create" -H 'Content-Type: application/json' -d '{"path":"灵感"}' | jq -r .error.code)" CATEGORY_EXISTS
+curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/update" -H 'Content-Type: application/json' \
+  -d "{\"id\":\"$SUNSET_ID\",\"categories\":[\"灵感/构图\",\"参考\"]}" >/dev/null
+check "item 分类赋值生效" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories | join(",")')" "灵感/构图,参考"
+check "按分类过滤（含子分类）" "$(curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/list" -H 'Content-Type: application/json' -d '{"categories":["灵感"]}' | jq -r .data.total)" 1
+check "分类过滤 all 语义" "$(curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/list" -H 'Content-Type: application/json' -d '{"categories":["灵感","参考"],"categories_match":"all"}' | jq -r .data.total)" 1
+check "排除分类" "$(curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/list" -H 'Content-Type: application/json' -d '{"exclude_categories":["灵感"]}' | jq -r .data.total)" 2
+check "分类重命名子树跟随" "$(curl -s -H "$AUTH" -X POST "$CAT_API/update" -H 'Content-Type: application/json' -d '{"path":"灵感","name":"灵感库"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories[0]')" "灵感库/构图"
+check "分类删除清除赋值" "$(curl -s -H "$AUTH" -X POST "$CAT_API/delete" -H 'Content-Type: application/json' -d '{"path":"灵感库"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories | join(",")')" "参考"
+check "注册表文件已落盘" "$(ls "$LIB/.hawk/categories.toml" >/dev/null 2>&1 && echo yes)" yes
+
+# --- 标签注册表（Tag） ---
+TAG_API="$BASE/api/v1/tag"
+check "创建空标签" "$(curl -s -H "$AUTH" -X POST "$TAG_API/create" -H 'Content-Type: application/json' -d '{"name":"待审核"}' | jq -r .status)" success
+check "空标签出现在标签列表" "$(curl -s -H "$AUTH" "$TAG_API/list" | jq -r '.data[] | select(.name=="待审核") | .count')" 0
+check "标签重命名跟随 item" "$(curl -s -H "$AUTH" -X POST "$TAG_API/update" -H 'Content-Type: application/json' -d '{"name":"sunset","new_name":"晚霞"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.tags | join(",")')" "nature,晚霞"
+check "排除标签过滤" "$(curl -s -H "$AUTH" -X POST "$BASE/api/v1/item/list" -H 'Content-Type: application/json' -d '{"exclude_tags":["nature"]}' | jq -r .data.total)" 2
+check "标签删除同步清除" "$(curl -s -H "$AUTH" -X POST "$TAG_API/delete" -H 'Content-Type: application/json' -d '{"name":"晚霞"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.tags | join(",")')" "nature"
+
 # --- 缩略图 ---
 for _ in $(seq 1 20); do
   curl -sf -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256" -o "$WORK/t.webp" && break

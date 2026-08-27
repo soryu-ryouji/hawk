@@ -14,6 +14,8 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
 │   └── 人像/
 └── .hawk/              ← hawk 只在目录下创建这个隐藏文件夹
     ├── config.toml     ← 项目级配置（参与同步）
+    ├── categories.toml ← 分类注册表（参与同步）
+    ├── tags.toml       ← 标签注册表（参与同步）
     ├── metadata/       ← 素材参数，纯文本（参与同步）
     ├── thumbnails/     ← 缩略图缓存（本地专用，不参与同步，可重建）
     └── trash/          ← 回收站（本地专用，不参与同步）
@@ -23,8 +25,10 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
 
 | 内容          | 是否参与同步 | 说明                       |
 | ------------- | ------------ | -------------------------- |
-| `config.toml` | 是           | 项目配置，随素材目录一起走 |
-| `metadata/`   | 是           | 素材参数，唯一数据源       |
+| `config.toml`     | 是           | 项目配置，随素材目录一起走 |
+| `categories.toml` | 是           | 分类注册表（含空分类）     |
+| `tags.toml`       | 是           | 标签注册表（含空标签）     |
+| `metadata/`       | 是           | 素材参数，唯一数据源       |
 | `thumbnails/` | 否           | 本地缓存，可重建           |
 | `trash/`      | 否           | 回收站，仅本机可恢复       |
 
@@ -49,6 +53,7 @@ modification_time = 1700000000000
 
 url = "https://example.com/photo.jpg"   # 来源网址
 tags = ["nature", "sunset"]             # 标签
+categories = ["插画/人物"]              # 分类（虚拟分类维度，见 category.md）
 star = 4                                # 评分 0–5
 annotation = "Beautiful sunset"         # 备注
 ```
@@ -119,4 +124,6 @@ thumbnail_sizes = [256, 1024]
 
 ## 实时文件监听
 
-hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 的变更同样被监听，修改后自动生效。
+hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 与注册表文件（categories.toml / tags.toml）的变更同样被监听，修改后自动生效。
+
+文件监听可能静默丢事件（尤其 macOS FSEvents，无溢出错误可捕获），因此另有**周期对账**：默认每 60 秒跑一次轻量全量扫描（复用哈希、不读文件内容），保证最终一致。间隔由环境变量 `HAWK_RESCAN_INTERVAL` 控制（秒，0 关闭）。

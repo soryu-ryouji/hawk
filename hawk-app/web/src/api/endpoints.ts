@@ -1,6 +1,6 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
 import { apiConfig, request } from './client';
-import type { FolderNode, Item, ItemListRequest, LibraryInfo } from '../types';
+import type { CategoryNode, FolderNode, Item, ItemListRequest, LibraryInfo, TagInfo } from '../types';
 
 export interface ItemListResult {
   items: Item[];
@@ -12,6 +12,7 @@ export interface ItemListResult {
 export interface ItemPatch {
   name?: string;
   tags?: string[];
+  categories?: string[];
   star?: number;
   annotation?: string;
   url?: string;
@@ -46,6 +47,18 @@ export const api = {
   refreshThumbnail: (id: string) => request<void>('POST', '/api/v1/item/refresh_thumbnail', { body: { id } }),
 
   trashClear: () => request<void>('POST', '/api/v1/trash/clear'),
+
+  categoryList: () => request<CategoryNode>('GET', '/api/v1/category/list'),
+  categoryCreate: (path: string) => request<void>('POST', '/api/v1/category/create', { body: { path } }),
+  categoryUpdate: (path: string, patch: { name?: string; parent_path?: string }) =>
+    request<void>('POST', '/api/v1/category/update', { body: { path, ...patch } }),
+  categoryDelete: (path: string) => request<void>('POST', '/api/v1/category/delete', { body: { path } }),
+
+  tagList: () => request<TagInfo[]>('GET', '/api/v1/tag/list'),
+  tagCreate: (name: string) => request<void>('POST', '/api/v1/tag/create', { body: { name } }),
+  tagUpdate: (name: string, newName: string) =>
+    request<void>('POST', '/api/v1/tag/update', { body: { name, new_name: newName } }),
+  tagDelete: (name: string) => request<void>('POST', '/api/v1/tag/delete', { body: { name } }),
 
   /** 缩略图 URL：<img> 无法带请求头，token 走查询参数（后端已放行该端点） */
   thumbnailUrl(id: string, size: 256 | 1024 = 256): string {

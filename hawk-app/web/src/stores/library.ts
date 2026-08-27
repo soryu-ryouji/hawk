@@ -4,7 +4,7 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
-import type { FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, ViewState } from '../types';
+import type { CategoryNode, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, TagInfo, ViewState } from '../types';
 
 const PAGE_SIZE = 100;
 
@@ -12,6 +12,9 @@ const ERROR_TEXT: Record<string, string> = {
   FILE_EXISTS: '同名文件或文件夹已存在',
   ITEM_NOT_FOUND: '素材不存在或已被移除',
   FOLDER_NOT_FOUND: '文件夹不存在',
+  CATEGORY_NOT_FOUND: '分类不存在',
+  CATEGORY_EXISTS: '分类已存在',
+  TAG_NOT_FOUND: '标签不存在',
   UNSUPPORTED_FORMAT: '不支持的格式',
   INVALID_PARAM: '参数无效',
   NETWORK: '无法连接 hawk-server',
@@ -40,6 +43,8 @@ export const useLibraryStore = defineStore('library', () => {
   const endReached = ref(false);
   const selection = ref<string[]>([]);
   const folders = ref<FolderNode | null>(null);
+  const categories = ref<CategoryNode | null>(null);
+  const tagList = ref<TagInfo[]>([]);
   const library = ref<LibraryInfo | null>(null);
   const thumbSize = ref(160);
   const previewId = ref<string | null>(null);
@@ -73,9 +78,25 @@ export const useLibraryStore = defineStore('library', () => {
     return list;
   });
 
+  /** 扁平化的分类树（添加到分类等选择控件用） */
+  const flatCategories = computed(() => {
+    const list: { path: string; label: string }[] = [];
+    const walk = (node: CategoryNode, depth: number) => {
+      for (const child of node.children) {
+        list.push({ path: child.path, label: '　'.repeat(depth) + child.name });
+        walk(child, depth + 1);
+      }
+    };
+    if (categories.value) {
+      walk(categories.value, 0);
+    }
+    return list;
+  });
+
   // ---- 内部 ----
   const debouncedRefresh = debounce(200);
   const debouncedRefreshFolders = debounce(300);
+  const debouncedRefreshTaxonomy = debounce(300);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   function buildListParams(offset: number, limit: number): ItemListRequest {
@@ -85,7 +106,9 @@ export const useLibraryStore = defineStore('library', () => {
       order_by: query.value.orderBy,
       order: query.value.order,
       in_trash: isTrash.value || undefined,
-      folders: currentFolderPath.value ? [currentFolderPath.value] : undefined,
+      folders: view.value.kind === 'folder' ? [view.value.path] : undefined,
+      categories: view.value.kind === 'category' ? [view.value.path] : undefined,
+      tags: view.value.kind === 'tag' ? [view.value.name] : undefined,
       offset,
       limit,
     };
@@ -100,7 +123,7 @@ export const useLibraryStore = defineStore('library', () => {
   // ---- 初始与查询 ----
   async function init() {
     library.value = await api.libraryInfo();
-    await refreshFolders();
+    await Promise.all([refreshFolders(), refreshTaxonomy()]);
     restoreView();
     await resetList();
   }
@@ -120,6 +143,12 @@ export const useLibraryStore = defineStore('library', () => {
       if (parsed.kind === 'folder' && !folderExists(parsed.path)) {
         return; // 上次浏览的文件夹已被删除 → 回退全部素材
       }
+      if (parsed.kind === 'category' && !categoryExists(parsed.path)) {
+        return;
+      }
+      if (parsed.kind === 'tag' && !tagList.value.some((t) => t.name === parsed.name)) {
+        return;
+      }
       view.value = parsed;
     } catch {
       // 损坏的持久化数据忽略
@@ -129,6 +158,11 @@ export const useLibraryStore = defineStore('library', () => {
   function folderExists(path: string): boolean {
     const walk = (node: FolderNode): boolean => node.path === path || node.children.some(walk);
     return folders.value ? walk(folders.value) : false;
+  }
+
+  function categoryExists(path: string): boolean {
+    const walk = (node: CategoryNode): boolean => node.path === path || node.children.some(walk);
+    return categories.value ? walk(categories.value) : false;
   }
 
   function setView(v: ViewState) {
@@ -324,6 +358,109 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  // ---- 分类/标签 ----
+
+  async function refreshTaxonomy() {
+    try {
+      const [categoryTree, tags] = await Promise.all([api.categoryList(), api.tagList()]);
+      categories.value = categoryTree;
+      tagList.value = tags;
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  async function categoryCreate(path: string) {
+    try {
+      await api.categoryCreate(path);
+      await refreshTaxonomy();
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  async function categoryRename(path: string, name: string) {
+    try {
+      await api.categoryUpdate(path, { name });
+      await refreshTaxonomy();
+      // 当前视图正在该分类下 → 跟随迁移后的新路径
+      if (view.value.kind === 'category') {
+        const prefix = path + '/';
+        if (view.value.path === path) {
+          setView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) });
+        } else if (view.value.path.startsWith(prefix)) {
+          setView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) + '/' + view.value.path.slice(prefix.length) });
+        }
+      }
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  async function categoryDelete(path: string) {
+    try {
+      await api.categoryDelete(path);
+      await refreshTaxonomy();
+      if (view.value.kind === 'category' && (view.value.path === path || view.value.path.startsWith(path + '/'))) {
+        setView({ kind: 'all' });
+      }
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  async function tagCreate(name: string) {
+    try {
+      await api.tagCreate(name);
+      await refreshTaxonomy();
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  async function tagRename(name: string, newName: string) {
+    try {
+      await api.tagUpdate(name, newName);
+      await refreshTaxonomy();
+      if (view.value.kind === 'tag' && view.value.name === name) {
+        setView({ kind: 'tag', name: newName });
+      }
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  async function tagDelete(name: string) {
+    try {
+      await api.tagDelete(name);
+      await refreshTaxonomy();
+      if (view.value.kind === 'tag' && view.value.name === name) {
+        setView({ kind: 'all' });
+      }
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  /** 为全部选中项追加分类（去重，保留已有） */
+  function addCategoryToSelected(path: string) {
+    for (const id of selection.value) {
+      const item = items.value.find((i) => i.id === id);
+      if (item && !(item.categories ?? []).includes(path)) {
+        void updateItem(id, { categories: [...(item.categories ?? []), path] });
+      }
+    }
+  }
+
+  function parentOfCategory(path: string): string {
+    const idx = path.lastIndexOf('/');
+    return idx < 0 ? '' : path.slice(0, idx);
+  }
+
+  function joinCategoryPath(parent: string, name: string): string {
+    return parent === '' ? name : `${parent}/${name}`;
+  }
+
   // ---- 预览浮层 ----
   function openPreview(id: string) {
     previewId.value = id;
@@ -379,15 +516,17 @@ export const useLibraryStore = defineStore('library', () => {
       }
     }
     debouncedRefreshFolders(() => void refreshFolders());
+    debouncedRefreshTaxonomy(() => void refreshTaxonomy());
   }
 
   return {
-    view, query, items, total, loading, endReached, selection, folders, library, thumbSize, previewId, toast,
-    isTrash, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders,
+    view, query, items, total, loading, endReached, selection, folders, categories, tagList, library, thumbSize, previewId, toast,
+    isTrash, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, flatCategories,
     init, setView, setQuery, resetList, fetchMore, refresh,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,
+    refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected,
     openPreview, closePreview, navigatePreview, showToast, applyEvent,
   };
 });

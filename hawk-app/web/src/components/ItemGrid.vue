@@ -8,19 +8,21 @@ import ItemCard from './ItemCard.vue';
 import EmptyState from './EmptyState.vue';
 import PromptDialog from './PromptDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
+import CategoryPickerDialog from './CategoryPickerDialog.vue';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
 
 const showTagDialog = ref(false);
 const showFolderDialog = ref(false);
+const showCategoryDialog = ref(false);
 
 /** 为全部选中项追加标签（去重） */
 function addTagToSelected(tag: string) {
   for (const id of store.selection) {
     const item = store.items.find((i) => i.id === id);
-    if (item && !item.tags.includes(tag)) {
-      void store.updateItem(id, { tags: [...item.tags, tag] });
+    if (item && !(item.tags ?? []).includes(tag)) {
+      void store.updateItem(id, { tags: [...(item.tags ?? []), tag] });
     }
   }
 }
@@ -63,6 +65,7 @@ function onMenu(item: Item, e: MouseEvent) {
       ]
     : [
         { label: '添加标签…', action: () => (showTagDialog.value = true) },
+        { label: '添加到分类…', action: () => (showCategoryDialog.value = true) },
         { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
         { label: '在 Finder 中显示', action: () => window.hawkShell?.showInFinder(item.paths[0]) },
         { separator: true, label: '' },
@@ -108,11 +111,21 @@ function onMenu(item: Item, e: MouseEvent) {
       v-if="showTagDialog"
       title="添加标签"
       placeholder="输入标签，回车确认"
+      :suggestions="store.tagList.map((t) => t.name)"
       @confirm="
         addTagToSelected($event);
         showTagDialog = false;
       "
       @cancel="showTagDialog = false"
+    />
+    <CategoryPickerDialog
+      v-if="showCategoryDialog"
+      title="添加到分类"
+      @confirm="
+        store.addCategoryToSelected($event);
+        showCategoryDialog = false;
+      "
+      @cancel="showCategoryDialog = false"
     />
     <FolderPickerDialog
       v-if="showFolderDialog"

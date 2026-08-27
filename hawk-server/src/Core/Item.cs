@@ -23,6 +23,7 @@ public sealed class Item
     public List<ItemLocation> Locations { get; } = new();
     public string? Url { get; set; }
     public List<string> Tags { get; set; } = new();
+    public List<string> Categories { get; set; } = new();
     public int Star { get; set; }
     public string? Annotation { get; set; }
     public int Width { get; set; }
@@ -55,6 +56,7 @@ public sealed class Item
             Paths = paths,
             Folders = paths.Select(LibraryPaths.DirOf).Where(d => d != "").Distinct().ToArray(),
             Star = Star,
+            Categories = Categories.ToArray(),
             Annotation = Annotation,
             ModificationTime = main.ModificationTime,
         };
@@ -71,7 +73,8 @@ public sealed record ItemDto
     public int Height { get; init; }
     public long Size { get; init; }
     public string? Url { get; init; }
-    public required string[] Tags { get; init; }
+    public string[] Tags { get; init; } = [];
+    public string[] Categories { get; init; } = [];
     public required string[] Paths { get; init; }
     public required string[] Folders { get; init; }
     public int Star { get; init; }

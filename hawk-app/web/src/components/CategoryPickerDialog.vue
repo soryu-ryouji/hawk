@@ -1,21 +1,22 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type { Directive } from 'vue';
+import { useLibraryStore } from '../stores/library';
 
-defineProps<{ title: string; placeholder?: string; suggestions?: string[] }>();
-const emit = defineEmits<{ confirm: [value: string]; cancel: [] }>();
+defineProps<{ title: string }>();
+const emit = defineEmits<{ confirm: [path: string]; cancel: [] }>();
 
+const store = useLibraryStore();
 const text = ref('');
-const listId = `dl-${Math.random().toString(36).slice(2)}`;
 
 const vFocus: Directive<HTMLElement> = {
   mounted: (el) => el.focus(),
 };
 
 function confirm() {
-  const value = text.value.trim();
-  if (value) {
-    emit('confirm', value);
+  const path = text.value.trim().replace(/^\/+|\/+$/g, '');
+  if (path) {
+    emit('confirm', path);
   } else {
     emit('cancel');
   }
@@ -30,13 +31,13 @@ function confirm() {
         <input
           v-model="text"
           v-focus
-          :list="suggestions?.length ? listId : undefined"
-          :placeholder="placeholder ?? ''"
+          list="category-paths"
+          placeholder="选择已有分类，或输入新路径（如 插画/人物）"
           @keydown.enter="confirm"
           @keydown.esc="emit('cancel')"
         />
-        <datalist v-if="suggestions?.length" :id="listId">
-          <option v-for="s in suggestions" :key="s" :value="s" />
+        <datalist id="category-paths">
+          <option v-for="category in store.flatCategories" :key="category.path" :value="category.path" />
         </datalist>
         <div class="actions">
           <button @click="emit('cancel')">取消</button>
@@ -59,7 +60,7 @@ function confirm() {
 }
 
 .dialog {
-  width: 320px;
+  width: 360px;
   padding: 16px;
   border-radius: 8px;
   background: var(--bg-2);

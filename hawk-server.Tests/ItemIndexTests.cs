@@ -7,12 +7,17 @@ public class ItemIndexTests
     private readonly ItemIndex _index = new();
 
     private Item AddItem(string hash, string location, string[]? tags = null, int star = 0,
-        string? annotation = null, string? url = null, long size = 100, long mtime = 1000)
+        string? annotation = null, string? url = null, long size = 100, long mtime = 1000, string[]? categories = null)
     {
         var item = _index.GetOrAdd(hash, out _);
         if (tags is not null)
         {
             item.Tags.AddRange(tags);
+        }
+
+        if (categories is not null)
+        {
+            item.Categories.AddRange(categories);
         }
 
         item.Star = star;
@@ -129,6 +134,36 @@ public class ItemIndexTests
         Assert.Equal(3, total);          // total 是分页前计数
         Assert.Single(page);
         Assert.Equal("h3", page[0].Id);
+    }
+
+    [Fact]
+    public void 分类过滤_any与all_含子分类()
+    {
+        AddItem("c1", "a.png", categories: ["插画/人物"]);
+        AddItem("c2", "b.png", categories: ["插画", "参考"]);
+        AddItem("c3", "c.png", categories: ["摄影"]);
+
+        // any：命中任一（"插画" 含子分类 "插画/人物"）
+        _index.Query(new ItemQuery { Categories = ["插画"] }, out var any);
+        Assert.Equal(2, any);
+
+        // all：必须同时命中「插画」与「参考」
+        _index.Query(new ItemQuery { Categories = ["插画", "参考"], CategoriesMatch = "all" }, out var all);
+        Assert.Equal(1, all);
+    }
+
+    [Fact]
+    public void 排除过滤_分类与标签()
+    {
+        AddItem("c1", "a.png", tags: ["nature"], categories: ["插画/人物"]);
+        AddItem("c2", "b.png", tags: ["work"], categories: ["摄影"]);
+        AddItem("c3", "c.png");
+
+        _index.Query(new ItemQuery { ExcludeCategories = ["插画"] }, out var noCat);
+        Assert.Equal(2, noCat);
+
+        _index.Query(new ItemQuery { ExcludeTags = ["nature"] }, out var noTag);
+        Assert.Equal(2, noTag);
     }
 
     [Fact]

@@ -32,6 +32,8 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton<LibraryConfig>();
 builder.Services.AddSingleton<MetadataStore>();
+builder.Services.AddSingleton<CategoryRegistry>();
+builder.Services.AddSingleton<TagRegistry>();
 builder.Services.AddSingleton<ItemIndex>();
 builder.Services.AddSingleton<ThumbnailService>();
 builder.Services.AddSingleton<EventBus>();
@@ -51,6 +53,7 @@ app.MapLibraryEndpoints();
 app.MapFolderEndpoints();
 app.MapItemEndpoints();
 app.MapTrashEndpoints();
+app.MapTaxonomyEndpoints();
 app.MapEventsEndpoints();
 
 // 启动顺序（server-csharp.md）：先开文件监听（事件入缓冲队列），再扫描建索引，就绪后才开放端口
@@ -62,6 +65,7 @@ watcher.FileUpsert += pipeline.NotifyUpsert;
 watcher.Deleted += pipeline.NotifyDeleted;
 watcher.Moved += pipeline.NotifyMoved;
 watcher.ConfigChanged += pipeline.NotifyConfigChanged;
+watcher.RegistryChanged += pipeline.NotifyRegistryChanged;
 watcher.Overflowed += pipeline.NotifyOverflow;
 watcher.Start();
 

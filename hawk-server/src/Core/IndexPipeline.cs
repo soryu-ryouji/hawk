@@ -23,6 +23,15 @@ public sealed class IndexPipeline : IDisposable
     private sealed record MetadataJob(string Hash, Action<ItemMetadata> Mutate, TaskCompletionSource<Item?> Done) : IndexJob;
     private sealed record ThumbJob(string Hash, string SourceAbs);
 
+    // 分类/标签操作（注册表 + 元数据批量迁移）
+    private sealed record CategoryCreateJob(string Path, TaskCompletionSource Done) : IndexJob;
+    private sealed record CategoryUpdateJob(string Path, string? Name, string? ParentPath, TaskCompletionSource Done) : IndexJob;
+    private sealed record CategoryDeleteJob(string Path, TaskCompletionSource Done) : IndexJob;
+    private sealed record TagCreateJob(string Name, TaskCompletionSource Done) : IndexJob;
+    private sealed record TagUpdateJob(string Name, string NewName, TaskCompletionSource Done) : IndexJob;
+    private sealed record TagDeleteJob(string Name, TaskCompletionSource Done) : IndexJob;
+    private sealed record RegistryReloadJob : IndexJob;
+
     private readonly LibraryPaths _paths;
     private readonly LibraryConfig _config;
     private readonly MetadataStore _store;
@@ -30,6 +39,9 @@ public sealed class IndexPipeline : IDisposable
     private readonly ThumbnailService _thumbnails;
     private readonly EventBus _bus;
     private readonly LibraryScanner _scanner;
+    private readonly CategoryRegistry _categories;
+    private readonly TagRegistry _tags;
+    private readonly ServerSettings _settings;
     private readonly ILogger<IndexPipeline> _logger;
 
     private readonly Channel<IndexJob> _jobs = Channel.CreateBounded<IndexJob>(
@@ -40,6 +52,7 @@ public sealed class IndexPipeline : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private int _overflow;
     private Task? _consumer;
+    private Task? _reconciler;
     private Task[] _thumbWorkers = [];
 
     // 防抖：仍在写入中的文件（mtime 距今不足 StabilityWindow）不立即哈希，延迟重试
@@ -58,6 +71,9 @@ public sealed class IndexPipeline : IDisposable
         ThumbnailService thumbnails,
         EventBus bus,
         LibraryScanner scanner,
+        CategoryRegistry categories,
+        TagRegistry tags,
+        ServerSettings settings,
         ILogger<IndexPipeline> logger)
     {
         _paths = paths;
@@ -67,6 +83,9 @@ public sealed class IndexPipeline : IDisposable
         _thumbnails = thumbnails;
         _bus = bus;
         _scanner = scanner;
+        _categories = categories;
+        _tags = tags;
+        _settings = settings;
         _logger = logger;
     }
 
@@ -77,6 +96,31 @@ public sealed class IndexPipeline : IDisposable
         _thumbWorkers = Enumerable.Range(0, Math.Clamp(Environment.ProcessorCount / 4, 1, 4))
             .Select(_ => ThumbLoop(_cts.Token))
             .ToArray();
+        _reconciler = ReconcileLoop(_cts.Token);
+    }
+
+    /// <summary>
+    /// 周期对账：文件监听（尤其 macOS FSEvents）可能静默丢事件且无溢出错误，
+    /// 每 RescanIntervalSeconds 跑一次轻量全量扫描（复用哈希、不读文件内容）保证最终一致。0 关闭。
+    /// </summary>
+    private async Task ReconcileLoop(CancellationToken ct)
+    {
+        if (_settings.RescanIntervalSeconds <= 0)
+        {
+            return;
+        }
+
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(_settings.RescanIntervalSeconds));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                FireAndForget(new ScanJob(Full: false, null));
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
     }
 
     // ---------- 入口：文件监听（火忘，channel 满时置溢出标记，由消费者全量扫描兜底） ----------
@@ -95,6 +139,9 @@ public sealed class IndexPipeline : IDisposable
 
     public void NotifyConfigChanged() => FireAndForget(new ScanJob(Full: false, null));
     public void NotifyOverflow() => Interlocked.Exchange(ref _overflow, 1);
+
+    /// <summary>注册表文件被外部修改（网盘同步等）：重新加载</summary>
+    public void NotifyRegistryChanged() => FireAndForget(new RegistryReloadJob());
 
     /// <summary>异步触发全量扫描（library/reindex：立即返回，过程变更照常推送事件）</summary>
     public void RequestScan(bool full) => FireAndForget(new ScanJob(full, null));
@@ -153,6 +200,50 @@ public sealed class IndexPipeline : IDisposable
         return tcs.Task;
     }
 
+    // ---------- 入口：分类/标签操作（API 提交，校验在端点层完成） ----------
+
+    public Task SubmitCategoryCreateAsync(string path)
+    {
+        var tcs = NewTcs();
+        Enqueue(new CategoryCreateJob(path, tcs), tcs);
+        return tcs.Task;
+    }
+
+    public Task SubmitCategoryUpdateAsync(string path, string? name, string? parentPath)
+    {
+        var tcs = NewTcs();
+        Enqueue(new CategoryUpdateJob(path, name, parentPath, tcs), tcs);
+        return tcs.Task;
+    }
+
+    public Task SubmitCategoryDeleteAsync(string path)
+    {
+        var tcs = NewTcs();
+        Enqueue(new CategoryDeleteJob(path, tcs), tcs);
+        return tcs.Task;
+    }
+
+    public Task SubmitTagCreateAsync(string name)
+    {
+        var tcs = NewTcs();
+        Enqueue(new TagCreateJob(name, tcs), tcs);
+        return tcs.Task;
+    }
+
+    public Task SubmitTagUpdateAsync(string name, string newName)
+    {
+        var tcs = NewTcs();
+        Enqueue(new TagUpdateJob(name, newName, tcs), tcs);
+        return tcs.Task;
+    }
+
+    public Task SubmitTagDeleteAsync(string name)
+    {
+        var tcs = NewTcs();
+        Enqueue(new TagDeleteJob(name, tcs), tcs);
+        return tcs.Task;
+    }
+
     private static TaskCompletionSource NewTcs() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static TaskCompletionSource<T> NewTcs<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -192,6 +283,7 @@ public sealed class IndexPipeline : IDisposable
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "索引任务处理失败: {Job}", job.GetType().Name);
+                    FailJob(job, ex); // 异常回传给等待中的 API 调用方，避免挂起
                 }
 
                 // 监听事件丢失兜底：每处理完一批任务检查一次
@@ -240,6 +332,54 @@ public sealed class IndexPipeline : IDisposable
             case MetadataJob j:
                 Complete(j.Done, DoApplyMetadata(j.Hash, j.Mutate));
                 break;
+            case CategoryCreateJob j:
+                _categories.Register(j.Path);
+                Complete(j.Done);
+                break;
+            case CategoryUpdateJob j:
+                DoCategoryUpdate(j.Path, j.Name, j.ParentPath);
+                Complete(j.Done);
+                break;
+            case CategoryDeleteJob j:
+                DoCategoryDelete(j.Path);
+                Complete(j.Done);
+                break;
+            case TagCreateJob j:
+                _tags.Register(j.Name);
+                Complete(j.Done);
+                break;
+            case TagUpdateJob j:
+                DoTagUpdate(j.Name, j.NewName);
+                Complete(j.Done);
+                break;
+            case TagDeleteJob j:
+                DoTagDelete(j.Name);
+                Complete(j.Done);
+                break;
+            case RegistryReloadJob:
+                _categories.Reload();
+                _tags.Reload();
+                break;
+        }
+    }
+
+    /// <summary>任务处理失败时把异常回传给提交方</summary>
+    private static void FailJob(IndexJob job, Exception ex)
+    {
+        switch (job)
+        {
+            case UpsertJob j: j.Done?.TrySetException(ex); break;
+            case MoveJob j: j.Done?.TrySetException(ex); break;
+            case DirMoveJob j: j.Done?.TrySetException(ex); break;
+            case ScanJob j: j.Done?.TrySetException(ex); break;
+            case ClearTrashJob j: j.Done?.TrySetException(ex); break;
+            case MetadataJob j: j.Done.TrySetException(ex); break;
+            case CategoryCreateJob j: j.Done.TrySetException(ex); break;
+            case CategoryUpdateJob j: j.Done.TrySetException(ex); break;
+            case CategoryDeleteJob j: j.Done.TrySetException(ex); break;
+            case TagCreateJob j: j.Done.TrySetException(ex); break;
+            case TagUpdateJob j: j.Done.TrySetException(ex); break;
+            case TagDeleteJob j: j.Done.TrySetException(ex); break;
         }
     }
 
@@ -366,6 +506,8 @@ public sealed class IndexPipeline : IDisposable
             _store.Save(hash, meta);
         }
 
+        RegisterTaxonomy(meta);
+
         // 索引更新；尺寸为派生信息，索引时从文件读取
         var item = _index.GetOrAdd(hash, out var created);
         SyncMetadata(item, meta);
@@ -480,8 +622,16 @@ public sealed class IndexPipeline : IDisposable
     {
         item.Url = meta.Url;
         item.Tags = new List<string>(meta.Tags);
+        item.Categories = new List<string>(meta.Categories);
         item.Star = meta.Star;
         item.Annotation = meta.Annotation;
+    }
+
+    /// <summary>元数据中的分类/标签自动登记进注册表（赋值即创建，空节点也可预创建）</summary>
+    private void RegisterTaxonomy(ItemMetadata meta)
+    {
+        _categories.RegisterAll(meta.Categories);
+        _tags.RegisterAll(meta.Tags);
     }
 
     // ---------- 删除 / 移动 ----------
@@ -712,6 +862,7 @@ public sealed class IndexPipeline : IDisposable
 
         mutate(meta);
         _store.Save(hash, meta);
+        RegisterTaxonomy(meta);
 
         var item = _index.Get(hash);
         if (item is not null)
@@ -721,6 +872,94 @@ public sealed class IndexPipeline : IDisposable
         }
 
         return item;
+    }
+
+    // ---------- 分类/标签级联迁移 ----------
+
+    /// <summary>分类重命名/移动：注册表前缀迁移 + 全部命中 item 的 categories 迁移（子树跟随）</summary>
+    private void DoCategoryUpdate(string path, string? name, string? parentPath)
+    {
+        var newName = name ?? CategoryPath.NameOf(path);
+        var newParent = parentPath ?? CategoryPath.ParentOf(path);
+        var newPath = newParent == "" ? newName : newParent + "/" + newName;
+        if (newPath == path)
+        {
+            return;
+        }
+
+        _categories.Rename(path, newPath);
+        // 分类可能仅由赋值产生而未注册过，补上登记
+        _categories.Register(newPath);
+
+        foreach (var (hash, meta) in _store.Snapshot())
+        {
+            if (!meta.Categories.Any(c => CategoryPath.IsSameOrDescendant(c, path)))
+            {
+                continue;
+            }
+
+            meta.Categories = meta.Categories
+                .Select(c => CategoryPath.IsSameOrDescendant(c, path) ? newPath + c[path.Length..] : c)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            SaveAndSync(hash, meta);
+        }
+    }
+
+    /// <summary>分类删除：注册表与全部 item 的该节点及子树赋值一并清除</summary>
+    private void DoCategoryDelete(string path)
+    {
+        _categories.Delete(path);
+
+        foreach (var (hash, meta) in _store.Snapshot())
+        {
+            if (meta.Categories.RemoveAll(c => CategoryPath.IsSameOrDescendant(c, path)) > 0)
+            {
+                SaveAndSync(hash, meta);
+            }
+        }
+    }
+
+    /// <summary>标签重命名：注册表更名 + 全部 item 的 tags 替换；目标已存在时合并</summary>
+    private void DoTagUpdate(string name, string newName)
+    {
+        _tags.Rename(name, newName);
+
+        foreach (var (hash, meta) in _store.Snapshot())
+        {
+            if (!meta.Tags.Contains(name))
+            {
+                continue;
+            }
+
+            meta.Tags = meta.Tags.Select(t => t == name ? newName : t).Distinct(StringComparer.Ordinal).ToList();
+            SaveAndSync(hash, meta);
+        }
+    }
+
+    /// <summary>标签删除：注册表与全部 item 的该标签清除</summary>
+    private void DoTagDelete(string name)
+    {
+        _tags.Delete(name);
+
+        foreach (var (hash, meta) in _store.Snapshot())
+        {
+            if (meta.Tags.RemoveAll(t => t == name) > 0)
+            {
+                SaveAndSync(hash, meta);
+            }
+        }
+    }
+
+    /// <summary>批量迁移的公共收尾：保存元数据、同步索引、推送 item.updated</summary>
+    private void SaveAndSync(string hash, ItemMetadata meta)
+    {
+        _store.Save(hash, meta);
+        if (_index.Get(hash) is { } item)
+        {
+            SyncMetadata(item, meta);
+            PublishItemChanged(item);
+        }
     }
 
     // ---------- 事件 ----------

@@ -18,6 +18,8 @@ public class IndexPipelineTests
         public required ItemIndex Index;
         public required ThumbnailService Thumbnails;
         public required EventBus Bus;
+        public required CategoryRegistry Categories;
+        public required TagRegistry Tags;
         public required IndexPipeline Pipeline;
 
         public static Rig Create(string root)
@@ -29,11 +31,14 @@ public class IndexPipelineTests
             var index = new ItemIndex();
             var thumbnails = new ThumbnailService(paths, NullLogger<ThumbnailService>.Instance);
             var bus = new EventBus();
+            var categories = new CategoryRegistry(paths, NullLogger<CategoryRegistry>.Instance);
+            var tags = new TagRegistry(paths, NullLogger<TagRegistry>.Instance);
             var scanner = new LibraryScanner(paths, config);
-            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, bus, scanner,
+            var settings = new ServerSettings { LibraryRoot = root, Token = "test" };
+            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, bus, scanner, categories, tags, settings,
                 NullLogger<IndexPipeline>.Instance);
             pipeline.Start();
-            return new Rig { Paths = paths, Store = store, Index = index, Thumbnails = thumbnails, Bus = bus, Pipeline = pipeline };
+            return new Rig { Paths = paths, Store = store, Index = index, Thumbnails = thumbnails, Bus = bus, Categories = categories, Tags = tags, Pipeline = pipeline };
         }
 
         public void Dispose() => Pipeline.Dispose();
@@ -273,5 +278,75 @@ public class IndexPipelineTests
 
         Assert.NotNull(result);
         Assert.Single(rig.Index.AllLocationPaths());
+    }
+
+    // ---------- 分类/标签级联 ----------
+
+    [Fact]
+    public async Task 分类重命名_元数据子树跟随迁移()
+    {
+        using var rig = Rig.Create(_dir.Root);
+        var file = _dir.WriteFile("art.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Categories = ["插画/人物"]);
+        Assert.Contains("插画", rig.Categories.Snapshot()); // 赋值自动登记注册表（含祖先）
+
+        await rig.Pipeline.SubmitCategoryUpdateAsync("插画", "灵感", null);
+
+        Assert.True(rig.Store.TryGet(hash, out var meta));
+        Assert.Equal(["灵感/人物"], meta.Categories);
+        Assert.Equal(["灵感", "灵感/人物"], rig.Categories.Snapshot());
+        Assert.Equal(["灵感/人物"], rig.Index.Get(hash)!.Categories);
+    }
+
+    [Fact]
+    public async Task 分类删除_清除全部赋值()
+    {
+        using var rig = Rig.Create(_dir.Root);
+        var file = _dir.WriteFile("art.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Categories = ["插画/人物", "参考"]);
+        await rig.Pipeline.SubmitCategoryDeleteAsync("插画");
+
+        Assert.True(rig.Store.TryGet(hash, out var meta));
+        Assert.Equal(["参考"], meta.Categories);
+        Assert.Empty(rig.Categories.Snapshot().Where(c => c.StartsWith("插画")));
+    }
+
+    [Fact]
+    public async Task 标签重命名_全部item跟随()
+    {
+        using var rig = Rig.Create(_dir.Root);
+        var file = _dir.WriteFile("photo.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Tags = ["natrue", "work"]);
+        await rig.Pipeline.SubmitTagUpdateAsync("natrue", "nature");
+
+        Assert.True(rig.Store.TryGet(hash, out var meta));
+        Assert.Equal(["nature", "work"], meta.Tags);
+        Assert.Contains("nature", rig.Tags.Snapshot());
+        Assert.DoesNotContain("natrue", rig.Tags.Snapshot());
+    }
+
+    [Fact]
+    public async Task 标签删除_注册表与赋值同步清除()
+    {
+        using var rig = Rig.Create(_dir.Root);
+        var file = _dir.WriteFile("photo.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Tags = ["nature"]);
+        await rig.Pipeline.SubmitTagDeleteAsync("nature");
+
+        Assert.True(rig.Store.TryGet(hash, out var meta));
+        Assert.Empty(meta.Tags);
+        Assert.Empty(rig.Tags.Snapshot());
     }
 }

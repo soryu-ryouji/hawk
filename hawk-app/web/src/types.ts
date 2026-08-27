@@ -3,11 +3,18 @@ import type { components } from './api/schema';
 // 契约类型一律从生成的 schema 取，不另写
 export type Item = components['schemas']['ItemDto'];
 export type FolderNode = components['schemas']['FolderNode'];
+export type CategoryNode = components['schemas']['CategoryNode'];
+export type TagInfo = components['schemas']['TagInfo'];
 export type LibraryInfo = components['schemas']['LibraryInfo'];
 export type ItemListRequest = components['schemas']['ItemListRequest'];
 
 // 业务自有类型
-export type ViewState = { kind: 'all' } | { kind: 'folder'; path: string } | { kind: 'trash' };
+export type ViewState =
+  | { kind: 'all' }
+  | { kind: 'folder'; path: string }
+  | { kind: 'category'; path: string }
+  | { kind: 'tag'; name: string }
+  | { kind: 'trash' };
 
 export interface QueryState {
   keywords: string[];

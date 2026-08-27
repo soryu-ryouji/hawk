@@ -8,6 +8,10 @@ public sealed record ItemQuery
     public string[]? Tags { get; init; }
     public int? Star { get; init; }
     public string[]? Folders { get; init; }
+    public string[]? Categories { get; init; }
+    public string? CategoriesMatch { get; init; }   // "any"（默认）/ "all"
+    public string[]? ExcludeCategories { get; init; }
+    public string[]? ExcludeTags { get; init; }
     public string? Ext { get; init; }
     public string? Annotation { get; init; }
     public string? Url { get; init; }
@@ -151,6 +155,29 @@ public sealed class ItemIndex
         }
     }
 
+    /// <summary>全部分类路径快照（含回收站 item 的赋值，分类树派生用）</summary>
+    public string[] AllCategories()
+    {
+        lock (_gate)
+        {
+            return _byHash.Values.SelectMany(i => i.Categories).Distinct(StringComparer.Ordinal).ToArray();
+        }
+    }
+
+    /// <summary>全部标签及库内计数快照（计数不含回收站）</summary>
+    public (string Name, int Count)[] TagsWithCounts()
+    {
+        lock (_gate)
+        {
+            var counts = _byHash.Values.Where(i => i.HasLibraryLocations)
+                .SelectMany(i => i.Tags)
+                .GroupBy(t => t, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+            var names = _byHash.Values.SelectMany(i => i.Tags).ToHashSet(StringComparer.Ordinal);
+            return names.Select(n => (n, counts.GetValueOrDefault(n))).ToArray();
+        }
+    }
+
     /// <summary>条件查询。在锁内完成过滤、排序、分页与 DTO 投影。</summary>
     public List<ItemDto> Query(ItemQuery q, out int total)
     {
@@ -182,6 +209,24 @@ public sealed class ItemIndex
             if (q.Folders is { Length: > 0 } folders)
             {
                 items = items.Where(i => folders.Any(f => InFolder(i, f, q.InTrash)));
+            }
+
+            if (q.Categories is { Length: > 0 } categories)
+            {
+                var matchAll = string.Equals(q.CategoriesMatch, "all", StringComparison.OrdinalIgnoreCase);
+                items = items.Where(i => matchAll
+                    ? categories.All(c => HasCategory(i, c))
+                    : categories.Any(c => HasCategory(i, c)));
+            }
+
+            if (q.ExcludeCategories is { Length: > 0 } excludeCategories)
+            {
+                items = items.Where(i => !excludeCategories.Any(c => HasCategory(i, c)));
+            }
+
+            if (q.ExcludeTags is { Length: > 0 } excludeTags)
+            {
+                items = items.Where(i => !excludeTags.Any(t => i.Tags.Contains(t, StringComparer.Ordinal)));
             }
 
             if (!string.IsNullOrEmpty(q.Ext))
@@ -218,6 +263,9 @@ public sealed class ItemIndex
             return dtos.Skip(Math.Max(0, q.Offset)).Take(Math.Max(1, q.Limit)).ToList();
         }
     }
+
+    private static bool HasCategory(Item item, string category) =>
+        item.Categories.Any(c => CategoryPath.IsSameOrDescendant(c, category));
 
     private static bool MatchesKeyword(Item item, string keyword, bool trashView)
     {
