@@ -52,12 +52,15 @@ function startServer(libPath) {
   const token = crypto.randomBytes(32).toString('hex');
   const child = spawn(command, [...args, '--library', libPath, '--port', '27371'], {
     env: { ...process.env, HAWK_TOKEN: token },
-    stdio: ['ignore', 'pipe', 'inherit'],
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
+    windowsHide: true,
   });
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('hawk-server 启动超时')), 60000);
     let buffer = '';
+    let stderrTail = '';
     child.stdout.on('data', (chunk) => {
       buffer += chunk.toString();
       const match = buffer.match(/HAWK_READY (\S+) token=(\w+)/);
@@ -66,9 +69,21 @@ function startServer(libPath) {
         resolve({ child, address: match[1], token });
       }
     });
+    // 留 stderr 尾部用于报错；开发态同时转发到终端
+    child.stderr.on('data', (chunk) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-4000);
+      if (isDev) {
+        process.stderr.write(chunk);
+      }
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(new Error(`hawk-server 启动失败: ${error.message}`));
+    });
     child.on('exit', (code) => {
       clearTimeout(timer);
-      reject(new Error(`hawk-server 启动失败（退出码 ${code}）`));
+      const detail = stderrTail.trim();
+      reject(new Error(`hawk-server 启动失败（退出码 ${code}）${detail ? `\n${detail}` : ''}`));
     });
   });
 }
@@ -153,7 +168,13 @@ ipcMain.handle('hawk:select-library', async () => {
   if (!selected) {
     return false;
   }
-  await switchLibrary(selected);
+  try {
+    await switchLibrary(selected);
+  } catch (error) {
+    // 失败时留在当前页并给出可见错误，而不是让 IPC 静默 reject
+    dialog.showErrorBox('hawk-server 启动失败', String(error && error.message ? error.message : error));
+    return false;
+  }
   loadMainPage();
   return true;
 });
