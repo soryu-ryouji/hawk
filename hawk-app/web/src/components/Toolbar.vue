@@ -41,6 +41,12 @@ function setStar(e: Event) {
       <span v-if="store.selection.length" class="selected"> · 已选 {{ store.selection.length }} 项</span>
     </div>
 
+    <div v-if="store.query.color" class="color-chip" title="颜色筛选">
+      <span class="dot" :style="{ background: store.query.color }" />
+      <span class="hex">{{ store.query.color }}</span>
+      <button class="clear" title="清除颜色筛选" @click="store.setQuery({ color: undefined })">×</button>
+    </div>
+
     <select :value="store.query.star ?? -1" class="filter" title="评分筛选" @change="setStar">
       <option :value="-1">全部评分</option>
       <option v-for="n in 6" :key="n - 1" :value="n - 1">{{ n - 1 }} 星</option>
@@ -94,6 +100,35 @@ function setStar(e: Event) {
 .sort {
   padding: 3px 6px;
   color: var(--fg-1);
+}
+
+.color-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-3);
+  font-size: 12px;
+}
+
+.color-chip .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.color-chip .clear {
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--fg-1);
+}
+
+.color-chip .clear:hover {
+  color: var(--danger);
+  background: transparent;
 }
 
 .thumb-slider {

@@ -16,6 +16,7 @@ public sealed class LibraryPaths
     public string HawkDir { get; }
     public string MetadataDir { get; }
     public string ThumbnailsDir { get; }
+    public string ColorsDir { get; }
     public string TrashDir { get; }
     public string ConfigFile { get; }
     public string CategoriesFile { get; }
@@ -27,23 +28,28 @@ public sealed class LibraryPaths
         HawkDir = Path.Combine(Root, HawkDirName);
         MetadataDir = Path.Combine(HawkDir, "metadata");
         ThumbnailsDir = Path.Combine(HawkDir, "thumbnails");
+        ColorsDir = Path.Combine(HawkDir, "colors");
         TrashDir = Path.Combine(HawkDir, TrashDirName);
         ConfigFile = Path.Combine(HawkDir, "config.toml");
         CategoriesFile = Path.Combine(HawkDir, "categories.toml");
         TagsFile = Path.Combine(HawkDir, "tags.toml");
     }
 
-    /// <summary>创建 .hawk/ 目录结构，并生成排除缓存目录的 .gitignore</summary>
+    /// <summary>创建 .hawk/ 目录结构，并生成排除缓存目录的 .gitignore（缺失的排除项会补上）</summary>
     public void EnsureLayout()
     {
         Directory.CreateDirectory(MetadataDir);
         Directory.CreateDirectory(ThumbnailsDir);
+        Directory.CreateDirectory(ColorsDir);
         Directory.CreateDirectory(TrashDir);
 
         var gitignore = Path.Combine(HawkDir, ".gitignore");
-        if (!File.Exists(gitignore))
+        var required = new[] { "thumbnails/", "colors/", "trash/" };
+        var existing = File.Exists(gitignore) ? File.ReadAllLines(gitignore) : [];
+        var missing = required.Where(r => !existing.Contains(r)).ToArray();
+        if (missing.Length > 0)
         {
-            File.WriteAllText(gitignore, "thumbnails/\ntrash/\n");
+            File.AppendAllLines(gitignore, missing);
         }
     }
 

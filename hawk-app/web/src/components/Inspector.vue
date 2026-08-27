@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { showInFileManagerLabel } from '../platform';
@@ -18,6 +18,23 @@ const annotation = ref('');
 const url = ref('');
 const tags = ref<string[]>([]);
 const star = ref(0);
+
+// 名称与注释为自动增高的 textarea，内容长时换行显示完整
+const nameArea = ref<HTMLTextAreaElement>();
+const annotationArea = ref<HTMLTextAreaElement>();
+
+function fit(el?: HTMLTextAreaElement) {
+  if (el) {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }
+}
+
+watch([name, annotation], async () => {
+  await nextTick();
+  fit(nameArea.value);
+  fit(annotationArea.value);
+});
 
 const item = computed(() => store.primarySelected);
 const previewUrl = computed(() => (item.value ? api.thumbnailUrl(item.value.id, 1024) : ''));
@@ -46,7 +63,9 @@ watch(item, (fresh) => {
 });
 
 function submitName() {
-  const value = name.value.trim();
+  // 文件名不允许换行：粘贴的多行文本以空格连接
+  const value = name.value.replace(/[\r\n]+/g, ' ').trim();
+  name.value = value;
   if (item.value && value && value !== item.value.name) {
     void store.updateItem(item.value.id, { name: value });
   }
@@ -98,6 +117,11 @@ function moveToRoot() {
 
 function showInFinder(path: string) {
   void window.hawkShell?.showInFinder(path);
+}
+
+/** 点击色块：在当前视图范围内按颜色检索；再次点击当前检索色则清除 */
+function searchColor(color: string) {
+  store.setQuery({ color: store.query.color === color ? undefined : color });
 }
 
 function formatSize(bytes: number): string {
@@ -152,10 +176,37 @@ function batchMoveFolder(path: string) {
         <img :src="previewUrl" :alt="item.name" draggable="false" />
       </div>
 
-      <div class="fields">
-        <input v-model="name" class="name-input" title="重命名文件" @keydown.enter="submitName" @blur="submitName" />
+      <div v-if="item.palette?.length" class="palette">
+        <button
+          v-for="p in item.palette"
+          :key="p.color"
+          class="swatch"
+          :class="{ active: store.query.color === p.color }"
+          :style="{ background: p.color }"
+          :title="`${p.color} (${p.percentage}%)`"
+          @click="searchColor(p.color)"
+        />
+      </div>
 
-        <input v-model="annotation" placeholder="添加注释" @keydown.enter="submitAnnotation" @blur="submitAnnotation" />
+      <div class="fields">
+        <textarea
+          ref="nameArea"
+          v-model="name"
+          class="name-input"
+          rows="1"
+          title="重命名文件（回车提交）"
+          @keydown.enter.prevent="($event.target as HTMLTextAreaElement).blur()"
+          @blur="submitName"
+        ></textarea>
+
+        <textarea
+          ref="annotationArea"
+          v-model="annotation"
+          rows="1"
+          placeholder="添加注释（回车换行，失焦提交）"
+          @keydown.ctrl.enter.prevent="($event.target as HTMLTextAreaElement).blur()"
+          @blur="submitAnnotation"
+        ></textarea>
 
         <input v-model="url" placeholder="来源网址" @keydown.enter="submitUrl" @blur="submitUrl" />
 
@@ -309,6 +360,26 @@ function batchMoveFolder(path: string) {
   letter-spacing: 0.5px;
 }
 
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px 0;
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatch.active {
+  box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 4px var(--accent);
+}
+
 .fields {
   display: flex;
   flex-direction: column;
@@ -316,12 +387,21 @@ function batchMoveFolder(path: string) {
   padding: 12px;
 }
 
-.fields > input {
+.fields > input,
+.fields > textarea {
   padding: 5px 8px;
+}
+
+.fields > textarea {
+  resize: none;
+  overflow: hidden;
+  line-height: 1.45;
+  overflow-wrap: break-word;
 }
 
 .name-input {
   font-weight: 600;
+  word-break: break-all;
 }
 
 section {

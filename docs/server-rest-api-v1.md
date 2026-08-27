@@ -240,6 +240,9 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | star              | number   | 评分 0–5                                   |
 | annotation        | string   | 备注                                       |
 | modification_time | number   | 修改时间（Unix 毫秒）                      |
+| palette           | object[] | 调色板（按占比降序，最多 10 项；未提炼或不可解码时为空数组） |
+
+palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前缀小写 hex，percentage 为像素覆盖占比（0–100，1 位小数）。调色板由后台异步提炼（见 [颜色提炼与颜色检索](color-search.md)），新入库素材稍后才就绪；就绪后通过 `item.updated` 事件推送。
 
 > **同内容去重**：内容相同的文件共享一个 item，`paths` 记录所有文件位置。
 >
@@ -266,6 +269,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | ext        | string   | 按扩展名过滤                                                    |
 | annotation | string   | 按备注文本过滤                                                  |
 | url        | string   | 按来源网址过滤                                                  |
+| color      | string   | 按颜色检索（`#344441`，`#` 可省略，大小写不敏感）；命中条件为调色板任一颜色 CIE76 ΔE ≤ 25，格式非法返回 `INVALID_PARAM` |
 | in_trash   | boolean  | 是否只查回收站中的 item，默认 false                             |
 | order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` |
 | order      | string   | 排序方向：`desc`（默认）/ `asc`                                 |

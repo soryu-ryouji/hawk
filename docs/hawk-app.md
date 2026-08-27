@@ -276,13 +276,13 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
 | `App.vue` | — | — | 布局骨架；`onMounted`：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast |
-| `Toolbar.vue` | — | — | 读写 store.query：搜索框（回车按空格拆 keywords）、star 筛选下拉、排序下拉（字段+方向）、缩略图滑杆（store.thumbSize） |
+| `Toolbar.vue` | — | — | 读写 store.query：搜索框（回车按空格拆 keywords）、star 筛选下拉、颜色筛选 chip（色点 + hex + 清除）、排序下拉（字段+方向）、缩略图滑杆（store.thumbSize） |
 | `Sidebar.vue` | — | — | 「全部素材」、FolderTreeNode 递归、「回收站」；选中态反映 store.view |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
 | `ItemGrid.vue` | — | — | 滚动容器渲染 store.items；sentinel 翻页；空态 EmptyState；右键/双击/点选转发 store |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标 |
-| `Inspector.vue` | — | — | 单选：1024 预览 + 可编辑字段（失焦/回车提交 updateItem）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径） |
-| `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；输入回车新增（trim 去重） |
+| `Inspector.vue` | — | — | 单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径） |
+| `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
@@ -298,7 +298,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | ---------- | ---------- |
 | `useContextMenu()` | 模块级单例响应式状态 `{visible, x, y, items}`（全局唯一菜单）；`open(items, MouseEvent)` 定位（防出屏翻转）；`close()` |
 | `useDragImport()` | `useDropZone` 接 drop → `webkitGetAsEntry()` 递归展开文件夹 → `webUtils.getPathForFile` 取绝对路径 → store.importPaths |
-| `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview |
+| `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
 
 ### 样式约定
 
@@ -321,7 +321,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 | 事件 | 处理 |
 | ---- | ---- |
-| `item.updated` | 负载是完整 Item，列表内**就地替换** |
+| `item.updated` | 负载是完整 Item。无过滤的「全部素材」视图**就地替换**（成员资格不可能变化）；过滤视图/激活查询条件时防抖 200ms 重查当前页（成员判定以服务端查询为准，如摘掉当前分类后 item 即时消失）。updateItem 响应走同一入口 |
 | `item.added` / `item.restored` | 涉及排序位置，防抖 200ms 重查当前页 |
 | `item.trashed` / `item.removed` | 普通视图就地移除；回收站视图防抖重查 |
 | 任何事件 | 防抖刷新文件夹树（见「已知缺口」） |

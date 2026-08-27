@@ -18,6 +18,7 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
     ├── tags.toml       ← 标签注册表（参与同步）
     ├── metadata/       ← 素材参数，纯文本（参与同步）
     ├── thumbnails/     ← 缩略图缓存（本地专用，不参与同步，可重建）
+    ├── colors/         ← 调色板缓存（本地专用，不参与同步，可重建）
     └── trash/          ← 回收站（本地专用，不参与同步）
 ```
 
@@ -30,9 +31,10 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
 | `tags.toml`       | 是           | 标签注册表（含空标签）     |
 | `metadata/`       | 是           | 素材参数，唯一数据源       |
 | `thumbnails/` | 否           | 本地缓存，可重建           |
+| `colors/`     | 否           | 调色板缓存，可重建         |
 | `trash/`      | 否           | 回收站，仅本机可恢复       |
 
-`.hawk/.gitignore` 由 hawk 自动生成，排除 `thumbnails/` 和 `trash/`。
+`.hawk/.gitignore` 由 hawk 自动生成，排除 `thumbnails/`、`colors/` 和 `trash/`。
 
 注意：部分网盘客户端（OneDrive、Syncthing 等）不识别 `.gitignore`，需要用户在网盘客户端中手动配置排除规则。后续应在用户文档中说明。
 
@@ -109,7 +111,7 @@ thumbnail_sizes = [256, 1024]
 
 ## 内容寻址（Content-Addressable）
 
-每个文件通过其内容哈希（BLAKE3）唯一标识，缩略图也按 hash 存储，避免重复生成：
+每个文件通过其内容哈希（BLAKE3）唯一标识，缩略图与调色板缓存也按 hash 存储，避免重复生成：
 
 ```text
 .hawk/thumbnails/
@@ -120,7 +122,13 @@ thumbnail_sizes = [256, 1024]
 └── 1024/                   # 预览面板
     ├── ab/
     └── cd/
+
+.hawk/colors/               # 调色板缓存（提炼算法见 docs/color-search.md）
+└── ab/
+    └── abcdef123....json   # { "v": 1, "palette": [{ "color", "percentage" }] }
 ```
+
+调色板缓存带算法版本号 `v`：提炼算法变更时版本 +1，旧缓存视为缺失自动重建。清空回收站时随缩略图一并清理。
 
 ## 实时文件监听
 

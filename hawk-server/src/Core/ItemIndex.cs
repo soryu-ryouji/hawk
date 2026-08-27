@@ -15,6 +15,8 @@ public sealed record ItemQuery
     public string? Ext { get; init; }
     public string? Annotation { get; init; }
     public string? Url { get; init; }
+    /// <summary>颜色检索（已转 Lab）；命中条件为调色板任一颜色 ΔE ≤ ColorMatchThreshold</summary>
+    public LabColor? Color { get; init; }
     public bool InTrash { get; init; }
     public string? OrderBy { get; init; }
     public string? Order { get; init; }
@@ -28,6 +30,11 @@ public sealed record ItemQuery
 /// </summary>
 public sealed class ItemIndex
 {
+    /// <summary>颜色检索的 ΔE 阈值（CIE76）。约覆盖「同一颜色家族」的宽松度</summary>
+    public const double ColorMatchThreshold = 25;
+
+    private const double ColorMatchThresholdSquared = ColorMatchThreshold * ColorMatchThreshold;
+
     private readonly object _gate = new();
     private readonly Dictionary<string, Item> _byHash = new();
     private readonly Dictionary<string, string> _hashByLocation = new(); // 位置路径 → hash
@@ -125,6 +132,21 @@ public sealed class ItemIndex
                 _byHash.Remove(hash);
             }
 
+            return item;
+        }
+    }
+
+    /// <summary>写入调色板（后台提炼完成后的回写）。item 已不存在（内容漂移）时返回 null，调用方丢弃结果</summary>
+    public Item? SetPalette(string hash, PaletteColor[] palette)
+    {
+        lock (_gate)
+        {
+            if (!_byHash.TryGetValue(hash, out var item))
+            {
+                return null;
+            }
+
+            item.Palette = palette;
             return item;
         }
     }
@@ -303,6 +325,11 @@ public sealed class ItemIndex
             if (!string.IsNullOrEmpty(q.Url))
             {
                 items = items.Where(i => i.Url?.Contains(q.Url, StringComparison.OrdinalIgnoreCase) == true);
+            }
+
+            if (q.Color is { } color)
+            {
+                items = items.Where(i => i.Palette.Any(p => ColorMath.DeltaESquared(p.Lab, color) <= ColorMatchThresholdSquared));
             }
 
             var dtos = items.Select(i => i.ToDto(q.InTrash)).ToList();

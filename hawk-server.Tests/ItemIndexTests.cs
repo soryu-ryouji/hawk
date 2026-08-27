@@ -63,6 +63,40 @@ public class ItemIndexTests
         Assert.Equal(3, _index.Count());
     }
 
+    [Fact]
+    public void 颜色过滤_相近色命中()
+    {
+        Seed();
+        _index.SetPalette("h1", [PaletteColor.FromRgb(0x34, 0x44, 0x41, 100)]);
+
+        // 同一颜色命中
+        var hit = _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x34, 0x44, 0x41) }, out var hitTotal);
+        Assert.Equal(1, hitTotal);
+        Assert.Equal("h1", hit[0].Id);
+
+        // 阈值内的相近色命中（ΔE ≈ 6）
+        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x2E, 0x4E, 0x44) }, out var nearTotal);
+        Assert.Equal(1, nearTotal);
+
+        // 阈值外的颜色不命中
+        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0xFF, 0x00, 0x00) }, out var farTotal);
+        Assert.Equal(0, farTotal);
+    }
+
+    [Fact]
+    public void 颜色过滤_无调色板不命中()
+    {
+        Seed();
+        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x34, 0x44, 0x41) }, out var total);
+        Assert.Equal(0, total);
+    }
+
+    [Fact]
+    public void SetPalette_item不存在时返回Null()
+    {
+        Assert.Null(_index.SetPalette("missing", [PaletteColor.FromRgb(0, 0, 0, 100)]));
+    }
+
     [Theory]
     [InlineData(new[] { "nature" }, 2)]
     [InlineData(new[] { "nature", "sunset" }, 1)]  // AND 语义

@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using Hawk.Server.Core;
 using Microsoft.Extensions.Logging.Abstractions;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace Hawk.Server.Tests;
 
@@ -17,6 +19,7 @@ public class IndexPipelineTests
         public required MetadataStore Store;
         public required ItemIndex Index;
         public required ThumbnailService Thumbnails;
+        public required ColorService Colors;
         public required EventBus Bus;
         public required CategoryRegistry Categories;
         public required TagRegistry Tags;
@@ -30,15 +33,16 @@ public class IndexPipelineTests
             var store = new MetadataStore(paths, NullLogger<MetadataStore>.Instance);
             var index = new ItemIndex();
             var thumbnails = new ThumbnailService(paths, NullLogger<ThumbnailService>.Instance);
+            var colors = new ColorService(paths, NullLogger<ColorService>.Instance);
             var bus = new EventBus();
             var categories = new CategoryRegistry(paths, NullLogger<CategoryRegistry>.Instance);
             var tags = new TagRegistry(paths, NullLogger<TagRegistry>.Instance);
             var scanner = new LibraryScanner(paths, config);
             var settings = new ServerSettings { LibraryRoot = root, Token = "test" };
-            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, bus, scanner, categories, tags, settings,
+            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, colors, bus, scanner, categories, tags, settings,
                 NullLogger<IndexPipeline>.Instance);
             pipeline.Start();
-            return new Rig { Paths = paths, Store = store, Index = index, Thumbnails = thumbnails, Bus = bus, Categories = categories, Tags = tags, Pipeline = pipeline };
+            return new Rig { Paths = paths, Store = store, Index = index, Thumbnails = thumbnails, Colors = colors, Bus = bus, Categories = categories, Tags = tags, Pipeline = pipeline };
         }
 
         public void Dispose() => Pipeline.Dispose();
@@ -121,6 +125,9 @@ public class IndexPipelineTests
             meta.Annotation = "迁移备注";
         });
 
+        // 等后台 worker 结束（缩略图 + 调色板提炼完成），确保源文件句柄已释放
+        Assert.True(await WaitUntil(() => rig.Colors.Exists(oldHash)));
+
         // 修改内容（mtime 必须前进，否则复用判定会命中）
         File.WriteAllBytes(file, [1, 2, 3, 4, 5, 6]);
         File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(2));
@@ -194,8 +201,8 @@ public class IndexPipelineTests
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
 
-        // 等缩略图生成（后台 worker 异步）
-        Assert.True(await WaitUntil(() => rig.Thumbnails.Exists(hash, 256)));
+        // 等缩略图与调色板缓存生成（后台 worker 异步），确保缩略图句柄已释放
+        Assert.True(await WaitUntil(() => rig.Thumbnails.Exists(hash, 256) && rig.Colors.Exists(hash)));
 
         var trashAbs = LibraryFs.FindFreeTrashPath(rig.Paths, "only.png", isDirectory: false);
         LibraryFs.EnsureParentDir(trashAbs);
@@ -208,6 +215,72 @@ public class IndexPipelineTests
         Assert.Null(rig.Index.Get(hash));
         Assert.False(File.Exists(Path.Combine(rig.Paths.MetadataDir, hash + ".toml")));
         Assert.False(rig.Thumbnails.Exists(hash, 256));
+    }
+
+    private static byte[] SolidPng(byte r, byte g, byte b)
+    {
+        using var image = new Image<Rgba32>(32, 32, new Rgba32(r, g, b));
+        using var ms = new MemoryStream();
+        image.SaveAsPng(ms);
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public async Task 入库后_后台提炼调色板并写入缓存()
+    {
+        using var rig = Rig.Create(_dir.Root);
+        var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        // 后台 worker 异步提炼
+        Assert.True(await WaitUntil(() => rig.Index.Get(hash)?.Palette.Length > 0));
+        var palette = rig.Index.Get(hash)!.Palette;
+        var color = Assert.Single(palette);
+        Assert.Equal("#ff0000", ColorMath.ToHex(color.R, color.G, color.B));
+        Assert.Equal(100f, color.Percentage);
+        Assert.True(rig.Colors.Exists(hash));
+    }
+
+    [Fact]
+    public async Task 重启扫描_从缓存载入调色板()
+    {
+        string hash;
+        using (var rig = Rig.Create(_dir.Root))
+        {
+            var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
+            var result = await rig.Pipeline.SubmitUpsertAsync(file);
+            hash = result!.Item.Id;
+            Assert.True(await WaitUntil(() => rig.Colors.Exists(hash)));
+        }
+
+        // 重建一套服务（模拟重启）：哈希复用不读文件内容，调色板应从缓存文件载入
+        using var rig2 = Rig.Create(_dir.Root);
+        await rig2.Pipeline.RunScanAsync(false);
+        var palette = rig2.Index.Get(hash)?.Palette;
+        var color = Assert.Single(palette!);
+        Assert.Equal("#ff0000", ColorMath.ToHex(color.R, color.G, color.B));
+    }
+
+    [Fact]
+    public async Task 清空回收站_清理调色板缓存()
+    {
+        using var rig = Rig.Create(_dir.Root);
+        var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+        Assert.True(await WaitUntil(() => rig.Colors.Exists(hash)));
+
+        var trashAbs = LibraryFs.FindFreeTrashPath(rig.Paths, "red.png", isDirectory: false);
+        LibraryFs.EnsureParentDir(trashAbs);
+        File.Move(file, trashAbs);
+        await rig.Pipeline.SubmitMoveAsync(file, trashAbs);
+
+        File.Delete(trashAbs);
+        await rig.Pipeline.SubmitClearTrashAsync();
+
+        Assert.Null(rig.Index.Get(hash));
+        Assert.False(rig.Colors.Exists(hash));
     }
 
     [Fact]

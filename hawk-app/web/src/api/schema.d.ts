@@ -628,6 +628,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/item/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query: {
+                    id: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/item/refresh_thumbnail": {
         parameters: {
             query?: never;
@@ -1120,6 +1155,7 @@ export interface components {
             annotation?: null | string;
             /** Format: int64 */
             modification_time?: number | string;
+            palette?: components["schemas"]["PaletteColorDto"][];
         };
         ItemIdRequest: {
             id: string;
@@ -1139,6 +1175,7 @@ export interface components {
             ext?: null | string;
             annotation?: null | string;
             url?: null | string;
+            color?: null | string;
             in_trash?: boolean;
             order_by?: null | string;
             order?: null | string;
@@ -1177,6 +1214,11 @@ export interface components {
             /** Format: int64 */
             modification_time: number | string;
             application_version: string;
+        };
+        PaletteColorDto: {
+            color: string;
+            /** Format: float */
+            percentage?: number | string;
         };
         TagCreateRequest: {
             name: string;

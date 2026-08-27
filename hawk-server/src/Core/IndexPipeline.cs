@@ -22,6 +22,8 @@ public sealed class IndexPipeline : IDisposable
     private sealed record ClearTrashJob(TaskCompletionSource? Done) : IndexJob;
     private sealed record MetadataJob(string Hash, Action<ItemMetadata> Mutate, TaskCompletionSource<Item?> Done) : IndexJob;
     private sealed record ThumbJob(string Hash, string SourceAbs);
+    /// <summary>后台 worker 提炼调色板完成后的回写（单写者规则：索引变更只发生在消费循环）</summary>
+    private sealed record PaletteJob(string Hash, PaletteColor[] Palette) : IndexJob;
 
     // 分类/标签操作（注册表 + 元数据批量迁移）
     private sealed record CategoryCreateJob(string Path, TaskCompletionSource Done) : IndexJob;
@@ -37,6 +39,7 @@ public sealed class IndexPipeline : IDisposable
     private readonly MetadataStore _store;
     private readonly ItemIndex _index;
     private readonly ThumbnailService _thumbnails;
+    private readonly ColorService _colors;
     private readonly EventBus _bus;
     private readonly LibraryScanner _scanner;
     private readonly CategoryRegistry _categories;
@@ -69,6 +72,7 @@ public sealed class IndexPipeline : IDisposable
         MetadataStore store,
         ItemIndex index,
         ThumbnailService thumbnails,
+        ColorService colors,
         EventBus bus,
         LibraryScanner scanner,
         CategoryRegistry categories,
@@ -81,6 +85,7 @@ public sealed class IndexPipeline : IDisposable
         _store = store;
         _index = index;
         _thumbnails = thumbnails;
+        _colors = colors;
         _bus = bus;
         _scanner = scanner;
         _categories = categories;
@@ -332,6 +337,13 @@ public sealed class IndexPipeline : IDisposable
             case MetadataJob j:
                 Complete(j.Done, DoApplyMetadata(j.Hash, j.Mutate));
                 break;
+            case PaletteJob j:
+                // 调色板回写：item 已因内容漂移消失时丢弃（幂等，重复应用无害）
+                if (_index.SetPalette(j.Hash, j.Palette) is { } paletteItem)
+                {
+                    PublishItemChanged(paletteItem);
+                }
+                break;
             case CategoryCreateJob j:
                 _categories.Register(j.Path);
                 Complete(j.Done);
@@ -517,6 +529,12 @@ public sealed class IndexPipeline : IDisposable
             item.Height = dim.Height;
         }
 
+        // 调色板是内容寻址的缓存：有则直接入索引；缺失由后台 worker 提炼后经 PaletteJob 补齐
+        if (item.Palette.Length == 0 && _colors.Load(hash) is { } palette)
+        {
+            item.Palette = palette;
+        }
+
         var addedLocation = _index.AddOrUpdateLocation(hash, pending.Rel, pending.Size, pending.Mtime);
 
         if (created)
@@ -591,6 +609,7 @@ public sealed class IndexPipeline : IDisposable
         {
             _store.Delete(oldHash);
             _thumbnails.Delete(oldHash, _config.Current.ThumbnailSizes);
+            _colors.Delete(oldHash);
         }
         else
         {
@@ -833,6 +852,7 @@ public sealed class IndexPipeline : IDisposable
                 {
                     _store.Delete(item.Id);
                     _thumbnails.Delete(item.Id, _config.Current.ThumbnailSizes);
+                    _colors.Delete(item.Id);
                 }
                 else
                 {
@@ -1023,14 +1043,30 @@ public sealed class IndexPipeline : IDisposable
             try
             {
                 var sizes = _config.Current.ThumbnailSizes.Where(s => !_thumbnails.Exists(job.Hash, s)).ToArray();
-                if (sizes.Length == 0)
+                var needPalette = !_colors.Exists(job.Hash);
+                if (sizes.Length == 0 && !needPalette)
                 {
                     continue;
                 }
 
+                var generated = sizes.Length > 0 && await _thumbnails.GenerateAsync(job.Hash, job.SourceAbs, sizes, ct: ct);
+
+                // 调色板从最小尺寸的已有缩略图提炼：原图只由缩略图生成解码一次，此处解码小图代价极低
+                if (needPalette)
+                {
+                    var source = _config.Current.ThumbnailSizes.OrderBy(s => s)
+                        .Select(s => _thumbnails.GetPath(job.Hash, s))
+                        .FirstOrDefault(File.Exists);
+                    if (source is not null && _colors.Extract(source) is { } palette)
+                    {
+                        _colors.Save(job.Hash, palette);
+                        // 回流水线应用（单写者）；队列满时丢弃——缓存已落盘，兜底扫描由 ApplyUpsert 载入
+                        _jobs.Writer.TryWrite(new PaletteJob(job.Hash, palette));
+                    }
+                }
+
                 // 生成完成后补发 item.updated：前端缩略图此前的 404 占位据此重建 <img>
-                if (await _thumbnails.GenerateAsync(job.Hash, job.SourceAbs, sizes, ct: ct)
-                    && _index.Get(job.Hash) is { } item)
+                if (generated && _index.Get(job.Hash) is { } item)
                 {
                     _bus.Publish("item.updated", item.ToDto(trashView: !item.HasLibraryLocations));
                 }

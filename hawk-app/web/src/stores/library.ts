@@ -104,6 +104,7 @@ export const useLibraryStore = defineStore('library', () => {
     return {
       keywords: query.value.keywords.length > 0 ? query.value.keywords : undefined,
       star: query.value.star,
+      color: query.value.color,
       order_by: query.value.orderBy,
       order: query.value.order,
       in_trash: isTrash.value || undefined,
@@ -210,6 +211,8 @@ export const useLibraryStore = defineStore('library', () => {
       items.value = res.items;
       total.value = Number(res.total);
       endReached.value = items.value.length >= total.value;
+      // 保持不变式「选择 ⊆ 列表」：不再属于当前视图的选中项一并摘除
+      selection.value = selection.value.filter((id) => res.items.some((i) => i.id === id));
     } catch (e) {
       showToast(errorText(e));
     }
@@ -248,13 +251,36 @@ export const useLibraryStore = defineStore('library', () => {
   async function updateItem(id: string, patch: Parameters<typeof api.itemUpdate>[1], path?: string) {
     try {
       const updated = await api.itemUpdate(id, patch, path);
-      const idx = items.value.findIndex((i) => i.id === id);
-      if (idx >= 0) {
-        items.value[idx] = updated;
-      }
+      applyUpdatedItem(updated);
     } catch (e) {
       showToast(errorText(e));
     }
+  }
+
+  /** 无过滤的「全部素材」视图：item.updated 不可能改变成员资格（进出回收站有独立事件），可原地更新 */
+  function isUnfilteredView() {
+    return (
+      view.value.kind === 'all' &&
+      query.value.keywords.length === 0 &&
+      query.value.star === undefined &&
+      !query.value.color
+    );
+  }
+
+  /**
+   * item.updated 的统一入口（updateItem 响应与 SSE 共用）。
+   * 无过滤视图原地更新；过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖整表刷新——
+   * 成员资格可能已变化（移出当前文件夹、摘掉当前分类/标签等），成员判定以服务端查询为准。
+   */
+  function applyUpdatedItem(updated: Item) {
+    if (isUnfilteredView()) {
+      const idx = items.value.findIndex((i) => i.id === updated.id);
+      if (idx >= 0) {
+        items.value[idx] = updated;
+      }
+      return;
+    }
+    debouncedRefresh(() => void refresh());
   }
 
   async function trashSelected() {
@@ -504,21 +530,7 @@ export const useLibraryStore = defineStore('library', () => {
   function applyEvent(type: string, payload: unknown) {
     switch (type) {
       case 'item.updated': {
-        const updated = payload as Item;
-        const idx = items.value.findIndex((i) => i.id === updated.id);
-        if (idx >= 0) {
-          // 移动到别的文件夹后不再属于当前文件夹视图 → 从列表移除
-          const folders = updated.folders ?? [];
-          if (currentFolderPath.value && !folders.includes(currentFolderPath.value)) {
-            items.value.splice(idx, 1);
-            selection.value = selection.value.filter((s) => s !== updated.id);
-            total.value = Math.max(0, total.value - 1);
-          } else {
-            items.value[idx] = updated;
-          }
-        } else if (isTrash.value) {
-          debouncedRefresh(() => void refresh());
-        }
+        applyUpdatedItem(payload as Item);
         break;
       }
       case 'item.added':

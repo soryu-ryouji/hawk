@@ -13,6 +13,18 @@ public sealed class ItemLocation
     public string LibraryPath => InTrash ? LibraryPaths.TrashToLibraryPath(Path) : Path;
 }
 
+/// <summary>调色板中的一个颜色：RGB 用于展示与缓存，Lab 为预算的检索坐标</summary>
+public sealed record PaletteColor(byte R, byte G, byte B, float Percentage, double LabL, double LabA, double LabB)
+{
+    public static PaletteColor FromRgb(byte r, byte g, byte b, float percentage)
+    {
+        var lab = ColorMath.RgbToLab(r, g, b);
+        return new PaletteColor(r, g, b, percentage, lab.L, lab.A, lab.B);
+    }
+
+    public LabColor Lab => new(LabL, LabA, LabB);
+}
+
 /// <summary>
 /// 内存索引中的 item。相同内容的文件共享一个 item，Locations 记录所有文件位置。
 /// tags/star/annotation/url 以元数据为准，此处为查询用副本，由流水线单向同步。
@@ -28,6 +40,9 @@ public sealed class Item
     public string? Annotation { get; set; }
     public int Width { get; set; }
     public int Height { get; set; }
+
+    /// <summary>提炼的调色板（按占比降序，最多 10 个）；尚未提炼或不支持解码时为空</summary>
+    public PaletteColor[] Palette { get; set; } = [];
 
     public bool HasLibraryLocations => Locations.Any(l => !l.InTrash);
     public bool HasTrashLocations => Locations.Any(l => l.InTrash);
@@ -59,8 +74,19 @@ public sealed class Item
             Categories = Categories.ToArray(),
             Annotation = Annotation,
             ModificationTime = main.ModificationTime,
+            Palette = Palette.Select(p => new PaletteColorDto { Color = ColorMath.ToHex(p.R, p.G, p.B), Percentage = p.Percentage }).ToArray(),
         };
     }
+}
+
+/// <summary>API 的调色板颜色项</summary>
+public sealed record PaletteColorDto
+{
+    /// <summary># 前缀小写 hex，如 "#344441"</summary>
+    public required string Color { get; init; }
+
+    /// <summary>像素覆盖占比（0–100，1 位小数）</summary>
+    public float Percentage { get; init; }
 }
 
 /// <summary>API 的 Item 对象（字段命名经全局 snake_case 策略序列化）</summary>
@@ -80,4 +106,5 @@ public sealed record ItemDto
     public int Star { get; init; }
     public string? Annotation { get; init; }
     public long ModificationTime { get; init; }
+    public PaletteColorDto[] Palette { get; init; } = [];
 }

@@ -36,6 +36,7 @@ builder.Services.AddSingleton<CategoryRegistry>();
 builder.Services.AddSingleton<TagRegistry>();
 builder.Services.AddSingleton<ItemIndex>();
 builder.Services.AddSingleton<ThumbnailService>();
+builder.Services.AddSingleton<ColorService>();
 builder.Services.AddSingleton<EventBus>();
 builder.Services.AddSingleton<LibraryScanner>();
 builder.Services.AddSingleton<IndexPipeline>();

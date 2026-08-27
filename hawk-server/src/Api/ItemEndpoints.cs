@@ -20,6 +20,7 @@ public static class ItemEndpoints
         public string? Ext { get; init; }
         public string? Annotation { get; init; }
         public string? Url { get; init; }
+        public string? Color { get; init; }
         public bool InTrash { get; init; }
         public string? OrderBy { get; init; }
         public string? Order { get; init; }
@@ -67,12 +68,23 @@ public static class ItemEndpoints
         group.MapPost("/list", (ItemListRequest? req, ItemIndex index) =>
         {
             req ??= new ItemListRequest();
+            LabColor? color = null;
+            if (req.Color is not null)
+            {
+                if (ColorMath.ParseHex(req.Color) is not { } rgb)
+                {
+                    throw ApiException.InvalidParam($"非法颜色值: {req.Color}");
+                }
+
+                color = ColorMath.RgbToLab(rgb.R, rgb.G, rgb.B);
+            }
+
             var query = new ItemQuery
             {
                 Ids = req.Ids, Keywords = req.Keywords, Tags = req.Tags, Star = req.Star,
                 Folders = req.Folders, Categories = req.Categories, CategoriesMatch = req.CategoriesMatch,
                 ExcludeCategories = req.ExcludeCategories, ExcludeTags = req.ExcludeTags,
-                Ext = req.Ext, Annotation = req.Annotation, Url = req.Url,
+                Ext = req.Ext, Annotation = req.Annotation, Url = req.Url, Color = color,
                 InTrash = req.InTrash, OrderBy = req.OrderBy, Order = req.Order,
                 Offset = req.Offset, Limit = req.Limit,
             };

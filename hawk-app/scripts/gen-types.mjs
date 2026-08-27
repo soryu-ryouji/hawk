@@ -35,8 +35,8 @@ try {
   const schemaFile = path.join(tmp, 'openapi.json');
   fs.writeFileSync(schemaFile, JSON.stringify(schema, null, 2));
 
-  // 经 .bin 软链定位真实 CLI 文件，绕开 exports 条件映射
-  const bin = fs.realpathSync(path.join(root, 'node_modules', '.bin', 'openapi-typescript'));
+  // .bin 下的 shim 在 Windows 上是 shell 脚本，直接定位包内真实 CLI 文件，绕开 exports 条件映射
+  const bin = path.join(root, 'node_modules', 'openapi-typescript', 'bin', 'cli.js');
   const out = path.join(root, 'web', 'src', 'api', 'schema.d.ts');
   execFileSync(process.execPath, [bin, schemaFile, '-o', out]);
   console.log(`已生成 ${out}`);

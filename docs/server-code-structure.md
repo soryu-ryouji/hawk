@@ -35,7 +35,7 @@ Program.cs 做的事（按执行顺序）：
 
 1. `ServerSettings.FromArgs` 解析命令行与环境变量；`ResolvePort` 用 `TcpListener` 试绑 27371，被占用则返回 0 交给 Kestrel 动态分配
 2. `WebApplicationBuilder`：绑定 `127.0.0.1`、Serilog 控制台日志、JSON 全局 snake_case + null 省略、`AddOpenApi`、CORS 全放开（localhost 工具，token 兜底）
-3. 注册单例：`LibraryPaths`（注册时 `EnsureLayout` 创建 `.hawk/` 结构与 `.gitignore`）、`LibraryConfig`、`MetadataStore`（构造时加载全部元数据）、`ItemIndex`、`ThumbnailService`、`EventBus`、`LibraryScanner`、`IndexPipeline`、`LibraryWatcher`
+3. 注册单例：`LibraryPaths`（注册时 `EnsureLayout` 创建 `.hawk/` 结构与 `.gitignore`）、`LibraryConfig`、`MetadataStore`（构造时加载全部元数据）、`ItemIndex`、`ThumbnailService`、`ColorService`、`EventBus`、`LibraryScanner`、`IndexPipeline`、`LibraryWatcher`
 4. 中间件顺序：CORS → `ErrorHandlingMiddleware` → `TokenAuthMiddleware`
 5. **启动顺序**（对应 server-csharp.md）：`pipeline.Start()` → 接线 watcher 事件 → `watcher.Start()`（事件先入队缓冲）→ `await pipeline.RunScanAsync(false)` 阻塞至初始索引完成 → `app.StartAsync()` 此后 `/health` 才可达
 6. 打印 `HAWK_READY <address> token=<token>` 行，Electron 主进程解析它拿到端口与 token
@@ -54,6 +54,8 @@ Program.cs 做的事（按执行顺序）：
 | `Item.cs` | 索引中的 item：`ItemLocation`（一个文件位置，回收站位置以 `.hawk/trash/` 开头）与 `Item`（位置列表 + 元数据副本 + 宽高派生信息）；`ToDto(trashView)` 负责向 API 投影——回收站视图的 paths 展示原库内路径（恢复目标） |
 | `ItemIndex.cs` | 内存索引：hash→item 与位置路径→hash 两个字典，一把锁保护；`Query` 实现 item/list 的全部过滤（AND 语义）、排序与分页 |
 | `ThumbnailService.cs` | ImageSharp 封装：`Identify` 只读头部取尺寸；`GenerateAsync` 按配置尺寸输出 WebP（`ResizeMode.Max` 等比缩小、不放大小图）；缩略图按 hash 内容寻址存储 |
+| `ColorMath.cs` | 颜色纯函数：hex 解析/格式化、sRGB→CIELAB（D65）、CIE76 ΔE² 距离 |
+| `ColorService.cs` | 调色板提炼（降采样 64px → Wu 量化 ≤10 色 → 像素占比，alpha<128 不参与）与缓存读写（`.hawk/colors/<hash前2位>/<hash>.json`，带算法版本号）；检索原理见 [color-search.md](color-search.md) |
 | `LibraryScanner.cs` | 目录遍历：跳过 `.hawk/` 内部（只深入 trash 子树）、库内应用 ignore 规则、枚举失败静默跳过 |
 | `LibraryWatcher.cs` | FileSystemWatcher 封装：Created/Changed→upsert、Deleted、Renamed→move、Error→溢出回调；过滤 `.hawk` 内部，config.toml 与注册表文件单独上报；另有周期对账扫描（`HAWK_RESCAN_INTERVAL`，默认 60s）兜底静默丢事件 |
 | `EventBus.cs` | SSE 事件总线：每个订阅者一条有界 channel；消费跟不上就断开该订阅（前端重连后用 item/list 全量对齐） |
@@ -69,11 +71,12 @@ Program.cs 做的事（按执行顺序）：
 - **任务类型**：`UpsertJob`（新增/变更，可携带 `KnownHash` 跳过流水线重算、供 item/add 复用 API 侧已算的哈希）、`DeleteJob`（按路径与目录前缀双重匹配，因为删除事件分不清文件还是目录）、`MoveJob` / `DirMoveJob`、`ScanJob`（full 时强制重算全部哈希）、`ClearTrashJob`、`MetadataJob`（item/update 的元数据写）
 - **两类入口**：watcher 走 fire-and-forget，channel 满则置溢出标记，消费者每批任务后检查并触发全量扫描兜底；API 与启动走携带 `TaskCompletionSource` 的提交，等待处理完成后返回结果
 - **写入防抖**：入库拆成 `PrepareUpsert`（路径过滤、复用判定，不读文件内容）与 `ApplyUpsert`（串行应用变更）两步。判定需要算哈希时，若文件 mtime 距今不足 1 秒（大文件仍在拷贝中），不立即处理，经去重集合延迟重试（上限 120 次）——避免对半截内容反复哈希；携带 KnownHash 或等待结果的提交不防抖（文件由 API 写入，内容已完整）
-- **入库流程（ApplyUpsert）**：哈希漂移时按路径迁移元数据（新 item 继承 tags 等素材参数，旧元数据无引用则删除）；回写最新 size/mtime 保持校验依据新鲜；补读图像尺寸；发 `item.added` / `item.updated`；缩略图派发到后台 worker（1–4 个并发，CPU 密集不阻塞索引）
+- **入库流程（ApplyUpsert）**：哈希漂移时按路径迁移元数据（新 item 继承 tags 等素材参数，旧元数据无引用则删除）；回写最新 size/mtime 保持校验依据新鲜；补读图像尺寸；加载调色板缓存（缺失由后台 worker 补齐）；发 `item.added` / `item.updated`；缩略图派发到后台 worker（1–4 个并发，CPU 密集不阻塞索引）
 - **`DoMove` / `MoveOne`**：索引 rekey 不重算哈希；lib→lib 时元数据路径跟随，lib↔trash 时去掉前缀后库内路径不变，元数据保持原路径作为恢复目标；目录移动后补扫新位置，吸收 watcher 遗漏的子文件事件
 - **`DoScan`（两阶段扫描）**：阶段一串行遍历做复用判定（命中元数据的直接应用，不读内容）；阶段二对需要哈希的文件并行计算（`ProcessorCount/2`，纯计算不碰共享状态）；阶段三串行应用结果并做消失检测。单写者模型不变，仅哈希计算并行
 - **`DoClearTrash`**：摘除回收站位置并清理元数据路径；内容在库内无其他引用时删除元数据与缩略图
 - **缩略图与前端刷新**：缩略图在后台 worker 生成，完成后补发 `item.updated`——前端此前渲染的 404 占位 <img> 据此重建并重新拉取
+- **调色板提炼**：与缩略图同一 worker 队列：缩略图齐全后从最小尺寸缩略图提炼（原图只在生成缩略图时解码一次），缓存落盘后经 `PaletteJob` 回流水线写入索引（单写者不破）并补发 `item.updated`；队列满时丢弃，缓存文件仍在，兜底扫描由 ApplyUpsert 载入
 - **事件语义**：位置归零 → `item.removed`；只剩回收站位置 → `item.trashed`；首个库内位置回归 → `item.restored`；其余变化 → `item.updated`
 
 ### Api/ —— HTTP 层
@@ -86,7 +89,7 @@ Program.cs 做的事（按执行顺序）：
 | `LibraryEndpoints.cs` | `library/info`（显示名取 config 的 name，缺省为目录名）、`library/reindex`（入队全量重哈希扫描，立即返回） |
 | `FolderEndpoints.cs` | folder 五端点。folder 即真实目录：list 实时从文件系统建树（排除 `.hawk` 与 ignore 目录）；create/update/delete/restore 先做校验（名称合法、父目录存在、目标占用 → `FILE_EXISTS`、禁止移入自身子目录），再做真实目录操作，最后 `SubmitDirMoveAsync` 同步索引 |
 | `ItemEndpoints.cs` | item 十端点，逻辑最重，见下节 |
-| `TrashEndpoints.cs` | `trash/clear`：物理删除 `.hawk/trash/` 全部内容，再提交 `ClearTrashJob` 清理元数据与缩略图 |
+| `TrashEndpoints.cs` | `trash/clear`：先提交 `ClearTrashJob` 清理索引位置、元数据与缓存（缩略图/调色板），再物理删除 `.hawk/trash/` 内容。顺序不能颠倒：先物理删除会让 watcher 的 Deleted 事件抢先摘除位置，DoClearTrash 找不到位置导致元数据与缓存泄漏（Windows 上 watcher 延迟低必现） |
 | `EventsEndpoints.cs` | SSE 订阅端点：循环读 EventBus channel 写 `event:`/`data:` 帧；断连时注销订阅；流式响应不纳入 OpenAPI schema |
 
 ### ItemEndpoints.cs 详解
@@ -105,7 +108,7 @@ Program.cs 做的事（按执行顺序）：
 | ---- | ---- |
 | `hawk-server.csproj` | net10.0；依赖：Blake3、SixLabors.ImageSharp、Tomlyn、Serilog.AspNetCore、Microsoft.Extensions.FileSystemGlobbing、Microsoft.AspNetCore.OpenApi |
 | `appsettings*.json` | 仅保留默认日志级别配置；Serilog 目前在代码里配置控制台输出 |
-| `tools/smoke.sh` | 端到端冒烟测试（46 项断言）：临时素材库 + curl 覆盖鉴权、索引、过滤、缩略图、去重、文件夹、监听、写入防抖、SSE、回收站全流程与重启后哈希复用。运行前先 `dotnet build` |
+| `tools/smoke.sh` | 端到端冒烟测试（76 项断言）：临时素材库 + curl 覆盖鉴权、索引、过滤、颜色检索、缩略图、去重、文件夹、监听、写入防抖、SSE、回收站全流程与重启后哈希复用。JSON POST 体一律经 stdin 传递（post_json），避免 Windows Git Bash 把 argv 中的中文转成 GBK。运行前先 `dotnet build` |
 
 仓库根目录另有 `hawk-server.Tests/`（xunit 单元/集成测试），见下文「测试」一节。
 
@@ -153,8 +156,8 @@ trash/clear:   物理删除 → ClearTrashJob 清位置、清元数据路径；
 
 | 层 | 位置 | 说明 |
 | ---- | ---- | ---- |
-| 单元/集成测试 | `hawk-server.Tests/`（xunit，106 项） | Core 层纯逻辑（路径、元数据 TOML 往返、ignore 匹配、索引查询、BLAKE3 标准向量）+ IndexPipeline 临时目录集成测试（入库/哈希复用/id 漂移继承/移动/多路径/清空回收站/事件/防抖）。`dotnet test hawk-server.Tests` |
-| 端到端契约测试 | `hawk-server/tools/smoke.sh`（46 项断言） | 临时素材库 + curl 覆盖 HTTP API 全流程；语言无关，未来 Rust 版可直接复用。运行前先 `dotnet build` |
+| 单元/集成测试 | `hawk-server.Tests/`（xunit，162 项） | Core 层纯逻辑（路径、元数据 TOML 往返、ignore 匹配、索引查询、颜色数学/调色板提炼、BLAKE3 标准向量）+ IndexPipeline 临时目录集成测试（入库/哈希复用/id 漂移继承/移动/多路径/清空回收站/调色板缓存/事件/防抖）。`dotnet test hawk-server.Tests` |
+| 端到端契约测试 | `hawk-server/tools/smoke.sh`（76 项断言） | 临时素材库 + curl 覆盖 HTTP API 全流程；语言无关，未来 Rust 版可直接复用。运行前先 `dotnet build` |
 
 测试策略：契约级测试（HTTP/存储格式）优先于内部单元测试——C# 版是过渡实现，Rust 重写后只有契约级测试能原样复用。
 

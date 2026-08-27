@@ -19,6 +19,7 @@ export type ViewState =
 export interface QueryState {
   keywords: string[];
   star?: number;
+  color?: string;
   orderBy: 'modification_time' | 'name' | 'size' | 'star';
   order: 'asc' | 'desc';
 }
