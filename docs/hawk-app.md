@@ -280,7 +280,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（标题栏通栏 + 三栏；`no-sidebar` 时侧栏列归零）；`onMounted`：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
+| `App.vue` | — | — | 布局骨架（标题栏通栏 + 三栏；`no-sidebar` 时侧栏列归零）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | — | Eagle 式通栏标题栏（无边框窗口拖拽区，双击空白切换最大化）：侧栏开关、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）、窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows 风格，固定右上）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Sidebar.vue` | — | — | 「全部素材」、FolderTreeNode 递归、「回收站」；选中态反映 store.view |
@@ -360,7 +360,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 - `electron-builder.yml`：`extraResources` 按平台携带 hawk-server 自包含单文件（`dotnet publish -r win-x64 / osx-arm64 / linux-x64` 产物）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
-- 产物：macOS dmg / Windows nsis / Linux AppImage
+- 产物：macOS `hawk.app` 目录（CI 交叉打包 arm64 + x64 后 zip 发布；不做 dmg）/ Windows portable / Linux AppImage
 - CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
 
 ## 目录结构

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { initApi } from './api/client';
 import { connectEvents } from './api/events';
 import { useLibraryStore } from './stores/library';
@@ -18,8 +18,9 @@ const store = useLibraryStore();
 const bootError = ref<string | null>(null);
 // 无连接参数但在 Electron 内：素材库未配置，进引导页
 const setupMode = ref(false);
+let disconnectEvents: (() => void) | null = null;
 
-onMounted(async () => {
+async function boot() {
   if (!initApi()) {
     if (window.hawkShell) {
       setupMode.value = true;
@@ -34,7 +35,10 @@ onMounted(async () => {
     bootError.value = '无法连接 hawk-server，请确认后端已启动';
     return;
   }
-  connectEvents({
+  setupMode.value = false;
+  bootError.value = null;
+  disconnectEvents?.();
+  disconnectEvents = connectEvents({
     onAdded: (item) => store.applyEvent('item.added', item),
     onUpdated: (item) => store.applyEvent('item.updated', item),
     onTrashed: (id) => store.applyEvent('item.trashed', { id }),
@@ -45,6 +49,25 @@ onMounted(async () => {
       void store.refreshFolders();
     },
   });
+}
+
+// 引导页选定素材库后，主进程仅在原 URL 上改 hash 注入连接参数；仅 hash 变化的导航是
+// same-document 导航（页面不重载、onMounted 不重跑），需监听 hashchange 重新走启动流程，
+// 否则会一直停留在引导页
+function onHashChange() {
+  if (setupMode.value || bootError.value) {
+    void boot();
+  }
+}
+
+onMounted(() => {
+  void boot();
+  window.addEventListener('hashchange', onHashChange);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('hashchange', onHashChange);
+  disconnectEvents?.();
 });
 
 useShortcuts();

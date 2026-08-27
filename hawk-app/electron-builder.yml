@@ -1,7 +1,8 @@
 # electron-builder 配置。npm run pack 会先执行 build:server（scripts/build-server.mjs）产出当前平台的 hawk-server 二进制。
 appId: com.hawk.app
 productName: hawk
-# 产物固定为 hawk.exe / hawk.dmg / hawk.AppImage，不带版本号
+# 产物固定为 hawk.exe / hawk.app（目录）/ hawk.AppImage，不带版本号
+# mac 用 dir target 直接产 .app 目录；GitHub 只能上传单文件，发布时由 CI zip 成 hawk-mac-<arch>.zip
 artifactName: ${productName}.${ext}
 # 只保留中英 Chromium 语言包（默认携带全部 55 种，约 49MB）
 electronLanguages:
@@ -18,7 +19,8 @@ extraResources:
     to: hawk-server
 mac:
   category: public.app-category.graphics-design
-  target: dmg
+  # dir：只构建 .app 目录，不做镜像打包（zip 由 CI 负责）
+  target: dir
 win:
   # 绿色软件：单文件 portable exe，免安装双击即用
   target: portable
