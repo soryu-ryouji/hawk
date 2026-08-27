@@ -28,7 +28,7 @@ Eagle 主窗口的关键特征：
 
 | Eagle 特性 | 决策 | 说明 |
 | ---------- | ---- | ---- |
-| 三栏布局 + 通栏自绘标题栏 | 采纳 | 无边框窗口（frame: false），标题栏集成侧栏开关/前进后退/面包屑/缩略图滑杆/筛选/搜索/窗口控制；不做状态栏 |
+| 三栏布局 + 通栏自绘标题栏 | 采纳 | 标题栏集成侧栏开关/前进后退/面包屑/缩略图滑杆/筛选/搜索/窗口控制；macOS 用系统原生红绿灯（`titleBarStyle: 'hidden'`），Windows/Linux 无边框（`frame: false`）+ 自绘窗口控制；不做状态栏 |
 | 深色主题 | 采纳 | 自定义 CSS，不引组件库 |
 | 瀑布流（不等高）网格 | 采纳（齐行布局） | Eagle 实为「行内等高、宽度按宽高比」的 justified 布局；自研贪心装行算法，不引库 |
 | 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类树与标签列表（见 category.md）；智能文件夹不做 |
@@ -64,7 +64,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `selectLibrary()` | 更换素材库：弹目录选择框 → 主进程杀掉旧 server 并用新库重启 → 重载窗口 |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
-| `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（无边框窗口没有原生按钮）；toggle 返回切换后的最大化状态 |
+| `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
 
 ## 契约与类型生成
@@ -95,7 +95,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 └────────────┴──────────────────────────────────┴─────────────────────┘
 ```
 
-无边框窗口（`frame: false`）：标题栏为通栏自绘（`TitleBar.vue`），整条是窗口拖拽区（双击空白切换最大化），交互控件单独 `no-drag`；右端窗口控制按钮经 preload 白名单 IPC 驱动主进程。无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在标题栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
+窗口标题栏按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 栏高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证），标题栏内容左移 78px 避让；Windows/Linux 为无边框窗口（`frame: false`），右端自绘窗口控制按钮经 preload 白名单 IPC 驱动主进程。标题栏（`TitleBar.vue`）为通栏自绘，整条是窗口拖拽区（双击空白切换最大化），交互控件单独 `no-drag`。无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在标题栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
@@ -282,7 +282,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | ---- | ----- | ----- | -------------- |
 | `App.vue` | — | — | 布局骨架（标题栏通栏 + 三栏；`no-sidebar` 时侧栏列归零）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | — | Eagle 式通栏标题栏（无边框窗口拖拽区，双击空白切换最大化）：侧栏开关、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）、窗口控制 |
-| `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows 风格，固定右上）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
+| `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格，固定右上）；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（父组件 TitleBar 的 scoped no-drag 规则命中不到子组件按钮，缺了会被拖拽区拦截真实点击）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Sidebar.vue` | — | — | 「全部素材」、FolderTreeNode 递归、「回收站」；选中态反映 store.view |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
 | `ItemGrid.vue` | — | — | 滚动容器渲染 store.items；sentinel 翻页；空态 EmptyState；右键/双击/点选转发 store |
@@ -370,7 +370,7 @@ hawk-app/
 ├── package.json            # 全部依赖与脚本（单包，不做 workspaces）
 ├── electron-builder.yml
 ├── electron/
-│   ├── main.cjs            # 无边框窗口（窗口控制 IPC）、拉起/回收 server、token、库选择、白名单 IPC
+│   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、拉起/回收 server、token、库选择、白名单 IPC
 │   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/拖拽路径/窗口控制）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型

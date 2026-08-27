@@ -8,6 +8,8 @@ import WindowControls from './WindowControls.vue';
 
 const store = useLibraryStore();
 const searchText = ref('');
+// macOS 窗口控制为系统原生红绿灯（叠加在标题栏左上），内容需右移避让
+const isMac = window.hawkShell?.platform === 'darwin';
 
 /** 文件夹/分类视图显示可点击面包屑（根 = 全部素材），其余视图显示固定标题 */
 const breadcrumb = computed(() => {
@@ -61,7 +63,7 @@ function onDblClick(e: MouseEvent) {
 </script>
 
 <template>
-  <header class="titlebar" @dblclick="onDblClick">
+  <header class="titlebar" :class="{ mac: isMac }" @dblclick="onDblClick">
     <div class="group left">
       <button class="bar-btn" :class="{ active: store.sidebarVisible }" title="侧栏" @click="store.toggleSidebar()">
         <Icon name="panelLeft" :size="16" />
@@ -158,6 +160,11 @@ function onDblClick(e: MouseEvent) {
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+/* macOS：左侧留出原生红绿灯的位置 */
+.titlebar.mac {
+  padding-left: 78px;
 }
 
 .group.right {

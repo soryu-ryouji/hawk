@@ -1,6 +1,7 @@
 // 平台相关的系统称呼。真实平台由 preload 注入；纯浏览器调试时按 userAgent 兜底。
 
-const platform =
+/** 运行平台：darwin/win32/linux；真实平台由 preload 注入，纯浏览器调试时按 userAgent 兜底 */
+export const platform =
   window.hawkShell?.platform ??
   (navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Windows') ? 'win32' : 'linux');
 

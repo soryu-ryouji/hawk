@@ -122,11 +122,8 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     backgroundColor: '#1e1e1e',
-    // macOS：隐藏系统标题栏但保留原生红绿灯（悬停 glyph、失焦置灰、全屏行为由系统保证），
-    // trafficLightPosition 按 40px 标题栏垂直居中；Windows/Linux：无边框，窗口控制由前端自绘
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 14 } }
-      : { frame: false }),
+    // 无边框窗口：标题栏由前端自绘（Eagle 式通栏），窗口控制走 hawk:win-* IPC
+    frame: false,
     // 开发态 / Linux 的窗口图标；打包后各平台图标由 electron-builder 嵌入
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
