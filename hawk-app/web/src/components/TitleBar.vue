@@ -65,7 +65,7 @@ function onDblClick(e: MouseEvent) {
 <template>
   <header class="titlebar" :class="{ mac: isMac }" @dblclick="onDblClick">
     <div class="group left">
-      <button class="bar-btn" :class="{ active: store.sidebarVisible }" title="侧栏" @click="store.toggleSidebar()">
+      <button class="bar-btn" :class="{ active: store.sidebarVisible }" title="侧栏与检查器" @click="store.toggleSidebar()">
         <Icon name="panelLeft" :size="16" />
       </button>
       <button class="bar-btn" title="后退" :disabled="!store.canGoBack" @click="store.goBack()">

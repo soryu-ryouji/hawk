@@ -7,6 +7,7 @@ export type CategoryNode = components['schemas']['CategoryNode'];
 export type TagInfo = components['schemas']['TagInfo'];
 export type LibraryInfo = components['schemas']['LibraryInfo'];
 export type ItemListRequest = components['schemas']['ItemListRequest'];
+export type ItemListResult = components['schemas']['ItemListResponse'];
 
 // 业务自有类型
 export type ViewState =

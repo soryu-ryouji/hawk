@@ -280,14 +280,14 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（标题栏通栏 + 三栏；`no-sidebar` 时侧栏列归零）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
-| `TitleBar.vue` | — | — | Eagle 式通栏标题栏（无边框窗口拖拽区，双击空白切换最大化）：侧栏开关、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）、窗口控制 |
+| `App.vue` | — | — | 布局骨架（标题栏通栏 + 三栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
+| `TitleBar.vue` | — | — | Eagle 式通栏标题栏（无边框窗口拖拽区，双击空白切换最大化）：侧栏开关（同时显隐左右两栏）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）、窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格，固定右上）；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（父组件 TitleBar 的 scoped no-drag 规则命中不到子组件按钮，缺了会被拖拽区拦截真实点击）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Sidebar.vue` | — | — | 「全部素材」、FolderTreeNode 递归、「回收站」；选中态反映 store.view |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
 | `ItemGrid.vue` | — | — | 滚动容器渲染 store.items；sentinel 翻页；空态 EmptyState；右键/双击/点选转发 store |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标 |
-| `Inspector.vue` | — | — | 单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径） |
+| `Inspector.vue` | — | — | 单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |

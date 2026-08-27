@@ -39,6 +39,8 @@ export const useLibraryStore = defineStore('library', () => {
   const query = ref<QueryState>({ keywords: [], orderBy: 'modification_time', order: 'desc' });
   const items = ref<Item[]>([]);
   const total = ref(0);
+  /** 当前视图（含筛选）未分页的全量字节数合计，检查器「分区状态」用 */
+  const totalSize = ref(0);
   const loading = ref(false);
   const endReached = ref(false);
   const selection = ref<string[]>([]);
@@ -64,6 +66,14 @@ export const useLibraryStore = defineStore('library', () => {
     () => selection.value.map((id) => items.value.find((i) => i.id === id)).filter((i): i is Item => !!i),
   );
   const primarySelected = computed(() => selectedItems.value.at(-1) ?? null);
+  /** 当前视图名称（检查器「分区状态」标题）：全部素材/回收站/标签名/文件夹或分类末级名 */
+  const viewTitle = computed(() => {
+    const v = view.value;
+    if (v.kind === 'all') return '全部素材';
+    if (v.kind === 'trash') return '回收站';
+    if (v.kind === 'tag') return v.name;
+    return v.path.split('/').pop() ?? '';
+  });
   const previewItem = computed(() => items.value.find((i) => i.id === previewId.value) ?? null);
   const previewNavId = (step: 1 | -1) => {
     const idx = items.value.findIndex((i) => i.id === previewId.value);
@@ -223,6 +233,7 @@ export const useLibraryStore = defineStore('library', () => {
     goHistory(1);
   }
 
+  /** Eagle 式侧栏开关：同时显隐左侧栏与右侧检查器 */
   function toggleSidebar() {
     sidebarVisible.value = !sidebarVisible.value;
   }
@@ -236,6 +247,7 @@ export const useLibraryStore = defineStore('library', () => {
     items.value = [];
     endReached.value = false;
     total.value = 0;
+    totalSize.value = 0;
     await fetchMore();
   }
 
@@ -248,6 +260,7 @@ export const useLibraryStore = defineStore('library', () => {
       const res = await api.itemList(buildListParams(items.value.length, PAGE_SIZE));
       items.value = [...items.value, ...res.items];
       total.value = Number(res.total);
+      totalSize.value = Number(res.total_size);
       endReached.value = items.value.length >= total.value;
     } catch (e) {
       showToast(errorText(e));
@@ -263,6 +276,7 @@ export const useLibraryStore = defineStore('library', () => {
       const res = await api.itemList(buildListParams(0, limit));
       items.value = res.items;
       total.value = Number(res.total);
+      totalSize.value = Number(res.total_size);
       endReached.value = items.value.length >= total.value;
       // 保持不变式「选择 ⊆ 列表」：不再属于当前视图的选中项一并摘除
       selection.value = selection.value.filter((id) => res.items.some((i) => i.id === id));
@@ -608,7 +622,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, items, total, loading, endReached, selection, folders, categories, tagList, trashTotal, library, thumbSize, previewId, toast, sidebarVisible,
+    view, query, items, total, totalSize, viewTitle, loading, endReached, selection, folders, categories, tagList, trashTotal, library, thumbSize, previewId, toast, sidebarVisible,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, flatCategories,
     init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, fetchMore, refresh,
     select, selectAll, clearSelection,

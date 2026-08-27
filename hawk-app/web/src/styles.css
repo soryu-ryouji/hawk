@@ -86,11 +86,13 @@ button.danger {
     "sidebar main inspector";
 }
 
-.app.no-sidebar {
-  grid-template-columns: 0 1fr 280px;
+/* 侧栏开关同时显隐左右两栏（Eagle 式） */
+.app.no-panels {
+  grid-template-columns: 0 1fr 0;
 }
 
-.app.no-sidebar > .sidebar {
+.app.no-panels > .sidebar,
+.app.no-panels > .inspector {
   display: none;
 }
 

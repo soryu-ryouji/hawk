@@ -28,7 +28,7 @@ public static class ItemEndpoints
         public int Limit { get; init; } = 50;
     }
 
-    public sealed record ItemListResponse(ItemDto[] Items, int Total, int Offset, int Limit);
+    public sealed record ItemListResponse(ItemDto[] Items, int Total, long TotalSize, int Offset, int Limit);
 
     public sealed record ItemAddRequest
     {
@@ -88,8 +88,8 @@ public static class ItemEndpoints
                 InTrash = req.InTrash, OrderBy = req.OrderBy, Order = req.Order,
                 Offset = req.Offset, Limit = req.Limit,
             };
-            var items = index.Query(query, out var total);
-            var response = new ItemListResponse(items.ToArray(), total, query.Offset, query.Limit);
+            var items = index.Query(query, out var total, out var totalSize);
+            var response = new ItemListResponse(items.ToArray(), total, totalSize, query.Offset, query.Limit);
             return TypedResults.Ok(Envelope<ItemListResponse>.Ok(response));
         });
 

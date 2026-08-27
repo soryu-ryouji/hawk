@@ -41,7 +41,7 @@ public class ItemIndexTests
     public void 默认查询排除回收站()
     {
         Seed();
-        var result = _index.Query(new ItemQuery(), out var total);
+        var result = _index.Query(new ItemQuery(), out var total, out _);
         Assert.Equal(3, total);
         Assert.Equal(3, result.Count);
     }
@@ -50,7 +50,7 @@ public class ItemIndexTests
     public void 回收站视图只含回收站item()
     {
         Seed();
-        var result = _index.Query(new ItemQuery { InTrash = true }, out var total);
+        var result = _index.Query(new ItemQuery { InTrash = true }, out var total, out _);
         Assert.Equal(1, total);
         Assert.Equal("h4", result[0].Id);
         Assert.Equal(["old/dead.jpg"], result[0].Paths);
@@ -70,16 +70,16 @@ public class ItemIndexTests
         _index.SetPalette("h1", [PaletteColor.FromRgb(0x34, 0x44, 0x41, 100)]);
 
         // 同一颜色命中
-        var hit = _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x34, 0x44, 0x41) }, out var hitTotal);
+        var hit = _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x34, 0x44, 0x41) }, out var hitTotal, out _);
         Assert.Equal(1, hitTotal);
         Assert.Equal("h1", hit[0].Id);
 
         // 阈值内的相近色命中（ΔE ≈ 6）
-        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x2E, 0x4E, 0x44) }, out var nearTotal);
+        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x2E, 0x4E, 0x44) }, out var nearTotal, out _);
         Assert.Equal(1, nearTotal);
 
         // 阈值外的颜色不命中
-        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0xFF, 0x00, 0x00) }, out var farTotal);
+        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0xFF, 0x00, 0x00) }, out var farTotal, out _);
         Assert.Equal(0, farTotal);
     }
 
@@ -87,7 +87,7 @@ public class ItemIndexTests
     public void 颜色过滤_无调色板不命中()
     {
         Seed();
-        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x34, 0x44, 0x41) }, out var total);
+        _index.Query(new ItemQuery { Color = ColorMath.RgbToLab(0x34, 0x44, 0x41) }, out var total, out _);
         Assert.Equal(0, total);
     }
 
@@ -104,7 +104,7 @@ public class ItemIndexTests
     public void 标签过滤_AND语义(string[] tags, int expected)
     {
         Seed();
-        _index.Query(new ItemQuery { Tags = tags }, out var total);
+        _index.Query(new ItemQuery { Tags = tags }, out var total, out _);
         Assert.Equal(expected, total);
     }
 
@@ -116,7 +116,7 @@ public class ItemIndexTests
     public void 关键词过滤_匹配名称与备注(string[] keywords, int expected)
     {
         Seed();
-        _index.Query(new ItemQuery { Keywords = keywords }, out var total);
+        _index.Query(new ItemQuery { Keywords = keywords }, out var total, out _);
         Assert.Equal(expected, total);
     }
 
@@ -129,7 +129,7 @@ public class ItemIndexTests
     public void 文件夹过滤_前缀含子目录(string[] folders, int expected)
     {
         Seed();
-        _index.Query(new ItemQuery { Folders = folders }, out var total);
+        _index.Query(new ItemQuery { Folders = folders }, out var total, out _);
         Assert.Equal(expected, total);
     }
 
@@ -137,19 +137,19 @@ public class ItemIndexTests
     public void 其他过滤条件()
     {
         Seed();
-        _index.Query(new ItemQuery { Star = 4 }, out var byStar);
+        _index.Query(new ItemQuery { Star = 4 }, out var byStar, out _);
         Assert.Equal(1, byStar);
 
-        _index.Query(new ItemQuery { Ext = "png" }, out var byExt);
+        _index.Query(new ItemQuery { Ext = "png" }, out var byExt, out _);
         Assert.Equal(1, byExt);
 
-        _index.Query(new ItemQuery { Annotation = "sunset" }, out var byAnn);
+        _index.Query(new ItemQuery { Annotation = "sunset" }, out var byAnn, out _);
         Assert.Equal(1, byAnn);
 
-        _index.Query(new ItemQuery { Url = "example.com" }, out var byUrl);
+        _index.Query(new ItemQuery { Url = "example.com" }, out var byUrl, out _);
         Assert.Equal(1, byUrl);
 
-        _index.Query(new ItemQuery { Ids = ["h1", "h3"] }, out var byIds);
+        _index.Query(new ItemQuery { Ids = ["h1", "h3"] }, out var byIds, out _);
         Assert.Equal(2, byIds);
     }
 
@@ -158,13 +158,13 @@ public class ItemIndexTests
     {
         Seed();
         // 默认 modification_time desc
-        var desc = _index.Query(new ItemQuery(), out _);
+        var desc = _index.Query(new ItemQuery(), out _, out _);
         Assert.Equal(["h1", "h3", "h2"], desc.Select(d => d.Id).ToArray());
 
-        var asc = _index.Query(new ItemQuery { Order = "asc", OrderBy = "size" }, out _);
+        var asc = _index.Query(new ItemQuery { Order = "asc", OrderBy = "size" }, out _, out _);
         Assert.Equal(["h2", "h3", "h1"], asc.Select(d => d.Id).ToArray());
 
-        var page = _index.Query(new ItemQuery { Offset = 1, Limit = 1 }, out var total);
+        var page = _index.Query(new ItemQuery { Offset = 1, Limit = 1 }, out var total, out _);
         Assert.Equal(3, total);          // total 是分页前计数
         Assert.Single(page);
         Assert.Equal("h3", page[0].Id);
@@ -178,11 +178,11 @@ public class ItemIndexTests
         AddItem("c3", "c.png", categories: ["摄影"]);
 
         // any：命中任一（"插画" 含子分类 "插画/人物"）
-        _index.Query(new ItemQuery { Categories = ["插画"] }, out var any);
+        _index.Query(new ItemQuery { Categories = ["插画"] }, out var any, out _);
         Assert.Equal(2, any);
 
         // all：必须同时命中「插画」与「参考」
-        _index.Query(new ItemQuery { Categories = ["插画", "参考"], CategoriesMatch = "all" }, out var all);
+        _index.Query(new ItemQuery { Categories = ["插画", "参考"], CategoriesMatch = "all" }, out var all, out _);
         Assert.Equal(1, all);
     }
 
@@ -193,10 +193,10 @@ public class ItemIndexTests
         AddItem("c2", "b.png", tags: ["work"], categories: ["摄影"]);
         AddItem("c3", "c.png");
 
-        _index.Query(new ItemQuery { ExcludeCategories = ["插画"] }, out var noCat);
+        _index.Query(new ItemQuery { ExcludeCategories = ["插画"] }, out var noCat, out _);
         Assert.Equal(2, noCat);
 
-        _index.Query(new ItemQuery { ExcludeTags = ["nature"] }, out var noTag);
+        _index.Query(new ItemQuery { ExcludeTags = ["nature"] }, out var noTag, out _);
         Assert.Equal(2, noTag);
     }
 

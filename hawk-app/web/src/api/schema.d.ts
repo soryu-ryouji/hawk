@@ -1188,6 +1188,8 @@ export interface components {
             items: components["schemas"]["ItemDto"][];
             /** Format: int32 */
             total: number | string;
+            /** Format: int64 */
+            total_size: number | string;
             /** Format: int32 */
             offset: number | string;
             /** Format: int32 */

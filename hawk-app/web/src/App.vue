@@ -85,7 +85,7 @@ useDragImport();
     </div>
   </div>
 
-  <div v-else class="app" :class="{ 'no-sidebar': !store.sidebarVisible }">
+  <div v-else class="app" :class="{ 'no-panels': !store.sidebarVisible }">
     <TitleBar class="titlebar" />
     <Sidebar class="sidebar" />
     <ItemGrid />

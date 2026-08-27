@@ -1,13 +1,6 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
 import { apiConfig, request } from './client';
-import type { CategoryNode, FolderNode, Item, ItemListRequest, LibraryInfo, TagInfo } from '../types';
-
-export interface ItemListResult {
-  items: Item[];
-  total: number;
-  offset: number;
-  limit: number;
-}
+import type { CategoryNode, FolderNode, Item, ItemListRequest, ItemListResult, LibraryInfo, TagInfo } from '../types';
 
 export interface ItemPatch {
   name?: string;

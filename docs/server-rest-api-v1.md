@@ -300,11 +300,14 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
       }
     ],
     "total": 1250,
+    "total_size": 314572800,
     "offset": 0,
     "limit": 50
   }
 }
 ```
+
+`total` / `total_size` 为过滤后未分页的全量计数与字节数合计（前端检查器「分区状态」用）。
 
 ### detail
 

@@ -317,7 +317,19 @@ function batchMoveFolder(path: string) {
       <button v-else @click="store.restoreSelected()">恢复</button>
     </div>
 
-    <div v-else class="hint">选择素材查看详情</div>
+    <!-- 无选中：当前分区状态（参考 Eagle：分区名 + 基本信息） -->
+    <div v-else class="section-status">
+      <div class="status-title">{{ store.viewTitle }}</div>
+      <section>
+        <div class="section-title">基本信息</div>
+        <dl class="info">
+          <dt>文件数</dt>
+          <dd>{{ store.total }}</dd>
+          <dt>占用空间</dt>
+          <dd>{{ formatSize(store.totalSize) }}</dd>
+        </dl>
+      </section>
+    </div>
 
     <CategoryPickerDialog v-if="showCategoryPicker" title="添加到分类" @confirm="batchAddCategory" @cancel="showCategoryPicker = false" />
     <FolderPickerDialog v-if="showFolderPicker" title="移动到文件夹" @confirm="batchMoveFolder" @cancel="showFolderPicker = false" />
@@ -535,11 +547,18 @@ section {
   padding: 6px 8px;
 }
 
-.hint {
-  height: 100%;
+.section-status {
+  padding: 12px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-1);
+  flex-direction: column;
+  gap: 16px;
+}
+
+.status-title {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-3);
+  font-weight: 600;
 }
 </style>

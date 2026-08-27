@@ -261,8 +261,8 @@ public sealed class ItemIndex
         }
     }
 
-    /// <summary>条件查询。在锁内完成过滤、排序、分页与 DTO 投影。</summary>
-    public List<ItemDto> Query(ItemQuery q, out int total)
+    /// <summary>条件查询。在锁内完成过滤、排序、分页与 DTO 投影；totalSize 为过滤后全量（未分页）的字节数合计。</summary>
+    public List<ItemDto> Query(ItemQuery q, out int total, out long totalSize)
     {
         lock (_gate)
         {
@@ -334,6 +334,7 @@ public sealed class ItemIndex
 
             var dtos = items.Select(i => i.ToDto(q.InTrash)).ToList();
             total = dtos.Count;
+            totalSize = dtos.Sum(d => d.Size);
 
             var desc = !string.Equals(q.Order, "asc", StringComparison.OrdinalIgnoreCase);
             dtos.Sort((a, b) =>
