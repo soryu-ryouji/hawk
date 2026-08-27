@@ -6,7 +6,8 @@ import { useLibraryStore } from './stores/library';
 import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
 import Sidebar from './components/Sidebar.vue';
-import Toolbar from './components/Toolbar.vue';
+import TitleBar from './components/TitleBar.vue';
+import WindowControls from './components/WindowControls.vue';
 import ItemGrid from './components/ItemGrid.vue';
 import Inspector from './components/Inspector.vue';
 import PreviewOverlay from './components/PreviewOverlay.vue';
@@ -51,16 +52,19 @@ useDragImport();
 </script>
 
 <template>
-  <SetupScreen v-if="setupMode" />
-
-  <div v-else-if="bootError" class="boot-error">
-    <p>{{ bootError }}</p>
-    <p>请从 hawk 桌面端启动本应用</p>
+  <!-- 引导页/启动失败页：无边框窗口下仍需拖拽区与窗口控制按钮 -->
+  <div v-if="setupMode || bootError" class="standalone">
+    <div class="drag-bar"><WindowControls /></div>
+    <SetupScreen v-if="setupMode" />
+    <div v-else class="boot-error">
+      <p>{{ bootError }}</p>
+      <p>请从 hawk 桌面端启动本应用</p>
+    </div>
   </div>
 
-  <div v-else class="app">
+  <div v-else class="app" :class="{ 'no-sidebar': !store.sidebarVisible }">
+    <TitleBar class="titlebar" />
     <Sidebar class="sidebar" />
-    <Toolbar class="toolbar" />
     <ItemGrid />
     <Inspector class="inspector" />
 

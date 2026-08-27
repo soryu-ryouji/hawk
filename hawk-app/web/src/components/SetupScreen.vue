@@ -28,7 +28,7 @@ async function openLibrary() {
 
 <style scoped>
 .setup {
-  height: 100vh;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;

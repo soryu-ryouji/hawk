@@ -180,7 +180,9 @@ try {
   check('网格渲染 10 个素材卡片', cardCount, 10);
   check('侧栏显示文件夹', await evaljs(`document.querySelector('.sidebar .tree')?.textContent?.includes('海报') ?? false`), true);
   check('侧栏入口', await evaljs(`document.querySelector('.sidebar')?.textContent?.includes('回收站') ?? false`), true);
-  check('位置标题为全部素材', await evaljs(`document.querySelector('.toolbar .title')?.textContent`), '全部素材');
+  check('位置标题为全部素材', await evaljs(`document.querySelector('.titlebar .title')?.textContent`), '全部素材');
+  check('窗口控制按钮（最小化/最大化/关闭）', await evaljs(`document.querySelectorAll('.titlebar .win-btn').length`), 3);
+  check('后退按钮初始禁用', await evaljs(`document.querySelector('.titlebar .bar-btn[title="后退"]')?.disabled ?? false`), true);
   const badge = await waitFor(async () => {
     const value = await evaljs(`document.querySelector('.sidebar .entry .count')?.textContent`);
     return value === '10' ? value : null;
@@ -269,7 +271,7 @@ try {
   await evaljs(`document.querySelector('.card').click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.inspector .fields')`), 5_000);
   check('选中后检查器出现', await evaljs(`!!document.querySelector('.inspector .name-input')`), true);
-  check('工具栏选中计数', await evaljs(`document.querySelector('.toolbar .selected')?.textContent?.includes('已选 1 项') ?? false`), true);
+  check('标题栏选中计数', await evaljs(`document.querySelector('.titlebar .selected')?.textContent?.includes('已选 1 项') ?? false`), true);
   await screenshot('ui-inspector.png');
 
   // 点星评分 → 卡片出现评分角标
@@ -290,7 +292,27 @@ try {
     return n === 2 ? n : null;
   }, 5_000);
   check('文件夹视图过滤', folderCount, 2);
-  check('位置标题为文件夹名', await evaljs(`document.querySelector('.toolbar .title')?.textContent`), '海报');
+  check('位置标题为文件夹名', await evaljs(`document.querySelector('.titlebar .crumb.current')?.textContent?.trim() ?? ''`), '海报');
+
+  // ---- 标题栏前进/后退 ----
+  await evaljs(`document.querySelector('.titlebar .bar-btn[title="后退"]').click()`);
+  const backCount = await waitFor(async () => {
+    const n = await evaljs(`document.querySelectorAll('.card').length`);
+    return n === 10 ? n : null;
+  }, 5_000);
+  check('后退回全部素材', backCount, 10);
+  await evaljs(`document.querySelector('.titlebar .bar-btn[title="前进"]').click()`);
+  const fwdCount = await waitFor(async () => {
+    const n = await evaljs(`document.querySelectorAll('.card').length`);
+    return n === 2 ? n : null;
+  }, 5_000);
+  check('前进回文件夹视图', fwdCount, 2);
+
+  // ---- 侧栏开关 ----
+  await evaljs(`document.querySelector('.titlebar .bar-btn[title="侧栏"]').click()`);
+  check('侧栏隐藏', await evaljs(`getComputedStyle(document.querySelector('.sidebar')).display`), 'none');
+  await evaljs(`document.querySelector('.titlebar .bar-btn[title="侧栏"]').click()`);
+  check('侧栏恢复', await evaljs(`getComputedStyle(document.querySelector('.sidebar')).display`) !== 'none', true);
 
   // SSE：另一进程写入文件 → 界面自动出现（先回全部素材）
   await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('全部素材'))?.click()`);
@@ -500,7 +522,7 @@ try {
     return detail && (detail.categories ?? []).length === 0 ? true : null;
   }, 5_000);
   check('删除分类清除赋值（服务端）', deleteOk, true);
-  check('删除后视图回全部素材', await evaljs(`document.querySelector('.toolbar .title')?.textContent`), '全部素材');
+  check('删除后视图回全部素材', await evaljs(`document.querySelector('.titlebar .title')?.textContent`), '全部素材');
 
   // 新建空标签 + 重命名跟随
   await evaljs(`[...document.querySelectorAll('.sidebar .section')].find((s) => s.textContent.includes('标签'))?.querySelector('.add')?.click()`);

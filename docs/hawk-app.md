@@ -12,30 +12,28 @@ Eagle 主窗口的关键特征：
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐
-│ 工具栏：搜索框 · 筛选 · 排序 · 缩略图尺寸                         │
+│ 标题栏：侧栏开关 · 前进/后退 · 面包屑 ‖ 缩略图滑杆 ‖ 筛选 · 搜索 · 窗口控制 │
 ├──────────┬─────────────────────────────────────┬───────────────┤
 │ 侧栏      │ 素材网格（瀑布流）                    │ 检查器         │
 │ · 素材库  │  · 缩略图卡片                        │ · 大图预览     │
 │ · 文件夹树│  · 多选 / 框选                       │ · 名称/评分    │
 │ · 标签    │  · 右键菜单                          │ · 标签/备注    │
 │ · 回收站  │  · 双击放大预览                      │ · URL/文件信息 │
-├──────────┴─────────────────────────────────────┴───────────────┤
-│ 状态栏：数量统计                                                 │
-└────────────────────────────────────────────────────────────────┘
+└──────────┴─────────────────────────────────────┴───────────────┘
 ```
 
-深色主题、缩略图优先的网格浏览、右侧检查器即选即改，是 Eagle 体验的核心，v1 全部采纳。
+无边框窗口 + 自绘通栏标题栏（含窗口控制）、深色主题、缩略图优先的网格浏览、右侧检查器即选即改，是 Eagle 体验的核心，全部采纳。
 
-v1 取舍：
+取舍：
 
-| Eagle 特性 | v1 决策 | 说明 |
-| ---------- | ------- | ---- |
-| 三栏布局 + 工具栏 + 状态栏 | 采纳 | |
+| Eagle 特性 | 决策 | 说明 |
+| ---------- | ---- | ---- |
+| 三栏布局 + 通栏自绘标题栏 | 采纳 | 无边框窗口（frame: false），标题栏集成侧栏开关/前进后退/面包屑/缩略图滑杆/筛选/搜索/窗口控制；不做状态栏 |
 | 深色主题 | 采纳 | 自定义 CSS，不引组件库 |
 | 瀑布流（不等高）网格 | 采纳（齐行布局） | Eagle 实为「行内等高、宽度按宽高比」的 justified 布局；自研贪心装行算法，不引库 |
 | 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类树与标签列表（见 category.md）；智能文件夹不做 |
 | 框选 | 不做 | 保留 Shift/Cmd 点选 |
-| 评分筛选、颜色标签 | 评分筛选做（工具栏），颜色标签不做 | API 支持 star 过滤 |
+| 评分筛选、颜色标签 | 评分筛选做（标题栏），颜色标签不做 | API 支持 star 过滤 |
 | 浏览器扩展采集 | 不做 | 属生态接入，后端 API 已就绪 |
 
 ## 进程模型与启动流程
@@ -59,13 +57,15 @@ Electron 主进程启动
 
 token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History API），前端读取后保存在内存，不写 localStorage。
 
-**preload 白名单**（contextBridge，只暴露这三个，与业务数据无关）：
+**preload 白名单**（contextBridge，只暴露这些，与业务数据无关）：
 
 | 通道 | 用途 |
 | ---- | ---- |
 | `selectLibrary()` | 更换素材库：弹目录选择框 → 主进程杀掉旧 server 并用新库重启 → 重载窗口 |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
+| `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（无边框窗口没有原生按钮）；toggle 返回切换后的最大化状态 |
+| `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
 
 ## 契约与类型生成
 
@@ -79,7 +79,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Toolbar  位置标题·已选N  [star筛选▾] [排序▾] [滑杆]        [🔍 搜索]  │
+│ TitleBar  [侧栏][‹][›] 面包屑·已选N  [−滑杆＋]  [star▾][排序▾][🔍搜索][—][▢][✕] │
 ├────────────┬──────────────────────────────────┬─────────────────────┤
 │ Sidebar    │ ItemGrid                         │ Inspector           │
 │  库名 ⌄    │  齐行网格：行内等高，宽度按宽高比     │  预览图(格式角标)    │
@@ -95,11 +95,11 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 └────────────┴──────────────────────────────────┴─────────────────────┘
 ```
 
-无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在工具栏位置标题旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
+无边框窗口（`frame: false`）：标题栏为通栏自绘（`TitleBar.vue`），整条是窗口拖拽区（双击空白切换最大化），交互控件单独 `no-drag`；右端窗口控制按钮经 preload 白名单 IPC 驱动主进程。无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在标题栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
-当前位置体现在侧栏选中态与工具栏位置标题；回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。文件夹与分类树节点的计数由后端 `folder/list`、`category/list` 的 `count` 字段提供（含子级、不含回收站、按 item 去重）。
+当前位置体现在侧栏选中态与标题栏：文件夹/分类视图渲染可点击面包屑（根 = 全部素材，逐级跳转），其余视图为固定标题；标题栏前进/后退在会话内浏览历史（`setView` 压栈，重命名跟随/删除回退就地修正当前条目）中移动。回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。文件夹与分类树节点的计数由后端 `folder/list`、`category/list` 的 `count` 字段提供（含子级、不含回收站、按 item 去重）。
 
 ### 目录结构（web/src）
 
@@ -124,7 +124,8 @@ web/
     │   └── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
     │   └── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
     ├── components/
-    │   ├── Toolbar.vue
+    │   ├── TitleBar.vue
+    │   ├── WindowControls.vue
     │   ├── Sidebar.vue
     │   ├── FolderTreeNode.vue
     │   ├── ItemGrid.vue
@@ -231,8 +232,10 @@ selection: string[];             // 选中 id，有序；末位为主选中/连�
 folders: FolderNode | null;      // 完整树（含根）
 library: LibraryInfo | null;
 thumbSize: number;               // 网格卡片边长偏好（默认 160，内存态不持久化）
+sidebarVisible: boolean;         // 侧栏显隐（标题栏开关，默认开）
 previewId: string | null;        // 预览浮层
 toast: string | null;            // 轻提示（3s 自动清除）
+// 会话内浏览历史：viewHistory/historyIndex，setView 压栈，数据变更修正就地替换当前条目
 
 // ---- getters ----
 isTrash: boolean;                // view.kind === 'trash'
@@ -243,7 +246,9 @@ previewItem / previewPrevId / previewNextId: 浮层与左右切换
 
 // ---- actions ----
 init(): Promise<void>;           // libraryInfo + folders + resetList；失败进启动失败态
-setView(v: ViewState): void;                       // 切视图：清空选择 → resetList
+setView(v: ViewState): void;                     // 切视图：压浏览历史 → 清空选择 → resetList
+goBack() / goForward(): void;                    // 标题栏前进/后退（canGoBack/canGoForward 驱动禁用态）
+toggleSidebar(): void;                           // 侧栏显隐开关
 setQuery(patch: Partial<QueryState>): void;        // → resetList
 resetList(): Promise<void>;      // items 清空 → fetchMore 第一页
 fetchMore(): Promise<void>;      // offset=items.length, limit=100；in_trash/folders 由 view 派生
@@ -275,8 +280,9 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架；`onMounted`：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast |
-| `Toolbar.vue` | — | — | 读写 store.query：搜索框（回车按空格拆 keywords）、star 筛选下拉、颜色筛选 chip（色点 + hex + 清除）、排序下拉（字段+方向）、缩略图滑杆（store.thumbSize） |
+| `App.vue` | — | — | 布局骨架（标题栏通栏 + 三栏；`no-sidebar` 时侧栏列归零）；`onMounted`：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
+| `TitleBar.vue` | — | — | Eagle 式通栏标题栏（无边框窗口拖拽区，双击空白切换最大化）：侧栏开关、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）、窗口控制 |
+| `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows 风格，固定右上）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Sidebar.vue` | — | — | 「全部素材」、FolderTreeNode 递归、「回收站」；选中态反映 store.view |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
 | `ItemGrid.vue` | — | — | 滚动容器渲染 store.items；sentinel 翻页；空态 EmptyState；右键/双击/点选转发 store |
@@ -309,7 +315,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 --fg-0: #e8e8e8;  --fg-1: #9d9d9d;  --accent: #4f8cff;  --danger: #e5534b;  --border: #3c3c3c;
 ```
 
-布局用 CSS Grid（列 `220px 1fr 280px`，行 `48px 1fr 26px`）；网格卡片 `repeat(auto-fill, minmax(var(--thumb-size), 1fr))`，卡片内缩略图定高 + `object-fit: contain`。
+布局用 CSS Grid（标题栏通栏 40px + 内容区 `220px 1fr 280px`，侧栏可经标题栏开关隐藏归零）；网格卡片 `repeat(auto-fill, minmax(var(--thumb-size), 1fr))`，卡片内缩略图定高 + `object-fit: contain`。
 
 ### 错误处理
 
@@ -347,7 +353,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 - 虚拟滚动（十万级素材再上 vue-virtual-scroller；无限滚动 + 懒加载先行）
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
-- 自定义标题栏、托盘
+- 托盘
 - 前端单元测试框架（Vitest 暂缓；契约层由 server 的 smoke.sh 兜底）
 
 ## 打包与分发
@@ -364,8 +370,8 @@ hawk-app/
 ├── package.json            # 全部依赖与脚本（单包，不做 workspaces）
 ├── electron-builder.yml
 ├── electron/
-│   ├── main.cjs            # 窗口、拉起/回收 server、token、库选择、白名单 IPC
-│   └── preload.cjs         # contextBridge（三通道）+ webUtils
+│   ├── main.cjs            # 无边框窗口（窗口控制 IPC）、拉起/回收 server、token、库选择、白名单 IPC
+│   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/拖拽路径/窗口控制）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   └── dev.mjs             # 一键开发：vite + electron（wait-on 5173）

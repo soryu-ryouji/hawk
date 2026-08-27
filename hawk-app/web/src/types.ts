@@ -39,6 +39,10 @@ declare global {
       selectLibrary(): Promise<boolean>;
       showInFinder(relPath: string): Promise<void>;
       getPathForFile(file: File): string;
+      minimizeWindow(): Promise<void>;
+      toggleMaximizeWindow(): Promise<boolean>;
+      closeWindow(): Promise<void>;
+      onWindowMaximized(cb: (maximized: boolean) => void): () => void;
     };
   }
 }

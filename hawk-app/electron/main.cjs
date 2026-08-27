@@ -122,6 +122,8 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     backgroundColor: '#1e1e1e',
+    // 无边框窗口：标题栏由前端自绘（Eagle 式通栏），窗口控制走 hawk:win-* IPC
+    frame: false,
     // 开发态 / Linux 的窗口图标；打包后各平台图标由 electron-builder 嵌入
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
@@ -129,6 +131,9 @@ function createWindow() {
     },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // 同步最大化状态给渲染进程（标题栏 最大化/还原 图标切换）
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('hawk:win-maximized', true));
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('hawk:win-maximized', false));
   // server 未就绪前不加载页面；启动/换库流程在 server 就绪后调用 loadMainPage
 
   // 无头自检：HAWK_SCREENSHOT=<路径> 时加载完成后截图落盘
@@ -162,6 +167,21 @@ async function switchLibrary(libPath) {
 }
 
 // ---------- 白名单 IPC ----------
+
+// 自绘标题栏的窗口控制（无边框窗口没有原生按钮）
+ipcMain.handle('hawk:win-minimize', () => mainWindow?.minimize());
+ipcMain.handle('hawk:win-maximize-toggle', () => {
+  if (!mainWindow) {
+    return false;
+  }
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+  return mainWindow.isMaximized();
+});
+ipcMain.handle('hawk:win-close', () => mainWindow?.close());
 
 ipcMain.handle('hawk:select-library', async () => {
   const selected = await pickLibrary();

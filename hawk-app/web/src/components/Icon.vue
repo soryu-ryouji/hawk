@@ -11,6 +11,15 @@ const icons = {
   trash: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6',
   search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35',
   chevronDown: 'M6 9l6 6 6-6',
+  chevronLeft: 'M15 18l-6-6 6-6',
+  chevronRight: 'M9 18l6-6-6-6',
+  panelLeft: 'M3 3h18v18H3zM9 3v18',
+  minus: 'M5 12h14',
+  plus: 'M12 5v14M5 12h14',
+  winMinimize: 'M6 12h12',
+  winMaximize: 'M6 6h12v12H6z',
+  winRestore: 'M9 9h9v9H9zM3 15V3h12',
+  close: 'M18 6L6 18M6 6l12 12',
 };
 </script>
 

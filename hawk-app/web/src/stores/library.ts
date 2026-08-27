@@ -50,9 +50,15 @@ export const useLibraryStore = defineStore('library', () => {
   const thumbSize = ref(160);
   const previewId = ref<string | null>(null);
   const toast = ref<string | null>(null);
+  const sidebarVisible = ref(true);
+  /** 浏览历史（会话内）：setView 压入，前进/后退在栈内移动 */
+  const viewHistory = ref<ViewState[]>([]);
+  const historyIndex = ref(-1);
 
   // ---- getters ----
   const isTrash = computed(() => view.value.kind === 'trash');
+  const canGoBack = computed(() => historyIndex.value > 0);
+  const canGoForward = computed(() => historyIndex.value >= 0 && historyIndex.value < viewHistory.value.length - 1);
   const currentFolderPath = computed(() => (view.value.kind === 'folder' ? view.value.path : null));
   const selectedItems = computed(
     () => selection.value.map((id) => items.value.find((i) => i.id === id)).filter((i): i is Item => !!i),
@@ -127,6 +133,9 @@ export const useLibraryStore = defineStore('library', () => {
     library.value = await api.libraryInfo();
     await Promise.all([refreshFolders(), refreshTaxonomy()]);
     restoreView();
+    // 历史栈以恢复后的视图为起点
+    viewHistory.value = [view.value];
+    historyIndex.value = 0;
     await resetList();
   }
 
@@ -167,11 +176,55 @@ export const useLibraryStore = defineStore('library', () => {
     return categories.value ? walk(categories.value) : false;
   }
 
-  function setView(v: ViewState) {
+  /** 应用视图：持久化 + 清选择 + 重查列表（setView/goBack/correctView 的公共收尾） */
+  function applyView(v: ViewState) {
     view.value = v;
     localStorage.setItem(viewStorageKey(), JSON.stringify(v));
     clearSelection();
     void resetList();
+  }
+
+  function sameView(a: ViewState, b: ViewState) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  /** 用户主动切换视图：截掉前进分支后压入历史 */
+  function setView(v: ViewState) {
+    if (!sameView(v, view.value)) {
+      viewHistory.value = [...viewHistory.value.slice(0, historyIndex.value + 1), v];
+      historyIndex.value = viewHistory.value.length - 1;
+    }
+    applyView(v);
+  }
+
+  /** 数据变更引起的当前视图修正（重命名跟随/删除回退）：就地改当前历史条目，不新增 */
+  function correctView(v: ViewState) {
+    if (historyIndex.value >= 0) {
+      viewHistory.value[historyIndex.value] = v;
+    }
+    applyView(v);
+  }
+
+  /** 标题栏前进/后退：在历史栈内移动，不压入新条目 */
+  function goHistory(step: 1 | -1) {
+    const target = viewHistory.value[historyIndex.value + step];
+    if (!target) {
+      return;
+    }
+    historyIndex.value += step;
+    applyView(target);
+  }
+
+  function goBack() {
+    goHistory(-1);
+  }
+
+  function goForward() {
+    goHistory(1);
+  }
+
+  function toggleSidebar() {
+    sidebarVisible.value = !sidebarVisible.value;
   }
 
   function setQuery(patch: Partial<QueryState>) {
@@ -370,7 +423,7 @@ export const useLibraryStore = defineStore('library', () => {
       await api.folderDelete(path);
       await refreshFolders();
       if (currentFolderPath.value === path || currentFolderPath.value?.startsWith(path + '/')) {
-        setView({ kind: 'all' });
+        correctView({ kind: 'all' });
       }
     } catch (e) {
       showToast(errorText(e));
@@ -419,9 +472,9 @@ export const useLibraryStore = defineStore('library', () => {
       if (view.value.kind === 'category') {
         const prefix = path + '/';
         if (view.value.path === path) {
-          setView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) });
+          correctView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) });
         } else if (view.value.path.startsWith(prefix)) {
-          setView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) + '/' + view.value.path.slice(prefix.length) });
+          correctView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) + '/' + view.value.path.slice(prefix.length) });
         }
       }
     } catch (e) {
@@ -434,7 +487,7 @@ export const useLibraryStore = defineStore('library', () => {
       await api.categoryDelete(path);
       await refreshTaxonomy();
       if (view.value.kind === 'category' && (view.value.path === path || view.value.path.startsWith(path + '/'))) {
-        setView({ kind: 'all' });
+        correctView({ kind: 'all' });
       }
     } catch (e) {
       showToast(errorText(e));
@@ -455,7 +508,7 @@ export const useLibraryStore = defineStore('library', () => {
       await api.tagUpdate(name, newName);
       await refreshTaxonomy();
       if (view.value.kind === 'tag' && view.value.name === name) {
-        setView({ kind: 'tag', name: newName });
+        correctView({ kind: 'tag', name: newName });
       }
     } catch (e) {
       showToast(errorText(e));
@@ -467,7 +520,7 @@ export const useLibraryStore = defineStore('library', () => {
       await api.tagDelete(name);
       await refreshTaxonomy();
       if (view.value.kind === 'tag' && view.value.name === name) {
-        setView({ kind: 'all' });
+        correctView({ kind: 'all' });
       }
     } catch (e) {
       showToast(errorText(e));
@@ -555,9 +608,9 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, items, total, loading, endReached, selection, folders, categories, tagList, trashTotal, library, thumbSize, previewId, toast,
-    isTrash, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, flatCategories,
-    init, setView, setQuery, resetList, fetchMore, refresh,
+    view, query, items, total, loading, endReached, selection, folders, categories, tagList, trashTotal, library, thumbSize, previewId, toast, sidebarVisible,
+    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, flatCategories,
+    init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, fetchMore, refresh,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,

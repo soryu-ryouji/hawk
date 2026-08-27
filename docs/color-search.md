@@ -105,7 +105,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 - **Inspector.vue**：预览图下方增加调色板色块行（圆形色块，最多 10 个）。hover 提示 `#344441 (3.1%)`；palette 为空（未就绪/非图像）时整行隐藏
 - **点击色块 = 在当前范围内检索**：不切换视图，直接在当前查询上叠加 `query.color`——在「全部素材」下即全库检索；在某个文件夹/分类/标签下则只在该范围内过滤（AND 语义），与 Eagle 一致。当前检索色对应的色块显示选中圈
-- **Toolbar.vue**：颜色检索激活时显示一个 chip（色点 + hex + ×），× 清除条件；点击其他色块替换条件。颜色条件属于 query 状态（与关键词、评分同级），清除前切换文件夹/分类/标签时继续生效
+- **TitleBar.vue**：颜色检索激活时显示一个 chip（色点 + hex + ×），× 清除条件；点击其他色块替换条件。颜色条件属于 query 状态（与关键词、评分同级），清除前切换文件夹/分类/标签时继续生效
 - **store**：`QueryState` 增加 `color?: string`，`buildListParams` 透传
 - `schema.d.ts` 由 gen-types.mjs 重新生成
 
@@ -147,7 +147,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | 文件 | 改动 |
 | ---- | ---- |
 | `web/src/components/Inspector.vue` | 调色板色块行 |
-| `web/src/components/Toolbar.vue` | 颜色筛选 chip |
+| `web/src/components/TitleBar.vue` | 颜色筛选 chip |
 | `web/src/stores/library.ts`、`web/src/types.ts` | `QueryState.color`、list 参数透传 |
 | `web/src/api/schema.d.ts` | 重新生成 |
 

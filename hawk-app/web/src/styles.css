@@ -75,23 +75,31 @@ button.danger {
   border-radius: 4px;
 }
 
-/* 布局骨架：侧栏 | (工具栏 + 网格) | 检查器，无底部状态栏（计数在侧栏徽章） */
+/* 布局骨架：标题栏通栏（无边框窗口自绘），下方 侧栏 | 网格 | 检查器，无底部状态栏（计数在侧栏徽章） */
 .app {
   display: grid;
   height: 100%;
   grid-template-columns: 220px 1fr 280px;
-  grid-template-rows: 46px 1fr;
+  grid-template-rows: 40px 1fr;
   grid-template-areas:
-    "sidebar toolbar inspector"
+    "titlebar titlebar titlebar"
     "sidebar main inspector";
+}
+
+.app.no-sidebar {
+  grid-template-columns: 0 1fr 280px;
+}
+
+.app.no-sidebar > .sidebar {
+  display: none;
+}
+
+.app > .titlebar {
+  grid-area: titlebar;
 }
 
 .app > .sidebar {
   grid-area: sidebar;
-}
-
-.app > .toolbar {
-  grid-area: toolbar;
 }
 
 .app > .grid-scroll {
@@ -100,6 +108,26 @@ button.danger {
 
 .app > .inspector {
   grid-area: inspector;
+}
+
+/* 引导页/启动失败页：顶部拖拽条 + 窗口控制 */
+.standalone {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.drag-bar {
+  flex: none;
+  height: 40px;
+  display: flex;
+  justify-content: flex-end;
+  -webkit-app-region: drag;
+}
+
+.drag-bar .win-controls,
+.drag-bar button {
+  -webkit-app-region: no-drag;
 }
 
 .toast {
@@ -116,7 +144,7 @@ button.danger {
 }
 
 .boot-error {
-  height: 100%;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
