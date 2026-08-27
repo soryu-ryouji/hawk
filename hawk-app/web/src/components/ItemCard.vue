@@ -29,12 +29,16 @@ const thumbStyle = computed(() =>
     ? { width: props.width + 'px', height: props.height + 'px' }
     : { width: '100%', aspectRatio: '1' },
 );
+
+/** 卡片宽度锁定为缩略图宽度：长名称不得撑开卡片（名称走 ellipsis 截断） */
+const cardStyle = computed(() => (props.width ? { width: props.width + 'px' } : {}));
 </script>
 
 <template>
   <div
     class="card"
     :class="{ selected }"
+    :style="cardStyle"
     @click="emit('select', item, $event)"
     @dblclick="emit('open', item.id)"
     @contextmenu.prevent="emit('menu', item, $event)"
@@ -60,6 +64,7 @@ const thumbStyle = computed(() =>
 
 <style scoped>
 .card {
+  flex: none; /* 行内宽度由齐行网格精确分配，不允许伸缩 */
   border-radius: 4px;
   overflow: hidden;
   background: var(--bg-2);

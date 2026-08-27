@@ -34,6 +34,7 @@ export interface MenuItem {
 declare global {
   interface Window {
     hawkShell?: {
+      platform: string;
       selectLibrary(): Promise<boolean>;
       showInFinder(relPath: string): Promise<void>;
       getPathForFile(file: File): string;

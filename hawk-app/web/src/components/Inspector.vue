@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
+import { showInFileManagerLabel } from '../platform';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
@@ -208,7 +209,7 @@ function batchMoveFolder(path: string) {
           <div class="section-title">文件位置</div>
           <div v-for="path in item.paths" :key="path" class="path-row">
             <span class="path" :title="path">{{ path }}</span>
-            <button class="finder" title="在 Finder 中显示" @click="showInFinder(path)">◎</button>
+            <button class="finder" :title="showInFileManagerLabel" @click="showInFinder(path)">◎</button>
           </div>
         </section>
       </div>

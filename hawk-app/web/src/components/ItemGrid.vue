@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { useIntersectionObserver, useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import { showInFileManagerLabel } from '../platform';
 import type { Item } from '../types';
 import ItemCard from './ItemCard.vue';
 import EmptyState from './EmptyState.vue';
@@ -102,7 +103,7 @@ function onMenu(item: Item, e: MouseEvent) {
         { label: '添加标签…', action: () => (showTagDialog.value = true) },
         { label: '添加到分类…', action: () => (showCategoryDialog.value = true) },
         { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
-        { label: '在 Finder 中显示', action: () => window.hawkShell?.showInFinder(item.paths[0]) },
+        { label: showInFileManagerLabel, action: () => window.hawkShell?.showInFinder(item.paths[0]) },
         { separator: true, label: '' },
         ...[5, 4, 3, 2, 1, 0].map((star) => ({
           label: `评分 ${star} 星`,
