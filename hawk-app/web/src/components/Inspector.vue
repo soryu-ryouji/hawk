@@ -12,6 +12,11 @@ const store = useLibraryStore();
 const showCategoryPicker = ref(false);
 const showFolderPicker = ref(false);
 
+/** 顶部拖拽条双击切换最大化（与 TitleBar 一致；条内无交互控件，无需排除判断） */
+function onHeadDblClick() {
+  void window.hawkShell?.toggleMaximizeWindow();
+}
+
 // 编辑字段为本地副本，切换选中项时重置；失焦/回车提交
 const name = ref('');
 const annotation = ref('');
@@ -169,6 +174,9 @@ function batchMoveFolder(path: string) {
 
 <template>
   <aside class="inspector">
+    <!-- 顶部拖拽条：检查器色块通高到窗口上沿；Windows/Linux 自绘窗口控制 fixed 在本条右侧 -->
+    <div class="inspector-head" @dblclick="onHeadDblClick" />
+    <div class="inspector-body">
     <!-- 单选：完整编辑（布局参考 Eagle） -->
     <template v-if="item && store.selection.length === 1">
       <div class="preview">
@@ -330,6 +338,7 @@ function batchMoveFolder(path: string) {
         </dl>
       </section>
     </div>
+    </div>
 
     <CategoryPickerDialog v-if="showCategoryPicker" title="添加到分类" @confirm="batchAddCategory" @cancel="showCategoryPicker = false" />
     <FolderPickerDialog v-if="showFolderPicker" title="移动到文件夹" @confirm="batchMoveFolder" @cancel="showFolderPicker = false" />
@@ -338,8 +347,21 @@ function batchMoveFolder(path: string) {
 
 <style scoped>
 .inspector {
+  display: flex;
+  flex-direction: column;
   background: var(--bg-2);
   border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.inspector-head {
+  flex: none;
+  height: 40px;
+  -webkit-app-region: drag;
+}
+
+.inspector-body {
+  flex: 1;
   overflow-y: auto;
 }
 

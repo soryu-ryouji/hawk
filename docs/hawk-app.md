@@ -11,24 +11,25 @@
 Eagle 主窗口的关键特征：
 
 ```text
-┌────────────────────────────────────────────────────────────────┐
-│ 标题栏：侧栏开关 · 前进/后退 · 面包屑 ‖ 缩略图滑杆 ‖ 筛选 · 搜索 · 窗口控制 │
-├──────────┬─────────────────────────────────────┬───────────────┤
-│ 侧栏      │ 素材网格（瀑布流）                    │ 检查器         │
-│ · 素材库  │  · 缩略图卡片                        │ · 大图预览     │
-│ · 文件夹树│  · 多选 / 框选                       │ · 名称/评分    │
-│ · 标签    │  · 右键菜单                          │ · 标签/备注    │
-│ · 回收站  │  · 双击放大预览                      │ · URL/文件信息 │
-└──────────┴─────────────────────────────────────┴───────────────┘
+┌──────────┬────────────────────────────────────┬───────────────┐
+│ 侧栏      │ 顶栏：侧栏开关·前进/后退·面包屑      │ 检查器         │
+│ · 素材库  │  ‖ 缩略图滑杆 ‖ 筛选·搜索           │ · 大图预览     │
+│ · 文件夹树├────────────────────────────────────┤ · 名称/评分    │
+│ · 标签    │ 素材网格（瀑布流）                   │ · 标签/备注    │
+│ · 回收站  │  · 缩略图卡片                       │ · URL/文件信息 │
+│          │  · 多选 / 框选                       │               │
+│          │  · 右键菜单                          │               │
+│          │  · 双击放大预览                      │               │
+└──────────┴────────────────────────────────────┴───────────────┘
 ```
 
-无边框窗口 + 自绘通栏标题栏（含窗口控制）、深色主题、缩略图优先的网格浏览、右侧检查器即选即改，是 Eagle 体验的核心，全部采纳。
+左右栏通高不被顶栏隔断、顶栏只覆盖中间内容区、深色主题、无边框窗口 + 自绘顶栏（含窗口控制）、缩略图优先的网格浏览、右侧检查器即选即改，是 Eagle 体验的核心，全部采纳。
 
 取舍：
 
 | Eagle 特性 | 决策 | 说明 |
 | ---------- | ---- | ---- |
-| 三栏布局 + 通栏自绘标题栏 | 采纳 | 标题栏集成侧栏开关/前进后退/面包屑/缩略图滑杆/筛选/搜索/窗口控制；macOS 用系统原生红绿灯（`titleBarStyle: 'hidden'`），Windows/Linux 无边框（`frame: false`）+ 自绘窗口控制；不做状态栏 |
+| 三栏布局（左右栏通高，顶栏只覆盖中栏） | 采纳 | 侧栏/检查器色块通高到窗口上沿，不被顶栏隔断；中栏顶栏集成侧栏开关/前进后退/面包屑/缩略图滑杆/筛选/搜索；macOS 用系统原生红绿灯（`titleBarStyle: 'hidden'`，压在侧栏顶条左侧），Windows/Linux 无边框（`frame: false`）+ 自绘窗口控制（fixed 于窗口右上角）；不做状态栏 |
 | 深色主题 | 采纳 | 自定义 CSS，不引组件库 |
 | 瀑布流（不等高）网格 | 采纳（齐行布局） | Eagle 实为「行内等高、宽度按宽高比」的 justified 布局；自研贪心装行算法，不引库 |
 | 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类树与标签列表（见 category.md）；智能文件夹不做 |
@@ -78,24 +79,28 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 ### 布局
 
 ```text
-┌─────────────────────────────────────────────────────────────────────┐
-│ TitleBar  [侧栏][‹][›] 面包屑·已选N  [−滑杆＋]  [star▾][排序▾][🔍搜索][—][▢][✕] │
-├────────────┬──────────────────────────────────┬─────────────────────┤
-│ Sidebar    │ ItemGrid                         │ Inspector           │
-│  库名 ⌄    │  齐行网格：行内等高，宽度按宽高比     │  预览图(格式角标)    │
-│  全部素材 N │  卡片下方：name.ext + 尺寸         │  名称(可改)          │
-│  ───────── │  无限滚动分页（100/页）            │  注释(可改)          │
-│  文件夹树   │  懒加载 <img loading=lazy>        │  URL(可改)          │
-│  (增/删/改) │  多选：Shift 连选 / Cmd 点选       │  标签 chips         │
-│  分类树     │  双击/空格 → 预览浮层（Esc 关闭）   │  分类 chips ＋      │
-│  (增/删/改) │  右键：标签/分类/文件夹/回收        │  文件夹 chips ＋    │
-│  标签列表 N │  拖入文件 → 导入                   │  基本信息(评分并入)  │
-│  (增/删/改) │                                  │  文件位置            │
-│  回收站 N   │                                  │                     │
+┌────────────┬──────────────────────────────────┬─────────────────────┐
+│ Sidebar    │ TitleBar                         │ Inspector           │
+│  拖拽条¹[开关]│  [侧栏²][‹][›] 面包屑·已选N        │  拖拽条¹            │
+│  库名 ⌄    │  [−滑杆＋]  [star▾][排序▾][🔍搜索]   │  预览图(格式角标)    │
+│  全部素材 N ├──────────────────────────────────┤  名称(可改)          │
+│  ───────── │  ItemGrid                        │  注释(可改)          │
+│  ˅文件夹树  │   齐行网格：行内等高，宽度按宽高比    │  URL(可改)          │
+│  (增/删/改) │   卡片下方：name.ext + 尺寸         │  标签 chips         │
+│  ˅分类树   │   无限滚动分页（100/页）            │  分类 chips ＋      │
+│  (增/删/改) │   懒加载 <img loading=lazy>        │  文件夹 chips ＋    │
+│  ˅标签列表 N│   多选：Shift 连选 / Cmd 点选       │  基本信息(评分并入)  │
+│  (增/删/改) │   双击/空格 → 预览浮层（Esc 关闭）   │  文件位置            │
+│  回收站 N   │   右键：标签/分类/文件夹/回收        │                     │
+│            │   拖入文件 → 导入                  │                     │
 └────────────┴──────────────────────────────────┴─────────────────────┘
+¹ 侧栏/检查器顶部各 40px 纯拖拽条（双击切换最大化）；macOS 原生红绿灯压在侧栏条左侧，
+  Windows/Linux 自绘窗口控制 fixed 于窗口右上角（不随侧栏显隐移动）
+² 侧栏开关：可见时在侧栏顶条右端；隐藏时挪到顶栏左上角
+  文件夹/分类/标签三个分区标题可点击折叠/展开（v-show 保留树节点状态）
 ```
 
-窗口标题栏按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 栏高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证），标题栏内容左移 78px 避让；Windows/Linux 为无边框窗口（`frame: false`），右端自绘窗口控制按钮经 preload 白名单 IPC 驱动主进程。标题栏（`TitleBar.vue`）为通栏自绘，整条是窗口拖拽区（双击空白切换最大化），交互控件单独 `no-drag`。无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在标题栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
+布局为 Eagle 式三栏：侧栏与检查器通高到窗口上沿，顶栏（`TitleBar.vue`）只覆盖中间内容区，顶部功能区按列分开不混在一起。窗口控制按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 条高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证）；Windows/Linux 为无边框窗口（`frame: false`），自绘窗口控制 fixed 在窗口右上角，经 preload 白名单 IPC 驱动主进程。三条顶条均为窗口拖拽区（双击空白切换最大化），顶栏交互控件单独 `no-drag`；侧栏隐藏时顶栏通栏：macOS 左端预留 78px 避让原生红绿灯，Windows/Linux 右端预留 130px 避让 fixed 的窗口控制。无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在顶栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
@@ -280,14 +285,14 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（标题栏通栏 + 三栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
-| `TitleBar.vue` | — | — | Eagle 式通栏标题栏（无边框窗口拖拽区，双击空白切换最大化）：侧栏开关（同时显隐左右两栏）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）、窗口控制 |
-| `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格，固定右上）；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（父组件 TitleBar 的 scoped no-drag 规则命中不到子组件按钮，缺了会被拖拽区拦截真实点击）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
-| `Sidebar.vue` | — | — | 「全部素材」、FolderTreeNode 递归、「回收站」；选中态反映 store.view |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
+| `TitleBar.vue` | — | — | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
+| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：「全部素材」、FolderTreeNode 递归、「回收站」；文件夹/分类/标签分区标题点击折叠/展开（v-show 保留树节点状态）；标签行左缩进与树节点名称列对齐；选中态反映 store.view |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
 | `ItemGrid.vue` | — | — | 滚动容器渲染 store.items；sentinel 翻页；空态 EmptyState；右键/双击/点选转发 store |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标 |
-| `Inspector.vue` | — | — | 单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
+| `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
@@ -315,7 +320,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 --fg-0: #e8e8e8;  --fg-1: #9d9d9d;  --accent: #4f8cff;  --danger: #e5534b;  --border: #3c3c3c;
 ```
 
-布局用 CSS Grid（标题栏通栏 40px + 内容区 `220px 1fr 280px`，侧栏可经标题栏开关隐藏归零）；网格卡片 `repeat(auto-fill, minmax(var(--thumb-size), 1fr))`，卡片内缩略图定高 + `object-fit: contain`。
+布局用 CSS Grid：`220px 1fr 280px` × `40px 1fr`，侧栏/检查器跨两行通高，顶栏只占中栏首行；侧栏可经顶栏开关隐藏归零（`no-panels` 时顶栏通栏）；窗口控制 fixed 于窗口右上角不占 grid。网格卡片 `repeat(auto-fill, minmax(var(--thumb-size), 1fr))`，卡片内缩略图定高 + `object-fit: contain`。
 
 ### 错误处理
 

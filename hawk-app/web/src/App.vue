@@ -85,11 +85,13 @@ useDragImport();
     </div>
   </div>
 
+  <!-- Eagle 式布局：侧栏/检查器通高，标题栏只覆盖中栏；窗口控制 fixed 于窗口右上角（Windows/Linux） -->
   <div v-else class="app" :class="{ 'no-panels': !store.sidebarVisible }">
-    <TitleBar class="titlebar" />
     <Sidebar class="sidebar" />
+    <TitleBar class="titlebar" />
     <ItemGrid />
     <Inspector class="inspector" />
+    <WindowControls />
 
     <PreviewOverlay
       v-if="store.previewItem"

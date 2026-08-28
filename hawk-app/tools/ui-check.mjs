@@ -181,7 +181,26 @@ try {
   check('侧栏显示文件夹', await evaljs(`document.querySelector('.sidebar .tree')?.textContent?.includes('海报') ?? false`), true);
   check('侧栏入口', await evaljs(`document.querySelector('.sidebar')?.textContent?.includes('回收站') ?? false`), true);
   check('位置标题为全部素材', await evaljs(`document.querySelector('.titlebar .title')?.textContent`), '全部素材');
-  check('窗口控制按钮（最小化/最大化/关闭）', await evaljs(`document.querySelectorAll('.titlebar .win-btn').length`), 3);
+  // 窗口控制 fixed 于窗口右上角；macOS 用系统原生红绿灯，不自绘
+  check('窗口控制按钮（最小化/最大化/关闭）', await evaljs(`document.querySelectorAll('.win-controls .win-btn').length`), process.platform === 'darwin' ? 0 : 3);
+
+  // ---- Eagle 式布局：左右栏通高到窗口上沿，标题栏只覆盖中栏 ----
+  const geo = await evaljs(`(() => {
+    const rect = (s) => document.querySelector(s).getBoundingClientRect();
+    const sidebar = rect('.sidebar'); const titlebar = rect('.titlebar'); const inspector = rect('.inspector');
+    return { sidebarTop: sidebar.top, inspectorTop: inspector.top,
+      gapLeft: titlebar.left - sidebar.right, gapRight: inspector.left - titlebar.right };
+  })()`);
+  check('侧栏通高（顶到窗口上沿）', geo.sidebarTop, 0);
+  check('检查器通高（顶到窗口上沿）', geo.inspectorTop, 0);
+  check('标题栏左接侧栏右缘', Math.abs(geo.gapLeft) <= 1, true);
+  check('标题栏右接检查器左缘', Math.abs(geo.gapRight) <= 1, true);
+
+  // ---- 分区折叠：点分区标题收起/展开（v-show 保留树节点状态） ----
+  await evaljs(`[...document.querySelectorAll('.sidebar .section')].find((s) => s.textContent.includes('文件夹'))?.click()`);
+  check('文件夹分区收起', await evaljs(`getComputedStyle(document.querySelector('.sidebar .tree')).display`), 'none');
+  await evaljs(`[...document.querySelectorAll('.sidebar .section')].find((s) => s.textContent.includes('文件夹'))?.click()`);
+  check('文件夹分区展开', await evaljs(`getComputedStyle(document.querySelector('.sidebar .tree')).display`) !== 'none', true);
   check('后退按钮初始禁用', await evaljs(`document.querySelector('.titlebar .bar-btn[title="后退"]')?.disabled ?? false`), true);
   const badge = await waitFor(async () => {
     const value = await evaljs(`document.querySelector('.sidebar .entry .count')?.textContent`);
@@ -308,11 +327,22 @@ try {
   }, 5_000);
   check('前进回文件夹视图', fwdCount, 2);
 
-  // ---- 侧栏开关 ----
-  await evaljs(`document.querySelector('.titlebar .bar-btn[title="侧栏"]').click()`);
+  // ---- 侧栏开关：可见时在侧栏顶条右端，隐藏时挪到顶栏左上角 ----
+  check('侧栏可见时开关在侧栏顶条', await evaljs(`!!document.querySelector('.sidebar-head [title="侧栏与检查器"]')`), true);
+  check('侧栏可见时顶栏无开关', await evaljs(`!!document.querySelector('.titlebar [title="侧栏与检查器"]')`), false);
+  await evaljs(`document.querySelector('.sidebar-head [title="侧栏与检查器"]').click()`);
   check('侧栏隐藏', await evaljs(`getComputedStyle(document.querySelector('.sidebar')).display`), 'none');
-  await evaljs(`document.querySelector('.titlebar .bar-btn[title="侧栏"]').click()`);
+  await screenshot('ui-no-panels.png');
+  check('侧栏隐藏后开关在顶栏', await evaljs(`!!document.querySelector('.titlebar [title="侧栏与检查器"]')`), true);
+  if (process.platform === 'darwin') {
+    // macOS：顶栏通栏时左端避让窗口左上角的原生红绿灯
+    check('顶栏左端避让红绿灯', await evaljs(`parseInt(getComputedStyle(document.querySelector('.titlebar')).paddingLeft)`), 78);
+  }
+  await evaljs(`document.querySelector('.titlebar [title="侧栏与检查器"]').click()`);
   check('侧栏恢复', await evaljs(`getComputedStyle(document.querySelector('.sidebar')).display`) !== 'none', true);
+  if (process.platform === 'darwin') {
+    check('侧栏恢复后顶栏无避让', await evaljs(`parseInt(getComputedStyle(document.querySelector('.titlebar')).paddingLeft)`), 10);
+  }
 
   // SSE：另一进程写入文件 → 界面自动出现（先回全部素材）
   await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('全部素材'))?.click()`);
@@ -424,11 +454,25 @@ try {
   await evaljs(`[...document.querySelectorAll('.sidebar .node')].find((n) => n.textContent.includes('海报'))?.click()`);
   await waitFor(async () => (await evaljs(`document.querySelectorAll('.card').length`)) === 3, 5_000);
   await send('Page.reload');
+  // 等待针点用「侧栏出现 active 节点」（视图恢复完成的标志），而不是「cards > 0」——
+  // 后者可能命中 reload 前的旧文档或恢复过程中的瞬态，误读卡片数
   const restoredCount = await waitFor(async () => {
-    const ready = await evaljs(`document.readyState === 'complete' && document.querySelectorAll('.card').length > 0`);
+    const ready = await evaljs(`document.readyState === 'complete' && !!document.querySelector('.sidebar .node.active')`);
     if (!ready) return null;
-    return evaljs(`document.querySelectorAll('.card').length`);
+    const n = await evaljs(`document.querySelectorAll('.card').length`);
+    return n > 0 ? n : null;
   }, 30_000);
+  if (restoredCount !== 3) {
+    // 诊断：区分「视图未恢复（回退全部）」与「视图恢复了但列表未过滤」
+    const diag = await evaljs(`(() => ({
+      storage: Object.entries(localStorage).map(([k, v]) => k + '=' + v),
+      title: document.querySelector('.titlebar .title')?.textContent ?? '',
+      crumb: document.querySelector('.titlebar .crumb.current')?.textContent?.trim() ?? '',
+      activeNode: document.querySelector('.sidebar .node.active')?.textContent?.trim() ?? '',
+      cards: [...document.querySelectorAll('.card .name')].map((n) => n.textContent),
+    }))()`);
+    console.log('  [诊断]', JSON.stringify(diag));
+  }
   check('重载后恢复文件夹视图（卡片数）', restoredCount, 3);
   check(
     '重载后侧栏选中态',

@@ -1,15 +1,15 @@
 <script setup lang="ts">
-// Eagle 式标题栏（无边框窗口通栏）：侧栏开关 · 前进/后退 · 位置面包屑 || 缩略图滑杆 || 筛选 · 搜索 · 窗口控制。
+// Eagle 式中栏顶栏（只覆盖内容区，左右栏通高）：侧栏开关 · 前进/后退 · 位置面包屑 || 缩略图滑杆 || 筛选 · 搜索。
 // 整条为窗口拖拽区域（双击空白切换最大化），交互控件单独 no-drag。
 import { computed, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import Icon from './Icon.vue';
-import WindowControls from './WindowControls.vue';
 
 const store = useLibraryStore();
 const searchText = ref('');
-// macOS 窗口控制为系统原生红绿灯（叠加在标题栏左上），内容需右移避让
 const isMac = window.hawkShell?.platform === 'darwin';
+// 窗口控制为 fixed 在窗口右上角的自绘按钮（仅 Windows/Linux 渲染）：侧栏隐藏时本栏通栏，右端需预留避让
+const reserveControls = !!window.hawkShell && !isMac;
 
 /** 文件夹/分类视图显示可点击面包屑（根 = 全部素材），其余视图显示固定标题 */
 const breadcrumb = computed(() => {
@@ -63,9 +63,15 @@ function onDblClick(e: MouseEvent) {
 </script>
 
 <template>
-  <header class="titlebar" :class="{ mac: isMac }" @dblclick="onDblClick">
+  <!-- 侧栏隐藏时本栏通栏：macOS 左端避让原生红绿灯，Windows/Linux 右端避让自绘窗口控制 -->
+  <header
+    class="titlebar"
+    :class="{ 'reserve-traffic': isMac && !store.sidebarVisible, 'reserve-controls': reserveControls && !store.sidebarVisible }"
+    @dblclick="onDblClick"
+  >
     <div class="group left">
-      <button class="bar-btn" :class="{ active: store.sidebarVisible }" title="侧栏与检查器" @click="store.toggleSidebar()">
+      <!-- 侧栏可见时开关在侧栏顶条右端；隐藏时挪到本栏左上角 -->
+      <button v-if="!store.sidebarVisible" class="bar-btn" title="侧栏与检查器" @click="store.toggleSidebar()">
         <Icon name="panelLeft" :size="16" />
       </button>
       <button class="bar-btn" title="后退" :disabled="!store.canGoBack" @click="store.goBack()">
@@ -130,8 +136,6 @@ function onDblClick(e: MouseEvent) {
         <Icon name="search" :size="13" />
         <input v-model="searchText" type="search" placeholder="搜索" @keydown.enter="submitSearch" />
       </div>
-
-      <WindowControls />
     </div>
   </header>
 </template>
@@ -141,7 +145,7 @@ function onDblClick(e: MouseEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-left: 10px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
   -webkit-app-region: drag;
@@ -162,13 +166,17 @@ function onDblClick(e: MouseEvent) {
   min-width: 0;
 }
 
-/* macOS：左侧留出原生红绿灯的位置 */
-.titlebar.mac {
+/* 侧栏隐藏时标题栏通栏：macOS 左端避开窗口左上角的原生红绿灯 */
+.titlebar.reserve-traffic {
   padding-left: 78px;
 }
 
+/* 侧栏隐藏时标题栏通栏：右端避开 fixed 在窗口右上角的自绘窗口控制（3 × 42px + 间隙） */
+.titlebar.reserve-controls {
+  padding-right: 130px;
+}
+
 .group.right {
-  align-self: stretch;
   gap: 8px;
 }
 

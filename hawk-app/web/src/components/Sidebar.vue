@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { reactive, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import Icon from './Icon.vue';
@@ -10,6 +10,14 @@ import PromptDialog from './PromptDialog.vue';
 const store = useLibraryStore();
 const menu = useContextMenu();
 const hasShell = !!window.hawkShell;
+
+// 三个分区的折叠态（点分区标题收起/展开，v-show 保留树节点内部的展开/编辑状态）
+const collapsed = reactive({ folder: false, category: false, tag: false });
+
+/** 顶部拖拽条双击切换最大化（与 TitleBar 一致；条内无交互控件，无需排除判断） */
+function onHeadDblClick() {
+  void window.hawkShell?.toggleMaximizeWindow();
+}
 
 const showCreateFolder = ref(false);
 const showCreateCategory = ref(false);
@@ -80,63 +88,80 @@ function onTagContextMenu(name: string, e: MouseEvent) {
 
 <template>
   <aside class="sidebar">
-    <button v-if="hasShell" class="library-name" :title="store.library?.path + '（点击更换素材库）'" @click="selectLibrary">
-      <Icon name="library" />
-      <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
-      <Icon name="chevronDown" :size="12" />
-    </button>
-    <div v-else class="library-name static">
-      <Icon name="library" />
-      <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
+    <!-- 顶部拖拽条：侧栏色块通高到窗口上沿；macOS 原生红绿灯压在本条左侧；右端为侧栏开关 -->
+    <div class="sidebar-head" @dblclick="onHeadDblClick">
+      <button class="panel-toggle" title="侧栏与检查器" @click="store.toggleSidebar()" @dblclick.stop>
+        <Icon name="panelLeft" :size="16" />
+      </button>
     </div>
-
-    <div class="entry" :class="{ active: store.view.kind === 'all' }" @click="store.setView({ kind: 'all' })">
-      <Icon name="all" />
-      <span class="label">全部素材</span>
-      <span class="count">{{ store.folders?.count ?? 0 }}</span>
-    </div>
-
-    <div class="section">
-      <span>文件夹</span>
-      <button class="add" title="新建文件夹" @click="showCreateFolder = true">＋</button>
-    </div>
-    <div class="tree" @contextmenu.prevent="onTreeContextMenu">
-      <FolderTreeNode v-for="node in store.folders?.children ?? []" :key="node.path" :node="node" :depth="0" />
-    </div>
-
-    <div class="section">
-      <span>分类</span>
-      <button class="add" title="新建分类" @click="showCreateCategory = true">＋</button>
-    </div>
-    <div class="tree" @contextmenu.prevent="onCategoryContextMenu">
-      <CategoryTreeNode v-for="node in store.categories?.children ?? []" :key="node.path" :node="node" :depth="0" />
-    </div>
-
-    <div class="section">
-      <span>标签</span>
-      <button class="add" title="新建标签" @click="showCreateTag = true">＋</button>
-    </div>
-    <div class="tags">
-      <div
-        v-for="tag in store.tagList"
-        :key="tag.name"
-        class="tag-row"
-        :class="{ active: store.view.kind === 'tag' && store.view.name === tag.name }"
-        @click="store.setView({ kind: 'tag', name: tag.name })"
-        @contextmenu.prevent.stop="onTagContextMenu(tag.name, $event)"
-      >
-        <Icon name="tag" :size="13" />
-        <span class="tag-name">{{ tag.name }}</span>
-        <span class="tag-count">{{ tag.count }}</span>
+    <div class="sidebar-body">
+      <button v-if="hasShell" class="library-name" :title="store.library?.path + '（点击更换素材库）'" @click="selectLibrary">
+        <Icon name="library" />
+        <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
+        <Icon name="chevronDown" :size="12" />
+      </button>
+      <div v-else class="library-name static">
+        <Icon name="library" />
+        <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
       </div>
-    </div>
 
-    <div class="spacer" />
+      <div class="entry" :class="{ active: store.view.kind === 'all' }" @click="store.setView({ kind: 'all' })">
+        <Icon name="all" />
+        <span class="label">全部素材</span>
+        <span class="count">{{ store.folders?.count ?? 0 }}</span>
+      </div>
 
-    <div class="entry trash" :class="{ active: store.view.kind === 'trash' }" @click="store.setView({ kind: 'trash' })">
-      <Icon name="trash" />
-      <span class="label">回收站</span>
-      <span class="count">{{ store.trashTotal }}</span>
+      <div class="section" @click="collapsed.folder = !collapsed.folder">
+        <span class="section-title">
+          <Icon name="chevronRight" :size="12" class="chev" :class="{ open: !collapsed.folder }" />
+          文件夹
+        </span>
+        <button class="add" title="新建文件夹" @click.stop="showCreateFolder = true">＋</button>
+      </div>
+      <div v-show="!collapsed.folder" class="tree" @contextmenu.prevent="onTreeContextMenu">
+        <FolderTreeNode v-for="node in store.folders?.children ?? []" :key="node.path" :node="node" :depth="0" />
+      </div>
+
+      <div class="section" @click="collapsed.category = !collapsed.category">
+        <span class="section-title">
+          <Icon name="chevronRight" :size="12" class="chev" :class="{ open: !collapsed.category }" />
+          分类
+        </span>
+        <button class="add" title="新建分类" @click.stop="showCreateCategory = true">＋</button>
+      </div>
+      <div v-show="!collapsed.category" class="tree" @contextmenu.prevent="onCategoryContextMenu">
+        <CategoryTreeNode v-for="node in store.categories?.children ?? []" :key="node.path" :node="node" :depth="0" />
+      </div>
+
+      <div class="section" @click="collapsed.tag = !collapsed.tag">
+        <span class="section-title">
+          <Icon name="chevronRight" :size="12" class="chev" :class="{ open: !collapsed.tag }" />
+          标签
+        </span>
+        <button class="add" title="新建标签" @click.stop="showCreateTag = true">＋</button>
+      </div>
+      <div v-show="!collapsed.tag" class="tags">
+        <div
+          v-for="tag in store.tagList"
+          :key="tag.name"
+          class="tag-row"
+          :class="{ active: store.view.kind === 'tag' && store.view.name === tag.name }"
+          @click="store.setView({ kind: 'tag', name: tag.name })"
+          @contextmenu.prevent.stop="onTagContextMenu(tag.name, $event)"
+        >
+          <Icon name="tag" :size="13" />
+          <span class="tag-name">{{ tag.name }}</span>
+          <span class="tag-count">{{ tag.count }}</span>
+        </div>
+      </div>
+
+      <div class="spacer" />
+
+      <div class="entry trash" :class="{ active: store.view.kind === 'trash' }" @click="store.setView({ kind: 'trash' })">
+        <Icon name="trash" />
+        <span class="label">回收站</span>
+        <span class="count">{{ store.trashTotal }}</span>
+      </div>
     </div>
   </aside>
 
@@ -152,8 +177,44 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   flex-direction: column;
   background: var(--bg-1);
   border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.sidebar-head {
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 8px;
+  -webkit-app-region: drag;
+}
+
+/* 侧栏开关：可见时在本条右端（激活态）；条在拖拽区内，按钮须退出拖拽 */
+.panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accent);
+  -webkit-app-region: no-drag;
+}
+
+.panel-toggle:hover {
+  background: var(--bg-3);
+}
+
+.sidebar-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
-  padding: 8px 0;
+  padding-bottom: 8px;
 }
 
 .library-name {
@@ -191,6 +252,21 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   padding: 8px 12px 4px;
   color: var(--fg-1);
   font-size: 12px;
+  cursor: pointer;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.chev {
+  transition: transform 0.1s;
+}
+
+.chev.open {
+  transform: rotate(90deg);
 }
 
 .add {
@@ -236,11 +312,12 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   color: var(--fg-1);
 }
 
+/* 左缩进与树节点名称列对齐（12px 内边距 + 14px 箭头占位），三个分区内容同一垂直线 */
 .tag-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 12px;
+  padding: 4px 12px 4px 26px;
   cursor: pointer;
   overflow: hidden;
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 无边框窗口的最小化/最大化/关闭按钮（Windows/Linux 风格，固定右上）。
-// macOS 用系统原生红绿灯（titleBarStyle: 'hidden'），本组件不渲染。
+// 无边框窗口的最小化/最大化/关闭按钮（Windows/Linux 风格，fixed 在窗口右上角）。
+// macOS 用系统原生红绿灯（titleBarStyle: 'hidden'，压在侧栏顶部拖拽条上），本组件不渲染。
 // 仅 Electron 内渲染；纯浏览器调试时 hawkShell 不存在，整体不显示。
 import { ref } from 'vue';
 import Icon from './Icon.vue';
@@ -40,10 +40,15 @@ function close() {
 
 <style scoped>
 .win-controls {
+  /* fixed 而非放进某一栏：左右栏通高后右上角属检查器顶部拖拽条，且侧栏隐藏时位置不变；
+     预览浮层（z-index 200）/对话框（150）仍盖得住它 */
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 100;
   display: flex;
-  align-self: stretch;
-  /* 整条控件区退出窗口拖拽区：父组件 TitleBar 的 scoped no-drag 规则命中不到本组件内的按钮，
-     必须由本组件自己声明，否则真实鼠标点击会被拖拽区拦截（按钮表现为「无效」） */
+  height: 40px;
+  /* 退出窗口拖拽区：下方是检查器/标题栏的拖拽区域，缺了会被拖拽区拦截真实点击 */
   -webkit-app-region: no-drag;
 }
 
