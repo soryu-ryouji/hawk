@@ -100,7 +100,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
   文件夹/分类/标签三个分区标题可点击折叠/展开（v-show 保留树节点状态）
 ```
 
-布局为 Eagle 式三栏：侧栏与检查器通高到窗口上沿，顶栏（`TitleBar.vue`）只覆盖中间内容区，顶部功能区按列分开不混在一起。窗口控制按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 条高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证）；Windows/Linux 为无边框窗口（`frame: false`），自绘窗口控制 fixed 在窗口右上角，经 preload 白名单 IPC 驱动主进程。三条顶条均为窗口拖拽区（双击空白切换最大化），顶栏交互控件单独 `no-drag`；侧栏隐藏时顶栏通栏：macOS 左端预留 78px 避让原生红绿灯，Windows/Linux 右端预留 130px 避让 fixed 的窗口控制。无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在顶栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
+布局为 Eagle 式三栏：侧栏与检查器通高到窗口上沿，顶栏（`TitleBar.vue`）只覆盖中间内容区，顶部功能区按列分开不混在一起。窗口控制按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 条高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证）；Windows/Linux 为无边框窗口（`frame: false`），自绘窗口控制 fixed 在窗口右上角，经 preload 白名单 IPC 驱动主进程。三条顶条均为窗口拖拽区（双击空白切换最大化），顶栏交互控件单独 `no-drag`；侧栏隐藏时顶栏通栏：macOS 左端预留 78px 避让原生红绿灯，Windows/Linux 右端预留 130px 避让 fixed 的窗口控制。侧栏与检查器宽度可拖拽调整：栏分界线上压 7px 命中区手柄（App.vue 内联 style 控制 grid 列宽，拖拽期间 body 锁定 col-resize 光标并禁用文本选择），侧栏 180–480px、检查器 240–560px，宽度持久化到 localStorage（`hawk:panelWidths`，全局生效不随素材库变）。无独立状态栏：计数在侧栏各行徽章（全部素材/文件夹/分类/标签/回收站），选中数在顶栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
@@ -285,7 +285,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | — | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：「全部素材」、FolderTreeNode 递归、「回收站」；文件夹/分类/标签分区标题点击折叠/展开（v-show 保留树节点状态）；标签行左缩进与树节点名称列对齐；选中态反映 store.view |

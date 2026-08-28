@@ -81,6 +81,8 @@ button.danger {
 .app {
   display: grid;
   height: 100%;
+  position: relative;
+  /* 列宽由 App.vue 内联 style 控制（侧栏可拖拽调宽），此处仅为兜底 */
   grid-template-columns: 220px 1fr 280px;
   grid-template-rows: 40px 1fr;
   grid-template-areas:
@@ -88,14 +90,33 @@ button.danger {
     "sidebar main inspector";
 }
 
-/* 侧栏开关同时显隐左右两栏（Eagle 式） */
-.app.no-panels {
-  grid-template-columns: 0 1fr 0;
-}
+/* 侧栏开关同时显隐左右两栏（Eagle 式）；列宽由内联 style 统一处理 */
 
 .app.no-panels > .sidebar,
 .app.no-panels > .inspector {
   display: none;
+}
+
+/* 侧栏宽度拖拽手柄：7px 命中区居中压在栏分界线上 */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  z-index: 20;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle.active {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* 拖拽期间全局锁定光标并禁用文本选择（手柄外移动也保持 col-resize） */
+body.col-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .app > .titlebar {

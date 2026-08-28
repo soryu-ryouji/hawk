@@ -20,6 +20,67 @@ const bootError = ref<string | null>(null);
 const setupMode = ref(false);
 let disconnectEvents: (() => void) | null = null;
 
+// ---- 侧栏宽度拖拽 ----
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 480;
+const INSPECTOR_MIN = 240;
+const INSPECTOR_MAX = 560;
+const sidebarWidth = ref(220);
+const inspectorWidth = ref(280);
+
+function clamp(v: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Math.round(v)));
+}
+
+function loadPanelWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('hawk:panelWidths') ?? '{}') as {
+      sidebar?: number;
+      inspector?: number;
+    };
+    if (typeof saved.sidebar === 'number') {
+      sidebarWidth.value = clamp(saved.sidebar, SIDEBAR_MIN, SIDEBAR_MAX);
+    }
+    if (typeof saved.inspector === 'number') {
+      inspectorWidth.value = clamp(saved.inspector, INSPECTOR_MIN, INSPECTOR_MAX);
+    }
+  } catch {
+    // 损坏的持久化数据忽略
+  }
+}
+
+function savePanelWidths() {
+  localStorage.setItem(
+    'hawk:panelWidths',
+    JSON.stringify({ sidebar: sidebarWidth.value, inspector: inspectorWidth.value }),
+  );
+}
+
+function onResizeMove(e: MouseEvent) {
+  if (dragSide.value === 'left') {
+    sidebarWidth.value = clamp(e.clientX, SIDEBAR_MIN, SIDEBAR_MAX);
+  } else if (dragSide.value === 'right') {
+    inspectorWidth.value = clamp(window.innerWidth - e.clientX, INSPECTOR_MIN, INSPECTOR_MAX);
+  }
+}
+
+function stopResize() {
+  dragSide.value = null;
+  document.body.classList.remove('col-resizing');
+  window.removeEventListener('mousemove', onResizeMove);
+  window.removeEventListener('mouseup', stopResize);
+  savePanelWidths();
+}
+
+const dragSide = ref<'left' | 'right' | null>(null);
+
+function startResize(side: 'left' | 'right') {
+  dragSide.value = side;
+  document.body.classList.add('col-resizing');
+  window.addEventListener('mousemove', onResizeMove);
+  window.addEventListener('mouseup', stopResize);
+}
+
 async function boot() {
   if (!initApi()) {
     if (window.hawkShell) {
@@ -61,6 +122,7 @@ function onHashChange() {
 }
 
 onMounted(() => {
+  loadPanelWidths();
   void boot();
   window.addEventListener('hashchange', onHashChange);
 });
@@ -68,6 +130,10 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('hashchange', onHashChange);
   disconnectEvents?.();
+  // 拖拽中组件被卸载（如切到引导页）时兜底清理
+  if (dragSide.value) {
+    stopResize();
+  }
 });
 
 useShortcuts();
@@ -86,12 +152,37 @@ useDragImport();
   </div>
 
   <!-- Eagle 式布局：侧栏/检查器通高，标题栏只覆盖中栏；窗口控制 fixed 于窗口右上角（Windows/Linux） -->
-  <div v-else class="app" :class="{ 'no-panels': !store.sidebarVisible }">
+  <div
+    v-else
+    class="app"
+    :class="{ 'no-panels': !store.sidebarVisible }"
+    :style="{
+      gridTemplateColumns: store.sidebarVisible
+        ? `${sidebarWidth}px 1fr ${inspectorWidth}px`
+        : '0 1fr 0',
+    }"
+  >
     <Sidebar class="sidebar" />
     <TitleBar class="titlebar" />
     <ItemGrid />
     <Inspector class="inspector" />
     <WindowControls />
+
+    <!-- 侧栏宽度拖拽手柄（命中区宽于视觉线，贴近栏边缘居中） -->
+    <template v-if="store.sidebarVisible">
+      <div
+        class="col-resize-handle"
+        :class="{ active: dragSide === 'left' }"
+        :style="{ left: `${sidebarWidth}px` }"
+        @mousedown.prevent="startResize('left')"
+      />
+      <div
+        class="col-resize-handle"
+        :class="{ active: dragSide === 'right' }"
+        :style="{ right: `${inspectorWidth}px` }"
+        @mousedown.prevent="startResize('right')"
+      />
+    </template>
 
     <PreviewOverlay
       v-if="store.previewItem"
