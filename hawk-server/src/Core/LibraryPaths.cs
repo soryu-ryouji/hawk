@@ -3,6 +3,8 @@ namespace Hawk.Server.Core;
 /// <summary>
 /// 素材库路径工具：负责 .hawk/ 内部路径、库内相对路径换算与安全校验。
 /// 索引与 API 层统一使用正斜杠相对路径（相对素材库根目录），如 "posters/2024/cat.jpg"。
+/// 缩略图与调色板是内容寻址的派生缓存，位于库外系统缓存目录（见 ThumbnailsDir/ColorsDir），
+/// 避免库在 iCloud/Dropbox 等同步盘时 .hawk/ 膨胀拖累同步。
 /// </summary>
 public sealed class LibraryPaths
 {
@@ -22,20 +24,32 @@ public sealed class LibraryPaths
     public string CategoriesFile { get; }
     public string TagsFile { get; }
 
-    public LibraryPaths(string root)
+    /// <param name="cacheDir">该库派生缓存目录（thumbnails/colors 的父级）的完整路径覆盖；仅供测试指向临时目录，null 时用库外系统缓存目录</param>
+    public LibraryPaths(string root, string? cacheDir = null)
     {
         Root = Path.GetFullPath(root);
         HawkDir = Path.Combine(Root, HawkDirName);
         MetadataDir = Path.Combine(HawkDir, "metadata");
-        ThumbnailsDir = Path.Combine(HawkDir, "thumbnails");
-        ColorsDir = Path.Combine(HawkDir, "colors");
+        // 缓存按库根路径哈希分目录，多库互不干扰；LocalApplicationData：Windows 为 %LOCALAPPDATA%（iCloud 不同步）
+        var cache = cacheDir ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "hawk", "cache", LibraryKey(Root));
+        ThumbnailsDir = Path.Combine(cache, "thumbnails");
+        ColorsDir = Path.Combine(cache, "colors");
         TrashDir = Path.Combine(HawkDir, TrashDirName);
         ConfigFile = Path.Combine(HawkDir, "config.toml");
         CategoriesFile = Path.Combine(HawkDir, "categories.toml");
         TagsFile = Path.Combine(HawkDir, "tags.toml");
     }
 
-    /// <summary>创建 .hawk/ 目录结构，并生成排除缓存目录的 .gitignore（缺失的排除项会补上）</summary>
+    /// <summary>库标识：根路径的 SHA-256 前 16 位（小写十六进制），作缓存子目录名</summary>
+    private static string LibraryKey(string root)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(root));
+        return Convert.ToHexString(hash)[..16].ToLowerInvariant();
+    }
+
+    /// <summary>创建 .hawk/ 目录结构，并生成排除 trash 的 .gitignore（缺失的排除项会补上）</summary>
     public void EnsureLayout()
     {
         Directory.CreateDirectory(MetadataDir);
@@ -44,7 +58,7 @@ public sealed class LibraryPaths
         Directory.CreateDirectory(TrashDir);
 
         var gitignore = Path.Combine(HawkDir, ".gitignore");
-        var required = new[] { "thumbnails/", "colors/", "trash/" };
+        var required = new[] { "trash/" };
         var existing = File.Exists(gitignore) ? File.ReadAllLines(gitignore) : [];
         var missing = required.Where(r => !existing.Contains(r)).ToArray();
         if (missing.Length > 0)

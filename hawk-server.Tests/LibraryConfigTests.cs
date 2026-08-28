@@ -9,7 +9,7 @@ public class LibraryConfigTests
 
     private LibraryConfig Load(string? configToml)
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         if (configToml is not null)
         {
@@ -25,7 +25,7 @@ public class LibraryConfigTests
         var config = Load(null);
         Assert.Null(config.Current.Name);
         Assert.Empty(config.Current.Ignore);
-        Assert.Equal([256, 1024], config.Current.ThumbnailSizes);
+        Assert.Equal([256, 512, 1024], config.Current.ThumbnailSizes);
     }
 
     [Fact]

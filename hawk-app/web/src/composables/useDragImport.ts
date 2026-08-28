@@ -33,19 +33,27 @@ export function useDragImport() {
         store.showToast('浏览器模式不支持导入（无法取文件路径）');
         return;
       }
+      // 落下即占用导入态：文件夹递归收集可能耗时，期间进度条显示「正在收集文件」
+      if (!store.importBegin()) {
+        return;
+      }
 
       const entries = [...(event.dataTransfer?.items ?? [])]
         .map((item) => item.webkitGetAsEntry())
         .filter((entry): entry is FileSystemEntry => entry !== null);
 
       const paths: string[] = [];
-      for (const entry of entries) {
-        for await (const file of walkEntry(entry)) {
-          const abs = shell.getPathForFile(file);
-          if (abs) {
-            paths.push(abs);
+      try {
+        for (const entry of entries) {
+          for await (const file of walkEntry(entry)) {
+            const abs = shell.getPathForFile(file);
+            if (abs) {
+              paths.push(abs);
+            }
           }
         }
+      } catch {
+        store.showToast('读取文件列表失败');
       }
       await store.importPaths(paths);
     },

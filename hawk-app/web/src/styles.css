@@ -161,6 +161,63 @@ body.col-resizing {
   z-index: 300;
 }
 
+/* 导入进度条占用底部居中位置时，toast 上移避让 */
+.toast-raised {
+  bottom: 122px;
+}
+
+.import-progress {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 280px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-progress-text {
+  font-size: 12px;
+  color: var(--fg-1);
+  text-align: center;
+}
+
+.import-progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-2);
+  overflow: hidden;
+}
+
+.import-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.15s ease;
+}
+
+/* 不定态（收集文件阶段）：40% 宽度的滑块往复 */
+.import-progress-bar.indeterminate {
+  width: 40%;
+  animation: import-slide 1s ease-in-out infinite alternate;
+}
+
+@keyframes import-slide {
+  from {
+    margin-left: 0;
+  }
+  to {
+    margin-left: 60%;
+  }
+}
+
 .boot-error {
   flex: 1;
   display: flex;

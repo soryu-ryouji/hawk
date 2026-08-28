@@ -30,7 +30,7 @@ public class CategoryRegistryTests
 
     private (LibraryPaths paths, CategoryRegistry registry) Create()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         return (paths, new CategoryRegistry(paths, NullLogger<CategoryRegistry>.Instance));
     }
@@ -87,7 +87,7 @@ public class TagRegistryTests
 
     private (LibraryPaths paths, TagRegistry registry) Create()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         return (paths, new TagRegistry(paths, NullLogger<TagRegistry>.Instance));
     }

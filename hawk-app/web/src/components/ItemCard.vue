@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
+import { useLibraryStore } from '../stores/library';
 import type { Item } from '../types';
 
 const props = withDefaults(
@@ -13,6 +14,7 @@ const emit = defineEmits<{
   menu: [item: Item, e: MouseEvent];
 }>();
 
+const store = useLibraryStore();
 const thumbFailed = ref(false);
 
 // 缩略图就绪后后端补发 item.updated：item 引用变化时重建 <img> 重试（此前可能 404 占位）
@@ -32,6 +34,15 @@ const thumbStyle = computed(() =>
 
 /** 卡片宽度锁定为缩略图宽度：长名称不得撑开卡片（名称走 ellipsis 截断） */
 const cardStyle = computed(() => (props.width ? { width: props.width + 'px' } : {}));
+
+// 缩略图 srcset：候选尺寸来自服务端 thumbnail_sizes（内容寻址、immutable，浏览器按 渲染宽 × DPR 选档）
+const thumbSrcSet = computed(() => store.thumbSizes.map((s) => `${api.thumbnailUrl(props.item.id, s)} ${s}w`).join(', '));
+// src 兜底取 ≥512 的最近档（无则最大档）：srcset 生效时浏览器忽略 src
+const thumbSrc = computed(
+  () => api.thumbnailUrl(props.item.id, store.thumbSizes.find((s) => s >= 512) ?? store.thumbSizes.at(-1) ?? 256),
+);
+/** sizes 声明 img 的 CSS 渲染宽（齐行网格传入的单元格宽），浏览器据此 × DPR 从 srcset 选档 */
+const thumbSizesAttr = computed(() => (props.width > 0 ? `${Math.ceil(props.width)}px` : '100vw'));
 </script>
 
 <template>
@@ -46,7 +57,9 @@ const cardStyle = computed(() => (props.width ? { width: props.width + 'px' } : 
     <div class="thumb" :style="thumbStyle">
       <img
         v-if="!thumbFailed"
-        :src="api.thumbnailUrl(item.id)"
+        :src="thumbSrc"
+        :srcset="thumbSrcSet"
+        :sizes="thumbSizesAttr"
         :alt="item.name"
         loading="lazy"
         draggable="false"

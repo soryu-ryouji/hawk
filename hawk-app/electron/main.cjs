@@ -1,6 +1,6 @@
-// hawk-app Electron 主进程：窗口管理、拉起/回收 hawk-server、token 注入、库选择、白名单 IPC。
+// hawk-app Electron 主进程：窗口管理（关窗隐藏到托盘）、系统托盘、单实例、拉起/回收 hawk-server、token 注入、库选择、白名单 IPC。
 // 业务数据一律走 REST，不经 IPC（见 docs/architecture.md、docs/hawk-app.md）。
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, Menu, Tray, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -13,8 +13,23 @@ const CONFIG_FILE = () => path.join(app.getPath('userData'), 'hawk-app.json');
 let server = null;
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
+/** 系统托盘实例（必须常驻引用，否则会被 GC 回收导致托盘消失） */
+let tray = null;
+/** 真正退出标志：托盘菜单「退出」/ macOS Cmd+Q 时置位，放行 close 拦截 */
+let isQuitting = false;
 /** 当前素材库根目录（show-in-finder 的路径守卫要用） */
 let libraryRoot = null;
+
+// 窗口/托盘共用的应用图标（build/icon.png，512px 源图，托盘用时按平台重采样）
+const APP_ICON = path.join(__dirname, '..', 'build', 'icon.png');
+
+// 单实例：托盘驻留期间再次启动（双击图标/快捷方式）应唤起已有窗口，而不是拉起第二个实例
+// （第二个实例的 hawk-server 会因 27371 端口占用直接启动失败）
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', showMainWindow);
+}
 
 // ---------- 用户配置（记住上次素材库） ----------
 
@@ -97,6 +112,18 @@ function stopServer() {
 
 // ---------- 窗口 ----------
 
+/** 从托盘/二次启动唤起主窗口 */
+function showMainWindow() {
+  if (!mainWindow) {
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function loadMainPage() {
   const hash = `api=${encodeURIComponent(server.address)}&token=${server.token}`;
   if (isDev) {
@@ -128,12 +155,20 @@ function createWindow() {
       ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 12, y: 14 } }
       : { frame: false }),
     // 开发态 / Linux 的窗口图标；打包后各平台图标由 electron-builder 嵌入
-    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Eagle 式关窗：拦截 close 改为隐藏到托盘（真正退出经托盘菜单，见 before-quit 的 isQuitting）
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return;
+    }
+    event.preventDefault();
+    mainWindow.hide();
+  });
   // 同步最大化状态给渲染进程（标题栏 最大化/还原 图标切换）
   mainWindow.on('maximize', () => mainWindow?.webContents.send('hawk:win-maximized', true));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('hawk:win-maximized', false));
@@ -150,6 +185,29 @@ function createWindow() {
       }, delay);
     });
   }
+}
+
+// ---------- 系统托盘（Eagle 式：关窗不退出，驻留后台，hawk-server 继续服务浏览器扩展采集） ----------
+
+function createTray() {
+  const image = nativeImage.createFromPath(APP_ICON);
+  if (image.isEmpty()) {
+    console.warn('tray icon missing, tray disabled:', APP_ICON);
+    return;
+  }
+  // Windows/Linux 托盘 16–32px，macOS 菜单栏约 18px
+  const size = process.platform === 'darwin' ? 18 : 32;
+  tray = new Tray(image.resize({ width: size, height: size }));
+  tray.setToolTip('hawk');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '打开 hawk', click: showMainWindow },
+      { type: 'separator' },
+      { label: '退出', click: () => app.quit() },
+    ]),
+  );
+  // 左键单击托盘图标唤起（Windows/Linux 惯例；macOS 上以右键菜单为主，左键唤起也无碍）
+  tray.on('click', showMainWindow);
 }
 
 // ---------- 素材库选择 ----------
@@ -217,6 +275,7 @@ ipcMain.handle('hawk:show-in-finder', (_event, relPath) => {
 
 app.whenReady().then(async () => {
   createWindow();
+  createTray();
 
   const libPath = readConfig().libraryPath;
   if (!libPath || !fs.existsSync(libPath)) {
@@ -234,5 +293,12 @@ app.whenReady().then(async () => {
   loadMainPage(); // 首次 createWindow 时 server 未就绪，就绪后重新加载带 token 的地址
 });
 
-app.on('window-all-closed', () => app.quit());
+// 关窗只是隐藏到托盘（close 已被拦截，正常不会走到这里）；不监听此事件的话 Electron 默认关窗即退出
+app.on('window-all-closed', () => {});
+// 真正退出（托盘菜单「退出」、macOS Cmd+Q）：放行 close 拦截，由 will-quit 回收 server
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+// macOS：关窗（隐藏到托盘）后点击 Dock 图标重新打开
+app.on('activate', showMainWindow);
 app.on('will-quit', stopServer);

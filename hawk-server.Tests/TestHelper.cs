@@ -5,10 +5,15 @@ public sealed class TempDir : IDisposable
 {
     public string Root { get; }
 
+    /// <summary>库外派生缓存目录（thumbnails/colors），与 Root 同级、随 Dispose 一并清理</summary>
+    public string CacheRoot { get; }
+
     public TempDir()
     {
         Root = Path.Combine(Path.GetTempPath(), "hawk-test-" + Guid.NewGuid().ToString("N"));
+        CacheRoot = Root + "-cache";
         Directory.CreateDirectory(Root);
+        Directory.CreateDirectory(CacheRoot);
     }
 
     public string WriteFile(string relPath, byte[] content)
@@ -33,6 +38,7 @@ public sealed class TempDir : IDisposable
         try
         {
             Directory.Delete(Root, recursive: true);
+            Directory.Delete(CacheRoot, recursive: true);
         }
         catch
         {

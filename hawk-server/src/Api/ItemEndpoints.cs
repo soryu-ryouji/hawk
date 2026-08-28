@@ -275,6 +275,11 @@ public static class ItemEndpoints
             if (req.Path is not null)
             {
                 File.Copy(sourceAbs, targetAbs);
+                // 保留原文件时间属性：File.Copy 会重置创建时间，修改时间在各平台行为也不可靠；
+                // modification_time 排序与文件管理器观感都以原文件为准
+                var sourceInfo = new FileInfo(sourceAbs);
+                File.SetCreationTimeUtc(targetAbs, sourceInfo.CreationTimeUtc);
+                File.SetLastWriteTimeUtc(targetAbs, sourceInfo.LastWriteTimeUtc);
             }
             else
             {

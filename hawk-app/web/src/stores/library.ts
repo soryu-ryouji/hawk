@@ -56,6 +56,8 @@ export const useLibraryStore = defineStore('library', () => {
   const thumbSize = ref(160);
   const previewId = ref<string | null>(null);
   const toast = ref<string | null>(null);
+  /** 导入进度：null 无任务；total=0 表示收集文件阶段（不定态），done 为已处理数 */
+  const importProgress = ref<{ total: number; done: number } | null>(null);
   const sidebarVisible = ref(true);
   /** 浏览历史（会话内）：setView 压入，前进/后退在栈内移动 */
   const viewHistory = ref<ViewState[]>([]);
@@ -82,6 +84,10 @@ export const useLibraryStore = defineStore('library', () => {
     return v.path.split('/').pop() ?? '';
   });
   const previewItem = computed(() => items.value.find((i) => i.id === previewId.value) ?? null);
+  /** 缩略图尺寸候选（library/info 的 thumbnail_sizes 升序；缺字段兜底默认档），网格 img srcset 用 */
+  const thumbSizes = computed<number[]>(() =>
+    (library.value?.thumbnail_sizes ?? [256, 1024]).map((s) => Number(s)).sort((a, b) => a - b),
+  );
   const previewNavId = (step: 1 | -1) => {
     const idx = items.value.findIndex((i) => i.id === previewId.value);
     return items.value[idx + step]?.id ?? null;
@@ -390,11 +396,24 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 拖拽导入：逐个 itemAddByPath，目标文件夹取当前视图 */
+  /** 导入开始：拖拽落下即调用，覆盖「收集文件」阶段；已有任务时拒绝并提示 */
+  function importBegin(): boolean {
+    if (importProgress.value) {
+      showToast('已有导入任务进行中');
+      return false;
+    }
+    importProgress.value = { total: 0, done: 0 };
+    return true;
+  }
+
+  /** 拖拽导入：逐个 itemAddByPath（server 逐文件完成复制/哈希/索引/缩略图后才返回），done 逐项推进 */
   async function importPaths(paths: string[]) {
     if (paths.length === 0) {
+      importProgress.value = null;
+      showToast('未找到可导入的文件');
       return;
     }
+    importProgress.value = { total: paths.length, done: 0 };
     let added = 0;
     let existed = 0;
     let failed = 0;
@@ -405,7 +424,9 @@ export const useLibraryStore = defineStore('library', () => {
       } catch {
         failed++;
       }
+      importProgress.value.done += 1;
     }
+    importProgress.value = null;
     showToast(`导入完成：新增 ${added}${existed ? `，已存在 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`);
     debouncedRefresh(() => void refresh());
   }
@@ -611,11 +632,11 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, items, total, totalSize, viewTitle, loading, endReached, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, sidebarVisible,
-    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, categoryOptions,
+    view, query, items, total, totalSize, viewTitle, loading, endReached, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, sidebarVisible,
+    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, categoryOptions, thumbSizes,
     init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, fetchMore, refresh,
     select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, importPaths,
+    updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,
     refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder,
     openPreview, closePreview, navigatePreview, showToast, applyEvent,

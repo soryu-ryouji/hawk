@@ -116,10 +116,13 @@ hawk-server 单实例对应单个素材库。
     "name": "设计素材库",
     "path": "D:/Assets/Design",
     "modification_time": 1592461625783,
-    "application_version": "1.0.0"
+    "application_version": "1.0.0",
+    "thumbnail_sizes": [256, 512, 1024]
   }
 }
 ```
+
+`thumbnail_sizes` 为缩略图尺寸白名单（来自项目配置，见 storage.md），前端网格据此构建 `srcset` 候选。
 
 ### reindex
 
@@ -356,6 +359,8 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 
 向素材库添加新文件。`path`、`url`、`img_base64` 三者必须提供其一，作为文件内容来源；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。`url` 仅作为下载来源；来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
 
+`path` 导入时保留原文件的创建时间与修改时间（`File.Copy` 默认会重置）：按 `modification_time` 排序与文件管理器观感均以原文件为准；`url`/`img_base64` 无原文件时间，取入库时刻。
+
 #### 请求
 
 | 参数        | 类型     | 必填   | 说明                                   |
@@ -454,7 +459,7 @@ Item 对象，并附带 `already_existed` 标志：
 
 ### thumbnail
 
-`GET /api/v1/item/thumbnail?id=<hash>&size=256|1024`
+`GET /api/v1/item/thumbnail?id=<hash>&size=256|512|1024`
 
 返回缩略图二进制（`image/webp`）。`size` 缺省为 256，可取值来自项目配置的 `thumbnail_sizes`。响应带 `Cache-Control: immutable`——item id 是内容哈希，缩略图内容永不变，客户端可永久缓存。缩略图不存在时返回 404（首次索引完成前可能出现）。
 

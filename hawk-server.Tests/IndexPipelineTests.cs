@@ -25,9 +25,9 @@ public class IndexPipelineTests
         public required TagRegistry Tags;
         public required IndexPipeline Pipeline;
 
-        public static Rig Create(string root)
+        public static Rig Create(string root, string cacheRoot)
         {
-            var paths = new LibraryPaths(root);
+            var paths = new LibraryPaths(root, cacheRoot);
             paths.EnsureLayout();
             var config = new LibraryConfig(paths, NullLogger<LibraryConfig>.Instance);
             var store = new MetadataStore(paths, NullLogger<MetadataStore>.Instance);
@@ -69,7 +69,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 入库_生成索引与元数据并识别尺寸()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("photo.png", TempDir.TinyPng);
 
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
@@ -91,7 +91,7 @@ public class IndexPipelineTests
         string metaFile;
         DateTime metaMtime;
 
-        using (var rig1 = Rig.Create(_dir.Root))
+        using (var rig1 = Rig.Create(_dir.Root, _dir.CacheRoot))
         {
             var file = _dir.WriteFile("a.png", TempDir.TinyPng);
             var result = await rig1.Pipeline.SubmitUpsertAsync(file);
@@ -101,7 +101,7 @@ public class IndexPipelineTests
         }
 
         // 模拟重启：全新实例从磁盘元数据加载，路径 + size/mtime 一致 → 复用哈希不读内容
-        using (var rig2 = Rig.Create(_dir.Root))
+        using (var rig2 = Rig.Create(_dir.Root, _dir.CacheRoot))
         {
             var result = await rig2.Pipeline.SubmitUpsertAsync(Path.Combine(_dir.Root, "a.png"));
             Assert.Equal(hash, result!.Item.Id); // 哈希来自元数据文件名，未重算
@@ -113,7 +113,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 内容修改导致id漂移_元数据按路径迁移并继承素材参数()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("a.png", TempDir.TinyPng);
         var first = await rig.Pipeline.SubmitUpsertAsync(file);
         var oldHash = first!.Item.Id;
@@ -147,7 +147,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 移动文件_保持id且元数据路径跟随()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("a/b.png", TempDir.TinyPng);
         var first = await rig.Pipeline.SubmitUpsertAsync(file);
 
@@ -165,7 +165,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 同内容多路径_回收一份不影响库内item()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var f1 = _dir.WriteFile("a.png", TempDir.TinyPng);
         var f2 = _dir.WriteFile("dir/b.png", TempDir.TinyPng);
         var r1 = await rig.Pipeline.SubmitUpsertAsync(f1);
@@ -196,7 +196,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 清空回收站_无其他引用时清理元数据与缩略图()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("only.png", TempDir.TinyPng);
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
@@ -228,7 +228,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 入库后_后台提炼调色板并写入缓存()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
@@ -246,7 +246,7 @@ public class IndexPipelineTests
     public async Task 重启扫描_从缓存载入调色板()
     {
         string hash;
-        using (var rig = Rig.Create(_dir.Root))
+        using (var rig = Rig.Create(_dir.Root, _dir.CacheRoot))
         {
             var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
             var result = await rig.Pipeline.SubmitUpsertAsync(file);
@@ -255,7 +255,7 @@ public class IndexPipelineTests
         }
 
         // 重建一套服务（模拟重启）：哈希复用不读文件内容，调色板应从缓存文件载入
-        using var rig2 = Rig.Create(_dir.Root);
+        using var rig2 = Rig.Create(_dir.Root, _dir.CacheRoot);
         await rig2.Pipeline.RunScanAsync(false);
         var palette = rig2.Index.Get(hash)?.Palette;
         var color = Assert.Single(palette!);
@@ -265,7 +265,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 清空回收站_清理调色板缓存()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
@@ -286,7 +286,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 事件发布_入库与清空回收站()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var reader = rig.Bus.Subscribe();
         var file = _dir.WriteFile("ev.png", TempDir.TinyPng);
 
@@ -304,7 +304,7 @@ public class IndexPipelineTests
         _dir.WriteFile("scan/one.png", TempDir.TinyPng);
         var two = _dir.WriteFile("scan/two.png", [9, 9, 9]);
 
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         await rig.Pipeline.RunScanAsync(full: false);
         Assert.True(await WaitUntil(() => rig.Index.Count() == 2));
 
@@ -317,7 +317,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 全量重扫_重算哈希并保持id稳定()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("stable.png", TempDir.TinyPng);
         var first = await rig.Pipeline.SubmitUpsertAsync(file);
 
@@ -330,7 +330,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 监听入口_写入中的文件防抖延迟入库()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("fresh.bin", new byte[64]); // mtime 为当前时刻
 
         rig.Pipeline.NotifyUpsert(file); // 监听入口（fire-and-forget）才走防抖
@@ -344,7 +344,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task API提交_不防抖立即入库()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("instant.bin", new byte[64]);
 
         var result = await rig.Pipeline.SubmitUpsertAsync(file); // 携带 Done 的提交直接处理
@@ -358,7 +358,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 分类重命名_元数据跟随迁移()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("art.png", TempDir.TinyPng);
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
@@ -377,7 +377,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 分类删除_清除全部赋值()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("art.png", TempDir.TinyPng);
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
@@ -393,7 +393,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 标签重命名_全部item跟随()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("photo.png", TempDir.TinyPng);
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
@@ -410,7 +410,7 @@ public class IndexPipelineTests
     [Fact]
     public async Task 标签删除_注册表与赋值同步清除()
     {
-        using var rig = Rig.Create(_dir.Root);
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
         var file = _dir.WriteFile("photo.png", TempDir.TinyPng);
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;

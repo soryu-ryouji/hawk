@@ -193,7 +193,28 @@ useDragImport();
     <ContextMenu />
 
     <Teleport to="body">
-      <div v-if="store.toast" class="toast">{{ store.toast }}</div>
+      <!-- 导入进度：拖拽落下即显示（收集文件阶段为不定态），逐个处理完推进 -->
+      <div v-if="store.importProgress" class="import-progress">
+        <span class="import-progress-text">
+          {{
+            store.importProgress.total > 0
+              ? `正在导入 ${store.importProgress.done} / ${store.importProgress.total}`
+              : '正在收集文件…'
+          }}
+        </span>
+        <div class="import-progress-track">
+          <div
+            class="import-progress-bar"
+            :class="{ indeterminate: store.importProgress.total === 0 }"
+            :style="
+              store.importProgress.total > 0
+                ? { width: `${(store.importProgress.done / store.importProgress.total) * 100}%` }
+                : undefined
+            "
+          />
+        </div>
+      </div>
+      <div v-if="store.toast" class="toast" :class="{ 'toast-raised': store.importProgress }">{{ store.toast }}</div>
     </Teleport>
   </div>
 </template>

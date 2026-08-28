@@ -1251,6 +1251,7 @@ export interface components {
             /** Format: int64 */
             modification_time: number | string;
             application_version: string;
+            thumbnail_sizes: (number | string)[];
         };
         PaletteColorDto: {
             color: string;

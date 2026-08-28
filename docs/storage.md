@@ -17,10 +17,18 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
     ├── categories.toml ← 分类注册表（参与同步）
     ├── tags.toml       ← 标签注册表（参与同步）
     ├── metadata/       ← 素材参数，纯文本（参与同步）
-    ├── thumbnails/     ← 缩略图缓存（本地专用，不参与同步，可重建）
-    ├── colors/         ← 调色板缓存（本地专用，不参与同步，可重建）
     └── trash/          ← 回收站（本地专用，不参与同步）
+
+派生缓存（缩略图、调色板）不进 .hawk/，放在库外系统缓存目录，
+避免库位于 iCloud/Dropbox 等同步盘时 .hawk/ 膨胀拖累同步：
+
+```text
+%LOCALAPPDATA%/hawk/cache/<库标识>/        ← Windows（iCloud 不同步）
+~/.local/share/hawk/cache/<库标识>/        ← Linux
+~/Library/Application Support/hawk/cache/<库标识>/  ← macOS
 ```
+
+`<库标识>` 为库根路径 SHA-256 的前 16 位十六进制，多库互不干扰。缓存按内容哈希寻址，可整体删除，重启扫描自动重建。
 
 ## 同步边界
 
@@ -30,11 +38,10 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
 | `categories.toml` | 是           | 分类注册表（含空分类）     |
 | `tags.toml`       | 是           | 标签注册表（含空标签）     |
 | `metadata/`       | 是           | 素材参数，唯一数据源       |
-| `thumbnails/` | 否           | 本地缓存，可重建           |
-| `colors/`     | 否           | 调色板缓存，可重建         |
 | `trash/`      | 否           | 回收站，仅本机可恢复       |
+| 库外缩略图/调色板缓存 | 否        | 系统缓存目录，可重建，不进同步盘 |
 
-`.hawk/.gitignore` 由 hawk 自动生成，排除 `thumbnails/`、`colors/` 和 `trash/`。
+`.hawk/.gitignore` 由 hawk 自动生成，排除 `trash/`。
 
 注意：部分网盘客户端（OneDrive、Syncthing 等）不识别 `.gitignore`，需要用户在网盘客户端中手动配置排除规则。后续应在用户文档中说明。
 
@@ -104,7 +111,7 @@ name = "设计素材库"
 ignore = ["node_modules", "*.tmp"]
 
 # 生成的缩略图尺寸
-thumbnail_sizes = [256, 1024]
+thumbnail_sizes = [256, 512, 1024]
 ```
 
 全局配置文件位于 `~/.config/hawk/config.toml`，只存放跨项目的全局设置（目前没有全局配置项）。
@@ -114,16 +121,18 @@ thumbnail_sizes = [256, 1024]
 每个文件通过其内容哈希（BLAKE3）唯一标识，缩略图与调色板缓存也按 hash 存储，避免重复生成：
 
 ```text
-.hawk/thumbnails/
+<库外缓存目录>/thumbnails/     # 见「目录结构」一节，%LOCALAPPDATA%/hawk/cache/<库标识>/ 等
 ├── 256/                    # 列表视图
 │   ├── ab/
 │   │   └── abcdef123...webp
 │   └── cd/
+├── 512/                    # 列表视图（大图/高分屏）
+│   └── ab/
 └── 1024/                   # 预览面板
     ├── ab/
     └── cd/
 
-.hawk/colors/               # 调色板缓存（提炼算法见 docs/color-search.md）
+<库外缓存目录>/colors/        # 调色板缓存（提炼算法见 docs/color-search.md）
 └── ab/
     └── abcdef123....json   # { "v": 1, "palette": [{ "color", "percentage" }] }
 ```

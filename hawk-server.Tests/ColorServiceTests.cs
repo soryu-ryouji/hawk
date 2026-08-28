@@ -9,7 +9,7 @@ public class ColorServiceTests
 {
     private readonly TempDir _dir = new();
 
-    private ColorService NewService() => new(new LibraryPaths(_dir.Root), NullLogger<ColorService>.Instance);
+    private ColorService NewService() => new(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<ColorService>.Instance);
 
     private static string SavePng(string absPath, Image<Rgba32> image)
     {

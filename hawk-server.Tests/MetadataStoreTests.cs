@@ -12,7 +12,7 @@ public class MetadataStoreTests
 
     private (LibraryPaths paths, MetadataStore store) CreateStore()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         return (paths, new MetadataStore(paths, NullLogger<MetadataStore>.Instance));
     }

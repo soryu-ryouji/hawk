@@ -4,7 +4,8 @@ namespace Hawk.Server.Api;
 
 public static class LibraryEndpoints
 {
-    public sealed record LibraryInfo(string Name, string Path, long ModificationTime, string ApplicationVersion);
+    /// <param name="ThumbnailSizes">缩略图尺寸白名单（config.toml thumbnail_sizes），前端据此构建网格 srcset</param>
+    public sealed record LibraryInfo(string Name, string Path, long ModificationTime, string ApplicationVersion, int[] ThumbnailSizes);
 
     public static void MapLibraryEndpoints(this IEndpointRouteBuilder app)
     {
@@ -17,7 +18,8 @@ public static class LibraryEndpoints
                     config.Current.Name ?? root.Name,
                     paths.Root,
                     LibraryPaths.ToUnixMs(root.LastWriteTimeUtc),
-                    AppEndpoints.Version);
+                    AppEndpoints.Version,
+                    config.Current.ThumbnailSizes.ToArray());
                 return TypedResults.Ok(Envelope<LibraryInfo>.Ok(info));
             });
 

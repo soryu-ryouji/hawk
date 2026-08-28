@@ -5,7 +5,7 @@ namespace Hawk.Server.Tests;
 public class LibraryPathsTests
 {
     private readonly TempDir _dir = new();
-    private LibraryPaths Paths => new(_dir.Root);
+    private LibraryPaths Paths => new(_dir.Root, _dir.CacheRoot);
 
     [Fact]
     public void ToRelative_根目录返回空串()
@@ -97,5 +97,36 @@ public class LibraryPathsTests
     {
         Assert.Equal(name, LibraryPaths.NameOf(rel));
         Assert.Equal(ext, LibraryPaths.ExtOf(rel));
+    }
+
+    [Fact]
+    public void 派生缓存默认位于库外系统缓存目录()
+    {
+        using var dir = new TempDir();
+        var paths = new LibraryPaths(dir.Root);
+
+        // 在库外（不会被库扫描/同步进 iCloud、Dropbox）
+        Assert.DoesNotContain(paths.ThumbnailsDir, dir.Root);
+        Assert.DoesNotContain(paths.ColorsDir, dir.Root);
+        // 按库区分：不同库根 → 不同缓存子目录
+        var other = new LibraryPaths(dir.Root + "-other");
+        Assert.NotEqual(paths.ThumbnailsDir, other.ThumbnailsDir);
+        // 库数据仍在 .hawk/ 内
+        Assert.StartsWith(Path.Combine(dir.Root, ".hawk"), paths.MetadataDir);
+        Assert.StartsWith(Path.Combine(dir.Root, ".hawk"), paths.TrashDir);
+    }
+
+    [Fact]
+    public void EnsureLayout_缓存目录建在覆盖位置且hawk内不再有缓存目录()
+    {
+        using var dir = new TempDir();
+        var paths = new LibraryPaths(dir.Root, dir.CacheRoot);
+        paths.EnsureLayout();
+
+        Assert.Equal(Path.Combine(dir.CacheRoot, "thumbnails"), paths.ThumbnailsDir);
+        Assert.Equal(Path.Combine(dir.CacheRoot, "colors"), paths.ColorsDir);
+        Assert.True(Directory.Exists(paths.ThumbnailsDir));
+        Assert.False(Directory.Exists(Path.Combine(dir.Root, ".hawk", "thumbnails")));
+        Assert.False(Directory.Exists(Path.Combine(dir.Root, ".hawk", "colors")));
     }
 }

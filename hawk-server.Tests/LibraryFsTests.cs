@@ -23,7 +23,7 @@ public class LibraryFsTests
     [Fact]
     public void FindFreeTrashPath_无冲突时保留原结构()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
 
         var abs = LibraryFs.FindFreeTrashPath(paths, "posters/cat.jpg", isDirectory: false);
@@ -33,7 +33,7 @@ public class LibraryFsTests
     [Fact]
     public void FindFreeTrashPath_冲突时在扩展名前追加序号()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         _dir.WriteText(".hawk/trash/posters/cat.jpg", "occupied");
         _dir.WriteText(".hawk/trash/posters/cat (1).jpg", "occupied");
@@ -45,7 +45,7 @@ public class LibraryFsTests
     [Fact]
     public void FindFreeTrashPath_目录冲突在末尾追加序号()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         _dir.Mkdir(".hawk/trash/posters");
 

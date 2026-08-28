@@ -17,7 +17,7 @@ public sealed class LibraryConfig
     private readonly ILogger<LibraryConfig> _logger;
     private volatile Snapshot _current;
 
-    public static readonly IReadOnlyList<int> DefaultThumbnailSizes = [256, 1024];
+    public static readonly IReadOnlyList<int> DefaultThumbnailSizes = [256, 512, 1024];
 
     public Snapshot Current => _current;
 

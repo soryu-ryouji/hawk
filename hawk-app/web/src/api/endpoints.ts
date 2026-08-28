@@ -53,8 +53,8 @@ export const api = {
     request<void>('POST', '/api/v1/tag/update', { body: { name, new_name: newName } }),
   tagDelete: (name: string) => request<void>('POST', '/api/v1/tag/delete', { body: { name } }),
 
-  /** 缩略图 URL：<img> 无法带请求头，token 走查询参数（后端已放行该端点） */
-  thumbnailUrl(id: string, size: 256 | 1024 = 256): string {
+  /** 缩略图 URL：size 须命中服务端 thumbnail_sizes 白名单；<img> 无法带请求头，token 走查询参数（后端已放行该端点） */
+  thumbnailUrl(id: string, size: number = 256): string {
     const { api: base, token } = apiConfig();
     return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&size=${size}&token=${encodeURIComponent(token)}`;
   },

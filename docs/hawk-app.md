@@ -56,6 +56,17 @@ Electron 主进程启动
   → 杀掉子进程（含异常退出路径，防止孤儿进程）
 ```
 
+关窗不退出（Eagle 式托盘驻留）：主进程拦截窗口 `close` 事件改为 `hide()`，
+应用驻留系统托盘、`hawk-server` 保持运行（浏览器扩展采集不间断）。托盘左键单击
+或菜单「打开 hawk」唤起主窗口，菜单「退出」才是真正退出（`before-quit` 置
+`isQuitting` 放行 close 拦截，经 `will-quit` 回收 server）。再次启动应用由单实例锁
+（`requestSingleInstanceLock`）转到已有实例——否则第二个实例的 hawk-server
+会因 27371 端口占用直接启动失败。macOS 关窗后点 Dock 图标经 `activate` 唤起。
+托盘为纯主进程行为，不新增 preload IPC 通道；自绘标题栏的关闭按钮与系统关窗
+行为一致（同样落入托盘）。托盘图标复用 `build/icon.png`（512px 源图运行时按平台
+重采样：Windows/Linux 32px、macOS 18px），该文件已列入 electron-builder `files`，
+打包后可用。
+
 token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History API），前端读取后保存在内存，不写 localStorage。
 
 **preload 白名单**（contextBridge，只暴露这些，与业务数据无关）：
@@ -214,7 +225,7 @@ export const api = {
   itemRestore(id: string, path?: string): Promise<void>;
   refreshThumbnail(id: string): Promise<void>;
   trashClear(): Promise<void>;
-  thumbnailUrl(id: string, size?: 256 | 1024): string;  // 拼 ?token= 的 <img> URL
+  thumbnailUrl(id: string, size?: number): string;  // 拼 ?token= 的 <img> URL；size 须命中服务端 thumbnail_sizes 白名单
   fileUrl(id: string): string;  // 原图 URL（预览浮层用），同样拼 ?token=
 };
 ```
@@ -248,6 +259,7 @@ thumbSize: number;               // 网格卡片边长偏好（默认 160，内�
 sidebarVisible: boolean;         // 侧栏显隐（标题栏开关，默认开）
 previewId: string | null;        // 预览浮层
 toast: string | null;            // 轻提示（3s 自动清除）
+importProgress: { total: number; done: number } | null;  // 导入进度：null 无任务；total=0 收集文件阶段（不定态进度条）
 // 会话内浏览历史：viewHistory/historyIndex，setView 压栈，数据变更修正就地替换当前条目
 
 // ---- getters ----
@@ -256,6 +268,7 @@ currentFolderPath: string | null;
 selectedItems: Item[];
 primarySelected: Item | null;    // selection 末位对应的 item
 previewItem / previewPrevId / previewNextId: 浮层与左右切换
+thumbSizes: number[];             // library/info 的 thumbnail_sizes 升序（网格 img srcset 候选；缺字段兜底 [256, 1024]）
 
 // ---- actions ----
 init(): Promise<void>;           // libraryInfo + folders + resetList；失败进启动失败态
@@ -271,7 +284,8 @@ selectAll(): void; clearSelection(): void;
 updateItem(id: string, patch): Promise<void>;      // 就地更新 items；ApiError → toast
 trashSelected(): Promise<void>; restoreSelected(): Promise<void>;
 clearTrash(): Promise<void>;                       // 调用方先二次确认
-importPaths(paths: string[]): Promise<void>;       // 逐个 itemAddByPath；汇总 toast（成功 n，已存在 m）
+importPaths(paths: string[]): Promise<void>;       // 逐个 itemAddByPath（server 逐文件处理完才返回，done 逐项推进）；结束汇总 toast（成功 n，已存在 m，失败 k）
+importBegin(): boolean;                           // 拖拽落下即占用导入态（并发导入拒绝并 toast）；importPaths 前置
 refreshFolders(): Promise<void>;
 openPreview(id): void; closePreview(): void; navigatePreview(step: 1 | -1): void;
 showToast(msg: string): void;
@@ -293,7 +307,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast；引导页/失败页带拖拽条与窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；引导页/失败页带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | — | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view |
@@ -316,7 +330,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | composable | 签名与行为 |
 | ---------- | ---------- |
 | `useContextMenu()` | 模块级单例响应式状态 `{visible, x, y, items}`（全局唯一菜单）；`open(items, MouseEvent)` 定位（防出屏翻转）；`close()` |
-| `useDragImport()` | `useDropZone` 接 drop → `webkitGetAsEntry()` 递归展开文件夹 → `webUtils.getPathForFile` 取绝对路径 → store.importPaths |
+| `useDragImport()` | `useDropZone` 接 drop → 先 `importBegin()` 占位（收集文件阶段进度条即显示）→ `webkitGetAsEntry()` 递归展开文件夹 → `webUtils.getPathForFile` 取绝对路径 → `store.importPaths`；收集失败 toast |
 | `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
 
 ### 样式约定
@@ -359,6 +373,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 8. 回收站：查看、单项或批量恢复、清空（二次确认）
 9. 实时性：另一进程改动库目录（或第二窗口操作）经 SSE 反映到界面
 10. 快捷键：`Delete` 回收/恢复、`Esc` 关浮层、`Cmd/Ctrl+A` 全选
+11. 托盘运行：关闭窗口最小化到系统托盘（hawk-server 驻留后台，扩展采集不间断）；托盘左键/菜单唤出主窗口；托盘「退出」才真正退出；驻留期间再次启动应用唤起已有实例
 
 ## 非目标（v1 明确不做）
 
@@ -366,7 +381,6 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 - 虚拟滚动（十万级素材再上 vue-virtual-scroller；无限滚动 + 懒加载先行）
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
-- 托盘
 - 前端单元测试框架（Vitest 暂缓；契约层由 server 的 smoke.sh 兜底）
 
 ## 打包与分发
@@ -383,7 +397,7 @@ hawk-app/
 ├── package.json            # 全部依赖与脚本（单包，不做 workspaces）
 ├── electron-builder.yml
 ├── electron/
-│   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、拉起/回收 server、token、库选择、白名单 IPC
+│   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、关窗隐藏到托盘 + 系统托盘、单实例锁、拉起/回收 server、token、库选择、白名单 IPC
 │   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/拖拽路径/窗口控制）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型

@@ -10,7 +10,7 @@ public class LibraryScannerTests
     [Fact]
     public void 遍历跳过hawk内部但包含回收站()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         _dir.WriteFile("a.png", TempDir.TinyPng);
         _dir.WriteFile("sub/b.png", TempDir.TinyPng);
@@ -28,7 +28,7 @@ public class LibraryScannerTests
     [Fact]
     public void 遍历应用ignore规则剪枝()
     {
-        var paths = new LibraryPaths(_dir.Root);
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
         paths.EnsureLayout();
         File.WriteAllText(paths.ConfigFile, """ignore = ["node_modules", "*.tmp"]""");
         _dir.WriteFile("keep.png", TempDir.TinyPng);

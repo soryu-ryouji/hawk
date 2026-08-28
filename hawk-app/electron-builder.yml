@@ -13,6 +13,8 @@ directories:
 files:
   - electron/**/*
   - web/dist/**/*
+  # 窗口/托盘图标（512px 源图，运行时按平台重采样）
+  - build/icon.png
 extraResources:
   # 各平台 hawk-server 自包含单文件（dotnet publish，见 scripts/build-server.mjs）
   - from: resources/hawk-server
