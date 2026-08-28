@@ -7,8 +7,9 @@
 #   ./tools/build.ps1 --platform=app --path=D:/Tools/hawk      # = 写法等价
 #
 # 产物直接输出到 <path>/ 根目录，不再套子文件夹：
-#   应用（当前平台）：Windows 为解压后的应用文件（hawk.exe 就地可运行）/ macOS hawk.app 目录 / Linux hawk.AppImage
-#   插件产物（构建接入后）：直接放在 <path>/ 下
+#   应用（当前平台）：Windows 解压后的应用文件（hawk.exe 就地可运行）/ macOS hawk.app 目录 / Linux hawk.AppImage
+#   浏览器插件：hawk-extension-chrome|firefox/ 目录（已解压的扩展，浏览器「加载已解压扩展程序」直接用）
+#   Safari 版需 macOS + Xcode 转换（见 hawk-browser-extension/README.md），不在本脚本构建
 #
 # 退出码：0 = 请求的内容全部构建成功；1 = 存在未构建成功（失败或跳过）的内容。
 
@@ -141,11 +142,39 @@ function Build-App {
     Write-Host "[app] 已输出 → $target" -ForegroundColor Green
 }
 
-# ---- 浏览器插件 ----
-# 插件源码与构建流程尚未接入，先占位：接入后构建产物同样直接输出到 <path>/ 根目录。
+# ---- 浏览器插件（hawk-browser-extension，WXT 跨浏览器构建）----
 function Build-Extension([string]$Browser) {
-    Write-Warning "[ext-$Browser] 浏览器插件构建尚未实现，跳过"
-    $script:failed += "ext-$Browser"
+    Write-Host "`n==> [ext-$Browser] 构建浏览器插件" -ForegroundColor Cyan
+
+    $extDir = Join-Path $RepoRoot 'hawk-browser-extension'
+    if (-not (Test-Path (Join-Path $extDir 'node_modules'))) {
+        throw 'hawk-browser-extension/node_modules 不存在，请先执行：cd hawk-browser-extension && npm install'
+    }
+
+    # WXT 输出目录：Chrome 为 MV3，Firefox/Safari 为 MV2
+    $outDirName = switch ($Browser) {
+        'chrome' { 'chrome-mv3' }
+        'firefox' { 'firefox-mv2' }
+        default { throw "不支持的浏览器: $Browser" }
+    }
+    $scriptName = if ($Browser -eq 'chrome') { 'build' } else { "build:$Browser" }
+
+    Push-Location $extDir
+    try {
+        & npm run $scriptName
+        if ($LASTEXITCODE -ne 0) { throw "npm run $scriptName 失败（退出码 $LASTEXITCODE）" }
+    }
+    finally {
+        Pop-Location
+    }
+
+    $src = Join-Path $extDir ".output/$outDirName"
+    if (-not (Test-Path $src)) { throw "未找到插件构建产物: $src" }
+
+    $target = Join-Path $outRoot "hawk-extension-$Browser"
+    Remove-StaleArtifact $target
+    Copy-Item $src $target -Recurse
+    Write-Host "[ext-$Browser] 已输出 → $target（浏览器加载已解压扩展即可）" -ForegroundColor Green
 }
 
 # ---- 主流程 ----
@@ -160,8 +189,24 @@ foreach ($p in $Platform) {
                 $script:failed += 'app'
             }
         }
-        'ext-chrome' { Build-Extension 'chrome' }
-        'ext-firefox' { Build-Extension 'firefox' }
+        'ext-chrome' {
+            try {
+                Build-Extension 'chrome'
+            }
+            catch {
+                Write-Host "`n[ext-chrome] 构建失败：$($_.Exception.Message)" -ForegroundColor Red
+                $script:failed += 'ext-chrome'
+            }
+        }
+        'ext-firefox' {
+            try {
+                Build-Extension 'firefox'
+            }
+            catch {
+                Write-Host "`n[ext-firefox] 构建失败：$($_.Exception.Message)" -ForegroundColor Red
+                $script:failed += 'ext-firefox'
+            }
+        }
     }
 }
 

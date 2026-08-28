@@ -1,0 +1,24 @@
+{
+  "name": "hawk-browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "hawk 浏览器图片收集插件（Chrome / Firefox / Safari）",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "build:safari": "wxt build -b safari",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "zip:safari": "wxt zip -b safari",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "wxt": "^0.20.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

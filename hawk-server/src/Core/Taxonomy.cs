@@ -4,10 +4,9 @@ using Tomlyn.Model;
 
 namespace Hawk.Server.Core;
 
-/// <summary>分类路径（正斜杠分隔层级）的规范化与工具</summary>
-public static class CategoryPath
+/// <summary>分类名称校验（扁平，无层级）：trim；空或含斜杠/反斜杠为非法</summary>
+public static class CategoryName
 {
-    /// <summary>规范化：段 trim、去空段；非法（/./../反斜杠/全空）返回 null</summary>
     public static string? Normalize(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
@@ -15,34 +14,14 @@ public static class CategoryPath
             return null;
         }
 
-        var segments = raw.Split('/', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length == 0 || segments.Any(s => s is "." or ".." || s.Contains('\\')))
-        {
-            return null;
-        }
-
-        return string.Join('/', segments);
+        var name = raw.Trim();
+        return name.Contains('/') || name.Contains('\\') ? null : name;
     }
-
-    /// <summary>父路径；根级分类返回 ""</summary>
-    public static string ParentOf(string path)
-    {
-        var idx = path.LastIndexOf('/');
-        return idx < 0 ? "" : path[..idx];
-    }
-
-    /// <summary>最后一段名称</summary>
-    public static string NameOf(string path) => path[(path.LastIndexOf('/') + 1)..];
-
-    /// <summary>path 是 prefix 自身或其后代</summary>
-    public static bool IsSameOrDescendant(string path, string prefix) =>
-        path == prefix || path.StartsWith(prefix + "/", StringComparison.Ordinal);
 }
 
 /// <summary>
 /// 分类注册表（.hawk/categories.toml）：持久化空分类，支持「先建后放」。
-/// 内容只是名字列表，网盘同步冲突代价低。树由路径派生，不单独存储结构。
-/// 写入只发生在索引流水线；外部修改由文件监听触发 Reload。
+/// 分类是扁平名字（item 可同时挂多个），与标签同构。写入只发生在索引流水线；外部修改由文件监听触发 Reload。
 /// </summary>
 public sealed class CategoryRegistry
 {
@@ -66,68 +45,53 @@ public sealed class CategoryRegistry
         }
     }
 
-    public bool Contains(string path) => Snapshot().Contains(path, StringComparer.Ordinal);
+    public bool Contains(string name) => Snapshot().Contains(name, StringComparer.Ordinal);
 
-    /// <summary>登记分类（含祖先补齐）；已存在则无动作</summary>
-    public void Register(string path)
+    /// <summary>登记分类；已存在则无动作</summary>
+    public void Register(string name)
     {
         lock (_gate)
         {
-            var changed = false;
-            for (var p = path; p != ""; p = CategoryPath.ParentOf(p))
+            if (!_entries.Contains(name))
             {
-                if (!_entries.Contains(p))
-                {
-                    _entries.Add(p);
-                    changed = true;
-                }
-            }
-
-            if (changed)
-            {
+                _entries.Add(name);
                 _entries.Sort(StringComparer.OrdinalIgnoreCase);
                 SaveLocked();
             }
         }
     }
 
-    public void RegisterAll(IEnumerable<string> paths)
+    public void RegisterAll(IEnumerable<string> names)
     {
-        foreach (var path in paths)
+        foreach (var name in names)
         {
-            Register(path);
+            Register(name);
         }
     }
 
-    /// <summary>重命名/移动：前缀迁移，子树跟随</summary>
-    public void Rename(string oldPath, string newPath)
+    /// <summary>重命名；目标已存在时合并（分类是集合语义）</summary>
+    public void Rename(string oldName, string newName)
     {
         lock (_gate)
         {
-            var changed = false;
-            for (var i = 0; i < _entries.Count; i++)
+            if (_entries.Remove(oldName))
             {
-                if (CategoryPath.IsSameOrDescendant(_entries[i], oldPath))
+                if (!_entries.Contains(newName))
                 {
-                    _entries[i] = newPath + _entries[i][oldPath.Length..];
-                    changed = true;
+                    _entries.Add(newName);
                 }
-            }
 
-            if (changed)
-            {
                 _entries.Sort(StringComparer.OrdinalIgnoreCase);
                 SaveLocked();
             }
         }
     }
 
-    /// <summary>删除节点及子树</summary>
-    public void Delete(string path)
+    public void Delete(string name)
     {
         lock (_gate)
         {
-            if (_entries.RemoveAll(e => CategoryPath.IsSameOrDescendant(e, path)) > 0)
+            if (_entries.Remove(name))
             {
                 SaveLocked();
             }

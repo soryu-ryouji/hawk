@@ -199,17 +199,17 @@ public class ItemIndexTests
     }
 
     [Fact]
-    public void 分类过滤_any与all_含子分类()
+    public void 分类过滤_any与all_精确匹配()
     {
-        AddItem("c1", "a.png", categories: ["插画/人物"]);
+        AddItem("c1", "a.png", categories: ["插画"]);
         AddItem("c2", "b.png", categories: ["插画", "参考"]);
         AddItem("c3", "c.png", categories: ["摄影"]);
 
-        // any：命中任一（"插画" 含子分类 "插画/人物"）
+        // any：精确命中任一
         _index.Query(new ItemQuery { Categories = ["插画"] }, out var any, out _);
         Assert.Equal(2, any);
 
-        // all：必须同时命中「插画」与「参考」
+        // all：必须同时挂有「插画」与「参考」
         _index.Query(new ItemQuery { Categories = ["插画", "参考"], CategoriesMatch = "all" }, out var all, out _);
         Assert.Equal(1, all);
     }
@@ -217,7 +217,7 @@ public class ItemIndexTests
     [Fact]
     public void 排除过滤_分类与标签()
     {
-        AddItem("c1", "a.png", tags: ["nature"], categories: ["插画/人物"]);
+        AddItem("c1", "a.png", tags: ["nature"], categories: ["插画"]);
         AddItem("c2", "b.png", tags: ["work"], categories: ["摄影"]);
         AddItem("c3", "c.png");
 

@@ -3,7 +3,7 @@ import type { components } from './api/schema';
 // 契约类型一律从生成的 schema 取，不另写
 export type Item = components['schemas']['ItemDto'];
 export type FolderNode = components['schemas']['FolderNode'];
-export type CategoryNode = components['schemas']['CategoryNode'];
+export type CategoryInfo = components['schemas']['CategoryInfo'];
 export type TagInfo = components['schemas']['TagInfo'];
 export type LibraryInfo = components['schemas']['LibraryInfo'];
 export type ItemListRequest = components['schemas']['ItemListRequest'];
@@ -16,7 +16,7 @@ export type ViewState =
   | { kind: 'uncategorized' }
   | { kind: 'untagged' }
   | { kind: 'folder'; path: string }
-  | { kind: 'category'; path: string }
+  | { kind: 'category'; name: string }
   | { kind: 'tag'; name: string }
   | { kind: 'trash' };
 

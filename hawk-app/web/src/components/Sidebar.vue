@@ -4,7 +4,6 @@ import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
-import CategoryTreeNode from './CategoryTreeNode.vue';
 import PromptDialog from './PromptDialog.vue';
 
 const store = useLibraryStore();
@@ -24,6 +23,7 @@ const showCreateCategory = ref(false);
 const showCreateTag = ref(false);
 const showRenameTag = ref(false);
 const renameTarget = ref('');
+const showRenameCategory = ref(false);
 
 async function selectLibrary() {
   if (window.hawkShell) {
@@ -46,6 +46,11 @@ function createRootCategory(name: string) {
   void store.categoryCreate(name);
 }
 
+function submitRenameCategory(newName: string) {
+  showRenameCategory.value = false;
+  void store.categoryRename(renameTarget.value, newName);
+}
+
 function createTag(name: string) {
   showCreateTag.value = false;
   void store.tagCreate(name);
@@ -63,6 +68,31 @@ function onTreeContextMenu(e: MouseEvent) {
 
 function onCategoryContextMenu(e: MouseEvent) {
   menu.open([{ label: '新建分类', action: () => (showCreateCategory.value = true) }], e);
+}
+
+/** 分类右键：重命名/删除 */
+function onCategoryRowContextMenu(name: string, e: MouseEvent) {
+  menu.open(
+    [
+      {
+        label: '重命名',
+        action: () => {
+          renameTarget.value = name;
+          showRenameCategory.value = true;
+        },
+      },
+      {
+        label: '删除分类',
+        danger: true,
+        action: () => {
+          if (window.confirm(`删除分类「${name}」？全部素材的该分类将被清除。`)) {
+            void store.categoryDelete(name);
+          }
+        },
+      },
+    ],
+    e,
+  );
 }
 
 /** 标签右键：重命名/删除 */
@@ -159,7 +189,18 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         <button class="add" title="新建分类" @click.stop="showCreateCategory = true">＋</button>
       </div>
       <div v-show="!collapsed.category" class="tree" @contextmenu.prevent="onCategoryContextMenu">
-        <CategoryTreeNode v-for="node in store.categories?.children ?? []" :key="node.path" :node="node" :depth="0" />
+        <div
+          v-for="category in store.categories"
+          :key="category.name"
+          class="cat-row"
+          :class="{ active: store.view.kind === 'category' && store.view.name === category.name }"
+          @click="store.setView({ kind: 'category', name: category.name })"
+          @contextmenu.prevent.stop="onCategoryRowContextMenu(category.name, $event)"
+        >
+          <Icon name="category" :size="13" />
+          <span class="cat-name">{{ category.name }}</span>
+          <span class="cat-count">{{ category.count }}</span>
+        </div>
       </div>
 
       <div class="section" @click="collapsed.tag = !collapsed.tag">
@@ -195,7 +236,8 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   </aside>
 
   <PromptDialog v-if="showCreateFolder" title="新建文件夹" placeholder="文件夹名称" @confirm="createRootFolder" @cancel="showCreateFolder = false" />
-  <PromptDialog v-if="showCreateCategory" title="新建分类" placeholder="分类路径（如 插画/人物）" @confirm="createRootCategory" @cancel="showCreateCategory = false" />
+  <PromptDialog v-if="showCreateCategory" title="新建分类" placeholder="分类名称" @confirm="createRootCategory" @cancel="showCreateCategory = false" />
+  <PromptDialog v-if="showRenameCategory" title="重命名分类" :placeholder="renameTarget" @confirm="submitRenameCategory" @cancel="showRenameCategory = false" />
   <PromptDialog v-if="showCreateTag" title="新建标签" placeholder="标签名称" @confirm="createTag" @cancel="showCreateTag = false" />
   <PromptDialog v-if="showRenameTag" title="重命名标签" :placeholder="renameTarget" @confirm="submitRenameTag" @cancel="showRenameTag = false" />
 </template>
@@ -369,6 +411,41 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 分类行与标签行同款对齐（分类/标签均为扁平名字，无树形层级） */
+.cat-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px 4px 26px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.cat-row:hover {
+  background: var(--bg-2);
+}
+
+.cat-row.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.cat-row.active .cat-count {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.cat-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-count {
+  font-size: 11px;
+  color: var(--fg-1);
 }
 
 .tag-count {

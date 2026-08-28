@@ -240,7 +240,7 @@ public sealed class ItemIndex
         }
     }
 
-    /// <summary>按分类节点统计 item 数（含子分类；同一 item 在同一节点只计一次）</summary>
+    /// <summary>按分类统计 item 数（同一 item 重复挂同一分类只计一次）</summary>
     public IReadOnlyDictionary<string, int> CategoryCounts()
     {
         lock (_gate)
@@ -248,18 +248,9 @@ public sealed class ItemIndex
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var item in _byHash.Values.Where(i => i.HasLibraryLocations))
             {
-                var nodes = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var category in item.Categories)
+                foreach (var category in item.Categories.Distinct(StringComparer.Ordinal))
                 {
-                    for (var node = category; node != ""; node = CategoryPath.ParentOf(node))
-                    {
-                        nodes.Add(node);
-                    }
-                }
-
-                foreach (var node in nodes)
-                {
-                    counts[node] = counts.GetValueOrDefault(node) + 1;
+                    counts[category] = counts.GetValueOrDefault(category) + 1;
                 }
             }
 
@@ -304,13 +295,13 @@ public sealed class ItemIndex
             {
                 var matchAll = string.Equals(q.CategoriesMatch, "all", StringComparison.OrdinalIgnoreCase);
                 items = items.Where(i => matchAll
-                    ? categories.All(c => HasCategory(i, c))
-                    : categories.Any(c => HasCategory(i, c)));
+                    ? categories.All(c => i.Categories.Contains(c, StringComparer.Ordinal))
+                    : categories.Any(c => i.Categories.Contains(c, StringComparer.Ordinal)));
             }
 
             if (q.ExcludeCategories is { Length: > 0 } excludeCategories)
             {
-                items = items.Where(i => !excludeCategories.Any(c => HasCategory(i, c)));
+                items = items.Where(i => !excludeCategories.Any(c => i.Categories.Contains(c, StringComparer.Ordinal)));
             }
 
             if (q.ExcludeTags is { Length: > 0 } excludeTags)
@@ -368,9 +359,6 @@ public sealed class ItemIndex
             return dtos.Skip(Math.Max(0, q.Offset)).Take(Math.Max(1, q.Limit)).ToList();
         }
     }
-
-    private static bool HasCategory(Item item, string category) =>
-        item.Categories.Any(c => CategoryPath.IsSameOrDescendant(c, category));
 
     private static bool MatchesKeyword(Item item, string keyword, bool trashView)
     {

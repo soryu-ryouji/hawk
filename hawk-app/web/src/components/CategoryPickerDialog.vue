@@ -4,7 +4,7 @@ import type { Directive } from 'vue';
 import { useLibraryStore } from '../stores/library';
 
 defineProps<{ title: string }>();
-const emit = defineEmits<{ confirm: [path: string]; cancel: [] }>();
+const emit = defineEmits<{ confirm: [name: string]; cancel: [] }>();
 
 const store = useLibraryStore();
 const text = ref('');
@@ -14,9 +14,9 @@ const vFocus: Directive<HTMLElement> = {
 };
 
 function confirm() {
-  const path = text.value.trim().replace(/^\/+|\/+$/g, '');
-  if (path) {
-    emit('confirm', path);
+  const name = text.value.trim();
+  if (name) {
+    emit('confirm', name);
   } else {
     emit('cancel');
   }
@@ -31,13 +31,13 @@ function confirm() {
         <input
           v-model="text"
           v-focus
-          list="category-paths"
-          placeholder="选择已有分类，或输入新路径（如 插画/人物）"
+          list="category-names"
+          placeholder="选择已有分类，或输入新分类名称"
           @keydown.enter="confirm"
           @keydown.esc="emit('cancel')"
         />
-        <datalist id="category-paths">
-          <option v-for="category in store.flatCategories" :key="category.path" :value="category.path" />
+        <datalist id="category-names">
+          <option v-for="category in store.categories" :key="category.name" :value="category.name" />
         </datalist>
         <div class="actions">
           <button @click="emit('cancel')">取消</button>

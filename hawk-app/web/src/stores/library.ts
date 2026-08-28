@@ -4,7 +4,7 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
-import type { CategoryNode, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, TagInfo, ViewState } from '../types';
+import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, TagInfo, ViewState } from '../types';
 
 const PAGE_SIZE = 100;
 
@@ -45,7 +45,7 @@ export const useLibraryStore = defineStore('library', () => {
   const endReached = ref(false);
   const selection = ref<string[]>([]);
   const folders = ref<FolderNode | null>(null);
-  const categories = ref<CategoryNode | null>(null);
+  const categories = ref<CategoryInfo[]>([]);
   const tagList = ref<TagInfo[]>([]);
   const trashTotal = ref(0);
   // 侧栏智能条目计数（limit:1 只取 total）
@@ -78,7 +78,7 @@ export const useLibraryStore = defineStore('library', () => {
     if (v.kind === 'uncategorized') return '未分类素材';
     if (v.kind === 'untagged') return '未标签素材';
     if (v.kind === 'trash') return '回收站';
-    if (v.kind === 'tag') return v.name;
+    if (v.kind === 'tag' || v.kind === 'category') return v.name;
     return v.path.split('/').pop() ?? '';
   });
   const previewItem = computed(() => items.value.find((i) => i.id === previewId.value) ?? null);
@@ -102,20 +102,8 @@ export const useLibraryStore = defineStore('library', () => {
     return list;
   });
 
-  /** 扁平化的分类树（添加到分类等选择控件用） */
-  const flatCategories = computed(() => {
-    const list: { path: string; label: string }[] = [];
-    const walk = (node: CategoryNode, depth: number) => {
-      for (const child of node.children) {
-        list.push({ path: child.path, label: '　'.repeat(depth) + child.name });
-        walk(child, depth + 1);
-      }
-    };
-    if (categories.value) {
-      walk(categories.value, 0);
-    }
-    return list;
-  });
+  /** 扁平化的分类列表（添加到分类选择控件用） */
+  const categoryOptions = computed(() => categories.value.map((c) => ({ name: c.name })));
 
   // ---- 内部 ----
   const debouncedRefresh = debounce(200);
@@ -135,7 +123,7 @@ export const useLibraryStore = defineStore('library', () => {
       folders_exact: view.value.kind === 'root' ? true : undefined,
       without_categories: view.value.kind === 'uncategorized' ? true : undefined,
       without_tags: view.value.kind === 'untagged' ? true : undefined,
-      categories: view.value.kind === 'category' ? [view.value.path] : undefined,
+      categories: view.value.kind === 'category' ? [view.value.name] : undefined,
       tags: view.value.kind === 'tag' ? [view.value.name] : undefined,
       offset,
       limit,
@@ -174,7 +162,7 @@ export const useLibraryStore = defineStore('library', () => {
       if (parsed.kind === 'folder' && !folderExists(parsed.path)) {
         return; // 上次浏览的文件夹已被删除 → 回退全部素材
       }
-      if (parsed.kind === 'category' && !categoryExists(parsed.path)) {
+      if (parsed.kind === 'category' && !categoryExists(parsed.name)) {
         return;
       }
       if (parsed.kind === 'tag' && !tagList.value.some((t) => t.name === parsed.name)) {
@@ -191,9 +179,8 @@ export const useLibraryStore = defineStore('library', () => {
     return folders.value ? walk(folders.value) : false;
   }
 
-  function categoryExists(path: string): boolean {
-    const walk = (node: CategoryNode): boolean => node.path === path || node.children.some(walk);
-    return categories.value ? walk(categories.value) : false;
+  function categoryExists(name: string): boolean {
+    return categories.value.some((c) => c.name === name);
   }
 
   /** 应用视图：持久化 + 清选择 + 重查列表（setView/goBack/correctView 的公共收尾） */
@@ -466,7 +453,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   async function refreshTaxonomy() {
     try {
-      const [categoryTree, tags, trash, root, uncategorized, untagged] = await Promise.all([
+      const [categoryList, tags, trash, root, uncategorized, untagged] = await Promise.all([
         api.categoryList(),
         api.tagList(),
         api.itemList({ in_trash: true, limit: 1 }),
@@ -474,7 +461,7 @@ export const useLibraryStore = defineStore('library', () => {
         api.itemList({ without_categories: true, limit: 1 }),
         api.itemList({ without_tags: true, limit: 1 }),
       ]);
-      categories.value = categoryTree;
+      categories.value = categoryList;
       tagList.value = tags;
       trashTotal.value = Number(trash.total);
       rootCount.value = Number(root.total);
@@ -485,38 +472,33 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function categoryCreate(path: string) {
+  async function categoryCreate(name: string) {
     try {
-      await api.categoryCreate(path);
+      await api.categoryCreate(name);
       await refreshTaxonomy();
     } catch (e) {
       showToast(errorText(e));
     }
   }
 
-  async function categoryRename(path: string, name: string) {
+  async function categoryRename(name: string, newName: string) {
     try {
-      await api.categoryUpdate(path, { name });
+      await api.categoryUpdate(name, newName);
       await refreshTaxonomy();
-      // 当前视图正在该分类下 → 跟随迁移后的新路径
-      if (view.value.kind === 'category') {
-        const prefix = path + '/';
-        if (view.value.path === path) {
-          correctView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) });
-        } else if (view.value.path.startsWith(prefix)) {
-          correctView({ kind: 'category', path: joinCategoryPath(parentOfCategory(path), name) + '/' + view.value.path.slice(prefix.length) });
-        }
+      // 当前视图正在该分类下 → 跟随新名字
+      if (view.value.kind === 'category' && view.value.name === name) {
+        correctView({ kind: 'category', name: newName });
       }
     } catch (e) {
       showToast(errorText(e));
     }
   }
 
-  async function categoryDelete(path: string) {
+  async function categoryDelete(name: string) {
     try {
-      await api.categoryDelete(path);
+      await api.categoryDelete(name);
       await refreshTaxonomy();
-      if (view.value.kind === 'category' && (view.value.path === path || view.value.path.startsWith(path + '/'))) {
+      if (view.value.kind === 'category' && view.value.name === name) {
         correctView({ kind: 'all' });
       }
     } catch (e) {
@@ -558,11 +540,11 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /** 为全部选中项追加分类（去重，保留已有） */
-  function addCategoryToSelected(path: string) {
+  function addCategoryToSelected(name: string) {
     for (const id of selection.value) {
       const item = items.value.find((i) => i.id === id);
-      if (item && !(item.categories ?? []).includes(path)) {
-        void updateItem(id, { categories: [...(item.categories ?? []), path] });
+      if (item && !(item.categories ?? []).includes(name)) {
+        void updateItem(id, { categories: [...(item.categories ?? []), name] });
       }
     }
   }
@@ -582,15 +564,6 @@ export const useLibraryStore = defineStore('library', () => {
     for (const id of selection.value) {
       void updateItem(id, { folder_path: path });
     }
-  }
-
-  function parentOfCategory(path: string): string {
-    const idx = path.lastIndexOf('/');
-    return idx < 0 ? '' : path.slice(0, idx);
-  }
-
-  function joinCategoryPath(parent: string, name: string): string {
-    return parent === '' ? name : `${parent}/${name}`;
   }
 
   // ---- 预览浮层 ----
@@ -639,7 +612,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   return {
     view, query, items, total, totalSize, viewTitle, loading, endReached, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, sidebarVisible,
-    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, flatCategories,
+    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, categoryOptions,
     init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, fetchMore, refresh,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importPaths,

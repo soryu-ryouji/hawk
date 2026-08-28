@@ -1,6 +1,6 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
 import { apiConfig, request } from './client';
-import type { CategoryNode, FolderNode, Item, ItemListRequest, ItemListResult, LibraryInfo, TagInfo } from '../types';
+import type { CategoryInfo, FolderNode, Item, ItemListRequest, ItemListResult, LibraryInfo, TagInfo } from '../types';
 
 export interface ItemPatch {
   name?: string;
@@ -41,11 +41,11 @@ export const api = {
 
   trashClear: () => request<void>('POST', '/api/v1/trash/clear'),
 
-  categoryList: () => request<CategoryNode>('GET', '/api/v1/category/list'),
-  categoryCreate: (path: string) => request<void>('POST', '/api/v1/category/create', { body: { path } }),
-  categoryUpdate: (path: string, patch: { name?: string; parent_path?: string }) =>
-    request<void>('POST', '/api/v1/category/update', { body: { path, ...patch } }),
-  categoryDelete: (path: string) => request<void>('POST', '/api/v1/category/delete', { body: { path } }),
+  categoryList: () => request<CategoryInfo[]>('GET', '/api/v1/category/list'),
+  categoryCreate: (name: string) => request<void>('POST', '/api/v1/category/create', { body: { name } }),
+  categoryUpdate: (name: string, newName: string) =>
+    request<void>('POST', '/api/v1/category/update', { body: { name, new_name: newName } }),
+  categoryDelete: (name: string) => request<void>('POST', '/api/v1/category/delete', { body: { name } }),
 
   tagList: () => request<TagInfo[]>('GET', '/api/v1/tag/list'),
   tagCreate: (name: string) => request<void>('POST', '/api/v1/tag/create', { body: { name } }),

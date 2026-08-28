@@ -3,37 +3,24 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Hawk.Server.Tests;
 
-public class CategoryPathTests
+public class CategoryNameTests
 {
     [Theory]
     [InlineData("插画", "插画")]
-    [InlineData("插画/人物", "插画/人物")]
-    [InlineData("插画 / 人物 ", "插画/人物")]   // 段 trim
-    [InlineData("插画//人物", "插画/人物")]      // 空段折叠
-    public void Normalize_合法路径(string raw, string expected)
+    [InlineData("  人物  ", "人物")] // trim
+    public void Normalize_合法名称(string raw, string expected)
     {
-        Assert.Equal(expected, CategoryPath.Normalize(raw));
+        Assert.Equal(expected, CategoryName.Normalize(raw));
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("  ")]
-    [InlineData("a/../b")]
-    [InlineData("a/./b")]
+    [InlineData("插画/人物")] // 层级已废弃，含斜杠非法
     [InlineData("a\\b")]
-    public void Normalize_非法路径(string raw)
+    public void Normalize_非法名称(string raw)
     {
-        Assert.Null(CategoryPath.Normalize(raw));
-    }
-
-    [Theory]
-    [InlineData("插画/人物", "插画", true)]
-    [InlineData("插画/人物", "插画", true)]
-    [InlineData("插画", "插画", true)]
-    [InlineData("插画集", "插画", false)]  // 前缀必须按段边界
-    public void IsSameOrDescendant(string path, string prefix, bool expected)
-    {
-        Assert.Equal(expected, CategoryPath.IsSameOrDescendant(path, prefix));
+        Assert.Null(CategoryName.Normalize(raw));
     }
 }
 
@@ -49,36 +36,37 @@ public class CategoryRegistryTests
     }
 
     [Fact]
-    public void 登记自动补齐祖先()
+    public void 登记去重且排序()
     {
         var (_, registry) = Create();
-        registry.Register("插画/人物/女");
+        registry.Register("插画");
+        registry.Register("插画");
+        registry.Register("参考");
 
-        Assert.Equal(["插画", "插画/人物", "插画/人物/女"], registry.Snapshot());
+        Assert.Equal(["参考", "插画"], registry.Snapshot());
     }
 
     [Fact]
-    public void 重命名子树跟随()
+    public void 重命名与合并()
     {
         var (_, registry) = Create();
-        registry.Register("插画/人物");
-        registry.Register("插画/场景");
-        registry.Register("参考");
+        registry.Register("old");
+        registry.Rename("old", "new");
+        Assert.Equal(["new"], registry.Snapshot());
 
-        registry.Rename("插画", "灵感");
-
-        Assert.Equal(["参考", "灵感", "灵感/人物", "灵感/场景"], registry.Snapshot());
+        // 目标已存在 → 合并
+        registry.Register("another");
+        registry.Rename("new", "another");
+        Assert.Equal(["another"], registry.Snapshot());
     }
 
     [Fact]
-    public void 删除连子树一并清除()
+    public void 删除()
     {
         var (_, registry) = Create();
-        registry.Register("插画/人物");
+        registry.Register("插画");
         registry.Register("参考");
-
         registry.Delete("插画");
-
         Assert.Equal(["参考"], registry.Snapshot());
     }
 
@@ -86,10 +74,10 @@ public class CategoryRegistryTests
     public void 持久化_重载后保持()
     {
         var (paths, registry) = Create();
-        registry.Register("插画/人物");
+        registry.Register("插画");
 
         var reloaded = new CategoryRegistry(paths, NullLogger<CategoryRegistry>.Instance);
-        Assert.Equal(["插画", "插画/人物"], reloaded.Snapshot());
+        Assert.Equal(["插画"], reloaded.Snapshot());
     }
 }
 

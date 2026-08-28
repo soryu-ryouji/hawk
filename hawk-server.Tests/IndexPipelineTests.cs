@@ -356,22 +356,22 @@ public class IndexPipelineTests
     // ---------- 分类/标签级联 ----------
 
     [Fact]
-    public async Task 分类重命名_元数据子树跟随迁移()
+    public async Task 分类重命名_元数据跟随迁移()
     {
         using var rig = Rig.Create(_dir.Root);
         var file = _dir.WriteFile("art.png", TempDir.TinyPng);
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
 
-        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Categories = ["插画/人物"]);
-        Assert.Contains("插画", rig.Categories.Snapshot()); // 赋值自动登记注册表（含祖先）
+        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Categories = ["插画"]);
+        Assert.Contains("插画", rig.Categories.Snapshot()); // 赋值自动登记注册表
 
-        await rig.Pipeline.SubmitCategoryUpdateAsync("插画", "灵感", null);
+        await rig.Pipeline.SubmitCategoryUpdateAsync("插画", "灵感");
 
         Assert.True(rig.Store.TryGet(hash, out var meta));
-        Assert.Equal(["灵感/人物"], meta.Categories);
-        Assert.Equal(["灵感", "灵感/人物"], rig.Categories.Snapshot());
-        Assert.Equal(["灵感/人物"], rig.Index.Get(hash)!.Categories);
+        Assert.Equal(["灵感"], meta.Categories);
+        Assert.Equal(["灵感"], rig.Categories.Snapshot());
+        Assert.Equal(["灵感"], rig.Index.Get(hash)!.Categories);
     }
 
     [Fact]
@@ -382,12 +382,12 @@ public class IndexPipelineTests
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
 
-        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Categories = ["插画/人物", "参考"]);
+        await rig.Pipeline.SubmitMetadataAsync(hash, m => m.Categories = ["插画", "参考"]);
         await rig.Pipeline.SubmitCategoryDeleteAsync("插画");
 
         Assert.True(rig.Store.TryGet(hash, out var meta));
         Assert.Equal(["参考"], meta.Categories);
-        Assert.Empty(rig.Categories.Snapshot().Where(c => c.StartsWith("插画")));
+        Assert.DoesNotContain("插画", rig.Categories.Snapshot());
     }
 
     [Fact]

@@ -27,7 +27,7 @@ public sealed class IndexPipeline : IDisposable
 
     // 分类/标签操作（注册表 + 元数据批量迁移）
     private sealed record CategoryCreateJob(string Path, TaskCompletionSource Done) : IndexJob;
-    private sealed record CategoryUpdateJob(string Path, string? Name, string? ParentPath, TaskCompletionSource Done) : IndexJob;
+    private sealed record CategoryUpdateJob(string OldName, string NewName, TaskCompletionSource Done) : IndexJob;
     private sealed record CategoryDeleteJob(string Path, TaskCompletionSource Done) : IndexJob;
     private sealed record TagCreateJob(string Name, TaskCompletionSource Done) : IndexJob;
     private sealed record TagUpdateJob(string Name, string NewName, TaskCompletionSource Done) : IndexJob;
@@ -207,24 +207,24 @@ public sealed class IndexPipeline : IDisposable
 
     // ---------- 入口：分类/标签操作（API 提交，校验在端点层完成） ----------
 
-    public Task SubmitCategoryCreateAsync(string path)
+    public Task SubmitCategoryCreateAsync(string name)
     {
         var tcs = NewTcs();
-        Enqueue(new CategoryCreateJob(path, tcs), tcs);
+        Enqueue(new CategoryCreateJob(name, tcs), tcs);
         return tcs.Task;
     }
 
-    public Task SubmitCategoryUpdateAsync(string path, string? name, string? parentPath)
+    public Task SubmitCategoryUpdateAsync(string oldName, string newName)
     {
         var tcs = NewTcs();
-        Enqueue(new CategoryUpdateJob(path, name, parentPath, tcs), tcs);
+        Enqueue(new CategoryUpdateJob(oldName, newName, tcs), tcs);
         return tcs.Task;
     }
 
-    public Task SubmitCategoryDeleteAsync(string path)
+    public Task SubmitCategoryDeleteAsync(string name)
     {
         var tcs = NewTcs();
-        Enqueue(new CategoryDeleteJob(path, tcs), tcs);
+        Enqueue(new CategoryDeleteJob(name, tcs), tcs);
         return tcs.Task;
     }
 
@@ -349,7 +349,7 @@ public sealed class IndexPipeline : IDisposable
                 Complete(j.Done);
                 break;
             case CategoryUpdateJob j:
-                DoCategoryUpdate(j.Path, j.Name, j.ParentPath);
+                DoCategoryUpdate(j.OldName, j.NewName);
                 Complete(j.Done);
                 break;
             case CategoryDeleteJob j:
@@ -896,44 +896,36 @@ public sealed class IndexPipeline : IDisposable
 
     // ---------- 分类/标签级联迁移 ----------
 
-    /// <summary>分类重命名/移动：注册表前缀迁移 + 全部命中 item 的 categories 迁移（子树跟随）</summary>
-    private void DoCategoryUpdate(string path, string? name, string? parentPath)
+    /// <summary>分类重命名：注册表更名 + 全部命中 item 的 categories 替换；目标已存在时合并</summary>
+    private void DoCategoryUpdate(string oldName, string newName)
     {
-        var newName = name ?? CategoryPath.NameOf(path);
-        var newParent = parentPath ?? CategoryPath.ParentOf(path);
-        var newPath = newParent == "" ? newName : newParent + "/" + newName;
-        if (newPath == path)
-        {
-            return;
-        }
-
-        _categories.Rename(path, newPath);
+        _categories.Rename(oldName, newName);
         // 分类可能仅由赋值产生而未注册过，补上登记
-        _categories.Register(newPath);
+        _categories.Register(newName);
 
         foreach (var (hash, meta) in _store.Snapshot())
         {
-            if (!meta.Categories.Any(c => CategoryPath.IsSameOrDescendant(c, path)))
+            if (!meta.Categories.Contains(oldName))
             {
                 continue;
             }
 
             meta.Categories = meta.Categories
-                .Select(c => CategoryPath.IsSameOrDescendant(c, path) ? newPath + c[path.Length..] : c)
+                .Select(c => c == oldName ? newName : c)
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
             SaveAndSync(hash, meta);
         }
     }
 
-    /// <summary>分类删除：注册表与全部 item 的该节点及子树赋值一并清除</summary>
-    private void DoCategoryDelete(string path)
+    /// <summary>分类删除：注册表与全部 item 的该分类赋值一并清除</summary>
+    private void DoCategoryDelete(string name)
     {
-        _categories.Delete(path);
+        _categories.Delete(name);
 
         foreach (var (hash, meta) in _store.Snapshot())
         {
-            if (meta.Categories.RemoveAll(c => CategoryPath.IsSameOrDescendant(c, path)) > 0)
+            if (meta.Categories.Remove(name))
             {
                 SaveAndSync(hash, meta);
             }

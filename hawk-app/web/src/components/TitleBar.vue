@@ -11,10 +11,10 @@ const isMac = window.hawkShell?.platform === 'darwin';
 // 窗口控制为 fixed 在窗口右上角的自绘按钮（仅 Windows/Linux 渲染）：侧栏隐藏时本栏通栏，右端需预留避让
 const reserveControls = !!window.hawkShell && !isMac;
 
-/** 文件夹/分类视图显示可点击面包屑（根 = 全部素材），其余视图显示固定标题 */
+/** 文件夹视图显示可点击面包屑（根 = 全部素材），其余视图显示固定标题 */
 const breadcrumb = computed(() => {
   const view = store.view;
-  if (view.kind !== 'folder' && view.kind !== 'category') {
+  if (view.kind !== 'folder') {
     return null;
   }
   const segs = view.path.split('/');
@@ -31,7 +31,7 @@ const locationTitle = computed(() => {
   if (view.kind === 'uncategorized') return '未分类素材';
   if (view.kind === 'untagged') return '未标签素材';
   if (view.kind === 'trash') return '回收站';
-  if (view.kind === 'tag') return view.name;
+  if (view.kind === 'tag' || view.kind === 'category') return view.name;
   return '';
 });
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>hawk</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>hawk</h1>
+      <p id="status" class="status">…</p>
+      <label>
+        服务器地址
+        <input id="server-url" type="text" placeholder="http://127.0.0.1:27371" />
+      </label>
+      <label>
+        Token（可选）
+        <input id="token" type="text" placeholder="留空自动获取（推荐）" />
+      </label>
+      <div class="actions">
+        <button id="save" type="button">保存设置</button>
+        <button id="check" type="button">测试连接</button>
+      </div>
+      <p class="hint">右键图片，或拖拽图片到右下角投放区即可收集。</p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

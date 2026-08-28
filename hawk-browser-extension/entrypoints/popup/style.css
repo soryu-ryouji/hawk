@@ -1,0 +1,98 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  width: 300px;
+  background: #16181d;
+  color: #d6d9de;
+  font: 13px/1.5 system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+}
+
+main {
+  padding: 14px 16px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.status {
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+
+.status[data-kind='ok'] {
+  color: #6fcf7c;
+}
+
+.status[data-kind='err'] {
+  color: #e06c75;
+}
+
+.status[data-kind='wait'] {
+  color: #8a8f98;
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #8a8f98;
+}
+
+input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid #2c313a;
+  border-radius: 5px;
+  background: #1d2026;
+  color: #d6d9de;
+  font-size: 13px;
+}
+
+input:focus {
+  outline: none;
+  border-color: #4a7dff;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 5px;
+  background: #2c313a;
+  color: #d6d9de;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #363c47;
+}
+
+#save {
+  background: #4a7dff;
+  color: #fff;
+}
+
+#save:hover {
+  background: #5d8bff;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7078;
+}

@@ -112,9 +112,19 @@ function removeCategory(category: string) {
 
 // ---- 文件夹 ----
 
-function moveToRoot() {
-  if (item.value) {
-    void store.updateItem(item.value.id, { folder_path: '' });
+/** 单值排他语义，用下拉框而非 chip：当前值取主位置（folders[0]），切换即移动文件 */
+const folderOptions = computed(() => {
+  const current = item.value?.folders?.[0] ?? '';
+  const options = [...store.flatFolders];
+  if (current !== '' && !options.some((f) => f.path === current)) {
+    options.push({ path: current, label: current }); // 树里已不存在的兜底（外部删除等）
+  }
+  return options;
+});
+
+function moveToFolder(path: string) {
+  if (item.value && path !== (item.value.folders?.[0] ?? '')) {
+    void store.updateItem(item.value.id, { folder_path: path });
   }
 }
 
@@ -161,9 +171,9 @@ function applyBatchTag() {
   batchTag.value = '';
 }
 
-function batchAddCategory(path: string) {
+function batchAddCategory(name: string) {
   showCategoryPicker.value = false;
-  store.addCategoryToSelected(path);
+  store.addCategoryToSelected(name);
 }
 
 function batchMoveFolder(path: string) {
@@ -236,14 +246,14 @@ function batchMoveFolder(path: string) {
 
         <section>
           <div class="section-title">文件夹</div>
-          <div class="chips">
-            <span v-for="folder in item.folders ?? []" :key="folder" class="chip">
-              {{ folder || '（根目录）' }}
-              <button class="remove" title="移到根目录" @click="moveToRoot">×</button>
-            </span>
-            <span v-if="(item.folders ?? []).length === 0" class="chip">（根目录）</span>
-            <button class="add" title="移动到文件夹" @click="showFolderPicker = true">＋</button>
-          </div>
+          <select
+            class="folder-select"
+            :value="item.folders?.[0] ?? ''"
+            title="所在文件夹（选择即移动）"
+            @change="moveToFolder(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="f in folderOptions" :key="f.path" :value="f.path">{{ f.label }}</option>
+          </select>
         </section>
 
         <section>
@@ -483,6 +493,22 @@ section {
   border-radius: 10px;
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* 文件夹为单值排他语义：下拉框（Eagle 同款），而非标签/分类的 chip */
+.folder-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-3);
+  color: var(--fg-0);
+  font-size: 12px;
+}
+
+.folder-select:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .info {

@@ -109,8 +109,8 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 ./tools/build.ps1 --platform app,ext-chrome,ext-firefox --path D:/Tools/hawk
 ```
 
-- `--platform` 可选 `app` / `ext-chrome` / `ext-firefox`，逗号分隔，默认全部；浏览器插件构建尚未实现，会先跳过
-- `--path` 产物输出目录，默认 `<仓库>/out/`；应用直接输出到该目录根下——Windows 自动解压 `hawk.zip`（`hawk.exe` 就地可运行）、macOS 为 `hawk.app` 目录、Linux 为 `hawk.AppImage`；插件产物之后同样直接输出
+- `--platform` 可选 `app` / `ext-chrome` / `ext-firefox`，逗号分隔，默认全部；浏览器插件见 [hawk-browser-extension](hawk-browser-extension/README.md)（Safari 需 macOS 另行转换，不参与此脚本）
+- `--path` 产物输出目录，默认 `<仓库>/out/`；应用直接输出到该目录根下——Windows 自动解压 `hawk.zip`（`hawk.exe` 就地可运行）、macOS 为 `hawk.app` 目录、Linux 为 `hawk.AppImage`；插件输出为 `hawk-extension-chrome|firefox/` 目录（浏览器「加载已解压扩展程序」直接用）
 - 有请求的内容未构建成功（失败或跳过）时退出码为 1
 
 ### CI 发版

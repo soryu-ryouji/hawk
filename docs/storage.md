@@ -55,7 +55,7 @@ modification_time = 1700000000000
 
 url = "https://example.com/photo.jpg"   # 来源网址
 tags = ["nature", "sunset"]             # 标签
-categories = ["插画/人物"]              # 分类（虚拟分类维度，见 category.md）
+categories = ["海报", "灵感参考"]      # 分类（虚拟分类维度，扁平可多选，见 category.md）
 star = 4                                # 评分 0–5
 annotation = "Beautiful sunset"         # 备注
 ```

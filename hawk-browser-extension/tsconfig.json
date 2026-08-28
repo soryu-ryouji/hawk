@@ -1,0 +1,4 @@
+{
+  // WXT 生成的类型与自动导入配置（npm install 时经 wxt prepare 产出）
+  "extends": "./.wxt/tsconfig.json"
+}

@@ -72,6 +72,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/info": {
         parameters: {
             query?: never;
@@ -759,7 +792,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["EnvelopeOfCategoryNode"];
+                        "application/json": components["schemas"]["EnvelopeOfCategoryInfo[]"];
                     };
                 };
             };
@@ -868,7 +901,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["CategoryPathRequest"];
+                    "application/json": components["schemas"]["CategoryNameRequest"];
                 };
             };
             responses: {
@@ -1051,30 +1084,27 @@ export interface components {
             exec_path: string;
         };
         CategoryCreateRequest: {
-            path: string;
-        };
-        CategoryNode: {
-            path: string;
             name: string;
-            children: components["schemas"]["CategoryNode"][];
+        };
+        CategoryInfo: {
+            name: string;
             /** Format: int32 */
             count: number | string;
         };
-        CategoryPathRequest: {
-            path: string;
+        CategoryNameRequest: {
+            name: string;
         };
         CategoryUpdateRequest: {
-            path: string;
-            name: null | string;
-            parent_path: null | string;
+            name: string;
+            new_name: string;
         };
         EnvelopeOfAppInfo: {
             status: string;
             data: null | components["schemas"]["AppInfo"];
         };
-        EnvelopeOfCategoryNode: {
+        "EnvelopeOfCategoryInfo[]": {
             status: string;
-            data: null | components["schemas"]["CategoryNode"];
+            data: null | components["schemas"]["CategoryInfo"][];
         };
         EnvelopeOfFolderNode: {
             status: string;
@@ -1133,7 +1163,9 @@ export interface components {
             name?: null | string;
             folder_path?: null | string;
             tags?: null | string[];
+            categories?: null | string[];
             annotation?: null | string;
+            website?: null | string;
         };
         ItemDto: {
             id: string;

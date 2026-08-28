@@ -44,7 +44,10 @@ public static class ItemEndpoints
         public string? Name { get; init; }
         public string? FolderPath { get; init; }
         public string[]? Tags { get; init; }
+        public string[]? Categories { get; init; }
         public string? Annotation { get; init; }
+        /// <summary>来源网页（收集场景：图片所在的页面地址），记录为 Item.url；与下载用的 url 区分</summary>
+        public string? Website { get; init; }
     }
 
     public sealed record ItemAddResponse(ItemDto Item, bool AlreadyExisted);
@@ -286,9 +289,21 @@ public static class ItemEndpoints
                 throw new ApiException(ErrorCodes.Internal, "索引失败", StatusCodes.Status500InternalServerError);
             }
 
-            // 附带的素材参数写入元数据；url 下载时来源网址自动记录为 Item.url
-            if (req.Tags is not null || req.Annotation is not null || req.Url is not null)
+            // 附带的素材参数写入元数据；website（来源网页）记录为 Item.url，下载用的 url 不覆盖它
+            if (req.Tags is not null || req.Annotation is not null || req.Website is not null || req.Categories is not null)
             {
+                string[]? categories = null;
+                if (req.Categories is not null)
+                {
+                    categories = req.Categories.Select(CategoryName.Normalize).ToArray()!;
+                    if (categories.Any(c => c is null))
+                    {
+                        throw ApiException.InvalidParam("包含非法分类名称");
+                    }
+
+                    categories = categories.Distinct(StringComparer.Ordinal).ToArray();
+                }
+
                 await pipeline.SubmitMetadataAsync(hash, meta =>
                 {
                     if (req.Tags is not null)
@@ -296,14 +311,19 @@ public static class ItemEndpoints
                         meta.Tags = req.Tags.ToList();
                     }
 
+                    if (categories is not null)
+                    {
+                        meta.Categories = categories.ToList();
+                    }
+
                     if (req.Annotation is not null)
                     {
                         meta.Annotation = req.Annotation;
                     }
 
-                    if (req.Url is not null)
+                    if (req.Website is not null)
                     {
-                        meta.Url = req.Url;
+                        meta.Url = req.Website;
                     }
                 });
             }
@@ -400,10 +420,10 @@ public static class ItemEndpoints
             string[]? categories = null;
             if (req.Categories is not null)
             {
-                categories = req.Categories.Select(CategoryPath.Normalize).ToArray()!;
+                categories = req.Categories.Select(CategoryName.Normalize).ToArray()!;
                 if (categories.Any(c => c is null))
                 {
-                    throw ApiException.InvalidParam("包含非法分类路径");
+                    throw ApiException.InvalidParam("包含非法分类名称");
                 }
 
                 categories = categories.Distinct(StringComparer.Ordinal).ToArray();

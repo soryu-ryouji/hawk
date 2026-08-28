@@ -32,7 +32,7 @@ Eagle 主窗口的关键特征：
 | 三栏布局（左右栏通高，顶栏只覆盖中栏） | 采纳 | 侧栏/检查器色块通高到窗口上沿，不被顶栏隔断；中栏顶栏集成侧栏开关/前进后退/面包屑/缩略图滑杆/筛选/搜索；macOS 用系统原生红绿灯（`titleBarStyle: 'hidden'`，压在侧栏顶条左侧），Windows/Linux 无边框（`frame: false`）+ 自绘窗口控制（fixed 于窗口右上角）；不做状态栏 |
 | 深色主题 | 采纳 | 自定义 CSS，不引组件库 |
 | 瀑布流（不等高）网格 | 采纳（齐行布局） | Eagle 实为「行内等高、宽度按宽高比」的 justified 布局；自研贪心装行算法，不引库 |
-| 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类树与标签列表（见 category.md）；智能文件夹不做 |
+| 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类列表与标签列表（见 category.md，分类为扁平受控词表）；智能文件夹不做 |
 | 框选 | 不做 | 保留 Shift/Cmd 点选 |
 | 评分筛选、颜色标签 | 评分筛选做（标题栏），颜色标签不做 | API 支持 star 过滤 |
 | 浏览器扩展采集 | 不做 | 属生态接入，后端 API 已就绪 |
@@ -87,7 +87,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 │  ───────── │  ItemGrid                        │  注释(可改)          │
 │  ˅文件夹树  │   齐行网格：行内等高，宽度按宽高比    │  URL(可改)          │
 │  (增/删/改) │   卡片下方：name.ext + 尺寸         │  标签 chips         │
-│  ˅分类树   │   无限滚动分页（100/页）            │  分类 chips ＋      │
+│  ˅分类     │   无限滚动分页（100/页）            │  分类 chips ＋      │
 │  (增/删/改) │   懒加载 <img loading=lazy>        │  文件夹 chips ＋    │
 │  ˅标签列表 N│   多选：Shift 连选 / Cmd 点选       │  基本信息(评分并入)  │
 │  (增/删/改) │   双击/空格 → 预览浮层（Esc 关闭）   │  文件位置            │
@@ -104,7 +104,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
-当前位置体现在侧栏选中态与标题栏：文件夹/分类视图渲染可点击面包屑（根 = 全部素材，逐级跳转），其余视图为固定标题；标题栏前进/后退在会话内浏览历史（`setView` 压栈，重命名跟随/删除回退就地修正当前条目）中移动。回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。文件夹与分类树节点的计数由后端 `folder/list`、`category/list` 的 `count` 字段提供（含子级、不含回收站、按 item 去重）。
+当前位置体现在侧栏选中态与标题栏：文件夹视图渲染可点击面包屑（根 = 全部素材，逐级跳转），其余视图为固定标题；标题栏前进/后退在会话内浏览历史（`setView` 压栈，重命名跟随/删除回退就地修正当前条目）中移动。回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。文件夹树节点计数由后端 `folder/list` 的 `count` 字段提供（含子级、不含回收站、按 item 去重）；分类/标签计数由 `category/list`、`tag/list` 提供（精确匹配、不含回收站）。
 
 ### 目录结构（web/src）
 
@@ -165,7 +165,7 @@ export type ViewState =
   | { kind: 'uncategorized' } // 未分类素材
   | { kind: 'untagged' }      // 未标签素材
   | { kind: 'folder'; path: string }
-  | { kind: 'category'; path: string }
+  | { kind: 'category'; name: string }
   | { kind: 'tag'; name: string }
   | { kind: 'trash' };
 export interface QueryState {
@@ -209,7 +209,7 @@ export const api = {
   itemDetail(id: string): Promise<Item>;
   itemCount(): Promise<number>;
   itemAddByPath(path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }): Promise<{ item: Item; already_existed: boolean }>;
-  itemUpdate(id: string, patch: { name?; tags?; star?; annotation?; url?; folder_path? }, path?: string): Promise<Item>;
+  itemUpdate(id: string, patch: { name?; tags?; categories?; star?; annotation?; url?; folder_path? }, path?: string): Promise<Item>;
   itemDelete(id: string, path?: string): Promise<void>;
   itemRestore(id: string, path?: string): Promise<void>;
   refreshThumbnail(id: string): Promise<void>;
@@ -350,7 +350,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 ## 功能清单 v1（验收标准）
 
 1. 启动选库：首次启动弹目录选择；记住上次素材库与上次浏览的文件夹视图（按库路径存 localStorage，文件夹已删则回退全部素材）；菜单可更换库
-2. 侧栏：全部素材 / 文件夹树 / 分类树 / 标签列表（三个分区均支持「＋」新建与右键重命名/删除）/ 回收站
+2. 侧栏：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站）/ 文件夹树 / 分类列表 / 标签列表（三分区均支持「＋」新建与右键重命名/删除）
 3. 网格：缩略图懒加载、无限滚动、单选/Shift 连选/Cmd 点选、双击预览浮层
 4. 搜索与筛选：关键词（命中名称/备注）、star 精确筛选、四种排序双向
 5. 检查器：1024 预览；名称、标签（chip 增删）、评分（点星）、备注、URL 编辑即存（失焦/回车提交）；只读信息：尺寸、大小、mtime、全部路径

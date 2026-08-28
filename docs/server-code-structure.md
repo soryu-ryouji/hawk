@@ -59,7 +59,7 @@ Program.cs 做的事（按执行顺序）：
 | `LibraryScanner.cs` | 目录遍历：跳过 `.hawk/` 内部（只深入 trash 子树）、库内应用 ignore 规则、枚举失败静默跳过 |
 | `LibraryWatcher.cs` | FileSystemWatcher 封装：Created/Changed→upsert、Deleted、Renamed→move、Error→溢出回调；过滤 `.hawk` 内部，config.toml 与注册表文件单独上报；另有周期对账扫描（`HAWK_RESCAN_INTERVAL`，默认 60s）兜底静默丢事件 |
 | `EventBus.cs` | SSE 事件总线：每个订阅者一条有界 channel；消费跟不上就断开该订阅（前端重连后用 item/list 全量对齐） |
-| `Taxonomy.cs` | 分类/标签维度：`CategoryPath` 路径规范化；`CategoryRegistry` / `TagRegistry` 注册表（`.hawk/categories.toml`、`.hawk/tags.toml`，原子写、祖先补齐、子树迁移）；支持空分类/空标签预创建，赋值时自动登记 |
+| `Taxonomy.cs` | 分类/标签维度：`CategoryName` 名称校验（扁平，无层级）；`CategoryRegistry` / `TagRegistry` 注册表（`.hawk/categories.toml`、`.hawk/tags.toml`，原子写）；支持空分类/空标签预创建，赋值时自动登记 |
 | `LibraryFs.cs` | 文件操作小工具：建父目录、回收站冲突时追加 ` (n)` 后缀、名称合法性校验 |
 | `IndexPipeline.cs` | **核心**：索引流水线，详见下节 |
 
@@ -67,7 +67,7 @@ Program.cs 做的事（按执行顺序）：
 
 所有索引变更收敛为一个单消费者流水线，任务经有界 channel（4096）串行处理：
 
-- **任务类型（分类/标签）**：`CategoryCreateJob` / `CategoryUpdateJob`（重命名/移动，注册表前缀迁移 + 全部命中 item 的 categories 级联，子树跟随）/ `CategoryDeleteJob`（节点及子树的注册表与赋值一并清除）；`TagCreateJob` / `TagUpdateJob`（重命名，目标已存在时合并）/ `TagDeleteJob`；`RegistryReloadJob`（外部同步改动注册表文件时重载）
+- **任务类型（分类/标签）**：`CategoryCreateJob` / `CategoryUpdateJob`（重命名，注册表更名 + 全部命中 item 的 categories 替换，目标已存在时合并）/ `CategoryDeleteJob`（注册表与全部 item 的该分类赋值一并清除）；`TagCreateJob` / `TagUpdateJob`（重命名，目标已存在时合并）/ `TagDeleteJob`；`RegistryReloadJob`（外部同步改动注册表文件时重载）
 - **任务类型**：`UpsertJob`（新增/变更，可携带 `KnownHash` 跳过流水线重算、供 item/add 复用 API 侧已算的哈希）、`DeleteJob`（按路径与目录前缀双重匹配，因为删除事件分不清文件还是目录）、`MoveJob` / `DirMoveJob`、`ScanJob`（full 时强制重算全部哈希）、`ClearTrashJob`、`MetadataJob`（item/update 的元数据写）
 - **两类入口**：watcher 走 fire-and-forget，channel 满则置溢出标记，消费者每批任务后检查并触发全量扫描兜底；API 与启动走携带 `TaskCompletionSource` 的提交，等待处理完成后返回结果
 - **写入防抖**：入库拆成 `PrepareUpsert`（路径过滤、复用判定，不读文件内容）与 `ApplyUpsert`（串行应用变更）两步。判定需要算哈希时，若文件 mtime 距今不足 1 秒（大文件仍在拷贝中），不立即处理，经去重集合延迟重试（上限 120 次）——避免对半截内容反复哈希；携带 KnownHash 或等待结果的提交不防抖（文件由 API 写入，内容已完整）

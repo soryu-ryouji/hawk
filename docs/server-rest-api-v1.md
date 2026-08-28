@@ -40,6 +40,7 @@
 | 方法 | 端点               | 说明         |
 | ---- | ------------------ | ------------ |
 | GET  | `/api/v1/app/info` | 获取应用信息 |
+| GET  | `/api/v1/app/token` | 发现连接 token（免鉴权，仅限扩展类客户端） |
 
 ### info
 
@@ -71,6 +72,25 @@
 `GET /health`
 
 就绪探活，不带 `/api/v1` 前缀，无需 token。Electron 壳启动后轮询此端点，返回 200 即表示后端就绪。
+
+### token
+
+`GET /api/v1/app/token`
+
+免鉴权的 token 发现端点，供浏览器插件等生态客户端零配置接入（插件端实现见 hawk-browser-extension）。
+
+安全性约束：
+
+- 响应**不携带 CORS 头**（`DisableCors`）：跨源网页 JS 无法读取响应，只有持 `host_permissions` 的浏览器扩展能读
+- **Host 必须是环回地址**（`127.0.0.1` / `localhost` / `::1`），否则返回 `INVALID_HOST`：防 DNS rebinding 伪装同源读取
+
+拿到 token 后，其余 `/api/*` 请求照常 `Authorization: Bearer <token>`。
+
+#### 响应
+
+```json
+{ "status": "success", "data": "<random-token>" }
+```
 
 ## library
 
@@ -234,7 +254,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | size              | number   | 文件大小（字节）                           |
 | url               | string   | 来源网址，可为空                           |
 | tags              | string[] | 标签列表                                   |
-| categories        | string[] | 分类路径列表（虚拟分类维度）               |
+| categories        | string[] | 分类列表（虚拟分类维度，扁平可多选）       |
 | paths             | string[] | 所有文件位置（库内相对路径），首个为主路径 |
 | folders           | string[] | 所在文件夹路径列表（由 paths 派生）        |
 | star              | number   | 评分 0–5                                   |
@@ -261,8 +281,8 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | ids        | string[] | 按 id 列表匹配                                                  |
 | keywords   | string[] | 关键词（匹配名称、备注）                                        |
 | tags       | string[] | 按标签过滤（AND）                                                |
-| categories | string[] | 按分类过滤（含子分类），`categories_match`：`any`（默认）/ `all` |
-| exclude_categories | string[] | 排除分类（任一命中即剔除，含子分类）                    |
+| categories | string[] | 按分类过滤（精确匹配），`categories_match`：`any`（默认）/ `all` |
+| exclude_categories | string[] | 排除分类（任一命中即剔除）                    |
 | exclude_tags | string[] | 排除标签（任一命中即剔除）                                |
 | star       | number   | 按评分过滤                                                      |
 | folders    | string[] | 按文件夹路径过滤（含子目录）                                    |
@@ -334,7 +354,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 
 `POST /api/v1/item/add`
 
-向素材库添加新文件。`path`、`url`、`img_base64` 三者必须提供其一，作为文件内容来源；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。以 `url` 下载时，该 URL 自动记录为 Item.url。
+向素材库添加新文件。`path`、`url`、`img_base64` 三者必须提供其一，作为文件内容来源；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。`url` 仅作为下载来源；来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
 
 #### 请求
 
@@ -346,7 +366,9 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | name        | string   | 否     | 文件名（不含扩展名），缺省取来源文件名 |
 | folder_path | string   | 否     | 目标文件夹路径，缺省为库根目录         |
 | tags        | string[] | 否     | 标签                                   |
+| categories  | string[] | 否     | 分类（扁平名称校验；浏览器拖拽收集用）   |
 | annotation  | string   | 否     | 备注                                   |
+| website     | string   | 否     | 来源网页（Eagle `website` 同义），记录为 Item.url |
 
 #### 响应
 
@@ -382,7 +404,7 @@ Item 对象，并附带 `already_existed` 标志：
 | path        | string   | 否   | 指定操作的文件位置（同内容多路径时），缺省为主路径 |
 | name        | string   | 否   | 重命名文件（同步修改真实文件名）                   |
 | tags        | string[] | 否   | 标签（整体替换）                                   |
-| categories  | string[] | 否   | 分类路径（整体替换，自动登记注册表）               |
+| categories  | string[] | 否   | 分类（整体替换，自动登记注册表）               |
 | folder_path | string   | 否   | 移动到新文件夹（移动真实文件）                     |
 | star        | number   | 否   | 评分 0–5                                           |
 | annotation  | string   | 否   | 备注                                               |
@@ -460,16 +482,16 @@ Item 对象，并附带 `already_existed` 标志：
 
 ## category
 
-分类是虚拟分类维度：层级路径（`插画/人物`），树由路径派生。注册表（`.hawk/categories.toml`）支持空分类预创建；item 赋值时自动登记。见 [category.md](category.md)。
+分类是虚拟分类维度：**扁平名字**（无层级），一个 item 可同时挂多个分类。注册表（`.hawk/categories.toml`）支持空分类预创建；item 赋值时自动登记。见 [category.md](category.md)。
 
 | 方法 | 端点 | 说明 |
 | ---- | ---- | ---- |
-| GET  | `/api/v1/category/list` | 分类树（注册表 ∪ 全部 item 赋值并集） |
-| POST | `/api/v1/category/create` | `{ "path": "插画/人物" }`，自动补齐祖先；已存在返回 `CATEGORY_EXISTS` |
-| POST | `/api/v1/category/update` | `{ "path", "name"?, "parent_path"? }`，重命名/移动，子树跟随 |
-| POST | `/api/v1/category/delete` | `{ "path" }`，删除节点及子树，全部 item 的相关赋值清除 |
+| GET  | `/api/v1/category/list` | `[{ name, count }]`（注册表 ∪ 全部 item 赋值并集），count 为库内（不含回收站）item 数 |
+| POST | `/api/v1/category/create` | `{ "name": "海报" }`；已存在返回 `CATEGORY_EXISTS` |
+| POST | `/api/v1/category/update` | `{ "name", "new_name" }` 重命名；目标已存在时合并 |
+| POST | `/api/v1/category/delete` | `{ "name" }`，全部 item 的相关赋值清除 |
 
-`category/list` 响应：树节点 `{ path, name, children }`（同 folder/list 结构，无 modification_time）。
+`category/list` 响应与 `tag/list` 同构（`{ name, count }` 数组）。
 
 ## tag
 
