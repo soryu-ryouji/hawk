@@ -3,3 +3,6 @@
 .idea/
 .vs/
 .vscode/
+
+# tools/build.ps1 默认输出目录
+/out/

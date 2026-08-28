@@ -103,6 +103,16 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 
 交叉编译其他平台的后端：`node scripts/build-server.mjs <RID>`（如 `osx-arm64`），再单独执行 `node scripts/pack.mjs`。
 
+把应用与浏览器插件构建并拷贝到指定目录（本地安装用）：
+
+```powershell
+./tools/build.ps1 --platform app,ext-chrome,ext-firefox --path D:/Tools/hawk
+```
+
+- `--platform` 可选 `app` / `ext-chrome` / `ext-firefox`，逗号分隔，默认全部；浏览器插件构建尚未实现，会先跳过
+- `--path` 产物输出目录，默认 `<仓库>/out/`；产物直接平铺在该目录根下（应用为 `hawk.exe` / `hawk.app` / `hawk.AppImage`，插件产物之后同样直接输出）
+- 有请求的内容未构建成功（失败或跳过）时退出码为 1
+
 ### CI 发版
 
 发版一般在 CI 上完成（见 [.github/workflows/release.yml](.github/workflows/release.yml)），无需本地打包：
