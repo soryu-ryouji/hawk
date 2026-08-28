@@ -31,6 +31,11 @@ async function selectLibrary() {
   }
 }
 
+// 设置面板尚未实现：先以 toast 占位，接入后改为打开设置面板
+function openSettings() {
+  store.showToast('设置面板尚未实现');
+}
+
 function createRootFolder(name: string) {
   showCreateFolder.value = false;
   void store.folderCreate('', name);
@@ -111,6 +116,30 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         <span class="count">{{ store.folders?.count ?? 0 }}</span>
       </div>
 
+      <div class="entry" :class="{ active: store.view.kind === 'root' }" @click="store.setView({ kind: 'root' })">
+        <Icon name="home" />
+        <span class="label">根目录素材</span>
+        <span class="count">{{ store.rootCount }}</span>
+      </div>
+
+      <div class="entry" :class="{ active: store.view.kind === 'uncategorized' }" @click="store.setView({ kind: 'uncategorized' })">
+        <Icon name="inbox" />
+        <span class="label">未分类素材</span>
+        <span class="count">{{ store.uncategorizedCount }}</span>
+      </div>
+
+      <div class="entry" :class="{ active: store.view.kind === 'untagged' }" @click="store.setView({ kind: 'untagged' })">
+        <Icon name="tagOff" />
+        <span class="label">未标签素材</span>
+        <span class="count">{{ store.untaggedCount }}</span>
+      </div>
+
+      <div class="entry" :class="{ active: store.view.kind === 'trash' }" @click="store.setView({ kind: 'trash' })">
+        <Icon name="trash" />
+        <span class="label">回收站</span>
+        <span class="count">{{ store.trashTotal }}</span>
+      </div>
+
       <div class="section" @click="collapsed.folder = !collapsed.folder">
         <span class="section-title">
           <Icon name="chevronRight" :size="12" class="chev" :class="{ open: !collapsed.folder }" />
@@ -155,13 +184,13 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         </div>
       </div>
 
-      <div class="spacer" />
+    </div>
 
-      <div class="entry trash" :class="{ active: store.view.kind === 'trash' }" @click="store.setView({ kind: 'trash' })">
-        <Icon name="trash" />
-        <span class="label">回收站</span>
-        <span class="count">{{ store.trashTotal }}</span>
-      </div>
+    <!-- 底部固定区（不随列表滚动）：设置入口 -->
+    <div class="sidebar-foot">
+      <button class="settings" title="设置" @click="openSettings">
+        <Icon name="settings" />
+      </button>
     </div>
   </aside>
 
@@ -347,11 +376,28 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   color: var(--fg-1);
 }
 
-.spacer {
-  flex: 1;
+/* 底部固定区：设置按钮常驻侧栏左下角（Eagle 式），与滚动列表分离 */
+.sidebar-foot {
+  flex: none;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
 }
 
-.trash {
-  border-top: 1px solid var(--border);
+.settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-1);
+}
+
+.settings:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 </style>

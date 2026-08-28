@@ -7,8 +7,8 @@
 #   ./tools/build.ps1 --platform=app --path=D:/Tools/hawk      # = 写法等价
 #
 # 产物直接输出到 <path>/ 根目录，不再套子文件夹：
-#   hawk.exe / hawk.app / hawk.AppImage   桌面应用（当前平台，单文件/目录）
-#   插件产物（目录或 zip，构建接入后）   直接放在 <path>/ 下
+#   应用（当前平台）：Windows 为解压后的应用文件（hawk.exe 就地可运行）/ macOS hawk.app 目录 / Linux hawk.AppImage
+#   插件产物（构建接入后）：直接放在 <path>/ 下
 #
 # 退出码：0 = 请求的内容全部构建成功；1 = 存在未构建成功（失败或跳过）的内容。
 
@@ -94,11 +94,12 @@ function Build-App {
     }
 
     # electron-builder 产物在 hawk-app/dist：
-    #   Windows: hawk.exe；macOS: mac*/hawk.app 目录；Linux: hawk.AppImage
+    #   Windows: hawk.zip（zip 目标，真身 exe 在其根目录）；macOS: mac*/hawk.app 目录；Linux: hawk.AppImage
     $dist = Join-Path $AppDir 'dist'
+    $isWin = ($IsWindows -eq $true) -or $env:OS -eq 'Windows_NT'
     $artifact = $null
-    if (($IsWindows -eq $true) -or $env:OS -eq 'Windows_NT') {
-        $artifact = Get-ChildItem $dist -Recurse -File -Filter 'hawk.exe' |
+    if ($isWin) {
+        $artifact = Get-ChildItem $dist -Recurse -File -Filter 'hawk.zip' |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
     }
     elseif ($IsMacOS -eq $true) {
@@ -111,7 +112,24 @@ function Build-App {
     }
     if (-not $artifact) { throw "未在 $dist 找到当前平台的打包产物" }
 
-    # 产物直接平铺到 <path>/ 根目录
+    if ($isWin) {
+        # Windows：解压 zip 到目标目录，hawk.exe 就地可运行（本地测试免二次解压）。
+        # 先按 zip 顶层条目清掉旧产物再解压，避免已删除的文件残留。
+        # 用系统内置 bsdtar（System32\tar.exe）：PATH 里的 GNU tar（Git 自带）不支持 zip
+        $bsdtar = Join-Path $env:SystemRoot 'System32\tar.exe'
+        $topLevel = & $bsdtar -tf $artifact.FullName | ForEach-Object { ($_ -split '/')[0] } | Sort-Object -Unique
+        foreach ($name in $topLevel) {
+            if ($name -and $name -ne '.' -and $name -ne '..') {
+                Remove-StaleArtifact (Join-Path $outRoot $name)
+            }
+        }
+        & $bsdtar -xf $artifact.FullName -C $outRoot
+        if ($LASTEXITCODE -ne 0) { throw "解压 $($artifact.Name) 失败（退出码 $LASTEXITCODE）" }
+        Write-Host "[app] 已解压 → $outRoot（hawk.exe 可直接运行）" -ForegroundColor Green
+        return
+    }
+
+    # 其余平台：产物直接平铺到 <path>/ 根目录
     $target = Join-Path $outRoot $artifact.Name
     Remove-StaleArtifact $target
     if ($artifact.PSIsContainer) {

@@ -8,10 +8,16 @@ public sealed record ItemQuery
     public string[]? Tags { get; init; }
     public int? Star { get; init; }
     public string[]? Folders { get; init; }
+    /// <summary>为 true 时文件夹只精确匹配直接位于该目录下的 item（不含子目录）；空字符串表示库根目录</summary>
+    public bool FoldersExact { get; init; }
     public string[]? Categories { get; init; }
     public string? CategoriesMatch { get; init; }   // "any"（默认）/ "all"
     public string[]? ExcludeCategories { get; init; }
     public string[]? ExcludeTags { get; init; }
+    /// <summary>只返回未分类（没有任何分类）的 item</summary>
+    public bool WithoutCategories { get; init; }
+    /// <summary>只返回未标签（没有任何标签）的 item</summary>
+    public bool WithoutTags { get; init; }
     public string? Ext { get; init; }
     public string? Annotation { get; init; }
     public string? Url { get; init; }
@@ -291,7 +297,7 @@ public sealed class ItemIndex
 
             if (q.Folders is { Length: > 0 } folders)
             {
-                items = items.Where(i => folders.Any(f => InFolder(i, f, q.InTrash)));
+                items = items.Where(i => folders.Any(f => InFolder(i, f, q.InTrash, q.FoldersExact)));
             }
 
             if (q.Categories is { Length: > 0 } categories)
@@ -310,6 +316,16 @@ public sealed class ItemIndex
             if (q.ExcludeTags is { Length: > 0 } excludeTags)
             {
                 items = items.Where(i => !excludeTags.Any(t => i.Tags.Contains(t, StringComparer.Ordinal)));
+            }
+
+            if (q.WithoutCategories)
+            {
+                items = items.Where(i => i.Categories.Count == 0);
+            }
+
+            if (q.WithoutTags)
+            {
+                items = items.Where(i => i.Tags.Count == 0);
             }
 
             if (!string.IsNullOrEmpty(q.Ext))
@@ -367,7 +383,11 @@ public sealed class ItemIndex
         return item.Annotation?.Contains(keyword, StringComparison.OrdinalIgnoreCase) == true;
     }
 
-    private static bool InFolder(Item item, string folder, bool trashView) =>
+    /// <summary>
+    /// 文件夹匹配：默认前缀匹配（folder 本身及子目录；folder 为空串表示整个素材库）；
+    /// exact 时只匹配直接位于该目录下的 item（空串 = 库根目录，不含任何子文件夹）。
+    /// </summary>
+    private static bool InFolder(Item item, string folder, bool trashView, bool exact = false) =>
         item.Locations.Any(l =>
         {
             if (l.InTrash != trashView)
@@ -376,7 +396,9 @@ public sealed class ItemIndex
             }
 
             var dir = LibraryPaths.DirOf(l.LibraryPath);
-            return folder == "" || dir == folder || dir.StartsWith(folder + "/", StringComparison.Ordinal);
+            return exact
+                ? dir == folder
+                : folder == "" || dir == folder || dir.StartsWith(folder + "/", StringComparison.Ordinal);
         });
 
     private static bool MatchesExt(Item item, string ext, bool trashView)

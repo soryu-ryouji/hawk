@@ -1168,10 +1168,13 @@ export interface components {
             /** Format: int32 */
             star?: null | number | string;
             folders?: null | string[];
+            folders_exact?: boolean;
             categories?: null | string[];
             categories_match?: null | string;
             exclude_categories?: null | string[];
             exclude_tags?: null | string[];
+            without_categories?: boolean;
+            without_tags?: boolean;
             ext?: null | string;
             annotation?: null | string;
             url?: null | string;

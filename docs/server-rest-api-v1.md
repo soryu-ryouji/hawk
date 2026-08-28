@@ -266,6 +266,9 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | exclude_tags | string[] | 排除标签（任一命中即剔除）                                |
 | star       | number   | 按评分过滤                                                      |
 | folders    | string[] | 按文件夹路径过滤（含子目录）                                    |
+| folders_exact | boolean | 为 true 时文件夹只精确匹配直接位于该目录下的 item（不含子目录）；空字符串表示库根目录，默认 false |
+| without_categories | boolean | 只返回未分类（没有任何分类）的 item，默认 false      |
+| without_tags | boolean | 只返回未标签（没有任何标签）的 item，默认 false      |
 | ext        | string   | 按扩展名过滤                                                    |
 | annotation | string   | 按备注文本过滤                                                  |
 | url        | string   | 按来源网址过滤                                                  |

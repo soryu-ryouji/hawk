@@ -2,7 +2,7 @@
   "name": "hawk-app",
   "version": "1.0.0",
   "private": true,
-  "description": "hawk 桌面应用（Electron 壳 + Vue 前端）",
+  "description": "hawk",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

@@ -22,7 +22,7 @@ mac:
   # dir：只构建 .app 目录，不做镜像打包（zip 由 CI 负责）
   target: dir
 win:
-  # 绿色软件：单文件 portable exe，免安装双击即用
-  target: portable
+  # 绿色软件：zip 解压即用，免安装。相比 portable（NSIS 单文件）无 32 位启动壳，产物全 64 位，构建也不依赖 GitHub 下载 NSIS 工具链
+  target: zip
 linux:
   target: AppImage

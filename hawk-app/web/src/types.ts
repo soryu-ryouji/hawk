@@ -12,6 +12,9 @@ export type ItemListResult = components['schemas']['ItemListResponse'];
 // 业务自有类型
 export type ViewState =
   | { kind: 'all' }
+  | { kind: 'root' }
+  | { kind: 'uncategorized' }
+  | { kind: 'untagged' }
   | { kind: 'folder'; path: string }
   | { kind: 'category'; path: string }
   | { kind: 'tag'; name: string }

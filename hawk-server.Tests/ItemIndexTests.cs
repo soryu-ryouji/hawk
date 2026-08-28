@@ -133,6 +133,34 @@ public class ItemIndexTests
         Assert.Equal(expected, total);
     }
 
+    [Theory]
+    [InlineData(new[] { "" }, 1)]    // 精确根目录：只有直接位于根的文件
+    [InlineData(new[] { "dir" }, 1)] // 精确匹配不含子目录
+    public void 文件夹精确匹配_只含直接位于该目录的item(string[] folders, int expected)
+    {
+        AddItem("r1", "a.png");
+        AddItem("r2", "dir/b.png");
+        AddItem("r3", "dir/sub/c.png");
+
+        _index.Query(new ItemQuery { Folders = folders, FoldersExact = true }, out var total, out _);
+        Assert.Equal(expected, total);
+    }
+
+    [Fact]
+    public void 未分类与未标签过滤()
+    {
+        AddItem("u1", "a.png", tags: ["nature"], categories: ["插画"]);
+        AddItem("u2", "b.png", tags: ["nature"]);
+        AddItem("u3", "c.png", categories: ["插画"]);
+        AddItem("u4", "d.png");
+
+        _index.Query(new ItemQuery { WithoutCategories = true }, out var noCategory, out _);
+        Assert.Equal(2, noCategory); // u2、u4
+
+        _index.Query(new ItemQuery { WithoutTags = true }, out var noTag, out _);
+        Assert.Equal(2, noTag); // u3、u4
+    }
+
     [Fact]
     public void 其他过滤条件()
     {

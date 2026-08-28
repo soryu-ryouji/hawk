@@ -21,7 +21,7 @@
 
 到 [Releases](https://github.com/soryu-ryouji/hawk/releases) 页面下载：
 
-- **正式版**：`hawk.exe`（绿色单文件，无需安装，双击即用，卸载即删）；macOS 提供 `hawk-mac-arm64.zip` / `hawk-mac-x64.zip`（解压后拖入 Applications 即可）
+- **正式版**：`hawk.zip`（绿色软件，解压即用，卸载即删）；macOS 提供 `hawk-mac-arm64.zip` / `hawk-mac-x64.zip`（解压后拖入 Applications 即可）
 - **Nightly**：[nightly](https://github.com/soryu-ryouji/hawk/releases/tag/nightly) 滚动预发布，每个 `feat`/`fix` 提交自动构建，想尝新可以拿
 
 > macOS 应用暂未签名/公证：首次打开需在 Finder 中右键应用 →「打开」→ 确认。
@@ -90,7 +90,7 @@ npm run pack
 
 一条命令完成：前端构建 → `dotnet publish` 产出当前平台的 hawk-server 自包含单文件 → electron-builder 打包。产物在 `hawk-app/dist/`：
 
-- **Windows**：`hawk.exe`（portable 绿色单文件，约 120MB，拷到任意目录双击即用）
+- **Windows**：`hawk.zip`（绿色软件，解压到任意目录双击 `hawk.exe` 即用；全 64 位，无安装器）
 - **macOS**：`dist/mac-arm64/hawk.app`（Intel 机器为 `dist/mac/hawk.app`）——不发 dmg，直接构建 .app 目录；对外分发由 CI zip 成 `hawk-mac-<arch>.zip`
 - **Linux**：`hawk.AppImage`
 
@@ -110,7 +110,7 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 ```
 
 - `--platform` 可选 `app` / `ext-chrome` / `ext-firefox`，逗号分隔，默认全部；浏览器插件构建尚未实现，会先跳过
-- `--path` 产物输出目录，默认 `<仓库>/out/`；产物直接平铺在该目录根下（应用为 `hawk.exe` / `hawk.app` / `hawk.AppImage`，插件产物之后同样直接输出）
+- `--path` 产物输出目录，默认 `<仓库>/out/`；应用直接输出到该目录根下——Windows 自动解压 `hawk.zip`（`hawk.exe` 就地可运行）、macOS 为 `hawk.app` 目录、Linux 为 `hawk.AppImage`；插件产物之后同样直接输出
 - 有请求的内容未构建成功（失败或跳过）时退出码为 1
 
 ### CI 发版
@@ -119,7 +119,7 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 
 - 推 `v*` tag（如 `git tag v1.0.0 && git push origin v1.0.0`）：自动构建并创建正式 Release
 - main 分支上 `feat`/`fix` 开头的提交：自动滚动更新 nightly 预发布
-- 每次发版产物：Windows `hawk.exe` + macOS `hawk-mac-arm64.zip` / `hawk-mac-x64.zip`（.app 目录打 zip；同一 arm64 runner 交叉打包，x64 无需额外机器）
+- 每次发版产物：Windows `hawk.zip` + macOS `hawk-mac-arm64.zip` / `hawk-mac-x64.zip`（.app 目录打 zip；同一 arm64 runner 交叉打包，x64 无需额外机器）
 
 ## 文档
 

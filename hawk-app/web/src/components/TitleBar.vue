@@ -27,6 +27,9 @@ const breadcrumb = computed(() => {
 const locationTitle = computed(() => {
   const view = store.view;
   if (view.kind === 'all') return '全部素材';
+  if (view.kind === 'root') return '根目录素材';
+  if (view.kind === 'uncategorized') return '未分类素材';
+  if (view.kind === 'untagged') return '未标签素材';
   if (view.kind === 'trash') return '回收站';
   if (view.kind === 'tag') return view.name;
   return '';

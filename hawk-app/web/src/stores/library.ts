@@ -48,6 +48,10 @@ export const useLibraryStore = defineStore('library', () => {
   const categories = ref<CategoryNode | null>(null);
   const tagList = ref<TagInfo[]>([]);
   const trashTotal = ref(0);
+  // 侧栏智能条目计数（limit:1 只取 total）
+  const rootCount = ref(0);
+  const uncategorizedCount = ref(0);
+  const untaggedCount = ref(0);
   const library = ref<LibraryInfo | null>(null);
   const thumbSize = ref(160);
   const previewId = ref<string | null>(null);
@@ -66,10 +70,13 @@ export const useLibraryStore = defineStore('library', () => {
     () => selection.value.map((id) => items.value.find((i) => i.id === id)).filter((i): i is Item => !!i),
   );
   const primarySelected = computed(() => selectedItems.value.at(-1) ?? null);
-  /** 当前视图名称（检查器「分区状态」标题）：全部素材/回收站/标签名/文件夹或分类末级名 */
+  /** 当前视图名称（检查器「分区状态」标题） */
   const viewTitle = computed(() => {
     const v = view.value;
     if (v.kind === 'all') return '全部素材';
+    if (v.kind === 'root') return '根目录素材';
+    if (v.kind === 'uncategorized') return '未分类素材';
+    if (v.kind === 'untagged') return '未标签素材';
     if (v.kind === 'trash') return '回收站';
     if (v.kind === 'tag') return v.name;
     return v.path.split('/').pop() ?? '';
@@ -124,7 +131,10 @@ export const useLibraryStore = defineStore('library', () => {
       order_by: query.value.orderBy,
       order: query.value.order,
       in_trash: isTrash.value || undefined,
-      folders: view.value.kind === 'folder' ? [view.value.path] : undefined,
+      folders: view.value.kind === 'folder' ? [view.value.path] : view.value.kind === 'root' ? [''] : undefined,
+      folders_exact: view.value.kind === 'root' ? true : undefined,
+      without_categories: view.value.kind === 'uncategorized' ? true : undefined,
+      without_tags: view.value.kind === 'untagged' ? true : undefined,
       categories: view.value.kind === 'category' ? [view.value.path] : undefined,
       tags: view.value.kind === 'tag' ? [view.value.name] : undefined,
       offset,
@@ -456,14 +466,20 @@ export const useLibraryStore = defineStore('library', () => {
 
   async function refreshTaxonomy() {
     try {
-      const [categoryTree, tags, trash] = await Promise.all([
+      const [categoryTree, tags, trash, root, uncategorized, untagged] = await Promise.all([
         api.categoryList(),
         api.tagList(),
         api.itemList({ in_trash: true, limit: 1 }),
+        api.itemList({ folders: [''], folders_exact: true, limit: 1 }),
+        api.itemList({ without_categories: true, limit: 1 }),
+        api.itemList({ without_tags: true, limit: 1 }),
       ]);
       categories.value = categoryTree;
       tagList.value = tags;
       trashTotal.value = Number(trash.total);
+      rootCount.value = Number(root.total);
+      uncategorizedCount.value = Number(uncategorized.total);
+      untaggedCount.value = Number(untagged.total);
     } catch (e) {
       showToast(errorText(e));
     }
@@ -622,7 +638,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, items, total, totalSize, viewTitle, loading, endReached, selection, folders, categories, tagList, trashTotal, library, thumbSize, previewId, toast, sidebarVisible,
+    view, query, items, total, totalSize, viewTitle, loading, endReached, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, sidebarVisible,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, flatCategories,
     init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, fetchMore, refresh,
     select, selectAll, clearSelection,

@@ -13,10 +13,16 @@ public static class ItemEndpoints
         public string[]? Tags { get; init; }
         public int? Star { get; init; }
         public string[]? Folders { get; init; }
+        /// <summary>为 true 时文件夹只精确匹配直接位于该目录下的 item（不含子目录）；空字符串表示库根目录</summary>
+        public bool FoldersExact { get; init; }
         public string[]? Categories { get; init; }
         public string? CategoriesMatch { get; init; }
         public string[]? ExcludeCategories { get; init; }
         public string[]? ExcludeTags { get; init; }
+        /// <summary>只返回未分类（没有任何分类）的 item</summary>
+        public bool WithoutCategories { get; init; }
+        /// <summary>只返回未标签（没有任何标签）的 item</summary>
+        public bool WithoutTags { get; init; }
         public string? Ext { get; init; }
         public string? Annotation { get; init; }
         public string? Url { get; init; }
@@ -82,8 +88,9 @@ public static class ItemEndpoints
             var query = new ItemQuery
             {
                 Ids = req.Ids, Keywords = req.Keywords, Tags = req.Tags, Star = req.Star,
-                Folders = req.Folders, Categories = req.Categories, CategoriesMatch = req.CategoriesMatch,
+                Folders = req.Folders, FoldersExact = req.FoldersExact, Categories = req.Categories, CategoriesMatch = req.CategoriesMatch,
                 ExcludeCategories = req.ExcludeCategories, ExcludeTags = req.ExcludeTags,
+                WithoutCategories = req.WithoutCategories, WithoutTags = req.WithoutTags,
                 Ext = req.Ext, Annotation = req.Annotation, Url = req.Url, Color = color,
                 InTrash = req.InTrash, OrderBy = req.OrderBy, Order = req.Order,
                 Offset = req.Offset, Limit = req.Limit,
