@@ -168,7 +168,7 @@ useDragImport();
     <Inspector class="inspector" />
     <WindowControls />
 
-    <!-- 侧栏宽度拖拽手柄：7px 命中区紧贴分界线右侧，避开左侧面板的滚动条 -->
+    <!-- 侧栏宽度拖拽手柄：4px 命中区紧贴分界线右侧，避开左侧面板的滚动条 -->
     <template v-if="store.sidebarVisible">
       <div
         class="col-resize-handle"

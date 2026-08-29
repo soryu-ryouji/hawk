@@ -75,6 +75,11 @@ button.danger {
   border-radius: 4px;
 }
 
+/* 悬停变亮：提示当前落在滚动条上、可以拖动 */
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4f;
+}
+
 /* 布局骨架（Eagle 式）：左右栏通高不被顶栏隔断，顶栏只覆盖中间内容区。
    每列各有顶部条：侧栏/检查器顶部为窗口拖拽条（macOS 红绿灯压在侧栏条左上），中栏为 TitleBar。
    无底部状态栏（计数在侧栏徽章） */
@@ -97,14 +102,14 @@ button.danger {
   display: none;
 }
 
-/* 栏宽度拖拽手柄：7px 命中区紧贴分界线右侧。
+/* 栏宽度拖拽手柄：4px 命中区紧贴分界线右侧（Eagle 宽度的量级，避免误触）。
    两条分界线左侧都压着左侧面板的纵向滚动条（侧栏、中栏的滚动条均贴各自右缘），
    手柄居中压线会盖住滚动条左缘、抢占其拖拽，故整体放在分界线右侧避开 */
 .col-resize-handle {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 7px;
+  width: 4px;
   cursor: col-resize;
   z-index: 20;
 }
