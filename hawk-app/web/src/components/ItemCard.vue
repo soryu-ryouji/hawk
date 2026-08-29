@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
+import { startItemsDrag } from '../dnd';
 import { useLibraryStore } from '../stores/library';
 import type { Item } from '../types';
 
@@ -43,6 +44,17 @@ const thumbSrc = computed(
 );
 /** sizes 声明 img 的 CSS 渲染宽（齐行网格传入的单元格宽），浏览器据此 × DPR 从 srcset 选档 */
 const thumbSizesAttr = computed(() => (props.width > 0 ? `${Math.ceil(props.width)}px` : '100vw'));
+
+/**
+ * 拖到侧栏（文件夹/分类/标签）的拖拽源。Eagle 语义：拖未选中的项 → 改为单选它；
+ * 拖已选中的项 → 带动整个选择集。回收站视图禁止拖出（服务端也拒绝移动回收站文件）。
+ */
+function onDragStart(e: DragEvent) {
+  if (!props.selected) {
+    store.select(props.item.id);
+  }
+  startItemsDrag(e, store.selection);
+}
 </script>
 
 <template>
@@ -50,9 +62,11 @@ const thumbSizesAttr = computed(() => (props.width > 0 ? `${Math.ceil(props.widt
     class="card"
     :class="{ selected }"
     :style="cardStyle"
+    :draggable="!store.isTrash"
     @click="emit('select', item, $event)"
     @dblclick="emit('open', item.id)"
     @contextmenu.prevent="emit('menu', item, $event)"
+    @dragstart="onDragStart"
   >
     <div class="thumb" :style="thumbStyle">
       <img

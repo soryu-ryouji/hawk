@@ -2,6 +2,7 @@
 // 再经 preload 的 webUtils.getPathForFile 取绝对路径逐个入库。
 import { useDropZone } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { ITEMS_MIME } from '../dnd';
 
 async function* walkEntry(entry: FileSystemEntry): AsyncGenerator<File> {
   if (entry.isFile) {
@@ -28,6 +29,10 @@ export function useDragImport() {
 
   useDropZone(document, {
     onDrop: async (_files, event) => {
+      // 库内素材拖拽（拖到侧栏文件夹/分类/标签）：不是文件导入，静默忽略
+      if (event.dataTransfer?.types.includes(ITEMS_MIME)) {
+        return;
+      }
       const shell = window.hawkShell;
       if (!shell) {
         store.showToast('浏览器模式不支持导入（无法取文件路径）');
@@ -57,10 +62,15 @@ export function useDragImport() {
       }
       await store.importPaths(paths);
     },
-    // 仅库内视图可导入
+    // 仅库内视图可导入；库内素材拖拽只有侧栏是合法放置区（行级处理器已置 move），
+    // 悬停在网格等其他位置时显式禁止，避免 document 级处理器给出误导性的 copy 光标
     onOver: (_files, event) => {
-      if (store.isTrash) {
-        event.dataTransfer && (event.dataTransfer.dropEffect = 'none');
+      const dt = event.dataTransfer;
+      if (!dt) {
+        return;
+      }
+      if (store.isTrash || (dt.types.includes(ITEMS_MIME) && !(event.target as HTMLElement).closest('.sidebar'))) {
+        dt.dropEffect = 'none';
       }
     },
   });

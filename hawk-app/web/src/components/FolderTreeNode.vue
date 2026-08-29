@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import type { Directive } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
 import type { FolderNode } from '../types';
 
 // 输入框自动聚焦指令（<script setup> 中以 vFocus 局部变量形式注册）
@@ -62,16 +63,44 @@ function onContextMenu(e: MouseEvent) {
     e,
   );
 }
+
+// ---- 素材拖入（网格 → 文件夹）：enter/leave 成对计数防子元素间闪烁 ----
+const dropDepth = ref(0);
+
+function onDragEnter(e: DragEvent) {
+  if (isItemsDrag(e)) {
+    dropDepth.value++;
+  }
+}
+
+function onDragLeave() {
+  dropDepth.value = Math.max(0, dropDepth.value - 1);
+}
+
+function onDragOver(e: DragEvent) {
+  itemsDragOver(e);
+}
+
+function onDrop(e: DragEvent) {
+  dropDepth.value = 0;
+  if (readItemsDrop(e)) {
+    store.moveSelectedToFolder(props.node.path);
+  }
+}
 </script>
 
 <template>
   <div>
     <div
       class="node"
-      :class="{ active: isActive() }"
+      :class="{ active: isActive(), 'drop-target': dropDepth > 0 }"
       :style="{ paddingLeft: 12 + depth * 14 + 'px' }"
       @click="store.setView({ kind: 'folder', path: node.path })"
       @contextmenu.prevent.stop="onContextMenu"
+      @dragenter="onDragEnter"
+      @dragleave="onDragLeave"
+      @dragover="onDragOver"
+      @drop="onDrop"
     >
       <span
         v-if="node.children.length > 0"
@@ -131,6 +160,13 @@ function onContextMenu(e: MouseEvent) {
 .node.active {
   background: var(--accent);
   color: #fff;
+}
+
+/* 素材悬停：整行高亮示意可放置 */
+.node.drop-target {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
 }
 
 .arrow {

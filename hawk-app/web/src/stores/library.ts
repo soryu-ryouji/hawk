@@ -645,33 +645,47 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 为全部选中项追加分类（去重，保留已有） */
+  /** 为全部选中项追加分类（去重，保留已有）；完成后立即刷新分类计数，不等 SSE 防抖 */
   async function addCategoryToSelected(name: string) {
     await ensureSelectionDetails();
+    const jobs = [];
     for (const id of selection.value) {
       const item = details.value.get(id);
       if (item && !(item.categories ?? []).includes(name)) {
-        void updateItem(id, { categories: [...(item.categories ?? []), name] });
+        jobs.push(updateItem(id, { categories: [...(item.categories ?? []), name] }));
       }
     }
+    await Promise.all(jobs);
+    void refreshTaxonomy();
   }
 
-  /** 为全部选中项追加标签（去重，保留已有） */
+  /** 为全部选中项追加标签（去重，保留已有）；完成后立即刷新标签计数，不等 SSE 防抖 */
   async function addTagToSelected(tag: string) {
     await ensureSelectionDetails();
+    const jobs = [];
     for (const id of selection.value) {
       const item = details.value.get(id);
       if (item && !(item.tags ?? []).includes(tag)) {
-        void updateItem(id, { tags: [...(item.tags ?? []), tag] });
+        jobs.push(updateItem(id, { tags: [...(item.tags ?? []), tag] }));
       }
     }
+    await Promise.all(jobs);
+    void refreshTaxonomy();
   }
 
-  /** 将全部选中项移动到目标文件夹（空字符串为根目录） */
-  function moveSelectedToFolder(path: string) {
+  /** 将全部选中项移动到目标文件夹（空字符串为根目录）；已在目标文件夹的项跳过；完成后立即刷新文件夹树，不等 SSE 防抖 */
+  async function moveSelectedToFolder(path: string) {
+    await ensureSelectionDetails();
+    const jobs = [];
     for (const id of selection.value) {
-      void updateItem(id, { folder_path: path });
+      const item = details.value.get(id);
+      if (item && (item.folders?.[0] ?? '') === path) {
+        continue;
+      }
+      jobs.push(updateItem(id, { folder_path: path }));
     }
+    await Promise.all(jobs);
+    void refreshFolders();
   }
 
   // ---- 预览浮层 ----

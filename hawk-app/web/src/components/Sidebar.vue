@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
 import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
 import PromptDialog from './PromptDialog.vue';
@@ -64,6 +65,65 @@ function submitRenameTag(newName: string) {
 /** 树空白处右键：新建根节点 */
 function onTreeContextMenu(e: MouseEvent) {
   menu.open([{ label: '新建文件夹', action: () => (showCreateFolder.value = true) }], e);
+}
+
+// ---- 素材拖入（网格 → 分类/标签行）：容器级委托 + 单高亮键，enter/leave 计数防子元素间闪烁 ----
+const dropDepth = reactive<Record<string, number>>({});
+const dropKey = ref<string | null>(null);
+
+type DropKind = 'category' | 'tag';
+
+function rowKey(kind: DropKind, name: string) {
+  return `${kind}:${name}`;
+}
+
+function onTreeDragEnter(kind: DropKind, e: DragEvent) {
+  if (!isItemsDrag(e)) {
+    return;
+  }
+  const row = (e.target as HTMLElement).closest('.cat-row, .tag-row');
+  if (!row) {
+    return;
+  }
+  const key = rowKey(kind, row.getAttribute('data-name') ?? '');
+  dropDepth[key] = (dropDepth[key] ?? 0) + 1;
+  dropKey.value = key;
+}
+
+function onTreeDragLeave(kind: DropKind, e: DragEvent) {
+  const row = (e.target as HTMLElement).closest('.cat-row, .tag-row');
+  if (!row) {
+    return;
+  }
+  const key = rowKey(kind, row.getAttribute('data-name') ?? '');
+  dropDepth[key] = Math.max(0, (dropDepth[key] ?? 0) - 1);
+  if ((dropDepth[key] ?? 0) === 0 && dropKey.value === key) {
+    dropKey.value = null;
+  }
+}
+
+function onTreeDragOver(e: DragEvent) {
+  itemsDragOver(e);
+}
+
+function onTreeDrop(kind: DropKind, e: DragEvent) {
+  dropKey.value = null;
+  for (const k of Object.keys(dropDepth)) {
+    dropDepth[k] = 0;
+  }
+  const row = (e.target as HTMLElement).closest('.cat-row, .tag-row');
+  if (!row || !readItemsDrop(e)) {
+    return;
+  }
+  const name = row.getAttribute('data-name');
+  if (!name) {
+    return;
+  }
+  if (kind === 'category') {
+    void store.addCategoryToSelected(name);
+  } else {
+    void store.addTagToSelected(name);
+  }
 }
 
 function onCategoryContextMenu(e: MouseEvent) {
@@ -188,12 +248,21 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         </span>
         <button class="add" title="新建分类" @click.stop="showCreateCategory = true">＋</button>
       </div>
-      <div v-show="!collapsed.category" class="tree" @contextmenu.prevent="onCategoryContextMenu">
+      <div
+        v-show="!collapsed.category"
+        class="tree"
+        @contextmenu.prevent="onCategoryContextMenu"
+        @dragenter="onTreeDragEnter('category', $event)"
+        @dragleave="onTreeDragLeave('category', $event)"
+        @dragover="onTreeDragOver"
+        @drop="onTreeDrop('category', $event)"
+      >
         <div
           v-for="category in store.categories"
           :key="category.name"
           class="cat-row"
-          :class="{ active: store.view.kind === 'category' && store.view.name === category.name }"
+          :class="{ active: store.view.kind === 'category' && store.view.name === category.name, 'drop-target': dropKey === rowKey('category', category.name) }"
+          :data-name="category.name"
           @click="store.setView({ kind: 'category', name: category.name })"
           @contextmenu.prevent.stop="onCategoryRowContextMenu(category.name, $event)"
         >
@@ -210,12 +279,20 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         </span>
         <button class="add" title="新建标签" @click.stop="showCreateTag = true">＋</button>
       </div>
-      <div v-show="!collapsed.tag" class="tags">
+      <div
+        v-show="!collapsed.tag"
+        class="tags"
+        @dragenter="onTreeDragEnter('tag', $event)"
+        @dragleave="onTreeDragLeave('tag', $event)"
+        @dragover="onTreeDragOver"
+        @drop="onTreeDrop('tag', $event)"
+      >
         <div
           v-for="tag in store.tagList"
           :key="tag.name"
           class="tag-row"
-          :class="{ active: store.view.kind === 'tag' && store.view.name === tag.name }"
+          :class="{ active: store.view.kind === 'tag' && store.view.name === tag.name, 'drop-target': dropKey === rowKey('tag', tag.name) }"
+          :data-name="tag.name"
           @click="store.setView({ kind: 'tag', name: tag.name })"
           @contextmenu.prevent.stop="onTagContextMenu(tag.name, $event)"
         >
@@ -421,6 +498,14 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   padding: 4px 12px 4px 26px;
   cursor: pointer;
   overflow: hidden;
+}
+
+/* 素材悬停：整行高亮示意可放置（与 FolderTreeNode 同款） */
+.cat-row.drop-target,
+.tag-row.drop-target {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
 }
 
 .cat-row:hover {
