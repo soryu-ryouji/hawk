@@ -22,4 +22,10 @@ contextBridge.exposeInMainWorld('hawkShell', {
     ipcRenderer.on('hawk:win-maximized', listener);
     return () => ipcRenderer.removeListener('hawk:win-maximized', listener);
   },
+  /** 订阅 server 扫描进度（启动/换库进度页用）：{ phase, processed, total }，total=0 表示不定态 */
+  onServerProgress: (cb) => {
+    const listener = (_event, progress) => cb(progress);
+    ipcRenderer.on('hawk:server-progress', listener);
+    return () => ipcRenderer.removeListener('hawk:server-progress', listener);
+  },
 });

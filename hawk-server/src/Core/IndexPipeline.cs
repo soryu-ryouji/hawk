@@ -19,6 +19,14 @@ public sealed class IndexPipeline : IDisposable
     private sealed record MoveJob(string OldAbs, string NewAbs, TaskCompletionSource? Done) : IndexJob;
     private sealed record DirMoveJob(string OldAbs, string NewAbs, TaskCompletionSource? Done) : IndexJob;
     private sealed record ScanJob(bool Full, TaskCompletionSource? Done) : IndexJob;
+
+    /// <summary>扫描进度快照（启动进度页用；经 stdout 的 HAWK_PROGRESS 行推给 Electron 主进程）</summary>
+    /// <param name="Phase">scan=遍历文件清单 hash=并行计算哈希 apply=应用索引</param>
+    /// <param name="Total">阶段总工作量；遍历阶段未知时为 0（前端显示不定态进度条）</param>
+    public sealed record ScanProgress(string Phase, int Processed, int Total);
+
+    /// <summary>扫描进度上报：Program 装配时设置； emit 已按 150ms 节流</summary>
+    public Action<ScanProgress>? OnScanProgress { get; set; }
     private sealed record ClearTrashJob(TaskCompletionSource? Done) : IndexJob;
     private sealed record MetadataJob(string Hash, Action<ItemMetadata> Mutate, TaskCompletionSource<Item?> Done) : IndexJob;
     private sealed record ThumbJob(string Hash, string SourceAbs);
@@ -775,6 +783,20 @@ public sealed class IndexPipeline : IDisposable
         var pending = new List<PendingUpsert>();
         var count = 0;
 
+        // 进度上报：按 150ms 节流，阶段切换/总数变化时强制发一帧
+        var reportState = (At: DateTime.MinValue, Phase: string.Empty, Total: -1);
+        void Report(string phase, int processed, int total, bool force = false)
+        {
+            var now = DateTime.UtcNow;
+            if (!force && phase == reportState.Phase && total == reportState.Total && now - reportState.At < TimeSpan.FromMilliseconds(150))
+            {
+                return;
+            }
+            reportState = (now, phase, total);
+            OnScanProgress?.Invoke(new ScanProgress(phase, processed, total));
+        }
+
+        Report("scan", 0, 0, force: true);
         foreach (var abs in _scanner.WalkLibrary())
         {
             ct.ThrowIfCancellationRequested();
@@ -782,6 +804,8 @@ public sealed class IndexPipeline : IDisposable
             {
                 seen.Add(rel);
             }
+
+            Report("scan", seen.Count, 0);
 
             var prepared = PrepareUpsert(abs, full, allowDefer: true, attempt: 0, ct);
             if (prepared is null)
@@ -802,17 +826,28 @@ public sealed class IndexPipeline : IDisposable
 
         if (pending.Count > 0)
         {
+            Report("hash", 0, pending.Count, force: true);
+            var hashed = 0;
             Parallel.ForEach(pending, new ParallelOptions { MaxDegreeOfParallelism = HashParallelism, CancellationToken = ct },
-                p => p.Hash = TryComputeHash(p.AbsPath, ct));
+                p =>
+                {
+                    p.Hash = TryComputeHash(p.AbsPath, ct);
+                    Report("hash", Interlocked.Increment(ref hashed), pending.Count);
+                });
 
+            Report("apply", 0, pending.Count, force: true);
+            var applied = 0;
             foreach (var p in pending)
             {
                 if (p.Hash is not null)
                 {
                     ApplyUpsert(p, p.Hash, ct);
                 }
+                Report("apply", ++applied, pending.Count);
             }
         }
+
+        Report("done", count, count, force: true);
 
         // 扫描未发现的位置 → 文件已消失
         foreach (var rel in _index.AllLocationPaths())

@@ -78,6 +78,16 @@ function startServer(libPath) {
     let stderrTail = '';
     child.stdout.on('data', (chunk) => {
       buffer += chunk.toString();
+      // 扫描进度行（HAWK_PROGRESS <phase> <processed> <total>）→ 转发给启动进度页；匹配后丢弃防累积
+      const progress = buffer.match(/HAWK_PROGRESS (\S+) (\d+) (\d+)/);
+      if (progress) {
+        buffer = buffer.slice(progress.index + progress[0].length);
+        mainWindow?.webContents.send('hawk:server-progress', {
+          phase: progress[1],
+          processed: Number(progress[2]),
+          total: Number(progress[3]),
+        });
+      }
       const match = buffer.match(/HAWK_READY (\S+) token=(\w+)/);
       if (match) {
         clearTimeout(timer);
@@ -131,6 +141,11 @@ function loadMainPage() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'web', 'dist', 'index.html'), { hash });
   }
+}
+
+/** 启动进度页：server 扫描索引期间先展示有反馈的静态页，就绪后再切主界面 */
+function loadLoadingPage() {
+  mainWindow.loadFile(path.join(__dirname, 'loading.html'));
 }
 
 /** 未配置素材库时的引导页：不带连接参数，由页面按钮触发目录选择框 */
@@ -249,6 +264,7 @@ ipcMain.handle('hawk:select-library', async () => {
   if (!selected) {
     return false;
   }
+  loadLoadingPage(); // 换库同样要重新扫描索引，先切进度页
   try {
     await switchLibrary(selected);
   } catch (error) {
@@ -283,6 +299,7 @@ app.whenReady().then(async () => {
     return;
   }
 
+  loadLoadingPage(); // 窗口立即给出进度反馈，server 扫描索引完成后再切主界面
   try {
     await switchLibrary(libPath);
   } catch (error) {
@@ -290,7 +307,7 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
-  loadMainPage(); // 首次 createWindow 时 server 未就绪，就绪后重新加载带 token 的地址
+  loadMainPage();
 });
 
 // 关窗只是隐藏到托盘（close 已被拦截，正常不会走到这里）；不监听此事件的话 Electron 默认关窗即退出

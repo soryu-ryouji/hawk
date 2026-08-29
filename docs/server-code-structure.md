@@ -38,7 +38,7 @@ Program.cs 做的事（按执行顺序）：
 3. 注册单例：`LibraryPaths`（注册时 `EnsureLayout` 创建 `.hawk/` 结构与 `.gitignore`）、`LibraryConfig`、`MetadataStore`（构造时加载全部元数据）、`ItemIndex`、`ThumbnailService`、`ColorService`、`EventBus`、`LibraryScanner`、`IndexPipeline`、`LibraryWatcher`
 4. 中间件顺序：CORS → `ErrorHandlingMiddleware` → `TokenAuthMiddleware`
 5. **启动顺序**（对应 server-csharp.md）：`pipeline.Start()` → 接线 watcher 事件 → `watcher.Start()`（事件先入队缓冲）→ `await pipeline.RunScanAsync(false)` 阻塞至初始索引完成 → `app.StartAsync()` 此后 `/health` 才可达
-6. 打印 `HAWK_READY <address> token=<token>` 行，Electron 主进程解析它拿到端口与 token
+6. 打印 `HAWK_READY <address> token=<token>` 行，Electron 主进程解析它拿到端口与 token；扫描期间另经 `HAWK_PROGRESS <phase> <processed> <total>` 行推送进度（150ms 节流），驱动启动进度页
 7. `ApplicationStopping` 时释放 watcher 与 pipeline
 
 ### Core/ —— 与 HTTP 无关的领域核心
@@ -73,7 +73,7 @@ Program.cs 做的事（按执行顺序）：
 - **写入防抖**：入库拆成 `PrepareUpsert`（路径过滤、复用判定，不读文件内容）与 `ApplyUpsert`（串行应用变更）两步。判定需要算哈希时，若文件 mtime 距今不足 1 秒（大文件仍在拷贝中），不立即处理，经去重集合延迟重试（上限 120 次）——避免对半截内容反复哈希；携带 KnownHash 或等待结果的提交不防抖（文件由 API 写入，内容已完整）
 - **入库流程（ApplyUpsert）**：哈希漂移时按路径迁移元数据（新 item 继承 tags 等素材参数，旧元数据无引用则删除）；回写最新 size/mtime 保持校验依据新鲜；补读图像尺寸；加载调色板缓存（缺失由后台 worker 补齐）；发 `item.added` / `item.updated`；缩略图派发到后台 worker（1–4 个并发，CPU 密集不阻塞索引）
 - **`DoMove` / `MoveOne`**：索引 rekey 不重算哈希；lib→lib 时元数据路径跟随，lib↔trash 时去掉前缀后库内路径不变，元数据保持原路径作为恢复目标；目录移动后补扫新位置，吸收 watcher 遗漏的子文件事件
-- **`DoScan`（两阶段扫描）**：阶段一串行遍历做复用判定（命中元数据的直接应用，不读内容）；阶段二对需要哈希的文件并行计算（`ProcessorCount/2`，纯计算不碰共享状态）；阶段三串行应用结果并做消失检测。单写者模型不变，仅哈希计算并行
+- **`DoScan`（两阶段扫描）**：阶段一串行遍历做复用判定（命中元数据的直接应用，不读内容）；阶段二对需要哈希的文件并行计算（`ProcessorCount/2`，纯计算不碰共享状态）；阶段三串行应用结果并做消失检测。单写者模型不变，仅哈希计算并行。全程经 `OnScanProgress` 上报进度（`scan`/`hash`/`apply`/`done` 四相、150ms 节流，Program 接到 stdout 的 `HAWK_PROGRESS` 行推给 Electron 进度页）
 - **`DoClearTrash`**：摘除回收站位置并清理元数据路径；内容在库内无其他引用时删除元数据与缩略图
 - **缩略图与前端刷新**：缩略图在后台 worker 生成，完成后补发 `item.updated`——前端此前渲染的 404 占位 <img> 据此重建并重新拉取
 - **调色板提炼**：与缩略图同一 worker 队列：缩略图齐全后从最小尺寸缩略图提炼（原图只在生成缩略图时解码一次），缓存落盘后经 `PaletteJob` 回流水线写入索引（单写者不破）并补发 `item.updated`；队列满时丢弃，缓存文件仍在，兜底扫描由 ApplyUpsert 载入

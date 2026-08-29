@@ -43,15 +43,16 @@ Eagle 主窗口的关键特征：
 
 ```text
 Electron 主进程启动
-  → 读用户配置（userData/hawk-app.json）取最近素材库；无 → 弹出目录选择框
+  → 读用户配置（userData/hawk-app.json）取最近素材库；无 → 加载引导页（SetupScreen）
+  → 创建 BrowserWindow，立即加载静态进度页 electron/loading.html（不等待后端）
   → 生成随机 token
   → spawn hawk-server（开发：dotnet 运行 dll；打包：process.resourcesPath 内二进制）
       环境变量传入 HAWK_TOKEN，参数 --library <path> --port 27371
-  → 解析子进程 stdout 的 `HAWK_READY <address> token=...` 行取得实际端口
+  → 解析子进程 stdout：
+      HAWK_PROGRESS <phase> <processed> <total>  扫描进度帧 → 转发进度页（150ms 节流）
+        phase：scan=遍历文件清单（total=0 不定态） hash=并行算哈希 apply=应用索引 done=完成
+      HAWK_READY <address> token=...            就绪 → 加载主界面
     （兜底：轮询默认端口 /health）
-  → 创建 BrowserWindow，加载：
-      开发：http://localhost:5173/#api=<addr>&token=<token>
-      打包：file://.../index.html#api=<addr>&token=<token>
 退出
   → 杀掉子进程（含异常退出路径，防止孤儿进程）
 ```
@@ -80,6 +81,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
+| `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），启动/换库进度页（loading.html）用；返回退订函数 |
 
 ## 契约与类型生成
 
@@ -418,7 +420,8 @@ hawk-app/
 ├── electron-builder.yml
 ├── electron/
 │   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、关窗隐藏到托盘 + 系统托盘、单实例锁、拉起/回收 server、token、库选择、白名单 IPC
-│   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制）+ webUtils
+│   ├── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/扫描进度）+ webUtils
+│   └── loading.html        # 启动进度页：server 扫描索引期间的静态页（图标 + 进度条 + 阶段文案），HAWK_PROGRESS 驱动，就绪后切主界面
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）

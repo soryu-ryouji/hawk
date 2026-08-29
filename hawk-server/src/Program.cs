@@ -61,6 +61,9 @@ app.MapEventsEndpoints();
 var pipeline = app.Services.GetRequiredService<IndexPipeline>();
 var watcher = app.Services.GetRequiredService<LibraryWatcher>();
 
+// 扫描进度经 stdout 推给 Electron 主进程（HAWK_PROGRESS 行），驱动启动进度页
+pipeline.OnScanProgress = p => Console.WriteLine($"HAWK_PROGRESS {p.Phase} {p.Processed} {p.Total}");
+
 pipeline.Start();
 watcher.FileUpsert += pipeline.NotifyUpsert;
 watcher.Deleted += pipeline.NotifyDeleted;

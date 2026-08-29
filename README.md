@@ -17,6 +17,12 @@
 - 自由开放：开放的 REST API，方便生态接入
 - 免费
 
+## 路线图
+
+- 1.0 版本
+  - 使用 Rust 重写服务器代码
+  - 实现
+
 ## 下载
 
 到 [Releases](https://github.com/soryu-ryouji/hawk/releases) 页面下载：
