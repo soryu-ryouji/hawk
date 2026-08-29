@@ -20,7 +20,7 @@ public static class FolderEndpoints
         group.MapGet("/list", (LibraryPaths paths, LibraryConfig config, ItemIndex index) =>
             TypedResults.Ok(Envelope<FolderNode>.Ok(BuildTree(paths, config, index))));
 
-        group.MapPost("/create", async (FolderCreateRequest req, LibraryPaths paths, LibraryConfig config, ItemIndex index) =>
+        group.MapPost("/create", async (FolderCreateRequest req, LibraryPaths paths, LibraryConfig config, ItemIndex index, IndexPipeline pipeline) =>
         {
             if (!LibraryFs.IsValidName(req.Name))
             {
@@ -36,6 +36,8 @@ public static class FolderEndpoints
             }
 
             Directory.CreateDirectory(targetAbs);
+            // 目录结构变化广播(folder.changed):本端操作 + 其他客户端的 SSE 刷新统一走事件
+            pipeline.NotifyFolderChanged(FolderChangedPayload.ReasonExternal);
             return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, index, targetAbs)));
         });
 
@@ -80,10 +82,11 @@ public static class FolderEndpoints
 
             Directory.Move(dirAbs, targetAbs);
             await pipeline.SubmitDirMoveAsync(dirAbs, targetAbs);
+            // DirMoveJob 内会广播 folder.changed,此处不重复通知
             return TypedResults.Ok(Envelope<FolderNode>.Ok(ToNode(paths, config, index, targetAbs)));
         });
 
-        // 删除：整体移入 .hawk/trash/（保留目录结构）
+        // 删除:整体移入 .hawk/trash/(保留目录结构)
         group.MapPost("/delete", async (FolderPathRequest req, LibraryPaths paths, IndexPipeline pipeline) =>
         {
             if (!LibraryPaths.IsValidLibraryPath(req.Path))

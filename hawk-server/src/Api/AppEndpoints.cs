@@ -39,10 +39,10 @@ public static class AppEndpoints
             })
             .WithTags("app");
 
-        // 后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照）
-        app.MapGet("/api/v1/app/status", (Core.IndexPipeline pipeline) =>
+        // 后台任务积压:轮询型客户端用(SSE 客户端订阅 task.progress 事件,两者同一份快照)
+        app.MapGet("/api/v1/app/status", (Core.ThumbnailWorker worker) =>
             {
-                var (pending, active) = pipeline.ThumbnailBacklog;
+                var (pending, active) = worker.Backlog;
                 return TypedResults.Ok(Envelope<TaskStatus>.Ok(new TaskStatus(new TaskBacklog(pending, active))));
             })
             .WithTags("app");

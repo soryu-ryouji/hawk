@@ -16,8 +16,11 @@ public sealed class LibraryWatcher : IDisposable
     /// <summary>文件或目录删除（绝对路径；流水线按路径与目录前缀双重匹配处理）</summary>
     public event Action<string>? Deleted;
 
-    /// <summary>移动/重命名（旧绝对路径，新绝对路径）</summary>
+    /// <summary>移动/重命名(旧绝对路径,新绝对路径;目录移动走 DirMoveJob,同时广播 folder.changed)</summary>
     public event Action<string, string>? Moved;
+
+    /// <summary>目录创建(绝对路径)——空目录不产生 item 事件,经 folder.changed 通知客户端刷新文件夹树</summary>
+    public event Action<string>? FolderCreated;
 
     /// <summary>config.toml 变更</summary>
     public event Action? ConfigChanged;
@@ -105,6 +108,13 @@ public sealed class LibraryWatcher : IDisposable
 
         if (IsInternal(fullPath))
         {
+            return;
+        }
+
+        // 目录不产生 item 事件,单独上报以驱动 folder.changed(目录删除无事件,由周期对账扫描兜底)
+        if (Directory.Exists(fullPath))
+        {
+            FolderCreated?.Invoke(fullPath);
             return;
         }
 

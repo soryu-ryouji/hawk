@@ -106,6 +106,7 @@ async function boot() {
     onRestored: (item) => store.applyEvent('item.restored', item),
     onRemoved: (id) => store.applyEvent('item.removed', { id }),
     onTaskProgress: (p) => store.applyEvent('task.progress', p),
+    onFolderChanged: () => store.applyEvent('folder.changed', {}),
     onReconnect: () => {
       void store.reloadSkeleton();
       void store.refreshFolders();

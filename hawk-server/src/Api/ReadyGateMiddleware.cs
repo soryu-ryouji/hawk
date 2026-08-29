@@ -13,7 +13,7 @@ public sealed class ReadyGateMiddleware(RequestDelegate next, Core.StartupState 
         var path = ctx.Request.Path.Value ?? string.Empty;
         if (!startup.IsReady
             && path.StartsWith("/api/", StringComparison.Ordinal)
-            && !path.StartsWith(StartupPath, StringComparison.Ordinal))
+            && !string.Equals(path, StartupPath, StringComparison.Ordinal))
         {
             ctx.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
             await ctx.Response.WriteAsJsonAsync(

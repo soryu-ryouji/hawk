@@ -18,11 +18,7 @@ AUTH="Authorization: Bearer $TOKEN"
 rm -rf "$WORK"
 mkdir -p "$LIB/海报"
 
-# 库外派生缓存目录：~/.local/share/hawk/cache/<库标识>（库标识 = 库根路径 SHA-256 前 16 位，见 LibraryPaths.LibraryKey）
-CACHE_KEY=$(printf '%s' "$LIB" | sha256sum | cut -c1-16)
-CACHE="${XDG_DATA_HOME:-$HOME/.local/share}/hawk/cache/$CACHE_KEY"
-
-# 生成三张不同内容的 PNG（4x2 / 2x4 / 8x8）
+# 生成三张不同内容的 PNG(4x2 / 2x4 / 8x8)
 python3 - "$LIB" <<'PYEOF'
 import struct, zlib, sys, os
 
@@ -48,6 +44,17 @@ for _ in $(seq 1 60); do
   curl -sf "$BASE/health" >/dev/null 2>&1 && break
   sleep 0.5
 done
+
+# 库外派生缓存目录(随平台:Windows 为 %LOCALAPPDATA%\hawk\cache,见 LibraryPaths 构造)。
+# 库标识以 server 报告的库根路径计算:server 看到的 argv 路径经 MSYS 转换,与 shell 变量可能不同,
+# 而 SHA-256 对路径字符串逐字节敏感
+LIB_ABS=$(curl -s -H "$AUTH" "$BASE/api/v1/library/info" | jq -r .data.path)
+CACHE_KEY=$(printf '%s' "$LIB_ABS" | sha256sum | cut -c1-16)
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) CACHE="$(cygpath -u "$LOCALAPPDATA")/hawk/cache/$CACHE_KEY" ;;
+  Darwin*) CACHE="$HOME/Library/Application Support/hawk/cache/$CACHE_KEY" ;;
+  *) CACHE="${XDG_DATA_HOME:-$HOME/.local/share}/hawk/cache/$CACHE_KEY" ;;
+esac
 
 PASS=0; FAIL=0
 check() { # check <描述> <实际> <期望>
@@ -95,18 +102,18 @@ check "按 tags 过滤" "$(post_json "$BASE/api/v1/item/list" '{"tags":["nature"
 check "按 keywords 过滤" "$(post_json "$BASE/api/v1/item/list" '{"keywords":["beautiful"]}' | jq -r .data.total)" 1
 check "元数据文件已落盘" "$(ls "$LIB/.hawk/metadata/$SUNSET_ID.toml" >/dev/null 2>&1 && echo yes)" yes
 
-# --- 分类（Category） ---
+# --- 分类(Category,扁平名字) ---
 CAT_API="$BASE/api/v1/category"
-check "创建空分类（含祖先）" "$(post_json "$CAT_API/create" '{"path":"灵感/构图"}' | jq -r .status)" success
-check "空分类出现在分类树" "$(curl -s -H "$AUTH" "$CAT_API/list" | jq -r '.data.children[0].children[0].name')" "构图"
-check "重复创建分类返回 CATEGORY_EXISTS" "$(post_json "$CAT_API/create" '{"path":"灵感"}' | jq -r .error.code)" CATEGORY_EXISTS
-post_json "$BASE/api/v1/item/update" "{\"id\":\"$SUNSET_ID\",\"categories\":[\"灵感/构图\",\"参考\"]}" >/dev/null
-check "item 分类赋值生效" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories | join(",")')" "灵感/构图,参考"
-check "按分类过滤（含子分类）" "$(post_json "$BASE/api/v1/item/list" '{"categories":["灵感"]}' | jq -r .data.total)" 1
+check "创建空分类" "$(post_json "$CAT_API/create" '{"name":"灵感"}' | jq -r .status)" success
+check "重复创建分类返回 CATEGORY_EXISTS" "$(post_json "$CAT_API/create" '{"name":"灵感"}' | jq -r .error.code)" CATEGORY_EXISTS
+check "空分类出现在分类列表" "$(curl -s -H "$AUTH" "$CAT_API/list" | jq -r '.data[] | select(.count==0) | .name')" "灵感"
+post_json "$BASE/api/v1/item/update" "{\"id\":\"$SUNSET_ID\",\"categories\":[\"灵感\",\"参考\"]}" >/dev/null
+check "item 分类赋值生效" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories | join(",")')" "灵感,参考"
+check "按分类过滤" "$(post_json "$BASE/api/v1/item/list" '{"categories":["灵感"]}' | jq -r .data.total)" 1
 check "分类过滤 all 语义" "$(post_json "$BASE/api/v1/item/list" '{"categories":["灵感","参考"],"categories_match":"all"}' | jq -r .data.total)" 1
 check "排除分类" "$(post_json "$BASE/api/v1/item/list" '{"exclude_categories":["灵感"]}' | jq -r .data.total)" 2
-check "分类重命名子树跟随" "$(post_json "$CAT_API/update" '{"path":"灵感","name":"灵感库"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories[0]')" "灵感库/构图"
-check "分类删除清除赋值" "$(post_json "$CAT_API/delete" '{"path":"灵感库"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories | join(",")')" "参考"
+check "分类重命名跟随" "$(post_json "$CAT_API/update" '{"name":"灵感","new_name":"灵感库"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories[0]')" "灵感库"
+check "分类删除清除赋值" "$(post_json "$CAT_API/delete" '{"name":"灵感库"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.categories | join(",")')" "参考"
 check "注册表文件已落盘" "$(ls "$LIB/.hawk/categories.toml" >/dev/null 2>&1 && echo yes)" yes
 
 # --- 标签注册表（Tag） ---
@@ -222,9 +229,22 @@ curl -s -N "$BASE/api/v1/events?token=$TOKEN" >"$WORK/sse.log" 2>&1 &
 SSE_PID=$!
 sleep 0.5
 post_json "$BASE/api/v1/item/update" "{\"id\":\"$SUNSET_ID\",\"star\":5}" >/dev/null
+post_json "$BASE/api/v1/folder/create" '{"name":"sse-dir","parent_path":""}' >/dev/null
 sleep 0.5
 kill $SSE_PID 2>/dev/null || true
 [[ $(grep -c 'event: item.updated' "$WORK/sse.log" || echo 0) -ge 1 ]] && PASS=$((PASS+1)) && echo "ok   - SSE 收到 item.updated" || { FAIL=$((FAIL+1)); echo "FAIL - SSE item.updated 未收到"; }
+[[ $(grep -c 'event: folder.changed' "$WORK/sse.log" || echo 0) -ge 1 ]] && PASS=$((PASS+1)) && echo "ok   - SSE 收到 folder.changed" || { FAIL=$((FAIL+1)); echo "FAIL - SSE folder.changed 未收到"; }
+
+# --- 批量更新(batch_update) ---
+CAT_ID=$(echo "$LIST" | jq -r '.data.items[] | select(.name=="cat") | .id')
+BATCH=$(post_json "$BASE/api/v1/item/batch_update" "{\"ids\":[\"$SUNSET_ID\",\"$CAT_ID\"],\"add_tags\":[\"批量\"],\"star\":2}")
+check "batch_update updated=2" "$(echo "$BATCH" | jq -r .data.updated)" 2
+check "batch_update 标签并集追加" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.tags | join(",")')" "nature,批量"
+check "batch_update 评分生效" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$CAT_ID" | jq -r .data.star)" 2
+ZERO_ID="0000000000000000000000000000000000000000000000000000000000000000"
+BATCH2=$(post_json "$BASE/api/v1/item/batch_update" "{\"ids\":[\"$CAT_ID\",\"$ZERO_ID\"],\"add_tags\":[\"x\"]}")
+check "batch_update missing_ids 报告不存在的 id" "$(echo "$BATCH2" | jq -r '.data.missing_ids | length')" 1
+check "batch_update 无更新字段返回 400" "$(post_json "$BASE/api/v1/item/batch_update" "{\"ids\":[\"$CAT_ID\"]}" -o /dev/null -w '%{http_code}')" 400
 
 # --- 回收站 ---
 check "item/delete 移入回收站" "$(post_json "$BASE/api/v1/item/delete" "{\"id\":\"$DOT_ID\"}" | jq -r .status)" success
@@ -238,7 +258,7 @@ check "恢复后 count=6" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -
 
 # folder/delete + restore
 post_json "$BASE/api/v1/folder/delete" '{"path":"icons"}' >/dev/null
-check "folder/delete 后树不含 icons" "$(curl -s -H "$AUTH" "$BASE/api/v1/folder/list" | jq -r '.data.children | map(.name) | join(",")')" "海报"
+check "folder/delete 后树不含 icons" "$(curl -s -H "$AUTH" "$BASE/api/v1/folder/list" | jq -r '.data.children | map(.name) | index("icons") == null')" true
 check "folder/restore 恢复" "$(post_json "$BASE/api/v1/folder/restore" '{"path":"icons"}' | jq -r .status)" success
 
 # trash/clear：删除 sunset 后清空，元数据应被清理

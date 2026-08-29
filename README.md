@@ -20,17 +20,12 @@
 ## 路线图
 
 - 1.0 版本
-  - 使用 Rust 重写服务器代码
-  - 实现
-
-## 下载
-
-到 [Releases](https://github.com/soryu-ryouji/hawk/releases) 页面下载：
-
-- **正式版**：`hawk.zip`（绿色软件，解压即用，卸载即删）；macOS 提供 `hawk-mac-arm64.zip` / `hawk-mac-x64.zip`（解压后拖入 Applications 即可）
-- **Nightly**：[nightly](https://github.com/soryu-ryouji/hawk/releases/tag/nightly) 滚动预发布，每个 `feat`/`fix` 提交自动构建，想尝新可以拿
-
-> macOS 应用暂未签名/公证：首次打开需在 Finder 中右键应用 →「打开」→ 确认。
+  - 使用 Rust 重写服务器代码，减小程序体积，提高资源吞吐效率和内存安全性
+  - 完成 Windows, MacOS 桌面客户端
+  - 完成 Chrome, Firefox, Safari 浏览器插件
+  - 制作 web, ios, android 平台的资源查看器（连接局域网内的电脑素材库）
+- 2.0 版本
+  - 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
 
 ## 核心特性
 

@@ -233,6 +233,7 @@ export const api = {
   itemCount(): Promise<number>;
   itemAddByPath(path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }): Promise<{ item: Item; already_existed: boolean }>;
   itemUpdate(id: string, patch: { name?; tags?; categories?; star?; annotation?; url?; folder_path? }, path?: string): Promise<Item>;
+  itemBatchUpdate(ids: string[], patch: { add_tags?; add_categories?; star?; folder_path? }): Promise<{ updated: number; missing_ids: string[] }>;  // 批量：标签/分类并集、评分/文件夹设置（见 API 文档 batch_update 节）
   itemDelete(id: string, path?: string): Promise<void>;
   itemRestore(id: string, path?: string): Promise<void>;
   refreshThumbnail(id: string): Promise<void>;
@@ -259,9 +260,13 @@ export const api = {
 export function connectEvents(handlers: {
   onAdded(item: Item): void; onUpdated(item: Item): void;
   onTrashed(id: string): void; onRestored(item: Item): void; onRemoved(id: string): void;
+  onTaskProgress(p: { task: string; pending: number; active: number }): void;
+  onFolderChanged(reason: string): void;   // 目录结构变化：重拉 folder/list（reason 恒为 external，忽略取值）
   onReconnect(): void;   // EventSource 断线重连成功后全量对齐
 }): () => void;           // 返回断开函数（App 卸载/换库时调）
 ```
+
+事件名与负载的字段契约以 server-rest-api-v1.md「events」节为准（`ItemEvents` 常量与文档一一对应），此处只做类型分发，不自定义负载形状。
 
 ### Pinia store（stores/library.ts）
 
@@ -307,6 +312,10 @@ reloadSkeleton(): Promise<void>; // SSE 驱动骨架重载：成员/次序以服
 select(id: string, mod?: 'range' | 'toggle'): void;
 selectAll(): void; clearSelection(): void;
 updateItem(id: string, patch): Promise<void>;      // 就地更新 items；ApiError → toast
+addCategoryToSelected(name) / addTagToSelected(tag): Promise<void>;  // 批量端点并集追加（已含该分类/标签的项跳过）；ensureSelectionDetails 先补齐选中项详情
+moveSelectedToFolder(path): Promise<void>;         // 批量端点移动主位置；已在目标处的项跳过
+setStarForSelected(star): Promise<void>;           // 批量端点设置评分（多选面板与右键菜单共用）
+batchUpdate(ids, patch, doneText): Promise<void>;  // 批量端点统一入口；missing_ids 计数在 toast 提示「n 个未处理」
 trashSelected(): Promise<void>; restoreSelected(): Promise<void>;
 clearTrash(): Promise<void>;                       // 调用方先二次确认
 importPaths(paths: string[]): Promise<void>;       // 逐个 itemAddByPath（server 逐文件处理完才返回，done 逐项推进）；结束汇总 toast（成功 n，已存在 m，失败 k）
@@ -386,7 +395,8 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 | `item.added` / `item.restored` | 新 item 落点（成员/次序）以服务端为准，防抖 200ms 重载骨架 |
 | `item.trashed` / `item.removed` | 就地移除（详情 + 骨架 + 选择），回收站视图同事件意味着「进来」，统一防抖重载兜底 |
 | `task.progress` | 更新 `taskBacklog`（缩略图积压计数；归零置 null 隐藏指示条），不触发文件夹/分类刷新 |
-| 任何事件 | 防抖刷新文件夹树（见「已知缺口」） |
+| `folder.changed` | 防抖重拉文件夹树（reason 恒为 external，忽略取值）；骨架成员与分类/标签计数无关，不触发 |
+| 任何 item 事件 | 防抖刷新文件夹树与分类/标签计数（folder.changed 已覆盖目录结构变化，此项兜底文件夹内 item 计数变动） |
 
 断线自动重连（EventSource 原生行为），重连后 reloadSkeleton + refreshFolders 全量对齐。
 
@@ -453,11 +463,10 @@ npm run build       # vue-tsc --noEmit && vite build
 
 ## 已知缺口与风险
 
-1. **文件夹树无 SSE 事件**：外部进程增删文件夹时前端不自动刷新。v1 缓解：item 事件时防抖重拉文件夹树；后续建议后端补 `folder.changed` 事件（开放问题，实现前定）
-2. **超大库的骨架传输**：`item/skeleton` 一次性回全量 dim，十万级条目约数 MB 本地传输、布局计算 O(n)（毫秒级）；若未来成为瓶颈，骨架可再压缩（数组元组/增量推送）
-3. **格式兜底**：后端暂不支持的格式（RAW/HEIC）无缩略图，前端渲染占位图（ext 角标）
-4. **token 暴露面**：localhost + hash 注入 + 内存保存，本机风险可控；不写盘
-5. **macOS 公证/Windows 签名**：打包分发阶段再处理，v1 不涉及
+1. **超大库的骨架传输**：`item/skeleton` 一次性回全量 dim，十万级条目约数 MB 本地传输、布局计算 O(n)（毫秒级）；若未来成为瓶颈，骨架可再压缩（数组元组/增量推送）
+2. **格式兜底**：后端暂不支持的格式（RAW/HEIC）无缩略图，前端渲染占位图（ext 角标）
+3. **token 暴露面**：localhost + hash 注入 + 内存保存，本机风险可控；不写盘
+4. **macOS 公证/Windows 签名**：打包分发阶段再处理，v1 不涉及
 
 ## 里程碑
 

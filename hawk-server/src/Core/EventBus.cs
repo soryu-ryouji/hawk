@@ -4,9 +4,6 @@ namespace Hawk.Server.Core;
 
 public sealed record LibraryEvent(string Type, object Payload);
 
-/// <summary>item.trashed / item.removed 的事件负载</summary>
-public sealed record ItemIdPayload(string Id);
-
 /// <summary>
 /// SSE 事件总线。订阅者各自持有有界 channel；
 /// 订阅者消费跟不上时断开其订阅（前端重连后通过 item/list 全量对齐）。

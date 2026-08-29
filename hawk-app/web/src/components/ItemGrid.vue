@@ -240,11 +240,7 @@ function onMenu(item: Item, e: MouseEvent) {
         { separator: true, label: '' },
         ...[5, 4, 3, 2, 1, 0].map((star) => ({
           label: `评分 ${star} 星`,
-          action: () => {
-            for (const id of store.selection) {
-              void store.updateItem(id, { star });
-            }
-          },
+          action: () => void store.setStarForSelected(star),
         })),
         { separator: true, label: '' },
         { label: '移入回收站', danger: true, action: () => void store.trashSelected() },

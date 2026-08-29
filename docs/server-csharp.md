@@ -40,15 +40,16 @@ MVP 用 ImageSharp 覆盖常见格式。图像解码收在一个接口后面，R
 
 ## 并发模型
 
-索引流水线（监听 → 哈希 → 缩略图 → 入库）用 `System.Threading.Channels` 串联，有界 channel 提供背压；HTTP 层由 ASP.NET Core 处理。细节：
+索引流水线（监听 → 哈希 → 入库）用 `System.Threading.Channels` 串联，有界 channel 提供背压；HTTP 层由 ASP.NET Core 处理。缩略图/调色板在独立的 `ThumbnailWorker` 后台线程池处理，经回调回写流水线。细节：
 
 - 索引与元数据写入收敛在单消费者循环（单写者）；监听事件幂等，channel 满时置溢出标记，由全量扫描兜底
 - 全量扫描分两阶段：复用判定串行，哈希计算并行（`ProcessorCount/2`），索引应用串行
 - 写入防抖：mtime 距今不足 1 秒的文件延迟重试（去重、上限 120 次），避免对拷贝中的大文件反复哈希
-- 缩略图生成是独立后台 worker 池（1–4 并发），不阻塞索引
+- 缩略图/调色板在独立的 `ThumbnailWorker` 后台线程池处理（并发 `CPU/2`、封顶 16），不阻塞索引；并发文件数即并行核数
 
 ## 替换为 Rust 时的注意点
 
 - 目标栈：axum、notify、blake3、image + fast_image_resize，索引同样在内存中维护
 - 行为对齐以 OpenAPI schema 为准，不逐行翻译 C# 代码；启动握手（`app/startup` 轮询、就绪网关）属 schema 契约的一部分
+- SSE 事件契约（事件名、负载形状、时序语义）见 API 文档 events 节，同为持久化契约
 - `.hawk/` 存储格式（metadata TOML、缩略图命名、trash 结构）属于持久化契约，Rust 版必须兼容

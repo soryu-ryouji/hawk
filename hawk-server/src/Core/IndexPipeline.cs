@@ -3,13 +3,15 @@ using System.Threading.Channels;
 
 namespace Hawk.Server.Core;
 
-/// <summary>item/add 的处理结果：索引后的 item 与「内容是否已存在」标志</summary>
-public sealed record UpsertResult(Item Item, bool AlreadyExisted);
+/// <summary>item/add 的处理结果:索引后的 item 投影与「内容是否已存在」标志</summary>
+public sealed record UpsertResult(ItemDto Item, bool AlreadyExisted);
 
 /// <summary>
-/// 索引流水线：监听事件 / 扫描 / API 写操作全部经有界 channel 串行处理（单写者），
-/// 哈希与元数据迁移在消费者内完成；缩略图生成转到后台工作线程，不阻塞索引。
-/// 索引与元数据的所有变更只发生在这里，处理逻辑保证幂等（重复事件无害）。
+/// 索引流水线:监听事件 / 扫描 / API 写操作全部经有界 channel 串行处理(单写者),
+/// 哈希与元数据迁移在消费者内完成;缩略图生成在 ThumbnailWorker 后台线程,不阻塞索引。
+/// 索引与元数据的所有变更只发生在这里,处理逻辑保证幂等(重复事件无害)。
+/// 职责边界:本类只做任务调度与文件/索引/元数据的应用;分类/标签级联在 TaxonomyMigrator,
+/// 缩略图/调色板在 ThumbnailWorker,事件发布辅助在 ItemEvents。
 /// </summary>
 public sealed class IndexPipeline : IDisposable
 {
@@ -19,41 +21,22 @@ public sealed class IndexPipeline : IDisposable
     private sealed record MoveJob(string OldAbs, string NewAbs, TaskCompletionSource? Done) : IndexJob;
     private sealed record DirMoveJob(string OldAbs, string NewAbs, TaskCompletionSource? Done) : IndexJob;
     private sealed record ScanJob(bool Full, TaskCompletionSource? Done) : IndexJob;
+    private sealed record ClearTrashJob(TaskCompletionSource? Done) : IndexJob;
+    private sealed record MetadataJob(string Hash, Action<ItemMetadata> Mutate, TaskCompletionSource? Done) : IndexJob;
+    private sealed record BatchMetadataJob(string[] Hashes, Action<ItemMetadata> Mutate, TaskCompletionSource<BatchMetadataResult>? Done) : IndexJob;
+    private sealed record PaletteJob(string Hash, PaletteColor[] Palette) : IndexJob;
+    private sealed record FolderHintJob(string Reason) : IndexJob;
 
-    /// <summary>扫描进度快照；StartupState 汇总后经 /api/v1/app/startup 提供给客户端</summary>
+    /// <summary>批量元数据应用(item/batch_update)的处理结果</summary>
+    public sealed record BatchMetadataResult(int Updated, string[] MissingIds);
+
+    /// <summary>扫描进度快照;StartupState 汇总后经 /api/v1/app/startup 提供给客户端</summary>
     /// <param name="Phase">scan=遍历文件清单 hash=并行计算哈希 apply=应用索引</param>
-    /// <param name="Total">阶段总工作量；遍历阶段未知时为 0（前端显示不定态进度条）</param>
+    /// <param name="Total">阶段总工作量;遍历阶段未知时为 0(前端显示不定态进度条)</param>
     public sealed record ScanProgress(string Phase, int Processed, int Total);
 
-    /// <summary>扫描进度上报：Program 装配时设置； emit 已按 150ms 节流</summary>
+    /// <summary>扫描进度上报:Program 装配时设置; emit 已按 150ms 节流</summary>
     public Action<ScanProgress>? OnScanProgress { get; set; }
-
-    /// <summary>缩略图积压快照（排队 + 生成中）</summary>
-    public (int Pending, int Active) ThumbnailBacklog =>
-        (System.Threading.Volatile.Read(ref _thumbQueued), System.Threading.Volatile.Read(ref _thumbActive));
-    private sealed record ClearTrashJob(TaskCompletionSource? Done) : IndexJob;
-    private sealed record MetadataJob(string Hash, Action<ItemMetadata> Mutate, TaskCompletionSource<Item?> Done) : IndexJob;
-    private sealed record ThumbJob(string Hash, string SourceAbs);
-
-    /// <summary>后台任务进度快照（task.progress 事件与 app/status 端点共用）</summary>
-    public sealed record TaskProgress(string Task, int Pending, int Active);
-
-    /// <summary>缩略图后台积压：排队中 + 生成中；只读快照供进度上报</summary>
-    private int _thumbQueued;
-    private int _thumbActive;
-    private long _lastTaskProgressAt;
-    private bool _taskProgressIdle = true;
-    /// <summary>后台 worker 提炼调色板完成后的回写（单写者规则：索引变更只发生在消费循环）</summary>
-    private sealed record PaletteJob(string Hash, PaletteColor[] Palette) : IndexJob;
-
-    // 分类/标签操作（注册表 + 元数据批量迁移）
-    private sealed record CategoryCreateJob(string Path, TaskCompletionSource Done) : IndexJob;
-    private sealed record CategoryUpdateJob(string OldName, string NewName, TaskCompletionSource Done) : IndexJob;
-    private sealed record CategoryDeleteJob(string Path, TaskCompletionSource Done) : IndexJob;
-    private sealed record TagCreateJob(string Name, TaskCompletionSource Done) : IndexJob;
-    private sealed record TagUpdateJob(string Name, string NewName, TaskCompletionSource Done) : IndexJob;
-    private sealed record TagDeleteJob(string Name, TaskCompletionSource Done) : IndexJob;
-    private sealed record RegistryReloadJob : IndexJob;
 
     private readonly LibraryPaths _paths;
     private readonly LibraryConfig _config;
@@ -63,29 +46,26 @@ public sealed class IndexPipeline : IDisposable
     private readonly ColorService _colors;
     private readonly EventBus _bus;
     private readonly LibraryScanner _scanner;
-    private readonly CategoryRegistry _categories;
-    private readonly TagRegistry _tags;
+    private readonly TaxonomyMigrator _migrator;
     private readonly ServerSettings _settings;
     private readonly ILogger<IndexPipeline> _logger;
 
     private readonly Channel<IndexJob> _jobs = Channel.CreateBounded<IndexJob>(
         new BoundedChannelOptions(4096) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true });
-    private readonly Channel<ThumbJob> _thumbJobs = Channel.CreateBounded<ThumbJob>(
-        new BoundedChannelOptions(4096) { FullMode = BoundedChannelFullMode.Wait, SingleReader = false });
 
     private readonly CancellationTokenSource _cts = new();
     private int _overflow;
     private Task? _consumer;
     private Task? _reconciler;
-    private Task[] _thumbWorkers = [];
+    private ThumbnailWorker? _thumbWorker;
 
-    // 防抖：仍在写入中的文件（mtime 距今不足 StabilityWindow）不立即哈希，延迟重试
+    // 防抖:仍在写入中的文件(mtime 距今不足 StabilityWindow)不立即哈希,延迟重试
     private static readonly TimeSpan StabilityWindow = TimeSpan.FromSeconds(1);
     private const int MaxDebounceAttempts = 120;
     private readonly ConcurrentDictionary<string, byte> _deferredPaths = new();
 
-    // 扫描阶段哈希计算的并行度（纯计算阶段，索引/元数据应用仍串行）
-    private static readonly int HashParallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
+    // 扫描阶段哈希计算的并行度(纯计算阶段,索引/元数据应用仍串行)
+    private static readonly int HashParallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 16);
 
     public IndexPipeline(
         LibraryPaths paths,
@@ -96,8 +76,7 @@ public sealed class IndexPipeline : IDisposable
         ColorService colors,
         EventBus bus,
         LibraryScanner scanner,
-        CategoryRegistry categories,
-        TagRegistry tags,
+        TaxonomyMigrator migrator,
         ServerSettings settings,
         ILogger<IndexPipeline> logger)
     {
@@ -109,25 +88,34 @@ public sealed class IndexPipeline : IDisposable
         _colors = colors;
         _bus = bus;
         _scanner = scanner;
-        _categories = categories;
-        _tags = tags;
+        _migrator = migrator;
         _settings = settings;
         _logger = logger;
+    }
+
+    /// <summary>装配缩略图 worker:索引访问与调色板回写的闭环在本类(单写者),worker 只负责生成</summary>
+    public void AttachThumbnailWorker(ThumbnailWorker worker)
+    {
+        _thumbWorker = worker;
+        worker.Attach(
+            getItemDto: hash => _index.GetDto(hash),
+            enqueuePalette: (hash, palette) =>
+            {
+                // 队列满时丢弃:缓存已落盘,兜底扫描由 ApplyUpsert 载入
+                _jobs.Writer.TryWrite(new PaletteJob(hash, palette));
+            });
     }
 
     public void Start()
     {
         _consumer = ConsumeLoop(_cts.Token);
-        // 缩略图为 CPU 密集操作，开少量并发工作线程
-        _thumbWorkers = Enumerable.Range(0, Math.Clamp(Environment.ProcessorCount / 4, 1, 4))
-            .Select(_ => ThumbLoop(_cts.Token))
-            .ToArray();
+        _thumbWorker?.Start();
         _reconciler = ReconcileLoop(_cts.Token);
     }
 
     /// <summary>
-    /// 周期对账：文件监听（尤其 macOS FSEvents）可能静默丢事件且无溢出错误，
-    /// 每 RescanIntervalSeconds 跑一次轻量全量扫描（复用哈希、不读文件内容）保证最终一致。0 关闭。
+    /// 周期对账:文件监听(尤其 macOS FSEvents)可能静默丢事件且无溢出错误,
+    /// 每 RescanIntervalSeconds 跑一次轻量全量扫描(复用哈希、不读文件内容)保证最终一致。0 关闭。
     /// </summary>
     private async Task ReconcileLoop(CancellationToken ct)
     {
@@ -149,12 +137,12 @@ public sealed class IndexPipeline : IDisposable
         }
     }
 
-    // ---------- 入口：文件监听（火忘，channel 满时置溢出标记，由消费者全量扫描兜底） ----------
+    // ---------- 入口:文件监听(火忘,channel 满时置溢出标记,由消费者全量扫描兜底) ----------
 
     public void NotifyUpsert(string absPath) => FireAndForget(new UpsertJob(absPath, false, null, null, 0));
     public void NotifyDeleted(string absPath) => FireAndForget(new DeleteJob(absPath));
 
-    /// <summary>新路径是目录时按目录移动处理，否则按文件移动</summary>
+    /// <summary>新路径是目录时按目录移动处理,否则按文件移动</summary>
     public void NotifyMoved(string oldAbs, string newAbs)
     {
         IndexJob job = Directory.Exists(newAbs)
@@ -166,11 +154,16 @@ public sealed class IndexPipeline : IDisposable
     public void NotifyConfigChanged() => FireAndForget(new ScanJob(Full: false, null));
     public void NotifyOverflow() => Interlocked.Exchange(ref _overflow, 1);
 
-    /// <summary>注册表文件被外部修改（网盘同步等）：重新加载</summary>
+    /// <summary>注册表文件被外部修改(网盘同步等):重新加载</summary>
     public void NotifyRegistryChanged() => FireAndForget(new RegistryReloadJob());
 
-    /// <summary>异步触发全量扫描（library/reindex：立即返回，过程变更照常推送事件）</summary>
+    /// <summary>异步触发全量扫描(library/reindex:立即返回,过程变更照常推送事件)</summary>
     public void RequestScan(bool full) => FireAndForget(new ScanJob(full, null));
+
+    /// <summary>目录结构可能变化(文件夹增删改移、外部变动、扫描兜底):广播 folder.changed</summary>
+    public void NotifyFolderChanged(string reason) => FireAndForget(new FolderHintJob(reason));
+
+    private sealed record RegistryReloadJob : IndexJob;
 
     private void FireAndForget(IndexJob job)
     {
@@ -180,9 +173,9 @@ public sealed class IndexPipeline : IDisposable
         }
     }
 
-    // ---------- 入口：API / 启动（等待处理完成） ----------
+    // ---------- 入口:API / 启动(等待处理完成) ----------
 
-    /// <param name="knownHash">调用方已算好的内容哈希（如 item/add），提供时流水线跳过重算</param>
+    /// <param name="knownHash">调用方已算好的内容哈希(如 item/add),提供时流水线跳过重算</param>
     public Task<UpsertResult?> SubmitUpsertAsync(string absPath, string? knownHash = null)
     {
         var tcs = NewTcs<UpsertResult?>();
@@ -211,14 +204,22 @@ public sealed class IndexPipeline : IDisposable
         return tcs.Task;
     }
 
-    public Task<Item?> SubmitMetadataAsync(string hash, Action<ItemMetadata> mutate)
+    public Task SubmitMetadataAsync(string hash, Action<ItemMetadata> mutate)
     {
-        var tcs = NewTcs<Item?>();
+        var tcs = NewTcs();
         Enqueue(new MetadataJob(hash, mutate, tcs), tcs);
         return tcs.Task;
     }
 
-    /// <summary>全量扫描。full=true 时对所有文件重算哈希（library/reindex）。</summary>
+    /// <summary>批量元数据应用(item/batch_update);不存在的 id 记入 MissingIds</summary>
+    public Task<BatchMetadataResult> SubmitBatchMetadataAsync(string[] hashes, Action<ItemMetadata> mutate)
+    {
+        var tcs = NewTcs<BatchMetadataResult>();
+        Enqueue(new BatchMetadataJob(hashes, mutate, tcs), tcs);
+        return tcs.Task;
+    }
+
+    /// <summary>全量扫描。full=true 时对所有文件重算哈希(library/reindex)。</summary>
     public Task RunScanAsync(bool full)
     {
         var tcs = NewTcs();
@@ -226,7 +227,7 @@ public sealed class IndexPipeline : IDisposable
         return tcs.Task;
     }
 
-    // ---------- 入口：分类/标签操作（API 提交，校验在端点层完成） ----------
+    // ---------- 入口:分类/标签操作(API 提交,校验在端点层完成) ----------
 
     public Task SubmitCategoryCreateAsync(string name)
     {
@@ -270,6 +271,14 @@ public sealed class IndexPipeline : IDisposable
         return tcs.Task;
     }
 
+    // 分类/标签操作(注册表 + 元数据批量迁移)
+    private sealed record CategoryCreateJob(string Path, TaskCompletionSource Done) : IndexJob;
+    private sealed record CategoryUpdateJob(string OldName, string NewName, TaskCompletionSource Done) : IndexJob;
+    private sealed record CategoryDeleteJob(string Path, TaskCompletionSource Done) : IndexJob;
+    private sealed record TagCreateJob(string Name, TaskCompletionSource Done) : IndexJob;
+    private sealed record TagUpdateJob(string Name, string NewName, TaskCompletionSource Done) : IndexJob;
+    private sealed record TagDeleteJob(string Name, TaskCompletionSource Done) : IndexJob;
+
     private static TaskCompletionSource NewTcs() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static TaskCompletionSource<T> NewTcs<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -309,13 +318,13 @@ public sealed class IndexPipeline : IDisposable
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "索引任务处理失败: {Job}", job.GetType().Name);
-                    FailJob(job, ex); // 异常回传给等待中的 API 调用方，避免挂起
+                    FailJob(job, ex); // 异常回传给等待中的 API 调用方,避免挂起
                 }
 
-                // 监听事件丢失兜底：每处理完一批任务检查一次
+                // 监听事件丢失兜底:每处理完一批任务检查一次
                 if (Interlocked.Exchange(ref _overflow, 0) == 1)
                 {
-                    _logger.LogInformation("检测到事件丢失，执行全量扫描");
+                    _logger.LogInformation("检测到事件丢失,执行全量扫描");
                     DoScan(full: false, ct);
                 }
             }
@@ -356,44 +365,60 @@ public sealed class IndexPipeline : IDisposable
                 Complete(j.Done);
                 break;
             case MetadataJob j:
-                Complete(j.Done, DoApplyMetadata(j.Hash, j.Mutate));
+                _migrator.ApplyMetadata(j.Hash, j.Mutate);
+                Complete(j.Done);
+                break;
+            case BatchMetadataJob j:
+                Complete(j.Done, DoBatchMetadata(j));
                 break;
             case PaletteJob j:
-                // 调色板回写：item 已因内容漂移消失时丢弃（幂等，重复应用无害）
+                // 调色板回写:item 已因内容漂移消失时丢弃(幂等,重复应用无害)
                 if (_index.SetPalette(j.Hash, j.Palette) is { } paletteItem)
                 {
-                    PublishItemChanged(paletteItem);
+                    ItemEvents.PublishChanged(_bus, paletteItem);
                 }
                 break;
+            case FolderHintJob j:
+                _bus.Publish(ItemEvents.FolderChanged, new FolderChangedPayload(j.Reason));
+                break;
             case CategoryCreateJob j:
-                _categories.Register(j.Path);
+                _migrator.RegisterCategory(j.Path);
                 Complete(j.Done);
                 break;
             case CategoryUpdateJob j:
-                DoCategoryUpdate(j.OldName, j.NewName);
+                _migrator.RenameCategory(j.OldName, j.NewName);
                 Complete(j.Done);
                 break;
             case CategoryDeleteJob j:
-                DoCategoryDelete(j.Path);
+                _migrator.DeleteCategory(j.Path);
                 Complete(j.Done);
                 break;
             case TagCreateJob j:
-                _tags.Register(j.Name);
+                _migrator.RegisterTag(j.Name);
                 Complete(j.Done);
                 break;
             case TagUpdateJob j:
-                DoTagUpdate(j.Name, j.NewName);
+                _migrator.RenameTag(j.Name, j.NewName);
                 Complete(j.Done);
                 break;
             case TagDeleteJob j:
-                DoTagDelete(j.Name);
+                _migrator.DeleteTag(j.Name);
                 Complete(j.Done);
                 break;
             case RegistryReloadJob:
-                _categories.Reload();
-                _tags.Reload();
+                // 注册表 Reload 在 TaxonomyMigrator 外部由其构造时持有的注册表自行处理
+                ReloadRegistries();
                 break;
         }
+    }
+
+    private void ReloadRegistries() => _migrator.ReloadRegistries();
+
+    private BatchMetadataResult DoBatchMetadata(BatchMetadataJob j)
+    {
+        var missing = new List<string>();
+        var updated = _migrator.ApplyMetadataBatch(j.Hashes, j.Mutate, missing);
+        return new BatchMetadataResult(updated, missing.ToArray());
     }
 
     /// <summary>任务处理失败时把异常回传给提交方</summary>
@@ -406,7 +431,8 @@ public sealed class IndexPipeline : IDisposable
             case DirMoveJob j: j.Done?.TrySetException(ex); break;
             case ScanJob j: j.Done?.TrySetException(ex); break;
             case ClearTrashJob j: j.Done?.TrySetException(ex); break;
-            case MetadataJob j: j.Done.TrySetException(ex); break;
+            case MetadataJob j: j.Done?.TrySetException(ex); break;
+            case BatchMetadataJob j: j.Done?.TrySetException(ex); break;
             case CategoryCreateJob j: j.Done.TrySetException(ex); break;
             case CategoryUpdateJob j: j.Done.TrySetException(ex); break;
             case CategoryDeleteJob j: j.Done.TrySetException(ex); break;
@@ -421,7 +447,7 @@ public sealed class IndexPipeline : IDisposable
 
     // ---------- 单文件入库 ----------
 
-    /// <summary>DoUpsert 的准备结果：复用判定完成，ReusedHash 非 null 表示无需计算哈希</summary>
+    /// <summary>DoUpsert 的准备结果:复用判定完成,ReusedHash 非 null 表示无需计算哈希</summary>
     private sealed class PendingUpsert
     {
         public required string AbsPath { get; init; }
@@ -432,11 +458,13 @@ public sealed class IndexPipeline : IDisposable
         public string? OldHash { get; init; }
         public string? ReusedHash { get; init; }
         public string? Hash { get; set; }
+        /// <summary>扫描路径在并行哈希阶段预取的图像尺寸;单文件入口(watcher/API)不预取,ApplyUpsert 同步识别</summary>
+        public (int Width, int Height)? Dim { get; set; }
     }
 
     private UpsertResult? DoUpsert(UpsertJob job, CancellationToken ct)
     {
-        // 携带已知哈希（item/add）或等待结果的提交不做防抖：文件由 API 写入，内容已完整
+        // 携带已知哈希(item/add)或等待结果的提交不做防抖:文件由 API 写入,内容已完整
         var allowDefer = job.KnownHash is null && job.Done is null;
         var pending = PrepareUpsert(job.AbsPath, job.ForceHash, allowDefer, job.Attempt, ct);
         if (pending is null)
@@ -449,8 +477,8 @@ public sealed class IndexPipeline : IDisposable
     }
 
     /// <summary>
-    /// 入库准备：路径过滤、文件状态读取、哈希复用判定、写入中文件防抖。
-    /// 返回 null 表示已处理（跳过/按删除处理/延迟重试）。不读文件内容。
+    /// 入库准备:路径过滤、文件状态读取、哈希复用判定、写入中文件防抖。
+    /// 返回 null 表示已处理(跳过/按删除处理/延迟重试)。不读文件内容。
     /// </summary>
     private PendingUpsert? PrepareUpsert(string absPath, bool forceHash, bool allowDefer, int attempt, CancellationToken ct)
     {
@@ -478,7 +506,7 @@ public sealed class IndexPipeline : IDisposable
         var size = file.Length;
         var mtime = LibraryPaths.ToUnixMs(file.LastWriteTimeUtc);
 
-        // 路径与 size/mtime 均与元数据一致 → 复用哈希（元数据文件名即哈希），不读文件内容
+        // 路径与 size/mtime 均与元数据一致 → 复用哈希(元数据文件名即哈希),不读文件内容
         var oldHash = _index.HashByLocation(rel) ?? _store.FindHashByPath(libPath);
         var reuse = !forceHash
             && oldHash is not null
@@ -492,8 +520,8 @@ public sealed class IndexPipeline : IDisposable
             return new PendingUpsert { AbsPath = absPath, Rel = rel, LibPath = libPath, Size = size, Mtime = mtime, OldHash = oldHash, ReusedHash = oldHash };
         }
 
-        // 文件可能仍在写入（如大文件拷贝中）：不立即哈希，延迟重试直至写入稳定，
-        // 避免对半截内容反复算哈希。超出重试上限后按现状处理（后续事件/扫描会自愈）。
+        // 文件可能仍在写入(如大文件拷贝中):不立即哈希,延迟重试直至写入稳定,
+        // 避免对半截内容反复算哈希。超出重试上限后按现状处理(后续事件/扫描会自愈)。
         if (allowDefer && attempt < MaxDebounceAttempts && IsUnstable(file))
         {
             DeferUpsert(absPath, attempt);
@@ -503,11 +531,11 @@ public sealed class IndexPipeline : IDisposable
         return new PendingUpsert { AbsPath = absPath, Rel = rel, LibPath = libPath, Size = size, Mtime = mtime, OldHash = oldHash };
     }
 
-    /// <summary>应用入库结果：元数据迁移与回写、索引更新、事件、缩略图派发。只允许串行调用。</summary>
+    /// <summary>应用入库结果:元数据迁移与回写、索引更新、事件、缩略图派发。只允许串行调用。</summary>
     private UpsertResult ApplyUpsert(PendingUpsert pending, string hash, CancellationToken ct)
     {
-        // 内容变动导致哈希漂移 → 按路径迁移元数据，旧 item 摘掉该位置。
-        // 注意先取旧元数据用于继承：迁移可能将旧元数据删除（无剩余位置时）
+        // 内容变动导致哈希漂移 → 按路径迁移元数据,旧 item 摘掉该位置。
+        // 注意先取旧元数据用于继承:迁移可能将旧元数据删除(无剩余位置时)
         ItemMetadata? inheritFrom = pending.OldHash is not null && pending.OldHash != hash
             && _store.TryGet(pending.OldHash, out var oldMeta) ? oldMeta : null;
 
@@ -515,10 +543,10 @@ public sealed class IndexPipeline : IDisposable
         {
             _index.RemoveLocation(pending.Rel);
             MigrateMetadata(pending.OldHash, pending.LibPath);
-            PublishLocationLoss(pending.OldHash);
+            ItemEvents.PublishLocationLoss(_bus, _index, pending.OldHash);
         }
 
-        // 元数据登记路径并回写最新 size/mtime，保持哈希校验依据新鲜
+        // 元数据登记路径并回写最新 size/mtime,保持哈希校验依据新鲜
         var meta = GetOrCreateMetadata(hash, inheritFrom);
         var metaChanged = false;
         var pathEntry = meta.FindPath(pending.LibPath);
@@ -539,18 +567,22 @@ public sealed class IndexPipeline : IDisposable
             _store.Save(hash, meta);
         }
 
-        RegisterTaxonomy(meta);
+        _migrator.RegisterTaxonomy(meta);
 
-        // 索引更新；尺寸为派生信息，索引时从文件读取
+        // 索引更新;尺寸为派生信息,索引时从文件读取(扫描路径已在并行哈希阶段预取)
         var item = _index.GetOrAdd(hash, out var created);
-        SyncMetadata(item, meta);
-        if (item.Width == 0 && ThumbnailService.Identify(pending.AbsPath) is { } dim)
+        item.SyncFrom(meta);
+        if (item.Width == 0)
         {
-            item.Width = dim.Width;
-            item.Height = dim.Height;
+            var dim = pending.Dim ?? ThumbnailService.Identify(pending.AbsPath);
+            if (dim is { } d)
+            {
+                item.Width = d.Width;
+                item.Height = d.Height;
+            }
         }
 
-        // 调色板是内容寻址的缓存：有则直接入索引；缺失由后台 worker 提炼后经 PaletteJob 补齐
+        // 调色板是内容寻址的缓存:有则直接入索引;缺失由后台 worker 提炼后经 PaletteJob 补齐
         if (item.Palette.Length == 0 && _colors.Load(hash) is { } palette)
         {
             item.Palette = palette;
@@ -560,22 +592,22 @@ public sealed class IndexPipeline : IDisposable
 
         if (created)
         {
-            _bus.Publish("item.added", item.ToDto(trashView: !item.HasLibraryLocations));
+            _bus.Publish(ItemEvents.Added, item.ToDto(trashView: !item.HasLibraryLocations));
         }
         else if (addedLocation || metaChanged)
         {
-            PublishItemChanged(item);
+            ItemEvents.PublishChanged(_bus, item);
         }
 
-        QueueThumbnails(hash, pending.AbsPath);
-        return new UpsertResult(item, AlreadyExisted: !created);
+        _thumbWorker?.Enqueue(hash, pending.AbsPath);
+        return new UpsertResult(item.ToDto(trashView: !item.HasLibraryLocations), AlreadyExisted: !created);
     }
 
-    /// <summary>文件最近一秒内仍在写入，视为不稳定</summary>
+    /// <summary>文件最近一秒内仍在写入,视为不稳定</summary>
     private static bool IsUnstable(FileInfo file) =>
         DateTime.UtcNow - file.LastWriteTimeUtc < StabilityWindow;
 
-    /// <summary>延迟重试：同一路径只保留一个延迟任务，避免监听事件风暴放大</summary>
+    /// <summary>延迟重试:同一路径只保留一个延迟任务,避免监听事件风暴放大</summary>
     private void DeferUpsert(string absPath, int attempt)
     {
         if (!_deferredPaths.TryAdd(absPath, 0))
@@ -602,7 +634,7 @@ public sealed class IndexPipeline : IDisposable
         });
     }
 
-    /// <summary>计算内容哈希；读不了（权限/占用）时告警并返回 null</summary>
+    /// <summary>计算内容哈希;读不了(权限/占用)时告警并返回 null</summary>
     private string? TryComputeHash(string absPath, CancellationToken ct)
     {
         try
@@ -616,7 +648,7 @@ public sealed class IndexPipeline : IDisposable
         }
     }
 
-    /// <summary>哈希漂移时按路径迁移：路径从旧元数据移除；旧元数据不再有位置且索引无引用时清理</summary>
+    /// <summary>哈希漂移时按路径迁移:路径从旧元数据移除;旧元数据不再有位置且索引无引用时清理</summary>
     private void MigrateMetadata(string oldHash, string libPath)
     {
         if (!_store.TryGet(oldHash, out var oldMeta))
@@ -638,7 +670,7 @@ public sealed class IndexPipeline : IDisposable
         }
     }
 
-    /// <summary>取得元数据；不存在时新建，可从旧元数据继承素材参数（id 漂移场景）</summary>
+    /// <summary>取得元数据;不存在时新建,可从旧元数据继承素材参数(id 漂移场景)</summary>
     private ItemMetadata GetOrCreateMetadata(string hash, ItemMetadata? inheritFrom)
     {
         if (_store.TryGet(hash, out var meta))
@@ -658,31 +690,15 @@ public sealed class IndexPipeline : IDisposable
         return created;
     }
 
-    private static void SyncMetadata(Item item, ItemMetadata meta)
-    {
-        item.Url = meta.Url;
-        item.Tags = new List<string>(meta.Tags);
-        item.Categories = new List<string>(meta.Categories);
-        item.Star = meta.Star;
-        item.Annotation = meta.Annotation;
-    }
-
-    /// <summary>元数据中的分类/标签自动登记进注册表（赋值即创建，空节点也可预创建）</summary>
-    private void RegisterTaxonomy(ItemMetadata meta)
-    {
-        _categories.RegisterAll(meta.Categories);
-        _tags.RegisterAll(meta.Tags);
-    }
-
     // ---------- 删除 / 移动 ----------
 
-    /// <summary>按相对路径删除：同时按文件（精确）与目录（前缀）匹配，删除事件不区分两者</summary>
+    /// <summary>按相对路径删除:同时按文件(精确)与目录(前缀)匹配,删除事件不区分两者</summary>
     private void DoDelete(string rel)
     {
         var item = _index.RemoveLocation(rel);
         if (item is not null)
         {
-            PublishLocationLoss(item.Id);
+            ItemEvents.PublishLocationLoss(_bus, _index, item.Id);
         }
 
         foreach (var loc in _index.LocationsUnder(rel + "/"))
@@ -690,7 +706,7 @@ public sealed class IndexPipeline : IDisposable
             var removed = _index.RemoveLocation(loc);
             if (removed is not null)
             {
-                PublishLocationLoss(removed.Id);
+                ItemEvents.PublishLocationLoss(_bus, _index, removed.Id);
             }
         }
     }
@@ -712,12 +728,16 @@ public sealed class IndexPipeline : IDisposable
 
         if (!MoveOne(oldRel, newRel, out var hash))
         {
-            // 旧位置未索引（例如改名发生在未索引文件上）→ 按新文件处理
+            // 旧位置未索引(例如改名发生在未索引文件上)→ 按新文件处理
             DoUpsert(new UpsertJob(newAbs, false, null, null, 0), ct);
             return;
         }
 
-        PublishTransition(hash!, LibraryPaths.IsInTrash(oldRel), LibraryPaths.IsInTrash(newRel));
+        var moved = _index.Get(hash!);
+        if (moved is not null)
+        {
+            ItemEvents.PublishTransition(_bus, moved, LibraryPaths.IsInTrash(oldRel), LibraryPaths.IsInTrash(newRel));
+        }
     }
 
     private void DoDirMove(string oldAbs, string newAbs, CancellationToken ct)
@@ -749,10 +769,16 @@ public sealed class IndexPipeline : IDisposable
         var newInTrash = LibraryPaths.IsInTrash(newRel + "/");
         foreach (var hash in affected)
         {
-            PublishTransition(hash, oldInTrash, newInTrash);
+            if (_index.Get(hash) is { } item)
+            {
+                ItemEvents.PublishTransition(_bus, item, oldInTrash, newInTrash);
+            }
         }
 
-        // 目录下可能有监听遗漏的文件，补扫新位置
+        // 目录移动后目录结构必然变化,广播 folder.changed(folder/list 全量建树,客户端重拉即可)
+        _bus.Publish(ItemEvents.FolderChanged, new FolderChangedPayload(FolderChangedPayload.ReasonExternal));
+
+        // 目录下可能有监听遗漏的文件,补扫新位置
         if (Directory.Exists(newAbs))
         {
             foreach (var file in _scanner.WalkDirectory(newAbs))
@@ -762,7 +788,7 @@ public sealed class IndexPipeline : IDisposable
         }
     }
 
-    /// <summary>单个位置的移动：更新索引与元数据路径。返回是否命中已索引位置。</summary>
+    /// <summary>单个位置的移动:更新索引与元数据路径。返回是否命中已索引位置。</summary>
     private bool MoveOne(string oldRel, string newRel, out string? hash)
     {
         hash = _index.MoveLocation(oldRel, newRel);
@@ -771,7 +797,7 @@ public sealed class IndexPipeline : IDisposable
             return false;
         }
 
-        // lib→lib：元数据路径跟随；lib↔trash：去前缀后库内路径不变，元数据保持原路径（恢复目标）
+        // lib→lib:元数据路径跟随;lib↔trash:去前缀后库内路径不变,元数据保持原路径(恢复目标)
         var oldLib = LibraryPaths.IsInTrash(oldRel) ? LibraryPaths.TrashToLibraryPath(oldRel) : oldRel;
         var newLib = LibraryPaths.IsInTrash(newRel) ? LibraryPaths.TrashToLibraryPath(newRel) : newRel;
         if (oldLib != newLib && _store.TryGet(hash, out var meta) && meta.FindPath(oldLib) is { } entry)
@@ -786,9 +812,9 @@ public sealed class IndexPipeline : IDisposable
     // ---------- 扫描 ----------
 
     /// <summary>
-    /// 全量扫描分两阶段：串行遍历做复用判定（不读文件内容），需要哈希的文件并行计算，
-    /// 最后串行应用索引/元数据变更——并行仅限纯计算阶段，单写者模型不变。
-    /// full=true 时对所有文件重算哈希（library/reindex）。
+    /// 全量扫描分两阶段:串行遍历做复用判定(不读文件内容),需要哈希的文件并行计算,
+    /// 最后串行应用索引/元数据变更——并行仅限纯计算阶段,单写者模型不变。
+    /// full=true 时对所有文件重算哈希(library/reindex)。
     /// </summary>
     private void DoScan(bool full, CancellationToken ct)
     {
@@ -796,7 +822,7 @@ public sealed class IndexPipeline : IDisposable
         var pending = new List<PendingUpsert>();
         var count = 0;
 
-        // 进度上报：按 150ms 节流，阶段切换/总数变化时强制发一帧
+        // 进度上报:按 150ms 节流,阶段切换/总数变化时强制发一帧
         var reportState = (At: DateTime.MinValue, Phase: string.Empty, Total: -1);
         void Report(string phase, int processed, int total, bool force = false)
         {
@@ -845,6 +871,12 @@ public sealed class IndexPipeline : IDisposable
                 p =>
                 {
                     p.Hash = TryComputeHash(p.AbsPath, ct);
+                    // 图像头部解析与哈希同属只读阶段,一并并行:避免串行 Identify 阻塞消费循环拖慢扫描
+                    if (p.Hash is not null)
+                    {
+                        p.Dim = ThumbnailService.Identify(p.AbsPath);
+                    }
+
                     Report("hash", Interlocked.Increment(ref hashed), pending.Count);
                 });
 
@@ -870,18 +902,21 @@ public sealed class IndexPipeline : IDisposable
                 var item = _index.RemoveLocation(rel);
                 if (item is not null)
                 {
-                    PublishLocationLoss(item.Id);
+                    ItemEvents.PublishLocationLoss(_bus, _index, item.Id);
                 }
             }
         }
 
-        _logger.LogInformation("扫描完成：{Count} 个文件（{Hashed} 个计算哈希），{Total} 个索引位置",
+        // 对账扫描是目录结构变化的兜底(外部删空目录等不会产生任何事件),广播一次 folder.changed
+        _bus.Publish(ItemEvents.FolderChanged, new FolderChangedPayload(FolderChangedPayload.ReasonExternal));
+
+        _logger.LogInformation("扫描完成:{Count} 个文件({Hashed} 个计算哈希),{Total} 个索引位置",
             count, pending.Count, _index.AllLocationPaths().Length);
     }
 
     // ---------- 回收站 ----------
 
-    /// <summary>清空回收站：清理位置与对应元数据、缩略图（库内仍有引用的内容除外）。物理删除由 API 层完成。</summary>
+    /// <summary>清空回收站:清理位置与对应元数据、缩略图(库内仍有引用的内容除外)。物理删除由 API 层完成。</summary>
     private void DoClearTrash()
     {
         foreach (var rel in _index.AllLocationPaths().Where(LibraryPaths.IsInTrash))
@@ -910,260 +945,23 @@ public sealed class IndexPipeline : IDisposable
 
             if (item.Locations.Count == 0)
             {
-                _bus.Publish("item.removed", new ItemIdPayload(item.Id));
+                _bus.Publish(ItemEvents.Removed, new ItemIdPayload(item.Id));
             }
             else
             {
-                PublishItemChanged(item);
+                ItemEvents.PublishChanged(_bus, item);
             }
         }
-    }
-
-    // ---------- 元数据写 ----------
-
-    private Item? DoApplyMetadata(string hash, Action<ItemMetadata> mutate)
-    {
-        if (!_store.TryGet(hash, out var meta))
-        {
-            return null;
-        }
-
-        mutate(meta);
-        _store.Save(hash, meta);
-        RegisterTaxonomy(meta);
-
-        var item = _index.Get(hash);
-        if (item is not null)
-        {
-            SyncMetadata(item, meta);
-            PublishItemChanged(item);
-        }
-
-        return item;
-    }
-
-    // ---------- 分类/标签级联迁移 ----------
-
-    /// <summary>分类重命名：注册表更名 + 全部命中 item 的 categories 替换；目标已存在时合并</summary>
-    private void DoCategoryUpdate(string oldName, string newName)
-    {
-        _categories.Rename(oldName, newName);
-        // 分类可能仅由赋值产生而未注册过，补上登记
-        _categories.Register(newName);
-
-        foreach (var (hash, meta) in _store.Snapshot())
-        {
-            if (!meta.Categories.Contains(oldName))
-            {
-                continue;
-            }
-
-            meta.Categories = meta.Categories
-                .Select(c => c == oldName ? newName : c)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-            SaveAndSync(hash, meta);
-        }
-    }
-
-    /// <summary>分类删除：注册表与全部 item 的该分类赋值一并清除</summary>
-    private void DoCategoryDelete(string name)
-    {
-        _categories.Delete(name);
-
-        foreach (var (hash, meta) in _store.Snapshot())
-        {
-            if (meta.Categories.Remove(name))
-            {
-                SaveAndSync(hash, meta);
-            }
-        }
-    }
-
-    /// <summary>标签重命名：注册表更名 + 全部 item 的 tags 替换；目标已存在时合并</summary>
-    private void DoTagUpdate(string name, string newName)
-    {
-        _tags.Rename(name, newName);
-
-        foreach (var (hash, meta) in _store.Snapshot())
-        {
-            if (!meta.Tags.Contains(name))
-            {
-                continue;
-            }
-
-            meta.Tags = meta.Tags.Select(t => t == name ? newName : t).Distinct(StringComparer.Ordinal).ToList();
-            SaveAndSync(hash, meta);
-        }
-    }
-
-    /// <summary>标签删除：注册表与全部 item 的该标签清除</summary>
-    private void DoTagDelete(string name)
-    {
-        _tags.Delete(name);
-
-        foreach (var (hash, meta) in _store.Snapshot())
-        {
-            if (meta.Tags.RemoveAll(t => t == name) > 0)
-            {
-                SaveAndSync(hash, meta);
-            }
-        }
-    }
-
-    /// <summary>批量迁移的公共收尾：保存元数据、同步索引、推送 item.updated</summary>
-    private void SaveAndSync(string hash, ItemMetadata meta)
-    {
-        _store.Save(hash, meta);
-        if (_index.Get(hash) is { } item)
-        {
-            SyncMetadata(item, meta);
-            PublishItemChanged(item);
-        }
-    }
-
-    // ---------- 事件 ----------
-
-    /// <summary>item 失去一个位置后的事件：无剩余位置 → removed；只剩回收站 → trashed；否则 updated</summary>
-    private void PublishLocationLoss(string hash)
-    {
-        var item = _index.Get(hash);
-        if (item is null)
-        {
-            _bus.Publish("item.removed", new ItemIdPayload(hash));
-        }
-        else if (!item.HasLibraryLocations)
-        {
-            _bus.Publish("item.trashed", new ItemIdPayload(hash));
-        }
-        else
-        {
-            _bus.Publish("item.updated", item.ToDto(trashView: false));
-        }
-    }
-
-    /// <summary>位置进出回收站后的事件</summary>
-    private void PublishTransition(string hash, bool wasInTrash, bool nowInTrash)
-    {
-        var item = _index.Get(hash);
-        if (item is null)
-        {
-            return;
-        }
-
-        if (!wasInTrash && nowInTrash && !item.HasLibraryLocations)
-        {
-            _bus.Publish("item.trashed", new ItemIdPayload(hash));
-        }
-        else if (wasInTrash && !nowInTrash && item.Locations.Count(l => !l.InTrash) == 1)
-        {
-            _bus.Publish("item.restored", item.ToDto(trashView: false));
-        }
-        else
-        {
-            PublishItemChanged(item);
-        }
-    }
-
-    private void PublishItemChanged(Item item) =>
-        _bus.Publish("item.updated", item.ToDto(trashView: !item.HasLibraryLocations));
-
-    // ---------- 哈希与缩略图 ----------
-
-    private void QueueThumbnails(string hash, string absPath)
-    {
-        // 缩略图是尽力而为的缓存，channel 满时丢弃（缺失可由 refresh_thumbnail 或重启扫描补齐）
-        if (_thumbJobs.Writer.TryWrite(new ThumbJob(hash, absPath)))
-        {
-            Interlocked.Increment(ref _thumbQueued);
-        }
-    }
-
-    private async Task ThumbLoop(CancellationToken ct)
-    {
-        await foreach (var job in _thumbJobs.Reader.ReadAllAsync(ct))
-        {
-            Interlocked.Decrement(ref _thumbQueued);
-            Interlocked.Increment(ref _thumbActive);
-            try
-            {
-                var sizes = _config.Current.ThumbnailSizes.Where(s => !_thumbnails.Exists(job.Hash, s)).ToArray();
-                var needPalette = !_colors.Exists(job.Hash);
-                if (sizes.Length == 0 && !needPalette)
-                {
-                    continue;
-                }
-
-                var generated = sizes.Length > 0 && await _thumbnails.GenerateAsync(job.Hash, job.SourceAbs, sizes, ct: ct);
-
-                // 调色板从最小尺寸的已有缩略图提炼：原图只由缩略图生成解码一次，此处解码小图代价极低
-                if (needPalette)
-                {
-                    var source = _config.Current.ThumbnailSizes.OrderBy(s => s)
-                        .Select(s => _thumbnails.GetPath(job.Hash, s))
-                        .FirstOrDefault(File.Exists);
-                    if (source is not null && _colors.Extract(source) is { } palette)
-                    {
-                        _colors.Save(job.Hash, palette);
-                        // 回流水线应用（单写者）；队列满时丢弃——缓存已落盘，兜底扫描由 ApplyUpsert 载入
-                        _jobs.Writer.TryWrite(new PaletteJob(job.Hash, palette));
-                    }
-                }
-
-                // 生成完成后补发 item.updated：前端缩略图此前的 404 占位据此重建 <img>
-                if (generated && _index.Get(job.Hash) is { } item)
-                {
-                    _bus.Publish("item.updated", item.ToDto(trashView: !item.HasLibraryLocations));
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "缩略图任务失败: {Hash}", job.Hash);
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _thumbActive);
-                ReportTaskProgress();
-            }
-        }
-    }
-
-    /// <summary>
-    /// 积压变化时节流推送 task.progress（500ms 一帧）；刚从非空闲转空闲时补发一帧，让客户端撤掉进度指示。
-    /// SSE 断开的客户端可用 GET /api/v1/app/status 轮询同一快照。
-    /// </summary>
-    private void ReportTaskProgress()
-    {
-        var (pending, active) = ThumbnailBacklog;
-        var idle = pending == 0 && active == 0;
-        var now = DateTime.UtcNow.Ticks;
-        var last = Interlocked.Read(ref _lastTaskProgressAt);
-        var due = now - last >= TimeSpan.TicksPerMillisecond * 500;
-        if (!due && !(idle && !_taskProgressIdle))
-        {
-            return;
-        }
-        if (Interlocked.CompareExchange(ref _lastTaskProgressAt, now, last) != last)
-        {
-            return;
-        }
-        _taskProgressIdle = idle;
-        _bus.Publish("task.progress", new TaskProgress("thumbnail", pending, active));
     }
 
     public void Dispose()
     {
         _cts.Cancel();
         _jobs.Writer.TryComplete();
-        _thumbJobs.Writer.TryComplete();
         try
         {
             _consumer?.Wait(TimeSpan.FromSeconds(5));
-            Task.WaitAll(_thumbWorkers, TimeSpan.FromSeconds(5));
+            _thumbWorker?.Dispose();
         }
         catch
         {

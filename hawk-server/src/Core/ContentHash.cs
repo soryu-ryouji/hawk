@@ -7,7 +7,9 @@ public static class ContentHash
 {
     public static string HashFile(string path, CancellationToken ct = default)
     {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan);
+        // FileShare.ReadWrite|Delete:消费循环算哈希期间,API 线程的移动/删除(改名/移文件夹)仍可成功;
+        // 读取本身只是流式顺序读,共享语义不影响哈希正确性
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20, FileOptions.SequentialScan);
         using var hasher = Hasher.New();
         var buffer = new byte[1 << 17];
         int read;

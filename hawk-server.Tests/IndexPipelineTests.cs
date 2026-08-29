@@ -39,8 +39,11 @@ public class IndexPipelineTests
             var tags = new TagRegistry(paths, NullLogger<TagRegistry>.Instance);
             var scanner = new LibraryScanner(paths, config);
             var settings = new ServerSettings { LibraryRoot = root, Token = "test" };
-            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, colors, bus, scanner, categories, tags, settings,
+            var worker = new ThumbnailWorker(thumbnails, colors, config, bus, NullLogger<ThumbnailWorker>.Instance);
+            var migrator = new TaxonomyMigrator(store, index, categories, tags, bus);
+            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, colors, bus, scanner, migrator, settings,
                 NullLogger<IndexPipeline>.Instance);
+            pipeline.AttachThumbnailWorker(worker);
             pipeline.Start();
             return new Rig { Paths = paths, Store = store, Index = index, Thumbnails = thumbnails, Colors = colors, Bus = bus, Categories = categories, Tags = tags, Pipeline = pipeline };
         }
@@ -79,8 +82,7 @@ public class IndexPipelineTests
         Assert.Equal(64, result.Item.Id.Length);
         Assert.Equal(1, result.Item.Width);
         Assert.Equal(1, result.Item.Height);
-        Assert.Single(result.Item.Locations);
-        Assert.Equal("photo.png", result.Item.Locations[0].Path);
+        Assert.Equal("photo.png", Assert.Single(result.Item.Paths));
         Assert.True(File.Exists(Path.Combine(rig.Paths.MetadataDir, result.Item.Id + ".toml")));
     }
 
@@ -421,5 +423,76 @@ public class IndexPipelineTests
         Assert.True(rig.Store.TryGet(hash, out var meta));
         Assert.Empty(meta.Tags);
         Assert.Empty(rig.Tags.Snapshot());
+    }
+
+    [Fact]
+    public async Task 批量元数据_标签并集追加且报告缺失()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var f1 = _dir.WriteFile("a.png", TempDir.TinyPng);
+        var f2 = _dir.WriteFile("b.png", [9, 9, 9]);
+        var r1 = await rig.Pipeline.SubmitUpsertAsync(f1);
+        var r2 = await rig.Pipeline.SubmitUpsertAsync(f2);
+        var h1 = r1!.Item.Id;
+        var h2 = r2!.Item.Id;
+
+        await rig.Pipeline.SubmitMetadataAsync(h1, m => m.Tags = ["已有"]);
+
+        var missingHash = new string('0', 64); // 索引中不存在
+        var result = await rig.Pipeline.SubmitBatchMetadataAsync(
+            [h1, h2, missingHash],
+            m =>
+            {
+                m.Tags = m.Tags.Union(["批量"], StringComparer.Ordinal).ToList();
+                m.Star = 3;
+            });
+
+        Assert.Equal(2, result.Updated);
+        Assert.Equal([missingHash], result.MissingIds);
+        Assert.True(rig.Store.TryGet(h1, out var m1));
+        Assert.Equal(["已有", "批量"], m1.Tags); // 并集追加,不覆盖
+        Assert.Equal(3, m1.Star);
+        Assert.True(rig.Store.TryGet(h2, out var m2));
+        Assert.Equal(["批量"], m2.Tags);
+        Assert.Contains("批量", rig.Tags.Snapshot()); // 赋值自动登记注册表
+        Assert.Equal(3, rig.Index.Get(h2)!.Star);
+    }
+
+    [Fact]
+    public async Task folder_changed_目录移动与提示入口均广播事件()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var reader = rig.Bus.Subscribe();
+        var file = _dir.WriteFile("d/a.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+
+        // 等后台缩略图/调色板 worker 释放文件句柄,再模拟外部进程移动目录(watcher 上报时移动已完成)
+        Assert.True(await WaitUntil(() => rig.Colors.Exists(result!.Item.Id)));
+
+        // 事件序列不固定(缩略图 worker 完成也会补发 item.updated):循环读到 folder.changed 为止
+        _dir.Mkdir("e");
+        var oldDir = Path.Combine(_dir.Root, "d");
+        var newDir = Path.Combine(_dir.Root, "e", "d");
+        Directory.Move(oldDir, newDir);
+        await rig.Pipeline.SubmitDirMoveAsync(oldDir, newDir);
+
+        FolderChangedPayload? payload = null;
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 5000)
+        {
+            var evt = await reader.ReadAsync();
+            if (evt.Type == "folder.changed")
+            {
+                payload = Assert.IsType<FolderChangedPayload>(evt.Payload);
+                break;
+            }
+        }
+
+        Assert.NotNull(payload);
+        Assert.Equal("external", payload!.Reason);
+
+        // 提示入口(watcher 目录创建/端点操作)
+        rig.Pipeline.NotifyFolderChanged(FolderChangedPayload.ReasonExternal);
+        Assert.Equal("folder.changed", (await reader.ReadAsync()).Type);
     }
 }

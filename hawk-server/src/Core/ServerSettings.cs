@@ -39,7 +39,7 @@ public sealed class ServerSettings
         if (string.IsNullOrWhiteSpace(library))
         {
             Console.Error.WriteLine("用法: hawk-server --library <素材库路径> [--port <端口>]");
-            Console.Error.WriteLine("环境变量: HAWK_LIBRARY / HAWK_PORT / HAWK_TOKEN");
+            Console.Error.WriteLine("环境变量: HAWK_LIBRARY / HAWK_PORT / HAWK_TOKEN / HAWK_RESCAN_INTERVAL(对账扫描间隔秒,0 关闭,默认 60)");
             Environment.Exit(2);
         }
 

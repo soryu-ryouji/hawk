@@ -47,6 +47,16 @@ public sealed class Item
     public bool HasLibraryLocations => Locations.Any(l => !l.InTrash);
     public bool HasTrashLocations => Locations.Any(l => l.InTrash);
 
+    /// <summary>用元数据刷新查询副本(元数据 → 索引的单向同步,只允许索引流水线调用)</summary>
+    public void SyncFrom(ItemMetadata meta)
+    {
+        Url = meta.Url;
+        Tags = new List<string>(meta.Tags);
+        Categories = new List<string>(meta.Categories);
+        Star = meta.Star;
+        Annotation = meta.Annotation;
+    }
+
     /// <summary>主位置：普通视图取首个库内位置，回收站视图取首个回收站位置</summary>
     public ItemLocation? MainLocation(bool trashView) =>
         trashView ? Locations.FirstOrDefault(l => l.InTrash) : Locations.FirstOrDefault(l => !l.InTrash);

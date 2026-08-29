@@ -84,7 +84,7 @@
 
 `GET /api/v1/app/status`
 
-后台任务积压快照。当前仅缩略图（含调色板）worker 队列：导入或初次索引后大量素材等待生成缩略图时，`pending`（排队中）与 `active`（生成中，上限 4）大于 0；积压清空后两者归零。
+后台任务积压快照。当前仅缩略图（含调色板）worker 队列：导入或初次索引后大量素材等待生成缩略图时，`pending`（排队中）与 `active`（生成中，并发度 `CPU/2`、封顶 16）大于 0；积压清空后两者归零。
 
 SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送版，服务端 500ms 节流）；本端点供轮询型客户端使用。
 
@@ -296,6 +296,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | GET  | `/api/v1/item/count`             | 获取 item 总数 |
 | POST | `/api/v1/item/add`               | 添加新 item    |
 | POST | `/api/v1/item/update`            | 更新 item      |
+| POST | `/api/v1/item/batch_update`      | 批量更新(标签/分类并集、评分/文件夹设置) |
 | POST | `/api/v1/item/delete`            | 移入回收站     |
 | POST | `/api/v1/item/restore`           | 从回收站恢复   |
 | GET  | `/api/v1/item/thumbnail`         | 获取缩略图     |
@@ -499,6 +500,50 @@ Item 对象，并附带 `already_existed` 标志：
 
 更新后的 Item 对象。
 
+### batch_update
+
+`POST /api/v1/item/batch_update`
+
+对一批 item 应用同一组更新,一次请求完成(多选打标签/评分/移动等批量场景,避免逐条 `item/update` 的 N 次往返)。所有 id 串行经索引流水线应用,响应一次性返回。
+
+语义与 `item/update` 的差异:
+
+- `add_tags` / `add_categories` 是**并集追加**(保留已有),不是整体替换
+- `star` / `folder_path` 是**设置**(与 `item/update` 同语义)
+
+#### 请求
+
+| 参数          | 类型     | 必填 | 说明                                             |
+| ------------- | -------- | ---- | ------------------------------------------------ |
+| ids           | string[] | 是   | item id 列表(重复 id 自动去重)                 |
+| add_tags      | string[] | 否   | 追加标签(并集,自动登记注册表)                  |
+| add_categories | string[] | 否  | 追加分类(并集;名称校验同 `item/update`,自动登记注册表) |
+| star          | number   | 否   | 评分 0–5(设置)                                 |
+| folder_path   | string   | 否   | 移动到该文件夹(移动各 item 的主位置;空字符串为库根目录) |
+
+四个更新字段至少提供一个,否则返回 `INVALID_PARAM`。
+
+#### 部分失败语义
+
+批量操作不整体失败,逐项跳过:
+
+- **内容不存在**的 id:跳过该项(元数据与移动都不应用),记入 `missing_ids`
+- **移动冲突**(目标位置已有同名文件):跳过该项的移动,记入 `missing_ids`;`add_tags` / `add_categories` / `star` 照常应用
+- **回收站中的 item**(无库内位置):移动不适用,跳过;元数据照常应用
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": { "updated": 498, "missing_ids": ["abc...", "def..."] }
+}
+```
+
+`updated` 为成功应用元数据的 id 数;`missing_ids` 为上述未达成的 id(去重)。客户端可据此提示「已更新 n 项,m 项未处理」。
+
+每个成功更新的 item 都会照常推送 `item.updated` 事件。
+
 ### delete
 
 `POST /api/v1/item/delete`
@@ -613,15 +658,52 @@ Item 对象，并附带 `already_existed` 标志：
 
 `GET /api/v1/events?token=<token>`
 
-Server-Sent Events 订阅素材库变更，前端据此增量刷新界面。`EventSource` 无法设置请求头，token 通过查询参数传递。
+Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`EventSource` 无法设置请求头,token 通过查询参数传递。
 
-事件类型：
+### 事件一览
 
-| 事件            | data              | 说明             |
-| --------------- | ----------------- | ---------------- |
-| `item.added`    | Item 对象         | 新文件入库       |
-| `item.updated`  | Item 对象         | 元数据或文件变更 |
-| `item.trashed`  | `{ "id": "..." }` | 移入回收站       |
-| `item.restored` | Item 对象         | 从回收站恢复     |
-| `item.removed`  | `{ "id": "..." }` | 彻底删除         |
-| `task.progress` | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化（当前仅缩略图队列；服务端 500ms 节流，积压倒零后补发一帧清零帧） |
+| 事件              | data | 说明 |
+| ----------------- | ---- | ---- |
+| `item.added`      | Item 对象 | 新文件入库 |
+| `item.updated`    | Item 对象 | 元数据、文件位置或调色板变更(缩略图生成完成也补发一次,前端据此重建 404 占位) |
+| `item.trashed`    | `{ "id": "..." }` | 最后一个库内位置移入回收站 |
+| `item.restored`   | Item 对象 | 首个回收站位置回归库内 |
+| `item.removed`    | `{ "id": "..." }` | 彻底删除(无剩余位置) |
+| `folder.changed`  | `{ "reason": "external" }` | 目录结构可能变化,客户端应重拉 `folder/list`;reason 恒为 `external`,客户端必须忽略取值(结构为将来预留) |
+| `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(当前仅缩略图/调色板队列;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
+
+事件名与负载即持久契约(Rust 重写必须逐字兼容);后端以常量集中定义(`ItemEvents`),客户端不许凭代码反推。
+
+### 负载契约
+
+**Item 对象**:与 `item/list` 响应中的 Item 结构完全相同(见「Item 对象」节)。`item.updated` / `item.added` / `item.restored` 带完整对象,客户端可就地替换缓存;`trashView` 由服务端按「是否只剩回收站位置」投影(回收站视图的 `paths` 为原库内路径)。
+
+**id 负载**(`item.trashed` / `item.removed`):
+
+```json
+{ "id": "9b1f2c..." }
+```
+
+**folder.changed 负载**:
+
+```json
+{ "reason": "external" }
+```
+
+触发来源:本端文件夹增删改移(API)、外部进程目录操作(文件监听)、周期对账扫描兜底。文件夹树无增量语义(前端经 `folder/list` 全量实时建树),事件只表达「需要重拉」。
+
+**task.progress 负载**:
+
+```json
+{ "task": "thumbnail", "pending": 236, "active": 4 }
+```
+
+`pending` 为排队数,`active` 为生成中(并发度 `CPU/2`、封顶 16)。SSE 断开的客户端可轮询 `GET /api/v1/app/status` 获取同一快照。
+
+### 时序与可靠性语义
+
+- **节流**:`task.progress` 服务端 500ms 最多一帧;`item.*` 事件无节流,批量操作(如 `item/batch_update` 500 项)会连续收到多条
+- **不保证送达**:订阅者消费跟不上(积压 1024 条)时服务端直接断开该订阅——客户端重连后必须以 `item/skeleton` + `folder/list` 全量对齐,不得假设收到过全部事件
+- **初始索引期间**:就绪网关拦截期内不推事件(订阅端点同样 503),主界面加载完成后订阅即可
+- **顺序**:同一 item 的事件按流水线处理顺序发出;不同 item 之间无全局顺序保证
+- **重连**:EventSource 断线自动重连,`onopen` 再次触发即对齐时机(参考前端 `events.ts` 的 `onReconnect` 约定)

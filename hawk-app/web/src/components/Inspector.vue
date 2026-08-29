@@ -150,9 +150,7 @@ function formatTime(ms: number): string {
 }
 
 function applyStarToAll(value: number) {
-  for (const selected of store.selectedItems) {
-    void store.updateItem(selected.id, { star: value });
-  }
+  void store.setStarForSelected(value);
 }
 
 // ---- 多选批量 ----

@@ -13,15 +13,15 @@ public static class ItemEndpoints
         public string[]? Tags { get; init; }
         public int? Star { get; init; }
         public string[]? Folders { get; init; }
-        /// <summary>为 true 时文件夹只精确匹配直接位于该目录下的 item（不含子目录）；空字符串表示库根目录</summary>
+        /// <summary>为 true 时文件夹只精确匹配直接位于该目录下的 item(不含子目录);空字符串表示库根目录</summary>
         public bool FoldersExact { get; init; }
         public string[]? Categories { get; init; }
         public string? CategoriesMatch { get; init; }
         public string[]? ExcludeCategories { get; init; }
         public string[]? ExcludeTags { get; init; }
-        /// <summary>只返回未分类（没有任何分类）的 item</summary>
+        /// <summary>只返回未分类(没有任何分类)的 item</summary>
         public bool WithoutCategories { get; init; }
-        /// <summary>只返回未标签（没有任何标签）的 item</summary>
+        /// <summary>只返回未标签(没有任何标签)的 item</summary>
         public bool WithoutTags { get; init; }
         public string? Ext { get; init; }
         public string? Annotation { get; init; }
@@ -36,7 +36,7 @@ public static class ItemEndpoints
 
     public sealed record ItemListResponse(ItemDto[] Items, int Total, long TotalSize, int Offset, int Limit);
 
-    /// <summary>虚拟网格骨架：全量 dim（与 item/list 同过滤同排序、不分页），前端据此建立完整布局后按 offset 取窗口
+    /// <summary>虚拟网格骨架:全量 dim(与 item/list 同过滤同排序、不分页),前端据此建立完整布局后按 offset 取窗口
     /// </summary>
     public sealed record ItemSkeletonResponse(ItemSkeletonDto[] Items, long TotalSize);
 
@@ -50,7 +50,7 @@ public static class ItemEndpoints
         public string[]? Tags { get; init; }
         public string[]? Categories { get; init; }
         public string? Annotation { get; init; }
-        /// <summary>来源网页（收集场景：图片所在的页面地址），记录为 Item.url；与下载用的 url 区分</summary>
+        /// <summary>来源网页(收集场景:图片所在的页面地址),记录为 Item.url;与下载用的 url 区分</summary>
         public string? Website { get; init; }
     }
 
@@ -69,6 +69,19 @@ public static class ItemEndpoints
         public string? Url { get; init; }
     }
 
+    /// <summary>批量更新(item/batch_update):标签/分类为并集追加,标量与文件夹为设置;部分失败逐项跳过</summary>
+    public sealed record ItemBatchUpdateRequest
+    {
+        public required string[] Ids { get; init; }
+        public string[]? AddTags { get; init; }
+        public string[]? AddCategories { get; init; }
+        public int? Star { get; init; }
+        public string? FolderPath { get; init; }
+    }
+
+    /// <summary>Updated=元数据实际应用数;MissingIds=内容不存在或移动冲突的 id(其余字段照常应用,除非 id 不存在)</summary>
+    public sealed record ItemBatchUpdateResponse(int Updated, string[] MissingIds);
+
     public sealed record ItemIdRequest(string Id, string? Path);
     public sealed record ItemRefreshThumbnailRequest(string Id);
 
@@ -86,8 +99,8 @@ public static class ItemEndpoints
             return TypedResults.Ok(Envelope<ItemListResponse>.Ok(response));
         });
 
-        // 骨架：与 /list 完全相同的过滤与排序（确定性次序），不分页，只回布局所需的最低字段。
-        // 前端虚拟网格用它一次性算出全部内容的总高（滚动条可自由拖动），视口内再按 offset 用 /list 取详情。
+        // 骨架:与 /list 完全相同的过滤与排序(确定性次序),不分页,只回布局所需的最低字段。
+        // 前端虚拟网格用它一次性算出全部内容的总高(滚动条可自由拖动),视口内再按 offset 用 /list 取详情。
         group.MapPost("/skeleton", (ItemListRequest? req, ItemIndex index) =>
         {
             var query = BuildQuery(req);
@@ -97,14 +110,15 @@ public static class ItemEndpoints
 
         group.MapGet("/detail", (string id, ItemIndex index) =>
         {
-            var item = index.Get(id) ?? throw ApiException.ItemNotFound(id);
-            return TypedResults.Ok(Envelope<ItemDto>.Ok(item.ToDto(trashView: !item.HasLibraryLocations)));
+            var dto = index.GetDto(id) ?? throw ApiException.ItemNotFound(id);
+            return TypedResults.Ok(Envelope<ItemDto>.Ok(dto));
         });
 
         group.MapGet("/count", (ItemIndex index) => TypedResults.Ok(Envelope<int>.Ok(index.Count())));
 
         group.MapPost("/add", AddAsync);
         group.MapPost("/update", UpdateAsync);
+        group.MapPost("/batch_update", BatchUpdateAsync);
         group.MapPost("/delete", DeleteAsync);
         group.MapPost("/restore", RestoreAsync);
 
@@ -116,7 +130,11 @@ public static class ItemEndpoints
                 throw ApiException.InvalidParam($"不支持的缩略图尺寸: {actualSize}");
             }
 
-            _ = index.Get(id) ?? throw ApiException.ItemNotFound(id);
+            if (!index.Contains(id))
+            {
+                throw ApiException.ItemNotFound(id);
+            }
+
             var file = thumbnails.GetPath(id, actualSize);
             if (!File.Exists(file))
             {
@@ -124,22 +142,21 @@ public static class ItemEndpoints
                 throw ApiException.ItemNotFound($"thumbnail {id} ({actualSize})");
             }
 
-            // item id 是内容哈希，缩略图内容永不变，客户端可永久缓存
+            // item id 是内容哈希,缩略图内容永不变,客户端可永久缓存
             ctx.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
             return TypedResults.File(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read), "image/webp");
         });
 
-        // 原图：预览浮层用。<img> 无法带请求头，token 走查询参数（AuthMiddleware 放行）
+        // 原图:预览浮层用。<img> 无法带请求头,token 走查询参数(AuthMiddleware 放行)
         group.MapGet("/file", (string id, HttpContext ctx, ItemIndex index, LibraryPaths paths) =>
         {
-            var item = index.Get(id) ?? throw ApiException.ItemNotFound(id);
-            var file = SourceFile(item, paths) ?? throw ApiException.InvalidParam("item 没有可用的文件位置");
+            var file = index.MainSourceAbs(id, paths) ?? throw ApiException.ItemNotFound(id);
             if (!File.Exists(file))
             {
                 throw ApiException.ItemNotFound($"file {id}");
             }
 
-            // item id 是内容哈希，文件内容永不变，客户端可永久缓存
+            // item id 是内容哈希,文件内容永不变,客户端可永久缓存
             ctx.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
             var contentType = new FileExtensionContentTypeProvider().TryGetContentType(file, out var ct)
                 ? ct
@@ -149,8 +166,7 @@ public static class ItemEndpoints
 
         group.MapPost("/refresh_thumbnail", async (ItemRefreshThumbnailRequest req, ItemIndex index, ThumbnailService thumbnails, LibraryConfig config, LibraryPaths paths) =>
         {
-            var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
-            var source = SourceFile(item, paths) ?? throw ApiException.InvalidParam("item 没有可用的文件位置");
+            var source = index.MainSourceAbs(req.Id, paths) ?? throw ApiException.ItemNotFound(req.Id);
             await thumbnails.GenerateAsync(req.Id, source, config.Current.ThumbnailSizes, force: true);
             return TypedResults.Ok(new Envelope<object>("success", null));
         });
@@ -158,7 +174,7 @@ public static class ItemEndpoints
 
     // ---------- list/skeleton 共用查询构造 ----------
 
-    /// <summary>ItemListRequest → ItemQuery：/list 与 /skeleton 必须走同一条路径，保证两次查询次序逐位一致</summary>
+    /// <summary>ItemListRequest → ItemQuery:/list 与 /skeleton 必须走同一条路径,保证两次查询次序逐位一致</summary>
     private static ItemQuery BuildQuery(ItemListRequest? req)
     {
         req ??= new ItemListRequest();
@@ -204,7 +220,7 @@ public static class ItemEndpoints
         var folderAbs = folderRel == "" ? paths.Root : paths.ToAbsolute(folderRel)!;
         Directory.CreateDirectory(folderAbs);
 
-        // 获取内容来源：本地文件直接引用，url/base64 先落临时文件
+        // 获取内容来源:本地文件直接引用,url/base64 先落临时文件
         string? tempFile = null;
         string sourceAbs;
         string ext;
@@ -289,14 +305,14 @@ public static class ItemEndpoints
                 throw ApiException.FileExists(targetRel);
             }
 
-            // 先算哈希判断内容是否已存在（already_existed 语义以写入前为准）
+            // 先算哈希判断内容是否已存在(already_existed 语义以写入前为准)
             var hash = ContentHash.HashFile(sourceAbs, ct);
-            var alreadyExisted = index.Get(hash) is not null;
+            var alreadyExisted = index.Contains(hash);
 
             if (req.Path is not null)
             {
                 File.Copy(sourceAbs, targetAbs);
-                // 保留原文件时间属性：File.Copy 会重置创建时间，修改时间在各平台行为也不可靠；
+                // 保留原文件时间属性:File.Copy 会重置创建时间,修改时间在各平台行为也不可靠;
                 // modification_time 排序与文件管理器观感都以原文件为准
                 var sourceInfo = new FileInfo(sourceAbs);
                 File.SetCreationTimeUtc(targetAbs, sourceInfo.CreationTimeUtc);
@@ -308,14 +324,14 @@ public static class ItemEndpoints
                 tempFile = null;
             }
 
-            // 哈希已算好，流水线跳过重算，避免大文件导入时二次读盘
+            // 哈希已算好,流水线跳过重算,避免大文件导入时二次读盘
             var result = await pipeline.SubmitUpsertAsync(targetAbs, hash);
             if (result is null)
             {
                 throw new ApiException(ErrorCodes.Internal, "索引失败", StatusCodes.Status500InternalServerError);
             }
 
-            // 附带的素材参数写入元数据；website（来源网页）记录为 Item.url，下载用的 url 不覆盖它
+            // 附带的素材参数写入元数据;website(来源网页)记录为 Item.url,下载用的 url 不覆盖它
             if (req.Tags is not null || req.Annotation is not null || req.Website is not null || req.Categories is not null)
             {
                 string[]? categories = null;
@@ -354,8 +370,9 @@ public static class ItemEndpoints
                 });
             }
 
-            var item = index.Get(hash)!;
-            return TypedResults.Ok(Envelope<ItemAddResponse>.Ok(new ItemAddResponse(item.ToDto(trashView: false), alreadyExisted)));
+            // 元数据可能刚经 SubmitMetadataAsync 更新,响应以最新投影为准(锁内投影,锁外不持有 Item)
+            var dto = index.GetDto(hash) ?? throw new ApiException(ErrorCodes.Internal, "索引失败", StatusCodes.Status500InternalServerError);
+            return TypedResults.Ok(Envelope<ItemAddResponse>.Ok(new ItemAddResponse(dto, alreadyExisted)));
         }
         finally
         {
@@ -370,13 +387,12 @@ public static class ItemEndpoints
 
     private static async Task<IResult> UpdateAsync(ItemUpdateRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
     {
-        var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
-        var loc = FindLocation(item, req.Path, wantTrash: null)
+        var loc = index.FindLocation(req.Id, req.Path, wantTrash: null)
             ?? throw ApiException.ItemNotFound(req.Path ?? req.Id);
 
         if (loc.InTrash && (req.Name is not null || req.FolderPath is not null))
         {
-            throw ApiException.InvalidParam("回收站中的文件不支持改名/移动，请先恢复");
+            throw ApiException.InvalidParam("回收站中的文件不支持改名/移动,请先恢复");
         }
 
         if (req.Name is not null)
@@ -421,9 +437,11 @@ public static class ItemEndpoints
                 }
             }
 
-            var fileName = loc.Path[(loc.Path.LastIndexOf('/') + 1)..];
+            // name 分支可能已移动过文件:按移动后的最新位置再移动(改名+移动同请求时基于新文件名计算目标)
+            var current = index.FindLocation(req.Id, req.Path, wantTrash: null) ?? loc;
+            var fileName = current.Path[(current.Path.LastIndexOf('/') + 1)..];
             var targetAbs = Path.Combine(folderAbs!, fileName);
-            var sourceAbs2 = paths.ToAbsolute(loc.Path)!;
+            var sourceAbs2 = paths.ToAbsolute(current.Path)!;
             if (!string.Equals(targetAbs, sourceAbs2, StringComparison.Ordinal))
             {
                 if (File.Exists(targetAbs))
@@ -484,16 +502,138 @@ public static class ItemEndpoints
             });
         }
 
-        var updated = index.Get(req.Id)!;
-        return TypedResults.Ok(Envelope<ItemDto>.Ok(updated.ToDto(trashView: !updated.HasLibraryLocations)));
+        var updated = index.GetDto(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
+        return TypedResults.Ok(Envelope<ItemDto>.Ok(updated));
+    }
+
+    // ---------- batch_update ----------
+
+    private static async Task<IResult> BatchUpdateAsync(ItemBatchUpdateRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
+    {
+        if (req.Ids.Length == 0)
+        {
+            throw ApiException.InvalidParam("ids 不能为空");
+        }
+
+        if (req.AddTags is null && req.AddCategories is null && req.Star is null && req.FolderPath is null)
+        {
+            throw ApiException.InvalidParam("至少提供一个更新字段");
+        }
+
+        if (req.Star is < 0 or > 5)
+        {
+            throw ApiException.InvalidParam("star 取值范围为 0-5");
+        }
+
+        string[]? addCategories = null;
+        if (req.AddCategories is not null)
+        {
+            addCategories = req.AddCategories.Select(CategoryName.Normalize).ToArray()!;
+            if (addCategories.Any(c => c is null))
+            {
+                throw ApiException.InvalidParam("包含非法分类名称");
+            }
+
+            addCategories = addCategories.Distinct(StringComparer.Ordinal).ToArray();
+        }
+
+        var ids = req.Ids.Distinct(StringComparer.Ordinal).ToArray();
+        var moveFailed = new List<string>();
+
+        // folder_path:逐个移动主位置(库内);已在目标处的跳过;无库内位置(全在回收站)的移动不适用,跳过
+        if (req.FolderPath is not null)
+        {
+            string folderAbs;
+            if (req.FolderPath == "")
+            {
+                folderAbs = paths.Root;
+            }
+            else
+            {
+                if (!LibraryPaths.IsValidLibraryPath(req.FolderPath))
+                {
+                    throw ApiException.InvalidParam($"非法文件夹路径: {req.FolderPath}");
+                }
+
+                folderAbs = paths.ToAbsolute(req.FolderPath)!;
+                if (!Directory.Exists(folderAbs))
+                {
+                    throw ApiException.FolderNotFound(req.FolderPath);
+                }
+            }
+
+            foreach (var id in ids)
+            {
+                var loc = index.FindLocation(id, null, wantTrash: false);
+                if (loc is null)
+                {
+                    continue;
+                }
+
+                var fileName = loc.Path[(loc.Path.LastIndexOf('/') + 1)..];
+                var sourceAbs = paths.ToAbsolute(loc.Path)!;
+                var targetAbs = Path.Combine(folderAbs, fileName);
+                if (string.Equals(targetAbs, sourceAbs, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                // 同名冲突不整体失败:跳过该项移动并记入 missing,其余照常
+                if (File.Exists(targetAbs))
+                {
+                    moveFailed.Add(id);
+                    continue;
+                }
+
+                try
+                {
+                    File.Move(sourceAbs, targetAbs);
+                }
+                catch (IOException)
+                {
+                    moveFailed.Add(id);
+                    continue;
+                }
+
+                await pipeline.SubmitMoveAsync(sourceAbs, targetAbs);
+            }
+        }
+
+        // 元数据:标签/分类并集追加、评分设置;一次提交,由流水线批量应用(单写者)
+        var updated = 0;
+        var missing = new List<string>(moveFailed);
+        if (req.AddTags is not null || addCategories is not null || req.Star is not null)
+        {
+            var result = await pipeline.SubmitBatchMetadataAsync(ids, meta =>
+            {
+                if (req.AddTags is not null)
+                {
+                    meta.Tags = meta.Tags.Union(req.AddTags, StringComparer.Ordinal).ToList();
+                }
+
+                if (addCategories is not null)
+                {
+                    meta.Categories = meta.Categories.Union(addCategories, StringComparer.Ordinal).ToList();
+                }
+
+                if (req.Star is not null)
+                {
+                    meta.Star = req.Star.Value;
+                }
+            });
+            updated = result.Updated;
+            missing.AddRange(result.MissingIds);
+        }
+
+        return TypedResults.Ok(Envelope<ItemBatchUpdateResponse>.Ok(
+            new ItemBatchUpdateResponse(updated, missing.Distinct(StringComparer.Ordinal).ToArray())));
     }
 
     // ---------- delete / restore ----------
 
     private static async Task<IResult> DeleteAsync(ItemIdRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
     {
-        var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
-        var loc = FindLocation(item, req.Path, wantTrash: false)
+        var loc = index.FindLocation(req.Id, req.Path, wantTrash: false)
             ?? throw ApiException.InvalidParam(req.Path is null ? "item 不在库内" : $"库内不存在该文件位置: {req.Path}");
 
         var sourceAbs = paths.ToAbsolute(loc.Path)!;
@@ -506,11 +646,10 @@ public static class ItemEndpoints
 
     private static async Task<IResult> RestoreAsync(ItemIdRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline)
     {
-        var item = index.Get(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
-        var loc = FindLocation(item, req.Path, wantTrash: true)
+        var loc = index.FindLocation(req.Id, req.Path, wantTrash: true)
             ?? throw ApiException.InvalidParam(req.Path is null ? "item 不在回收站" : $"回收站中不存在该文件位置: {req.Path}");
 
-        // 按原路径放回（回收站中的实际名称去掉 .hawk/trash/ 前缀）
+        // 按原路径放回(回收站中的实际名称去掉 .hawk/trash/ 前缀)
         var targetAbs = paths.ToAbsolute(loc.LibraryPath)!;
         if (File.Exists(targetAbs))
         {
@@ -522,33 +661,5 @@ public static class ItemEndpoints
         File.Move(sourceAbs, targetAbs);
         await pipeline.SubmitMoveAsync(sourceAbs, targetAbs);
         return TypedResults.Ok(new Envelope<object>("success", null));
-    }
-
-    /// <summary>
-    /// 定位操作的文件位置：缺省为主位置（wantTrash=false 时取首个库内位置，true 时取首个回收站位置）；
-    /// 指定 path 时按视图匹配（回收站位置以其原库内路径匹配）。
-    /// </summary>
-    private static ItemLocation? FindLocation(Item item, string? path, bool? wantTrash)
-    {
-        if (path is null)
-        {
-            return wantTrash switch
-            {
-                false => item.Locations.FirstOrDefault(l => !l.InTrash),
-                true => item.Locations.FirstOrDefault(l => l.InTrash),
-                null => item.Locations.FirstOrDefault(l => !l.InTrash) ?? item.Locations.FirstOrDefault(),
-            };
-        }
-
-        return item.Locations.FirstOrDefault(l =>
-            (wantTrash is null || l.InTrash == wantTrash) &&
-            (l.Path == path || l.LibraryPath == path));
-    }
-
-    /// <summary>取一个可读的源文件绝对路径（优先库内位置）</summary>
-    private static string? SourceFile(Item item, LibraryPaths paths)
-    {
-        var loc = item.Locations.FirstOrDefault(l => !l.InTrash) ?? item.Locations.FirstOrDefault();
-        return loc is null ? null : paths.ToAbsolute(loc.Path);
     }
 }

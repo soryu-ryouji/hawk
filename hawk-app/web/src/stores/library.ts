@@ -645,47 +645,47 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 为全部选中项追加分类（去重，保留已有）；完成后立即刷新分类计数，不等 SSE 防抖 */
+  /** 为全部选中项追加分类(去重,保留已有);完成后立即刷新分类计数,不等 SSE 防抖 */
   async function addCategoryToSelected(name: string) {
     await ensureSelectionDetails();
-    const jobs = [];
-    for (const id of selection.value) {
-      const item = details.value.get(id);
-      if (item && !(item.categories ?? []).includes(name)) {
-        jobs.push(updateItem(id, { categories: [...(item.categories ?? []), name] }));
-      }
-    }
-    await Promise.all(jobs);
+    const ids = selection.value.filter((id) => !(details.value.get(id)?.categories ?? []).includes(name));
+    await batchUpdate(ids, { add_categories: [name] }, '已添加分类');
     void refreshTaxonomy();
   }
 
-  /** 为全部选中项追加标签（去重，保留已有）；完成后立即刷新标签计数，不等 SSE 防抖 */
+  /** 为全部选中项追加标签(去重,保留已有);完成后立即刷新标签计数,不等 SSE 防抖 */
   async function addTagToSelected(tag: string) {
     await ensureSelectionDetails();
-    const jobs = [];
-    for (const id of selection.value) {
-      const item = details.value.get(id);
-      if (item && !(item.tags ?? []).includes(tag)) {
-        jobs.push(updateItem(id, { tags: [...(item.tags ?? []), tag] }));
-      }
-    }
-    await Promise.all(jobs);
+    const ids = selection.value.filter((id) => !(details.value.get(id)?.tags ?? []).includes(tag));
+    await batchUpdate(ids, { add_tags: [tag] }, '已添加标签');
     void refreshTaxonomy();
   }
 
-  /** 将全部选中项移动到目标文件夹（空字符串为根目录）；已在目标文件夹的项跳过；完成后立即刷新文件夹树，不等 SSE 防抖 */
+  /** 将全部选中项移动到目标文件夹(空字符串为根目录);已在目标文件夹的项跳过;完成后立即刷新文件夹树 */
   async function moveSelectedToFolder(path: string) {
     await ensureSelectionDetails();
-    const jobs = [];
-    for (const id of selection.value) {
-      const item = details.value.get(id);
-      if (item && (item.folders?.[0] ?? '') === path) {
-        continue;
-      }
-      jobs.push(updateItem(id, { folder_path: path }));
-    }
-    await Promise.all(jobs);
+    const ids = selection.value.filter((id) => (details.value.get(id)?.folders?.[0] ?? '') !== path);
+    await batchUpdate(ids, { folder_path: path }, '已移动');
     void refreshFolders();
+  }
+
+  /** 批量设置选中项评分(多选面板与右键菜单共用) */
+  async function setStarForSelected(star: number) {
+    await batchUpdate([...selection.value], { star }, '已设置评分');
+  }
+
+  /** 批量端点统一入口:missing(内容不存在/移动冲突)在结果中提示,不整体失败 */
+  async function batchUpdate(ids: string[], patch: Parameters<typeof api.itemBatchUpdate>[1], doneText: string) {
+    if (ids.length === 0) {
+      return;
+    }
+    try {
+      const res = await api.itemBatchUpdate(ids, patch);
+      const skipped = res.missing_ids.length;
+      showToast(skipped > 0 ? `${doneText}(${skipped} 个未处理)` : doneText);
+    } catch (e) {
+      showToast(errorText(e));
+    }
   }
 
   // ---- 预览浮层 ----
@@ -742,10 +742,14 @@ export const useLibraryStore = defineStore('library', () => {
         if (p.task !== 'thumbnail') {
           break;
         }
-        // 积压归零撤掉指示；其余帧更新计数（节流由服务端 500ms 保证）
+        // 积压归零撤掉指示;其余帧更新计数(节流由服务端 500ms 保证)
         taskBacklog.value = p.pending + p.active > 0 ? { pending: p.pending, active: p.active } : null;
         break;
       }
+      case 'folder.changed':
+        // 目录结构变化(本端操作/外部进程/对账兜底):重拉文件夹树;与骨架成员和分类/标签计数无关
+        debouncedRefreshFolders(() => void refreshFolders());
+        return; // 跳过下方 item 事件附带的 taxonomy 防抖刷新
     }
     // task.progress 与文件夹树/分类无关，跳过下面的防抖刷新
     if (type === 'task.progress') {
@@ -762,7 +766,7 @@ export const useLibraryStore = defineStore('library', () => {
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,
-    refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder,
+    refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
     openPreview, closePreview, navigatePreview, showToast, applyEvent,
   };
 });

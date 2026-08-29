@@ -12,6 +12,14 @@ export interface ItemPatch {
   folder_path?: string;
 }
 
+/** 批量更新(item/batch_update):标签/分类为并集追加,评分/文件夹为设置 */
+export interface ItemBatchPatch {
+  add_tags?: string[];
+  add_categories?: string[];
+  star?: number;
+  folder_path?: string;
+}
+
 export const api = {
   appInfo: () => request<{ version: string; platform: string; exec_path: string }>('GET', '/api/v1/app/info'),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
@@ -35,9 +43,12 @@ export const api = {
     request<{ item: Item; already_existed: boolean }>('POST', '/api/v1/item/add', {
       body: { path, name: opts?.name, folder_path: opts?.folder_path, tags: opts?.tags },
     }),
-  // undefined 键会被 JSON.stringify 省略，即「不更新该字段」；置空传空字符串/空数组
+  // undefined 键会被 JSON.stringify 省略,即「不更新该字段」;置空传空字符串/空数组
   itemUpdate: (id: string, patch: ItemPatch, path?: string) =>
     request<Item>('POST', '/api/v1/item/update', { body: { id, path, ...patch } }),
+  /** 批量更新;missing_ids 为内容不存在或移动冲突的 id(其余字段照常应用) */
+  itemBatchUpdate: (ids: string[], patch: ItemBatchPatch) =>
+    request<{ updated: number; missing_ids: string[] }>('POST', '/api/v1/item/batch_update', { body: { ids, ...patch } }),
   itemDelete: (id: string, path?: string) => request<void>('POST', '/api/v1/item/delete', { body: { id, path } }),
   itemRestore: (id: string, path?: string) => request<void>('POST', '/api/v1/item/restore', { body: { id, path } }),
   refreshThumbnail: (id: string) => request<void>('POST', '/api/v1/item/refresh_thumbnail', { body: { id } }),

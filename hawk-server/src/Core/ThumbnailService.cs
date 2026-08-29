@@ -24,13 +24,15 @@ public sealed class ThumbnailService
 
     public bool Exists(string hash, int size) => File.Exists(GetPath(hash, size));
 
-    /// <summary>读取图像尺寸（只解码头信息）。非图像或解码失败返回 null。</summary>
+    /// <summary>读取图像尺寸(只解码头信息)。非图像或解码失败返回 null。
+    /// 共享读打开(FileShare.ReadWrite|Delete):后台调用方(扫描/缩略图)不阻塞文件的移动与删除。</summary>
     public static (int Width, int Height)? Identify(string absPath)
     {
         try
         {
-            var info = Image.Identify(absPath);
-            return ((int)info.Width, (int)info.Height);
+            using var stream = OpenShared(absPath);
+            var info = Image.Identify(stream);
+            return info is null ? null : ((int)info.Width, (int)info.Height);
         }
         catch
         {
@@ -38,12 +40,13 @@ public sealed class ThumbnailService
         }
     }
 
-    /// <summary>检测图像格式对应的默认扩展名（小写不含点）。无法识别返回 null。</summary>
+    /// <summary>检测图像格式对应的默认扩展名(小写不含点)。无法识别返回 null。</summary>
     public static string? DetectExtension(string absPath)
     {
         try
         {
-            var format = Image.DetectFormat(absPath);
+            using var stream = OpenShared(absPath);
+            var format = Image.DetectFormat(stream);
             return format?.FileExtensions.FirstOrDefault()?.ToLowerInvariant();
         }
         catch
@@ -85,7 +88,8 @@ public sealed class ThumbnailService
 
         try
         {
-            using var image = await Image.LoadAsync(sourceAbs, ct);
+            using var stream = OpenShared(sourceAbs);
+            using var image = await Image.LoadAsync(stream, ct);
             foreach (var size in pending)
             {
                 ct.ThrowIfCancellationRequested();
@@ -113,6 +117,10 @@ public sealed class ThumbnailService
             return false;
         }
     }
+
+    /// <summary>共享读打开:缩略图生成可能跨秒持有句柄,允许并发读/移动/删除,不阻塞文件的移动与删除(Windows 句柄语义)</summary>
+    private static FileStream OpenShared(string absPath) =>
+        new(absPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
 
     /// <summary>删除某内容的全部缩略图</summary>
     public void Delete(string hash, IEnumerable<int> sizes)

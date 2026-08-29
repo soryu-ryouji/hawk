@@ -31,11 +31,16 @@ public sealed record ItemQuery
 }
 
 /// <summary>
-/// 内存索引：hash → item，位置路径 → hash 反查。
-/// 写入只发生在索引流水线（单写者），读取可来自任意 HTTP 线程，统一用一把锁保护。
+/// 内存索引:hash → item,位置路径 → hash 反查。
+/// 写入只发生在索引流水线(单写者),读取可来自任意 HTTP 线程,统一用一把锁保护。
+///
+/// 读取纪律:Get 返回可变 Item 引用,仅限流水线消费线程(单写者)与测试使用;
+/// HTTP 层一律走 GetDto(锁内投影)/ Query / FindLocation(不可变快照),锁外不得持有或遍历 Item。
 /// </summary>
 public sealed class ItemIndex
 {
+    /// <summary>item 文件位置的不可变快照:API 层定位待操作文件的唯一方式(锁外遍历可变 Locations 会破坏读取纪律)</summary>
+    public sealed record LocationSnapshot(string Path, string LibraryPath, bool InTrash);
     /// <summary>颜色检索的 ΔE 阈值（CIE76）。约覆盖「同一颜色家族」的宽松度</summary>
     public const double ColorMatchThreshold = 25;
 
@@ -45,11 +50,83 @@ public sealed class ItemIndex
     private readonly Dictionary<string, Item> _byHash = new();
     private readonly Dictionary<string, string> _hashByLocation = new(); // 位置路径 → hash
 
+    /// <summary>
+    /// 取得可变 item 引用。仅限索引流水线(单写者)与测试;HTTP 层一律走 GetDto/Query/FindLocation。
+    /// </summary>
     public Item? Get(string hash)
     {
         lock (_gate)
         {
             return _byHash.GetValueOrDefault(hash);
+        }
+    }
+
+    /// <summary>索引中是否存在该 item(存在性检查,不暴露引用)</summary>
+    public bool Contains(string hash)
+    {
+        lock (_gate)
+        {
+            return _byHash.ContainsKey(hash);
+        }
+    }
+
+    /// <summary>
+    /// 锁内投影为 DTO(trashView 按「是否只剩回收站位置」自动判定),HTTP 层的读取出口。
+    /// </summary>
+    public ItemDto? GetDto(string hash)
+    {
+        lock (_gate)
+        {
+            return _byHash.GetValueOrDefault(hash) is { } item ? item.ToDto(trashView: !item.HasLibraryLocations) : null;
+        }
+    }
+
+    /// <summary>
+    /// 定位操作的文件位置并返回不可变快照:缺省为主位置(wantTrash=false 取首个库内位置,true 取首个回收站位置);
+    /// 指定 path 时按视图匹配(回收站位置以其原库内路径匹配)。
+    /// </summary>
+    public LocationSnapshot? FindLocation(string hash, string? path, bool? wantTrash)
+    {
+        lock (_gate)
+        {
+            if (!_byHash.TryGetValue(hash, out var item))
+            {
+                return null;
+            }
+
+            ItemLocation? loc;
+            if (path is null)
+            {
+                loc = wantTrash switch
+                {
+                    false => item.Locations.FirstOrDefault(l => !l.InTrash),
+                    true => item.Locations.FirstOrDefault(l => l.InTrash),
+                    _ => item.Locations.FirstOrDefault(l => !l.InTrash) ?? item.Locations.FirstOrDefault(),
+                };
+            }
+            else
+            {
+                loc = item.Locations.FirstOrDefault(l =>
+                    (wantTrash is null || l.InTrash == wantTrash) &&
+                    (l.Path == path || l.LibraryPath == path));
+            }
+
+            return loc is null ? null : new LocationSnapshot(loc.Path, loc.LibraryPath, loc.InTrash);
+        }
+    }
+
+    /// <summary>主位置(优先库内)的源文件绝对路径快照;item/file、refresh_thumbnail 用</summary>
+    public string? MainSourceAbs(string hash, LibraryPaths paths)
+    {
+        lock (_gate)
+        {
+            if (!_byHash.TryGetValue(hash, out var item))
+            {
+                return null;
+            }
+
+            var loc = item.Locations.FirstOrDefault(l => !l.InTrash) ?? item.Locations.FirstOrDefault();
+            return loc is null ? null : paths.ToAbsolute(loc.Path);
         }
     }
 

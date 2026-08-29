@@ -15,6 +15,8 @@ export interface EventHandlers {
   onRestored(item: Item): void;
   onRemoved(id: string): void;
   onTaskProgress(progress: TaskProgress): void;
+  /** 目录结构变化:本端文件夹操作、外部进程改动、对账扫描兜底;reason 恒为 external,忽略取值 */
+  onFolderChanged(reason: string): void;
   onReconnect(): void;
 }
 
@@ -42,6 +44,7 @@ export function connectEvents(handlers: EventHandlers): () => void {
   listen<Item>('item.restored', handlers.onRestored);
   listen<{ id: string }>('item.removed', (d) => handlers.onRemoved(d.id));
   listen<TaskProgress>('task.progress', handlers.onTaskProgress);
+  listen<{ reason: string }>('folder.changed', (d) => handlers.onFolderChanged(d.reason));
 
   return () => source.close();
 }

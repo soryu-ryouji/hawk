@@ -37,8 +37,10 @@ builder.Services.AddSingleton<TagRegistry>();
 builder.Services.AddSingleton<ItemIndex>();
 builder.Services.AddSingleton<ThumbnailService>();
 builder.Services.AddSingleton<ColorService>();
+builder.Services.AddSingleton<ThumbnailWorker>();
 builder.Services.AddSingleton<EventBus>();
 builder.Services.AddSingleton<LibraryScanner>();
+builder.Services.AddSingleton<TaxonomyMigrator>();
 builder.Services.AddSingleton<IndexPipeline>();
 builder.Services.AddSingleton<LibraryWatcher>();
 builder.Services.AddSingleton<StartupState>();
@@ -66,11 +68,13 @@ var watcher = app.Services.GetRequiredService<LibraryWatcher>();
 var startup = app.Services.GetRequiredService<StartupState>();
 
 pipeline.OnScanProgress = startup.Report;
+pipeline.AttachThumbnailWorker(app.Services.GetRequiredService<ThumbnailWorker>());
 
 pipeline.Start();
 watcher.FileUpsert += pipeline.NotifyUpsert;
 watcher.Deleted += pipeline.NotifyDeleted;
 watcher.Moved += pipeline.NotifyMoved;
+watcher.FolderCreated += _ => pipeline.NotifyFolderChanged(FolderChangedPayload.ReasonExternal);
 watcher.ConfigChanged += pipeline.NotifyConfigChanged;
 watcher.RegistryChanged += pipeline.NotifyRegistryChanged;
 watcher.Overflowed += pipeline.NotifyOverflow;
