@@ -1,6 +1,6 @@
 // hawk-app Electron 主进程：窗口管理、拉起/回收 hawk-server、token 注入、库选择、白名单 IPC。
 // 业务数据一律走 REST，不经 IPC（见 docs/architecture.md、docs/hawk-app.md）。
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -208,6 +208,35 @@ ipcMain.handle('hawk:show-in-finder', (_event, relPath) => {
     return;
   }
   shell.showItemInFolder(abs);
+});
+
+// 库内相对路径 → 绝对路径（复制路径/复制图片共用的守卫，与 show-in-finder 一致）
+function resolveInLibrary(relPath) {
+  if (typeof relPath !== 'string' || relPath.includes('..')) {
+    return null;
+  }
+  const abs = path.join(libraryRoot, ...relPath.split('/'));
+  return path.resolve(abs).startsWith(path.resolve(libraryRoot)) ? abs : null;
+}
+
+/** 预览右键：复制文件绝对路径到剪贴板 */
+ipcMain.handle('hawk:copy-path', (_event, relPath) => {
+  const abs = resolveInLibrary(relPath);
+  if (abs) {
+    clipboard.writeText(abs);
+  }
+});
+
+/** 预览右键：复制图片本身到剪贴板（文件在磁盘上，直接按路径读） */
+ipcMain.handle('hawk:copy-image', (_event, relPath) => {
+  const abs = resolveInLibrary(relPath);
+  if (!abs) {
+    return;
+  }
+  const image = nativeImage.createFromPath(abs);
+  if (!image.isEmpty()) {
+    clipboard.writeImage(image);
+  }
 });
 
 // ---------- 生命周期 ----------

@@ -75,6 +75,8 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | ---- | ---- |
 | `selectLibrary()` | 更换素材库：弹目录选择框 → 主进程杀掉旧 server 并用新库重启 → 重载窗口 |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
+| `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
+| `copyImage(path)` | 预览右键「复制图片」：主进程 `nativeImage.createFromPath` + `clipboard.writeImage` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
@@ -322,7 +324,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
-| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；滚轮以光标为中心缩放、拖拽平移、双击复位；Esc/点遮罩/空格关闭；←/→ 切换 |
+| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式：几乎不透明的磨砂玻璃遮罩（`backdrop-filter: blur`）覆盖底层界面，底部中间为「‹ 当前序号/视图总数 ›」翻页器，右上角 × 关闭；滚轮以光标为中心缩放、拖拽平移、双击复位；Esc/点遮罩/空格关闭；←/→ 或底部按钮切换；右键菜单：在文件管理器中显示/复制文件路径/复制图片（主进程 `hawk:copy-path`、`hawk:copy-image` 写剪贴板）/删除图片（删除后跳到下一张，末张关闭） |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
 
@@ -400,7 +402,7 @@ hawk-app/
 ├── electron-builder.yml
 ├── electron/
 │   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、关窗隐藏到托盘 + 系统托盘、单实例锁、拉起/回收 server、token、库选择、白名单 IPC
-│   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/拖拽路径/窗口控制）+ webUtils
+│   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   └── dev.mjs             # 一键开发：vite + electron（wait-on 5173）

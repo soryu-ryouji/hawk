@@ -45,6 +45,10 @@ declare global {
       platform: string;
       selectLibrary(): Promise<boolean>;
       showInFinder(relPath: string): Promise<void>;
+      /** 复制库内文件的绝对路径到剪贴板 */
+      copyPath(relPath: string): Promise<void>;
+      /** 复制图片文件本身到剪贴板 */
+      copyImage(relPath: string): Promise<void>;
       getPathForFile(file: File): string;
       minimizeWindow(): Promise<void>;
       toggleMaximizeWindow(): Promise<boolean>;

@@ -58,7 +58,8 @@ watch(
 .mask {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  /* 预览浮层是 200，右键菜单必须更高 */
+  z-index: 400;
 }
 
 .menu {

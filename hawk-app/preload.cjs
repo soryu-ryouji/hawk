@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('hawkShell', {
   selectLibrary: () => ipcRenderer.invoke('hawk:select-library'),
   /** 在系统文件管理器中显示库内文件（相对路径） */
   showInFinder: (relPath) => ipcRenderer.invoke('hawk:show-in-finder', relPath),
+  /** 复制库内文件的绝对路径到剪贴板 */
+  copyPath: (relPath) => ipcRenderer.invoke('hawk:copy-path', relPath),
+  /** 复制图片文件本身到剪贴板 */
+  copyImage: (relPath) => ipcRenderer.invoke('hawk:copy-image', relPath),
   /** 拖拽导入时取文件绝对路径（Electron webUtils） */
   getPathForFile: (file) => webUtils.getPathForFile(file),
   /** 窗口最小化（自绘标题栏按钮） */
