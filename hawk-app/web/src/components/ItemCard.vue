@@ -129,6 +129,7 @@ const thumbSizesAttr = computed(() => (props.width > 0 ? `${Math.ceil(props.widt
   box-sizing: border-box;
   padding: 5px 7px 6px;
   background: var(--bg-2);
+  text-align: center;
 }
 
 /* 标题最多两行，超出省略（line-clamp 替代 nowrap + text-overflow） */
