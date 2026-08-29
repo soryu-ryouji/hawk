@@ -37,6 +37,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/startup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnvelopeOfStartupInfo"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnvelopeOfTaskStatus"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/info": {
         parameters: {
             query?: never;
@@ -1174,9 +1244,17 @@ export interface components {
             status: string;
             data: unknown;
         };
+        EnvelopeOfStartupInfo: {
+            status: string;
+            data: null | components["schemas"]["StartupInfo"];
+        };
         "EnvelopeOfTagInfo[]": {
             status: string;
             data: null | components["schemas"]["TagInfo"][];
+        };
+        EnvelopeOfTaskStatus: {
+            status: string;
+            data: null | components["schemas"]["TaskStatus"];
         };
         FolderCreateRequest: {
             name: string;
@@ -1315,6 +1393,15 @@ export interface components {
             /** Format: float */
             percentage?: number | string;
         };
+        StartupInfo: {
+            status: string;
+            phase: null | string;
+            /** Format: int32 */
+            processed: null | number | string;
+            /** Format: int32 */
+            total: null | number | string;
+            message: null | string;
+        };
         TagCreateRequest: {
             name: string;
         };
@@ -1329,6 +1416,15 @@ export interface components {
         TagUpdateRequest: {
             name: string;
             new_name: string;
+        };
+        TaskBacklog: {
+            /** Format: int32 */
+            pending: number | string;
+            /** Format: int32 */
+            active: number | string;
+        };
+        TaskStatus: {
+            thumbnail: components["schemas"]["TaskBacklog"];
         };
     };
     responses: never;

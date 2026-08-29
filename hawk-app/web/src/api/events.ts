@@ -2,12 +2,19 @@
 import { apiConfig } from './client';
 import type { Item } from '../types';
 
+export interface TaskProgress {
+  task: string;
+  pending: number;
+  active: number;
+}
+
 export interface EventHandlers {
   onAdded(item: Item): void;
   onUpdated(item: Item): void;
   onTrashed(id: string): void;
   onRestored(item: Item): void;
   onRemoved(id: string): void;
+  onTaskProgress(progress: TaskProgress): void;
   onReconnect(): void;
 }
 
@@ -34,6 +41,7 @@ export function connectEvents(handlers: EventHandlers): () => void {
   listen<{ id: string }>('item.trashed', (d) => handlers.onTrashed(d.id));
   listen<Item>('item.restored', handlers.onRestored);
   listen<{ id: string }>('item.removed', (d) => handlers.onRemoved(d.id));
+  listen<TaskProgress>('task.progress', handlers.onTaskProgress);
 
   return () => source.close();
 }

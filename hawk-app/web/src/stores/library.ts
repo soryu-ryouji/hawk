@@ -65,6 +65,8 @@ export const useLibraryStore = defineStore('library', () => {
   const toast = ref<string | null>(null);
   /** 导入进度：null 无任务；total=0 表示收集文件阶段（不定态），done 为已处理数 */
   const importProgress = ref<{ total: number; done: number } | null>(null);
+  /** 缩略图后台积压（task.progress 事件驱动；null 表示无积压，进度条隐藏） */
+  const taskBacklog = ref<{ pending: number; active: number } | null>(null);
   const sidebarVisible = ref(true);
   /** 浏览历史（会话内）：setView 压入，前进/后退在栈内移动 */
   const viewHistory = ref<ViewState[]>([]);
@@ -721,13 +723,26 @@ export const useLibraryStore = defineStore('library', () => {
         debouncedSkeletonReload(() => void reloadSkeleton());
         break;
       }
+      case 'task.progress': {
+        const p = payload as { task: string; pending: number; active: number };
+        if (p.task !== 'thumbnail') {
+          break;
+        }
+        // 积压归零撤掉指示；其余帧更新计数（节流由服务端 500ms 保证）
+        taskBacklog.value = p.pending + p.active > 0 ? { pending: p.pending, active: p.active } : null;
+        break;
+      }
+    }
+    // task.progress 与文件夹树/分类无关，跳过下面的防抖刷新
+    if (type === 'task.progress') {
+      return;
     }
     debouncedRefreshFolders(() => void refreshFolders());
     debouncedRefreshTaxonomy(() => void refreshTaxonomy());
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, sidebarVisible,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes,
     init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,

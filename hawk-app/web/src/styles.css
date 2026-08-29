@@ -141,6 +141,44 @@ body.col-resizing {
   grid-area: inspector;
 }
 
+/* 缩略图积压指示条：与网格同占 main 区（网格叠放），压顶缘呈现浏览器式加载条。
+   只读指示不拦截交互 */
+.app > .task-bar {
+  grid-area: main;
+  align-self: start;
+  justify-self: stretch;
+  height: 0;
+  position: relative;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.task-bar-fill {
+  height: 2px;
+  background: var(--accent);
+  animation: task-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes task-slide {
+  0% { width: 20%; margin-left: 0; }
+  50% { width: 40%; margin-left: 60%; }
+  100% { width: 20%; margin-left: 0; }
+}
+
+.task-bar-text {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-1) 88%, transparent);
+  border: 1px solid var(--border);
+  color: var(--fg-1);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 /* 引导页/启动失败页：顶部拖拽条（窗口控制按钮 fixed 在右上角，不占文档流） */
 .standalone {
   height: 100%;

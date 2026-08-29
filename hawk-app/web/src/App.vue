@@ -105,6 +105,7 @@ async function boot() {
     onTrashed: (id) => store.applyEvent('item.trashed', { id }),
     onRestored: (item) => store.applyEvent('item.restored', item),
     onRemoved: (id) => store.applyEvent('item.removed', { id }),
+    onTaskProgress: (p) => store.applyEvent('task.progress', p),
     onReconnect: () => {
       void store.reloadSkeleton();
       void store.refreshFolders();
@@ -165,6 +166,11 @@ useDragImport();
     <Sidebar class="sidebar" />
     <TitleBar class="titlebar" />
     <ItemGrid />
+    <!-- 缩略图后台积压指示：细进度条压在网格顶缘（浏览器式加载条），计数归零自动消失 -->
+    <div v-if="store.taskBacklog" class="task-bar">
+      <div class="task-bar-fill" />
+      <span class="task-bar-text">正在生成缩略图 · 剩余 {{ store.taskBacklog.pending + store.taskBacklog.active }}</span>
+    </div>
     <Inspector class="inspector" />
     <WindowControls />
 

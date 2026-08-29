@@ -40,7 +40,62 @@
 | 方法 | 端点               | 说明         |
 | ---- | ------------------ | ------------ |
 | GET  | `/api/v1/app/info` | 获取应用信息 |
+| GET  | `/api/v1/app/startup` | 启动状态与索引构建进度（就绪网关唯一放行端点） |
+| GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列；SSE 的 `task.progress` 事件为同一快照的推送版） |
 | GET  | `/api/v1/app/token` | 发现连接 token（免鉴权，仅限扩展类客户端） |
+
+### startup
+
+`GET /api/v1/app/startup`
+
+查询启动状态。server 先监听端口、初始索引后台构建；客户端轮询此端点获取进度（200ms 左右间隔为宜），也是索引完成前唯一可用的 API。
+
+#### 响应
+
+索引构建中：
+
+```json
+{
+  "status": "success",
+  "data": { "status": "starting", "phase": "hash", "processed": 343, "total": 800 }
+}
+```
+
+就绪：
+
+```json
+{ "status": "success", "data": { "status": "ready" } }
+```
+
+初始索引失败（进程不退出，修复后需重启）：
+
+```json
+{ "status": "success", "data": { "status": "error", "message": "..." } }
+```
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| status | string | `starting` / `ready` / `error` |
+| phase | string | 仅 starting 时存在：`scan`（遍历清单，total 恒 0）/ `hash`（并行算哈希）/ `apply`（应用索引） |
+| processed / total | number | 仅 starting 时存在；`total=0` 表示该阶段总量未知（客户端宜显示不定态进度） |
+| message | string | 仅 error 时存在：失败原因 |
+
+### status
+
+`GET /api/v1/app/status`
+
+后台任务积压快照。当前仅缩略图（含调色板）worker 队列：导入或初次索引后大量素材等待生成缩略图时，`pending`（排队中）与 `active`（生成中，上限 4）大于 0；积压清空后两者归零。
+
+SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送版，服务端 500ms 节流）；本端点供轮询型客户端使用。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": { "thumbnail": { "pending": 236, "active": 4 } }
+}
+```
 
 ### info
 
@@ -71,7 +126,7 @@
 
 `GET /health`
 
-就绪探活，不带 `/api/v1` 前缀，无需 token。Electron 壳启动后轮询此端点，返回 200 即表示后端就绪。
+就绪探活，不带 `/api/v1` 前缀，无需 token。**初始索引完成前返回 503**，完成后 200。只用于区分进程状态，进度与就绪判断以 `app/startup` 为准。
 
 ### token
 
@@ -569,3 +624,4 @@ Server-Sent Events 订阅素材库变更，前端据此增量刷新界面。`Eve
 | `item.trashed`  | `{ "id": "..." }` | 移入回收站       |
 | `item.restored` | Item 对象         | 从回收站恢复     |
 | `item.removed`  | `{ "id": "..." }` | 彻底删除         |
+| `task.progress` | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化（当前仅缩略图队列；服务端 500ms 节流，积压倒零后补发一帧清零帧） |

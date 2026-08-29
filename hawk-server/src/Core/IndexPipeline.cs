@@ -20,16 +20,29 @@ public sealed class IndexPipeline : IDisposable
     private sealed record DirMoveJob(string OldAbs, string NewAbs, TaskCompletionSource? Done) : IndexJob;
     private sealed record ScanJob(bool Full, TaskCompletionSource? Done) : IndexJob;
 
-    /// <summary>扫描进度快照（启动进度页用；经 stdout 的 HAWK_PROGRESS 行推给 Electron 主进程）</summary>
+    /// <summary>扫描进度快照；StartupState 汇总后经 /api/v1/app/startup 提供给客户端</summary>
     /// <param name="Phase">scan=遍历文件清单 hash=并行计算哈希 apply=应用索引</param>
     /// <param name="Total">阶段总工作量；遍历阶段未知时为 0（前端显示不定态进度条）</param>
     public sealed record ScanProgress(string Phase, int Processed, int Total);
 
     /// <summary>扫描进度上报：Program 装配时设置； emit 已按 150ms 节流</summary>
     public Action<ScanProgress>? OnScanProgress { get; set; }
+
+    /// <summary>缩略图积压快照（排队 + 生成中）</summary>
+    public (int Pending, int Active) ThumbnailBacklog =>
+        (System.Threading.Volatile.Read(ref _thumbQueued), System.Threading.Volatile.Read(ref _thumbActive));
     private sealed record ClearTrashJob(TaskCompletionSource? Done) : IndexJob;
     private sealed record MetadataJob(string Hash, Action<ItemMetadata> Mutate, TaskCompletionSource<Item?> Done) : IndexJob;
     private sealed record ThumbJob(string Hash, string SourceAbs);
+
+    /// <summary>后台任务进度快照（task.progress 事件与 app/status 端点共用）</summary>
+    public sealed record TaskProgress(string Task, int Pending, int Active);
+
+    /// <summary>缩略图后台积压：排队中 + 生成中；只读快照供进度上报</summary>
+    private int _thumbQueued;
+    private int _thumbActive;
+    private long _lastTaskProgressAt;
+    private bool _taskProgressIdle = true;
     /// <summary>后台 worker 提炼调色板完成后的回写（单写者规则：索引变更只发生在消费循环）</summary>
     private sealed record PaletteJob(string Hash, PaletteColor[] Palette) : IndexJob;
 
@@ -1060,13 +1073,18 @@ public sealed class IndexPipeline : IDisposable
     private void QueueThumbnails(string hash, string absPath)
     {
         // 缩略图是尽力而为的缓存，channel 满时丢弃（缺失可由 refresh_thumbnail 或重启扫描补齐）
-        _thumbJobs.Writer.TryWrite(new ThumbJob(hash, absPath));
+        if (_thumbJobs.Writer.TryWrite(new ThumbJob(hash, absPath)))
+        {
+            Interlocked.Increment(ref _thumbQueued);
+        }
     }
 
     private async Task ThumbLoop(CancellationToken ct)
     {
         await foreach (var job in _thumbJobs.Reader.ReadAllAsync(ct))
         {
+            Interlocked.Decrement(ref _thumbQueued);
+            Interlocked.Increment(ref _thumbActive);
             try
             {
                 var sizes = _config.Current.ThumbnailSizes.Where(s => !_thumbnails.Exists(job.Hash, s)).ToArray();
@@ -1106,7 +1124,35 @@ public sealed class IndexPipeline : IDisposable
             {
                 _logger.LogDebug(ex, "缩略图任务失败: {Hash}", job.Hash);
             }
+            finally
+            {
+                Interlocked.Decrement(ref _thumbActive);
+                ReportTaskProgress();
+            }
         }
+    }
+
+    /// <summary>
+    /// 积压变化时节流推送 task.progress（500ms 一帧）；刚从非空闲转空闲时补发一帧，让客户端撤掉进度指示。
+    /// SSE 断开的客户端可用 GET /api/v1/app/status 轮询同一快照。
+    /// </summary>
+    private void ReportTaskProgress()
+    {
+        var (pending, active) = ThumbnailBacklog;
+        var idle = pending == 0 && active == 0;
+        var now = DateTime.UtcNow.Ticks;
+        var last = Interlocked.Read(ref _lastTaskProgressAt);
+        var due = now - last >= TimeSpan.TicksPerMillisecond * 500;
+        if (!due && !(idle && !_taskProgressIdle))
+        {
+            return;
+        }
+        if (Interlocked.CompareExchange(ref _lastTaskProgressAt, now, last) != last)
+        {
+            return;
+        }
+        _taskProgressIdle = idle;
+        _bus.Publish("task.progress", new TaskProgress("thumbnail", pending, active));
     }
 
     public void Dispose()

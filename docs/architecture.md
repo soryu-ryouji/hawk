@@ -62,11 +62,13 @@ Electron 壳与后端二进制一起打包发行（electron-builder 的 `extraRe
 
 ```text
 Electron 启动
+  → 预选空闲环回端口 + 生成随机 token
   → spawn hawk-server 子进程
-      - 默认监听 27371 端口，被占用时回退为动态分配
-      - 生成随机 token，经环境变量传入
-  → 轮询 /health 直到就绪
-  → 加载前端页面（请求携带 token）
+      - 参数 --library <path> --port <预选端口>，token 经环境变量传入
+      - **先监听端口，初始索引后台构建**（先监听、后索引的启动模型）
+  → 轮询 GET /api/v1/app/startup（200ms 间隔）：
+      starting → 进度帧驱动启动进度页；ready → 加载主界面；error → 弹错误框
+  → 初始索引完成前 /api/* 返回 503 NOT_READY（app/startup 除外），/health 503
 Electron 退出
   → 回收 hawk-server 子进程（防止孤儿进程残留）
 ```

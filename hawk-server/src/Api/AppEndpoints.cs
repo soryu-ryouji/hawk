@@ -14,10 +14,38 @@ public static class AppEndpoints
 
     public sealed record AppInfo(string Version, string Platform, string ExecPath);
 
+    /// <summary>启动状态查询：初始索引后台构建期间供客户端轮询进度（见 server-rest-api-v1.md「app」节）</summary>
+    public sealed record StartupInfo(string Status, string? Phase, int? Processed, int? Total, string? Message);
+
+    /// <summary>后台任务积压快照：缩略图/调色板 worker 队列</summary>
+    public sealed record TaskBacklog(int Pending, int Active);
+    public sealed record TaskStatus(TaskBacklog Thumbnail);
+
     public static void MapAppEndpoints(this IEndpointRouteBuilder app)
     {
-        // 就绪探活：无需 token， Electron 壳轮询此端点确认后端就绪
-        app.MapGet("/health", () => Results.Ok()).WithTags("app");
+        // 就绪探活：无需 token。初始索引完成前返回 503（Electron 壳与生态客户端轮询 /api/v1/app/startup 获取进度）
+        app.MapGet("/health", (Core.StartupState startup) =>
+            startup.IsReady ? Results.Ok("ok") : Results.StatusCode(StatusCodes.Status503ServiceUnavailable)).WithTags("app");
+
+        // 启动状态：ready / starting（带进度）/ error（初始索引失败，message 为原因）
+        app.MapGet("/api/v1/app/startup", (Core.StartupState startup) =>
+            {
+                var info = startup.Error is not null
+                    ? new StartupInfo("error", null, null, null, startup.Error)
+                    : startup.IsReady
+                        ? new StartupInfo("ready", null, null, null, null)
+                        : new StartupInfo("starting", startup.Phase, startup.Processed, startup.Total, null);
+                return TypedResults.Ok(Envelope<StartupInfo>.Ok(info));
+            })
+            .WithTags("app");
+
+        // 后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照）
+        app.MapGet("/api/v1/app/status", (Core.IndexPipeline pipeline) =>
+            {
+                var (pending, active) = pipeline.ThumbnailBacklog;
+                return TypedResults.Ok(Envelope<TaskStatus>.Ok(new TaskStatus(new TaskBacklog(pending, active))));
+            })
+            .WithTags("app");
 
         app.MapGet("/api/v1/app/info", () =>
             {

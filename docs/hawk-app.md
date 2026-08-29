@@ -45,17 +45,19 @@ Eagle 主窗口的关键特征：
 Electron 主进程启动
   → 读用户配置（userData/hawk-app.json）取最近素材库；无 → 加载引导页（SetupScreen）
   → 创建 BrowserWindow，立即加载静态进度页 electron/loading.html（不等待后端）
-  → 生成随机 token
+  → 预选空闲环回端口（net.listen(0)）+ 生成随机 token
   → spawn hawk-server（开发：dotnet 运行 dll；打包：process.resourcesPath 内二进制）
-      环境变量传入 HAWK_TOKEN，参数 --library <path> --port 27371
-  → 解析子进程 stdout：
-      HAWK_PROGRESS <phase> <processed> <total>  扫描进度帧 → 转发进度页（150ms 节流）
-        phase：scan=遍历文件清单（total=0 不定态） hash=并行算哈希 apply=应用索引 done=完成
-      HAWK_READY <address> token=...            就绪 → 加载主界面
-    （兜底：轮询默认端口 /health）
+      环境变量传入 HAWK_TOKEN，参数 --library <path> --port <预选端口>
+  → 轮询 GET /api/v1/app/startup（200ms，Bearer token；server 先监听、索引后台构建）：
+      starting → 进度帧（phase/processed/total）转发进度页
+      ready    → 加载主界面（开发：localhost:5173/#api=...&token=...；打包：file://index.html#...）
+      error    → 错误框（message 为后端给出的失败原因）
+    子进程异常退出 / 60s 超时 → 错误框（stderr 尾部）
 退出
   → 杀掉子进程（含异常退出路径，防止孤儿进程）
 ```
+
+握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。
 
 关窗不退出（Eagle 式托盘驻留）：主进程拦截窗口 `close` 事件改为 `hide()`，
 应用驻留系统托盘、`hawk-server` 保持运行（浏览器扩展采集不间断）。托盘左键单击
@@ -278,6 +280,8 @@ library: LibraryInfo | null;
 thumbSize: number;               // 网格卡片边长偏好（默认 160，内存态不持久化）
 sidebarVisible: boolean;         // 侧栏显隐（标题栏开关，默认开）
 previewId: string | null;        // 预览浮层
+// 缩略图后台积压（task.progress 驱动；null 无积压，App.vue 顶部细进度条据此显隐）
+taskBacklog: { pending: number; active: number } | null;
 toast: string | null;            // 轻提示（3s 自动清除）
 importProgress: { total: number; done: number } | null;  // 导入进度：null 无任务；total=0 收集文件阶段（不定态进度条）
 // 会话内浏览历史：viewHistory/historyIndex，setView 压栈，数据变更修正就地替换当前条目
@@ -380,6 +384,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 | `item.updated` | 负载是完整 Item。详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。过滤视图/激活查询条件时防抖 200ms 重载骨架（成员判定以服务端查询为准，如摘掉当前分类后 item 即时消失）。updateItem 响应走同一入口 |
 | `item.added` / `item.restored` | 新 item 落点（成员/次序）以服务端为准，防抖 200ms 重载骨架 |
 | `item.trashed` / `item.removed` | 就地移除（详情 + 骨架 + 选择），回收站视图同事件意味着「进来」，统一防抖重载兜底 |
+| `task.progress` | 更新 `taskBacklog`（缩略图积压计数；归零置 null 隐藏指示条），不触发文件夹/分类刷新 |
 | 任何事件 | 防抖刷新文件夹树（见「已知缺口」） |
 
 断线自动重连（EventSource 原生行为），重连后 reloadSkeleton + refreshFolders 全量对齐。

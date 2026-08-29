@@ -29,10 +29,14 @@ MVP 用 ImageSharp 覆盖常见格式。图像解码收在一个接口后面，R
 
 ## 启动顺序
 
+先监听、后索引（Syncthing 式启动模型，见 architecture.md）：Kestrel 立即开放端口，初始扫描在索引流水线后台构建，就绪语义由状态端点表达而非端口可达性。
+
 1. 启动文件监听（事件先入缓冲队列）
-2. 扫描素材目录并加载 `metadata/`，按路径与 size/mtime 比对，仅对新增或变动的文件计算哈希；哈希确认后将最新 size/mtime 回写元数据
-3. 重放缓冲事件，与加载结果合并去重
-4. 就绪后开放 `/health`
+2. 启动 Kestrel 监听（端口对客户端立即可达）
+3. 后台扫描素材目录并加载 `metadata/`，按路径与 size/mtime 比对，仅对新增或变动的文件计算哈希；哈希确认后将最新 size/mtime 回写元数据
+4. 重放缓冲事件，与加载结果合并去重
+5. 索引完成 → `StartupState.MarkReady()`：`/health` 转 200、`/api/*` 网关放行；此前一切 API 返回 503 `NOT_READY`，进度经 `GET /api/v1/app/startup` 查询
+6. 索引失败 → 进程保留，`/api/v1/app/startup` 返回 `error` 与原因（修复后重启）
 
 ## 并发模型
 
@@ -46,5 +50,5 @@ MVP 用 ImageSharp 覆盖常见格式。图像解码收在一个接口后面，R
 ## 替换为 Rust 时的注意点
 
 - 目标栈：axum、notify、blake3、image + fast_image_resize，索引同样在内存中维护
-- 行为对齐以 OpenAPI schema 为准，不逐行翻译 C# 代码
+- 行为对齐以 OpenAPI schema 为准，不逐行翻译 C# 代码；启动握手（`app/startup` 轮询、就绪网关）属 schema 契约的一部分
 - `.hawk/` 存储格式（metadata TOML、缩略图命名、trash 结构）属于持久化契约，Rust 版必须兼容

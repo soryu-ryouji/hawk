@@ -26,6 +26,7 @@ public static class ErrorCodes
     public const string CategoryNotFound = "CATEGORY_NOT_FOUND";
     public const string CategoryExists = "CATEGORY_EXISTS";
     public const string TagNotFound = "TAG_NOT_FOUND";
+    public const string NotReady = "NOT_READY";
     public const string Internal = "INTERNAL";
 }
 

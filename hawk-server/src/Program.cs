@@ -41,12 +41,14 @@ builder.Services.AddSingleton<EventBus>();
 builder.Services.AddSingleton<LibraryScanner>();
 builder.Services.AddSingleton<IndexPipeline>();
 builder.Services.AddSingleton<LibraryWatcher>();
+builder.Services.AddSingleton<StartupState>();
 
 var app = builder.Build();
 
 app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseMiddleware<TokenAuthMiddleware>();
+app.UseMiddleware<ReadyGateMiddleware>();
 
 app.MapOpenApi(); // /openapi/v1.json，schema 即契约，无需 token
 app.MapAppEndpoints();
@@ -57,12 +59,13 @@ app.MapTrashEndpoints();
 app.MapTaxonomyEndpoints();
 app.MapEventsEndpoints();
 
-// 启动顺序（server-csharp.md）：先开文件监听（事件入缓冲队列），再扫描建索引，就绪后才开放端口
+// 启动顺序（server-csharp.md）：先监听端口（先监听、扫描后台进行），初始索引完成后才算就绪。
+// 客户端（Electron 壳/生态接入）轮询 GET /api/v1/app/startup 获取进度与就绪状态，初始索引期间除该端点外一律 503 NOT_READY。
 var pipeline = app.Services.GetRequiredService<IndexPipeline>();
 var watcher = app.Services.GetRequiredService<LibraryWatcher>();
+var startup = app.Services.GetRequiredService<StartupState>();
 
-// 扫描进度经 stdout 推给 Electron 主进程（HAWK_PROGRESS 行），驱动启动进度页
-pipeline.OnScanProgress = p => Console.WriteLine($"HAWK_PROGRESS {p.Phase} {p.Processed} {p.Total}");
+pipeline.OnScanProgress = startup.Report;
 
 pipeline.Start();
 watcher.FileUpsert += pipeline.NotifyUpsert;
@@ -71,9 +74,9 @@ watcher.Moved += pipeline.NotifyMoved;
 watcher.ConfigChanged += pipeline.NotifyConfigChanged;
 watcher.RegistryChanged += pipeline.NotifyRegistryChanged;
 watcher.Overflowed += pipeline.NotifyOverflow;
-watcher.Start();
+watcher.Start(); // 事件先入队缓冲，与初始扫描天然去重
 
-await pipeline.RunScanAsync(full: false); // 阻塞至初始索引完成
+var initialScan = pipeline.RunScanAsync(full: false); // 后台构建，不阻塞端口监听
 
 app.Lifetime.ApplicationStopping.Register(() =>
 {
@@ -85,10 +88,23 @@ await app.StartAsync();
 
 var address = app.Services.GetRequiredService<IServer>().Features
     .Get<IServerAddressesFeature>()!.Addresses.First();
-app.Logger.LogInformation("hawk-server 就绪: {Address}，素材库: {Library}", address, settings.LibraryRoot);
+app.Logger.LogInformation("hawk-server 监听 {Address}，素材库: {Library}，初始索引后台构建中", address, settings.LibraryRoot);
 
-// Electron 主进程解析此行获取端口与 token
-Console.WriteLine($"HAWK_READY {address} token={settings.Token}");
+// 初始索引结果异步落定：就绪后 /health 转 200、API 网关放行；失败则记入启动状态供客户端查询
+_ = Task.Run(async () =>
+{
+    try
+    {
+        await initialScan;
+        startup.MarkReady();
+        app.Logger.LogInformation("初始索引完成，hawk-server 就绪");
+    }
+    catch (Exception ex)
+    {
+        startup.Fail(ex);
+        app.Logger.LogError(ex, "初始索引构建失败");
+    }
+});
 
 await app.WaitForShutdownAsync();
 

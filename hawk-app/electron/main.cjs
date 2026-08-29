@@ -2,6 +2,7 @@
 // 业务数据一律走 REST，不经 IPC（见 docs/architecture.md、docs/hawk-app.md）。
 const { app, BrowserWindow, dialog, ipcMain, shell, Menu, Tray, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
+const net = require('node:net');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -24,7 +25,7 @@ let libraryRoot = null;
 const APP_ICON = path.join(__dirname, '..', 'build', 'icon.png');
 
 // 单实例：托盘驻留期间再次启动（双击图标/快捷方式）应唤起已有窗口，而不是拉起第二个实例
-// （第二个实例的 hawk-server 会因 27371 端口占用直接启动失败）
+// （第二个实例会拉起第二套 hawk-server 进程争用同一素材库，引发索引与文件监听竞争）
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -61,39 +62,50 @@ function resolveServerCommand() {
   return { command: path.join(process.resourcesPath, 'hawk-server', bin), args: [] };
 }
 
-/** 拉起 hawk-server，解析 stdout 的 HAWK_READY 行取得实际监听地址 */
-function startServer(libPath) {
+/** 预选一个空闲环回端口：server 绑定它，token 由本进程生成——端口与 token 都不再需要子进程回传 */
+function probeFreePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+/**
+ * 拉起 hawk-server：先监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
+ * 轮询 GET /api/v1/app/startup：starting（带进度，转发进度页）→ ready（resolve）/ error（reject，带原因）。
+ */
+async function startServer(libPath) {
   const { command, args } = resolveServerCommand();
   const token = crypto.randomBytes(32).toString('hex');
-  const child = spawn(command, [...args, '--library', libPath, '--port', '27371'], {
+  const port = await probeFreePort();
+  const address = `http://127.0.0.1:${port}`;
+  const child = spawn(command, [...args, '--library', libPath, '--port', String(port)], {
     env: { ...process.env, HAWK_TOKEN: token },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错
     // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
     windowsHide: true,
   });
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('hawk-server 启动超时')), 60000);
-    let buffer = '';
+    let settled = false;
     let stderrTail = '';
-    child.stdout.on('data', (chunk) => {
-      buffer += chunk.toString();
-      // 扫描进度行（HAWK_PROGRESS <phase> <processed> <total>）→ 转发给启动进度页；匹配后丢弃防累积
-      const progress = buffer.match(/HAWK_PROGRESS (\S+) (\d+) (\d+)/);
-      if (progress) {
-        buffer = buffer.slice(progress.index + progress[0].length);
-        mainWindow?.webContents.send('hawk:server-progress', {
-          phase: progress[1],
-          processed: Number(progress[2]),
-          total: Number(progress[3]),
-        });
+    const finish = (error, value) => {
+      if (settled) {
+        return;
       }
-      const match = buffer.match(/HAWK_READY (\S+) token=(\w+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve({ child, address: match[1], token });
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(timeout);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(value);
       }
-    });
+    };
     // 留 stderr 尾部用于报错；开发态同时转发到终端
     child.stderr.on('data', (chunk) => {
       stderrTail = (stderrTail + chunk.toString()).slice(-4000);
@@ -101,15 +113,38 @@ function startServer(libPath) {
         process.stderr.write(chunk);
       }
     });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(new Error(`hawk-server 启动失败: ${error.message}`));
-    });
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      const detail = stderrTail.trim();
-      reject(new Error(`hawk-server 启动失败（退出码 ${code}）${detail ? `\n${detail}` : ''}`));
-    });
+    child.on('error', (error) => finish(new Error(`hawk-server 启动失败: ${error.message}`)));
+    child.on('exit', (code) =>
+      finish(new Error(`hawk-server 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}`)));
+
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`${address}/api/v1/app/startup`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          return; // 服务已监听但未到可查询状态，继续轮询
+        }
+        const body = await res.json();
+        const state = body.data;
+        if (state.status === 'starting') {
+          mainWindow?.webContents.send('hawk:server-progress', {
+            phase: state.phase || 'scan',
+            processed: state.processed || 0,
+            total: state.total || 0,
+          });
+          return;
+        }
+        if (state.status === 'ready') {
+          finish(null, { child, address, token });
+        } else {
+          finish(new Error(state.message || 'hawk-server 初始索引构建失败'));
+        }
+      } catch {
+        // 连接拒绝：server 尚未监听，继续轮询
+      }
+    }, 200);
+    const timeout = setTimeout(() => finish(new Error('hawk-server 启动超时')), 60000);
   });
 }
 
