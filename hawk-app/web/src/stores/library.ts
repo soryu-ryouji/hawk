@@ -4,9 +4,10 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
-import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, TagInfo, ViewState } from '../types';
+import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewState } from '../types';
 
-const PAGE_SIZE = 100;
+/** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
+const INITIAL_WINDOW = 150;
 
 const ERROR_TEXT: Record<string, string> = {
   FILE_EXISTS: '同名文件或文件夹已存在',
@@ -37,12 +38,18 @@ export const useLibraryStore = defineStore('library', () => {
   // ---- state ----
   const view = ref<ViewState>({ kind: 'all' });
   const query = ref<QueryState>({ keywords: [], orderBy: 'modification_time', order: 'desc' });
-  const items = ref<Item[]>([]);
-  const total = ref(0);
+  /** 当前视图全量骨架（id/width/height/star，与 item/list 同查询同排序）：布局与滚动条总高的唯一依据 */
+  const skeleton = ref<SkeletonItem[]>([]);
+  /** 已拉取的详情（视口窗口 + 预取），按 id 索引；不在视口的行只留骨架占位不渲染 */
+  const details = ref(new Map<string, Item>());
   /** 当前视图（含筛选）未分页的全量字节数合计，检查器「分区状态」用 */
   const totalSize = ref(0);
+  /** 整表（骨架）加载中 */
   const loading = ref(false);
-  const endReached = ref(false);
+  /** 视口窗口补数据中 */
+  const windowLoading = ref(false);
+  /** 骨架版本：换视图/骨架重载时自增，过期窗口响应据此丢弃 */
+  let skeletonVersion = 0;
   const selection = ref<string[]>([]);
   const folders = ref<FolderNode | null>(null);
   const categories = ref<CategoryInfo[]>([]);
@@ -69,7 +76,7 @@ export const useLibraryStore = defineStore('library', () => {
   const canGoForward = computed(() => historyIndex.value >= 0 && historyIndex.value < viewHistory.value.length - 1);
   const currentFolderPath = computed(() => (view.value.kind === 'folder' ? view.value.path : null));
   const selectedItems = computed(
-    () => selection.value.map((id) => items.value.find((i) => i.id === id)).filter((i): i is Item => !!i),
+    () => selection.value.map((id) => details.value.get(id)).filter((i): i is Item => !!i),
   );
   const primarySelected = computed(() => selectedItems.value.at(-1) ?? null);
   /** 当前视图名称（检查器「分区状态」标题） */
@@ -83,14 +90,17 @@ export const useLibraryStore = defineStore('library', () => {
     if (v.kind === 'tag' || v.kind === 'category') return v.name;
     return v.path.split('/').pop() ?? '';
   });
-  const previewItem = computed(() => items.value.find((i) => i.id === previewId.value) ?? null);
+  const previewItem = computed(() => (previewId.value ? (details.value.get(previewId.value) ?? null) : null));
+  /** 当前视图条目数（= 骨架长度；骨架未加载时为 0） */
+  const total = computed(() => skeleton.value.length);
+  const previewIndex = computed(() => skeleton.value.findIndex((i) => i.id === previewId.value));
   /** 缩略图尺寸候选（library/info 的 thumbnail_sizes 升序；缺字段兜底默认档），网格 img srcset 用 */
   const thumbSizes = computed<number[]>(() =>
     (library.value?.thumbnail_sizes ?? [256, 1024]).map((s) => Number(s)).sort((a, b) => a - b),
   );
   const previewNavId = (step: 1 | -1) => {
-    const idx = items.value.findIndex((i) => i.id === previewId.value);
-    return items.value[idx + step]?.id ?? null;
+    const next = previewIndex.value >= 0 ? skeleton.value[previewIndex.value + step] : undefined;
+    return next?.id ?? null;
   };
 
   /** 扁平化的文件夹树（移动到文件夹等选择控件用），含根目录 */
@@ -112,12 +122,13 @@ export const useLibraryStore = defineStore('library', () => {
   const categoryOptions = computed(() => categories.value.map((c) => ({ name: c.name })));
 
   // ---- 内部 ----
-  const debouncedRefresh = debounce(200);
+  const debouncedSkeletonReload = debounce(200);
   const debouncedRefreshFolders = debounce(300);
   const debouncedRefreshTaxonomy = debounce(300);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function buildListParams(offset: number, limit: number): ItemListRequest {
+  /** 当前视图 + 查询条件的列表参数（不含分页）：骨架与视口窗口共用，保证两次查询次序逐位一致 */
+  function listParams(): Omit<ItemListRequest, 'offset' | 'limit'> {
     return {
       keywords: query.value.keywords.length > 0 ? query.value.keywords : undefined,
       star: query.value.star,
@@ -131,8 +142,6 @@ export const useLibraryStore = defineStore('library', () => {
       without_tags: view.value.kind === 'untagged' ? true : undefined,
       categories: view.value.kind === 'category' ? [view.value.name] : undefined,
       tags: view.value.kind === 'tag' ? [view.value.name] : undefined,
-      offset,
-      limit,
     };
   }
 
@@ -247,24 +256,17 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   async function resetList() {
-    items.value = [];
-    endReached.value = false;
-    total.value = 0;
-    totalSize.value = 0;
-    await fetchMore();
-  }
-
-  async function fetchMore() {
-    if (loading.value || endReached.value) {
-      return;
-    }
+    const version = ++skeletonVersion;
     loading.value = true;
     try {
-      const res = await api.itemList(buildListParams(items.value.length, PAGE_SIZE));
-      items.value = [...items.value, ...res.items];
-      total.value = Number(res.total);
+      const res = await api.itemSkeleton(listParams());
+      if (version !== skeletonVersion) {
+        return; // 期间已切视图/重载，结果作废
+      }
+      skeleton.value = res.items;
       totalSize.value = Number(res.total_size);
-      endReached.value = items.value.length >= total.value;
+      details.value = new Map();
+      await ensureWindow(0, INITIAL_WINDOW);
     } catch (e) {
       showToast(errorText(e));
     } finally {
@@ -272,19 +274,74 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** SSE 驱动的刷新：重查已加载范围并整体替换，尽量保持滚动位置 */
-  async function refresh() {
-    const limit = Math.max(items.value.length, PAGE_SIZE);
+  /**
+   * 视口窗口补数据：按骨架索引区间拉 item/list（同查询同排序，偏移与骨架逐位对齐），
+   * 区间内已全部缓存则跳过。骨架版本变化时丢弃过期响应。
+   */
+  async function ensureWindow(start: number, end: number) {
+    const sk = skeleton.value;
+    const from = Math.max(0, Math.min(start, sk.length));
+    const to = Math.max(from, Math.min(end, sk.length));
+    let missing = false;
+    for (let i = from; i < to; i++) {
+      if (!details.value.has(sk[i].id)) {
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) {
+      return;
+    }
+
+    const version = skeletonVersion;
+    windowLoading.value = true;
     try {
-      const res = await api.itemList(buildListParams(0, limit));
-      items.value = res.items;
-      total.value = Number(res.total);
+      const res = await api.itemList({ ...listParams(), offset: from, limit: to - from });
+      if (version !== skeletonVersion) {
+        return;
+      }
+      const map = new Map(details.value);
+      for (const item of res.items) {
+        map.set(item.id, item);
+      }
+      details.value = map;
+    } catch {
+      // 窗口加载失败静默：后续滚动/重试会再次触发
+    } finally {
+      windowLoading.value = false;
+    }
+  }
+
+  /**
+   * SSE 驱动的骨架重载：条目增删/成员资格/次序以服务端查询为准；详情缓存保留，
+   * 已不属于当前视图的条目就地清理。滚动位置不动，内容就地增删。
+   */
+  async function reloadSkeleton() {
+    const version = ++skeletonVersion;
+    try {
+      const res = await api.itemSkeleton(listParams());
+      if (version !== skeletonVersion) {
+        return;
+      }
+      skeleton.value = res.items;
       totalSize.value = Number(res.total_size);
-      endReached.value = items.value.length >= total.value;
-      // 保持不变式「选择 ⊆ 列表」：不再属于当前视图的选中项一并摘除
-      selection.value = selection.value.filter((id) => res.items.some((i) => i.id === id));
-    } catch (e) {
-      showToast(errorText(e));
+      const ids = new Set(res.items.map((i) => i.id));
+      selection.value = selection.value.filter((id) => ids.has(id));
+      if (details.value.size > 0) {
+        const map = new Map(details.value);
+        let changed = false;
+        for (const id of [...map.keys()]) {
+          if (!ids.has(id)) {
+            map.delete(id);
+            changed = true;
+          }
+        }
+        if (changed) {
+          details.value = map;
+        }
+      }
+    } catch {
+      // 下次事件或 SSE 重连再对齐
     }
   }
 
@@ -292,11 +349,11 @@ export const useLibraryStore = defineStore('library', () => {
   function select(id: string, mod?: 'range' | 'toggle') {
     if (mod === 'range' && selection.value.length > 0) {
       const anchor = selection.value.at(-1)!;
-      const a = items.value.findIndex((i) => i.id === anchor);
-      const b = items.value.findIndex((i) => i.id === id);
+      const a = skeleton.value.findIndex((i) => i.id === anchor);
+      const b = skeleton.value.findIndex((i) => i.id === id);
       if (a >= 0 && b >= 0) {
         const [from, to] = a < b ? [a, b] : [b, a];
-        selection.value = items.value.slice(from, to + 1).map((i) => i.id);
+        selection.value = skeleton.value.slice(from, to + 1).map((i) => i.id);
         return;
       }
     }
@@ -310,7 +367,8 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function selectAll() {
-    selection.value = items.value.map((i) => i.id);
+    // 基于骨架（全量），不是仅视口窗口
+    selection.value = skeleton.value.map((i) => i.id);
   }
 
   function clearSelection() {
@@ -339,18 +397,25 @@ export const useLibraryStore = defineStore('library', () => {
 
   /**
    * item.updated 的统一入口（updateItem 响应与 SSE 共用）。
-   * 无过滤视图原地更新；过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖整表刷新——
+   * 详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。
+   * 过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖重载骨架——
    * 成员资格可能已变化（移出当前文件夹、摘掉当前分类/标签等），成员判定以服务端查询为准。
    */
   function applyUpdatedItem(updated: Item) {
-    if (isUnfilteredView()) {
-      const idx = items.value.findIndex((i) => i.id === updated.id);
-      if (idx >= 0) {
-        items.value[idx] = updated;
-      }
-      return;
+    if (details.value.has(updated.id)) {
+      const map = new Map(details.value);
+      map.set(updated.id, updated);
+      details.value = map;
     }
-    debouncedRefresh(() => void refresh());
+    const skIdx = skeleton.value.findIndex((s) => s.id === updated.id);
+    if (skIdx >= 0 && skeleton.value[skIdx].star !== updated.star) {
+      const next = skeleton.value.slice();
+      next[skIdx] = { ...next[skIdx], star: updated.star };
+      skeleton.value = next;
+    }
+    if (!isUnfilteredView()) {
+      debouncedSkeletonReload(() => void reloadSkeleton());
+    }
   }
 
   async function trashSelected() {
@@ -363,7 +428,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
     }
     clearSelection();
-    debouncedRefresh(() => void refresh());
+    debouncedSkeletonReload(() => void reloadSkeleton());
   }
 
   async function restoreSelected() {
@@ -381,7 +446,7 @@ export const useLibraryStore = defineStore('library', () => {
     if (failed === 0) {
       showToast('已恢复');
     }
-    debouncedRefresh(() => void refresh());
+    debouncedSkeletonReload(() => void reloadSkeleton());
   }
 
   async function clearTrash() {
@@ -389,7 +454,7 @@ export const useLibraryStore = defineStore('library', () => {
       await api.trashClear();
       showToast('回收站已清空');
       if (isTrash.value) {
-        await resetList();
+        debouncedSkeletonReload(() => void reloadSkeleton());
       }
     } catch (e) {
       showToast(errorText(e));
@@ -428,7 +493,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
     importProgress.value = null;
     showToast(`导入完成：新增 ${added}${existed ? `，已存在 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`);
-    debouncedRefresh(() => void refresh());
+    // SSE item.added 已触发防抖骨架重载，这里不重复拉取
   }
 
   // ---- 文件夹写操作 ----
@@ -560,10 +625,29 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** 选中项详情补齐：加标签/分类需读现有值合并，批量选中（含视口外）时先按需拉取 */
+  async function ensureSelectionDetails() {
+    const missing = selection.value.filter((id) => !details.value.has(id));
+    if (missing.length === 0) {
+      return;
+    }
+    try {
+      const res = await api.itemList({ ...listParams(), ids: missing, offset: 0, limit: missing.length });
+      const map = new Map(details.value);
+      for (const item of res.items) {
+        map.set(item.id, item);
+      }
+      details.value = map;
+    } catch {
+      // 尽力而为：拉不到的选中项在后续合并中跳过
+    }
+  }
+
   /** 为全部选中项追加分类（去重，保留已有） */
-  function addCategoryToSelected(name: string) {
+  async function addCategoryToSelected(name: string) {
+    await ensureSelectionDetails();
     for (const id of selection.value) {
-      const item = items.value.find((i) => i.id === id);
+      const item = details.value.get(id);
       if (item && !(item.categories ?? []).includes(name)) {
         void updateItem(id, { categories: [...(item.categories ?? []), name] });
       }
@@ -571,9 +655,10 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /** 为全部选中项追加标签（去重，保留已有） */
-  function addTagToSelected(tag: string) {
+  async function addTagToSelected(tag: string) {
+    await ensureSelectionDetails();
     for (const id of selection.value) {
-      const item = items.value.find((i) => i.id === id);
+      const item = details.value.get(id);
       if (item && !(item.tags ?? []).includes(tag)) {
         void updateItem(id, { tags: [...(item.tags ?? []), tag] });
       }
@@ -590,6 +675,11 @@ export const useLibraryStore = defineStore('library', () => {
   // ---- 预览浮层 ----
   function openPreview(id: string) {
     previewId.value = id;
+    // 详情可能未加载（如键盘导航跳到视口外项）：按骨架索引补拉，到位后浮层即出现
+    const idx = skeleton.value.findIndex((s) => s.id === id);
+    if (idx >= 0) {
+      void ensureWindow(idx, idx + 1);
+    }
   }
 
   function closePreview() {
@@ -599,7 +689,7 @@ export const useLibraryStore = defineStore('library', () => {
   function navigatePreview(step: 1 | -1) {
     const next = previewNavId(step);
     if (next) {
-      previewId.value = next;
+      openPreview(next);
     }
   }
 
@@ -612,18 +702,23 @@ export const useLibraryStore = defineStore('library', () => {
       }
       case 'item.added':
       case 'item.restored':
-        debouncedRefresh(() => void refresh());
+        // 新 item 的落点（成员/次序）只能以服务端查询为准：防抖重载骨架，视口窗口随后按需补齐
+        debouncedSkeletonReload(() => void reloadSkeleton());
         break;
       case 'item.trashed':
       case 'item.removed': {
         const id = (payload as { id: string }).id;
-        if (isTrash.value) {
-          debouncedRefresh(() => void refresh());
-        } else {
-          items.value = items.value.filter((i) => i.id !== id);
-          selection.value = selection.value.filter((s) => s !== id);
-          total.value = Math.max(0, total.value - 1);
+        // 就地移除立即反馈；回收站视图同事件意味着「进来了」，统一以防抖重载兜底
+        if (details.value.has(id)) {
+          const map = new Map(details.value);
+          map.delete(id);
+          details.value = map;
         }
+        if (skeleton.value.some((s) => s.id === id)) {
+          skeleton.value = skeleton.value.filter((s) => s.id !== id);
+        }
+        selection.value = selection.value.filter((s) => s !== id);
+        debouncedSkeletonReload(() => void reloadSkeleton());
         break;
       }
     }
@@ -632,9 +727,9 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, items, total, totalSize, viewTitle, loading, endReached, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, sidebarVisible,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, sidebarVisible,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewNavId, flatFolders, categoryOptions, thumbSizes,
-    init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, fetchMore, refresh,
+    init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,

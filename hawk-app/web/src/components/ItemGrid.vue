@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch, watchEffect } from 'vue';
-import { useIntersectionObserver, useResizeObserver } from '@vueuse/core';
+import { computed, nextTick, ref, watch, watchEffect } from 'vue';
+import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import { gridNavRows } from '../composables/useGridNav';
@@ -19,86 +19,196 @@ const showTagDialog = ref(false);
 const showFolderDialog = ref(false);
 const showCategoryDialog = ref(false);
 
-// ---------- 齐行网格（justified layout）：行内等高、宽度按宽高比分配，图片完整显示 ----------
+// ---------- 齐行布局（justified layout）+ 虚拟渲染 ----------
+// Eagle 式：骨架（全量 id/宽/高）一次性算出完整布局，滚动条总高即时确定、可自由拖动；
+// 只渲染视口 ± overscan 的行，行内详情未拉取的单元格只保留宽高的占位块（不渲染图片）。
 
-interface GridCell {
-  item: Item;
+interface LayoutCell {
+  id: string;
   width: number;
   height: number;
+  star: number;
+}
+
+interface LayoutRow {
+  key: string;
+  cells: LayoutCell[];
+  y: number;
+  height: number;
+  /** 行内条目在骨架中的索引区间 [startIdx, endIdx)，视口窗口按它向 store 补数据 */
+  startIdx: number;
+  endIdx: number;
 }
 
 const GAP = 10;
+/** 视口外行缓存：上下各多渲染的行数，吸收快速滚动的渲染延迟 */
+const OVERSCAN_ROWS = 4;
+/** 卡片 meta 区定高（Eagle 式 3 行：标题 2 + 像素 1），必须与 ItemCard.vue 中 .meta 的 height 一致 */
+const META_H = 54;
+/** 卡片边框 2px×2：行距必须计入，否则下一行图片盖住上一行的 meta 文字 */
+const CARD_BORDER = 4;
+
 const gridRef = ref<HTMLElement | null>(null);
 const containerWidth = ref(0);
+const viewportHeight = ref(0);
+const scrollTop = ref(0);
 
 useResizeObserver(gridRef, ([entry]) => {
   containerWidth.value = entry.contentRect.width;
+  viewportHeight.value = entry.contentRect.height;
 });
 
-/** 贪心装行：累计到超出容器即切行；非末行按容器宽精确反推行高（上下限避免极端行） */
-const gridRows = computed<GridCell[][]>(() => {
+let scrollRaf = 0;
+function onScroll() {
+  if (scrollRaf) {
+    return;
+  }
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0;
+    scrollTop.value = gridRef.value?.scrollTop ?? 0;
+  });
+}
+
+/** 贪心装行：累计到超出容器即切行；非末行按容器宽精确反推行高（上下限避免极端行）
+ * 只依赖骨架 + 卡片尺寸 + 容器宽：详情缓存变化不触发全量重排（大库上每次窗口拉取都重排太贵） */
+const layout = computed<LayoutRow[]>(() => {
   const width = containerWidth.value;
   if (width <= 0) {
     return [];
   }
 
   const targetH = store.thumbSize;
-  const rows: GridCell[][] = [];
-  let row: { item: Item; ratio: number }[] = [];
+  const sk = store.skeleton;
+  const rows: LayoutRow[] = [];
+  let y = 0;
+  let row: { idx: number; id: string; ratio: number; star: number }[] = [];
   let ratiosSum = 0;
 
   const flush = (isLast: boolean) => {
     if (row.length === 0) {
       return;
     }
-    const h = isLast
-      ? targetH
-      : Math.min(Math.max((width - (row.length - 1) * GAP) / ratiosSum, targetH * 0.5), targetH * 1.75);
-    rows.push(row.map(({ item, ratio }) => ({ item, width: Math.round(h * ratio), height: Math.round(h) })));
+    const h = Math.round(
+      isLast ? targetH : Math.min(Math.max((width - (row.length - 1) * GAP) / ratiosSum, targetH * 0.5), targetH * 1.75),
+    );
+    // 行高 = 卡片总高（缩略图 + meta + 边框），行槽位与真实卡片一致，杜绝行间重叠
+    const rowH = h + META_H + CARD_BORDER;
+    rows.push({
+      key: row[0].id,
+      cells: row.map((r) => ({ id: r.id, width: Math.round(h * r.ratio), height: h, star: r.star })),
+      y,
+      height: rowH,
+      startIdx: row[0].idx,
+      endIdx: row[row.length - 1].idx + 1,
+    });
+    y += rowH + GAP;
     row = [];
     ratiosSum = 0;
   };
 
-  for (const item of store.items) {
-    const ratio = Number(item.width) > 0 && Number(item.height) > 0 ? Number(item.width) / Number(item.height) : 1;
+  for (let idx = 0; idx < sk.length; idx++) {
+    const s = sk[idx];
+    const ratio = Number(s.width) > 0 && Number(s.height) > 0 ? Number(s.width) / Number(s.height) : 1;
     if (row.length > 0 && (ratiosSum + ratio) * targetH + row.length * GAP > width) {
       flush(false);
     }
-    row.push({ item, ratio });
+    row.push({ idx, id: s.id, ratio, star: Number(s.star) });
     ratiosSum += ratio;
   }
   flush(true);
   return rows;
 });
 
+/** 滚动条总高：布局完成即确定，不随滚动变化 */
+const totalHeight = computed(() => {
+  const rows = layout.value;
+  return rows.length > 0 ? rows[rows.length - 1].y + rows[rows.length - 1].height : 0;
+});
+
+/** 可见行区间（按 y 二分），上下各扩 OVERSCAN_ROWS 行 */
+const visibleRange = computed<[number, number]>(() => {
+  const rows = layout.value;
+  if (rows.length === 0) {
+    return [0, -1];
+  }
+  const top = scrollTop.value;
+  const bottom = scrollTop.value + viewportHeight.value;
+  let lo = 0;
+  let hi = rows.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].y + rows[mid].height < top) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  let end = lo;
+  while (end + 1 < rows.length && rows[end + 1].y <= bottom) {
+    end++;
+  }
+  return [Math.max(0, lo - OVERSCAN_ROWS), Math.min(rows.length - 1, end + OVERSCAN_ROWS)];
+});
+
+interface RenderedCell extends LayoutCell {
+  item: Item | null;
+}
+
+/** 视口行 + 详情解析：只在这个切片上映射 details，详情到位后占位块换成真实卡片 */
+const renderedRows = computed(() => {
+  const [a, b] = visibleRange.value;
+  if (a > b) {
+    return [];
+  }
+  return layout.value.slice(a, b + 1).map((row) => ({
+    ...row,
+    cells: row.cells.map((c): RenderedCell => ({ ...c, item: store.details.get(c.id) ?? null })),
+  }));
+});
+
+// 视口窗口补数据（首屏由 resetList 负责，这里兜滚动/跳转）
+watchEffect(() => {
+  const [a, b] = visibleRange.value;
+  const rows = layout.value;
+  if (a <= b && a < rows.length) {
+    void store.ensureWindow(rows[a].startIdx, rows[b].endIdx);
+  }
+});
+
 // 发布方向键导航所需的行布局（每项的视觉中心 x）
 watchEffect(() => {
-  gridNavRows.value = gridRows.value.map((row) => {
+  gridNavRows.value = layout.value.map((row) => {
     let x = 0;
-    return row.map((cell) => {
+    return row.cells.map((cell) => {
       const cx = x + cell.width / 2;
       x += cell.width + GAP;
-      return { id: cell.item.id, cx };
+      return { id: cell.id, cx };
     });
   });
 });
 
-// 键盘移动选中框时滚动到可见区域
+// 键盘移动选中框时滚动到可见区域；目标行未渲染时先把容器滚过去（触发渲染）再细调
 watch(
   () => store.primarySelected?.id,
-  (id) => {
-    if (id) {
-      document.querySelector(`[data-item-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+  async (id) => {
+    if (!id || !gridRef.value) {
+      return;
     }
+    const idx = store.skeleton.findIndex((s) => s.id === id);
+    if (idx < 0) {
+      return;
+    }
+    const row = layout.value.find((r) => idx >= r.startIdx && idx < r.endIdx);
+    const el = gridRef.value;
+    if (row && (row.y < el.scrollTop || row.y + row.height > el.scrollTop + el.clientHeight)) {
+      el.scrollTop = Math.max(0, row.y - 100);
+    }
+    await nextTick();
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-item-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+    });
   },
 );
-
-const sentinel = ref<HTMLElement | null>(null);
-useIntersectionObserver(sentinel, ([entry]) => {
-  if (entry.isIntersecting) {
-    void store.fetchMore();
-  }
-});
 
 function onSelect(item: Item, e: MouseEvent) {
   const mod = e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : undefined;
@@ -145,31 +255,41 @@ function onMenu(item: Item, e: MouseEvent) {
 </script>
 
 <template>
-  <div class="grid-scroll">
+  <div ref="gridRef" class="grid-scroll" @scroll.passive="onScroll">
     <EmptyState
       v-if="!store.loading && store.total === 0"
       :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'"
     />
 
-    <div ref="gridRef" class="grid">
-      <div v-for="(row, i) in gridRows" :key="i" class="row">
-        <ItemCard
-          v-for="cell in row"
-          :key="cell.item.id"
-          :item="cell.item"
-          :data-item-id="cell.item.id"
-          :selected="store.selection.includes(cell.item.id)"
-          :width="cell.width"
-          :height="cell.height"
-          @select="onSelect"
-          @open="store.openPreview"
-          @menu="onMenu"
-        />
+    <div v-if="totalHeight > 0" class="grid" :style="{ height: `${totalHeight}px` }">
+      <div v-for="row in renderedRows" :key="row.key" class="row" :style="{ transform: `translateY(${row.y}px)` }">
+        <template v-for="cell in row.cells" :key="cell.id">
+          <ItemCard
+            v-if="cell.item"
+            :item="cell.item"
+            :data-item-id="cell.id"
+            :selected="store.selection.includes(cell.id)"
+            :width="cell.width"
+            :height="cell.height"
+            @select="onSelect"
+            @open="store.openPreview"
+            @menu="onMenu"
+          />
+          <!-- 详情未拉取：只保留宽高的占位块，不进视口渲染（ Eagle 式） -->
+          <div
+            v-else
+            class="cell-placeholder"
+            :class="{ selected: store.selection.includes(cell.id) }"
+            :style="{ width: `${cell.width}px`, height: `${cell.height + META_H}px` }"
+            :data-item-id="cell.id"
+          >
+            <span v-if="cell.star > 0" class="star">★{{ cell.star }}</span>
+          </div>
+        </template>
       </div>
     </div>
 
-    <div ref="sentinel" class="sentinel" />
-    <div v-if="store.loading" class="loading">加载中…</div>
+    <div v-if="store.windowLoading && !store.loading" class="loading">加载中…</div>
 
     <PromptDialog
       v-if="showTagDialog"
@@ -216,19 +336,39 @@ function onMenu(item: Item, e: MouseEvent) {
   padding: 12px;
 }
 
+/* 总高由内联 style 决定；行绝对定位 + translateY，离屏行不渲染 */
 .grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  position: relative;
 }
 
 .row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   gap: 10px;
 }
 
-.sentinel {
-  height: 1px;
+.cell-placeholder {
+  position: relative;
+  flex: none;
+  border-radius: 4px;
+  background: var(--bg-2);
+  border: 2px solid transparent;
+}
+
+.cell-placeholder.selected {
+  border-color: var(--accent);
+}
+
+.cell-placeholder .star {
+  position: absolute;
+  right: 5px;
+  top: 4px;
+  color: #f5c518;
+  font-size: 11px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 
 .loading {

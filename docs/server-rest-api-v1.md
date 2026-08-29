@@ -236,6 +236,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | 方法 | 端点                             | 说明           |
 | ---- | -------------------------------- | -------------- |
 | POST | `/api/v1/item/list`              | 查询 item 列表 |
+| POST | `/api/v1/item/skeleton`          | 全量布局骨架（dim，不分页，与 list 同序） |
 | GET  | `/api/v1/item/detail`            | 获取单个 item  |
 | GET  | `/api/v1/item/count`             | 获取 item 总数 |
 | POST | `/api/v1/item/add`               | 添加新 item    |
@@ -334,6 +335,30 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 ```
 
 `total` / `total_size` 为过滤后未分页的全量计数与字节数合计（前端检查器「分区状态」用）。
+
+**排序稳定性**：主键同值（如相同 `modification_time`）时按 `id` 字典序打破平局，保证相同查询的次序逐位确定——前端「骨架 + 分页窗口」模型依赖这一点对齐。
+
+### skeleton
+
+`POST /api/v1/item/skeleton`
+
+请求参数与 `item/list` 完全相同（`offset` / `limit` 可省略，忽略），过滤、排序与 `item/list` **逐位一致**，但不分页，只返回布局所需的最低字段。供前端虚拟网格一次性建立完整布局（滚动条总高即时确定，可自由拖动跳转），视口内再按 offset 用 `item/list` 取详情。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": {
+    "items": [
+      { "id": "9b1f2c...", "width": 1920, "height": 1080, "star": 4 }
+    ],
+    "total_size": 314572800
+  }
+}
+```
+
+条目数（`items` 长度）即全量计数；`star` 供网格 ★ 角标在未加载详情时显示。
 
 ### detail
 

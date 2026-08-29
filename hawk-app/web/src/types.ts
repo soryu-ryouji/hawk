@@ -8,6 +8,9 @@ export type TagInfo = components['schemas']['TagInfo'];
 export type LibraryInfo = components['schemas']['LibraryInfo'];
 export type ItemListRequest = components['schemas']['ItemListRequest'];
 export type ItemListResult = components['schemas']['ItemListResponse'];
+/** 虚拟网格骨架：全量 dim（与 item/list 同查询同排序、不分页） */
+export type SkeletonItem = components['schemas']['ItemSkeletonDto'];
+export type ItemSkeletonResult = components['schemas']['ItemSkeletonResponse'];
 
 // 业务自有类型
 export type ViewState =

@@ -1,6 +1,6 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
 import { apiConfig, request } from './client';
-import type { CategoryInfo, FolderNode, Item, ItemListRequest, ItemListResult, LibraryInfo, TagInfo } from '../types';
+import type { CategoryInfo, FolderNode, Item, ItemListRequest, ItemListResult, ItemSkeletonResult, LibraryInfo, TagInfo } from '../types';
 
 export interface ItemPatch {
   name?: string;
@@ -26,6 +26,9 @@ export const api = {
   folderRestore: (path: string) => request<void>('POST', '/api/v1/folder/restore', { body: { path } }),
 
   itemList: (params: ItemListRequest) => request<ItemListResult>('POST', '/api/v1/item/list', { body: params }),
+  /** 全量骨架：与 item/list 同过滤同排序（确定性次序）、不分页，只含 id/width/height/star；前端虚拟网格建完整布局用 */
+  itemSkeleton: (params: Omit<ItemListRequest, 'offset' | 'limit'>) =>
+    request<ItemSkeletonResult>('POST', '/api/v1/item/skeleton', { body: params }),
   itemDetail: (id: string) => request<Item>('GET', '/api/v1/item/detail', { query: { id } }),
   itemCount: () => request<number>('GET', '/api/v1/item/count'),
   itemAddByPath: (path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }) =>

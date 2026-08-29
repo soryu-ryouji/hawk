@@ -405,6 +405,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/item/skeleton": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": null | components["schemas"]["ItemListRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnvelopeOfItemSkeletonResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/item/detail": {
         parameters: {
             query?: never;
@@ -1123,6 +1162,10 @@ export interface components {
             status: string;
             data: null | components["schemas"]["ItemListResponse"];
         };
+        EnvelopeOfItemSkeletonResponse: {
+            status: string;
+            data: null | components["schemas"]["ItemSkeletonResponse"];
+        };
         EnvelopeOfLibraryInfo: {
             status: string;
             data: null | components["schemas"]["LibraryInfo"];
@@ -1232,6 +1275,20 @@ export interface components {
         };
         ItemRefreshThumbnailRequest: {
             id: string;
+        };
+        ItemSkeletonDto: {
+            id: string;
+            /** Format: int32 */
+            width?: number | string;
+            /** Format: int32 */
+            height?: number | string;
+            /** Format: int32 */
+            star?: number | string;
+        };
+        ItemSkeletonResponse: {
+            items: components["schemas"]["ItemSkeletonDto"][];
+            /** Format: int64 */
+            total_size: number | string;
         };
         ItemUpdateRequest: {
             id: string;

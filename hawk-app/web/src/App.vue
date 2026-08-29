@@ -106,7 +106,7 @@ async function boot() {
     onRestored: (item) => store.applyEvent('item.restored', item),
     onRemoved: (id) => store.applyEvent('item.removed', { id }),
     onReconnect: () => {
-      void store.refresh();
+      void store.reloadSkeleton();
       void store.refreshFolders();
     },
   });
@@ -168,7 +168,7 @@ useDragImport();
     <Inspector class="inspector" />
     <WindowControls />
 
-    <!-- 侧栏宽度拖拽手柄（命中区宽于视觉线，贴近栏边缘居中） -->
+    <!-- 侧栏宽度拖拽手柄：7px 命中区紧贴分界线右侧，避开左侧面板的滚动条 -->
     <template v-if="store.sidebarVisible">
       <div
         class="col-resize-handle"
@@ -179,7 +179,7 @@ useDragImport();
       <div
         class="col-resize-handle"
         :class="{ active: dragSide === 'right' }"
-        :style="{ right: `${inspectorWidth}px` }"
+        :style="{ left: `calc(100% - ${inspectorWidth}px)` }"
         @mousedown.prevent="startResize('right')"
       />
     </template>

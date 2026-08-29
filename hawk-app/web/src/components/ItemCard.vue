@@ -124,21 +124,29 @@ const thumbSizesAttr = computed(() => (props.width > 0 ? `${Math.ceil(props.widt
 }
 
 .meta {
+  /* 定高：ItemGrid.vue 的 META_H 常量与此保持一致，行距按它计算； Eagle 式预留 3 行（标题 2 + 像素 1） */
+  height: 54px;
+  box-sizing: border-box;
   padding: 5px 7px 6px;
   background: var(--bg-2);
 }
 
+/* 标题最多两行，超出省略（line-clamp 替代 nowrap + text-overflow） */
 .name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--fg-0);
   font-size: 12px;
+  line-height: 14px;
+  word-break: break-all;
 }
 
 .dims {
-  margin-top: 1px;
+  margin-top: 2px;
   color: var(--fg-1);
   font-size: 11px;
+  line-height: 13px;
 }
 </style>

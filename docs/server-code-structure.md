@@ -52,7 +52,7 @@ Program.cs 做的事（按执行顺序）：
 | `MetadataStore.cs` | 元数据存取：内存权威副本 + path→hash 反查表；磁盘原子写（临时文件 + rename）；只认 64 位小写 hex 文件名（同步冲突副本自动忽略）；TOML 解析用 Tomlyn，序列化手写以精确控制格式 |
 | `ContentHash.cs` | BLAKE3 流式哈希 → hex，即 item id |
 | `Item.cs` | 索引中的 item：`ItemLocation`（一个文件位置，回收站位置以 `.hawk/trash/` 开头）与 `Item`（位置列表 + 元数据副本 + 宽高派生信息）；`ToDto(trashView)` 负责向 API 投影——回收站视图的 paths 展示原库内路径（恢复目标） |
-| `ItemIndex.cs` | 内存索引：hash→item 与位置路径→hash 两个字典，一把锁保护；`Query` 实现 item/list 的全部过滤（AND 语义）、排序与分页 |
+| `ItemIndex.cs` | 内存索引：hash→item 与位置路径→hash 两个字典，一把锁保护；`Query` 实现 item/list 的全部过滤（AND 语义）、排序与分页；`QuerySkeleton` 同过滤排序投影 dim 全量（虚拟网格布局）；排序主键同值按 id 打破平局，保证骨架与分页窗口两次查询次序逐位一致 |
 | `ThumbnailService.cs` | ImageSharp 封装：`Identify` 只读头部取尺寸；`GenerateAsync` 按配置尺寸输出 WebP（`ResizeMode.Max` 等比缩小、不放大小图）；缩略图按 hash 内容寻址存储 |
 | `ColorMath.cs` | 颜色纯函数：hex 解析/格式化、sRGB→CIELAB（D65）、CIE76 ΔE² 距离 |
 | `ColorService.cs` | 调色板提炼（降采样 64px → Wu 量化 ≤10 色 → 像素占比，alpha<128 不参与）与缓存读写（库外缓存目录 `colors/<hash前2位>/<hash>.json`，带算法版本号）；检索原理见 [color-search.md](color-search.md) |
@@ -88,13 +88,13 @@ Program.cs 做的事（按执行顺序）：
 | `AppEndpoints.cs` | `GET /health`（探活）、`GET /api/v1/app/info`（版本/平台/可执行路径） |
 | `LibraryEndpoints.cs` | `library/info`（显示名取 config 的 name，缺省为目录名）、`library/reindex`（入队全量重哈希扫描，立即返回） |
 | `FolderEndpoints.cs` | folder 五端点。folder 即真实目录：list 实时从文件系统建树（排除 `.hawk` 与 ignore 目录）；create/update/delete/restore 先做校验（名称合法、父目录存在、目标占用 → `FILE_EXISTS`、禁止移入自身子目录），再做真实目录操作，最后 `SubmitDirMoveAsync` 同步索引 |
-| `ItemEndpoints.cs` | item 十端点，逻辑最重，见下节 |
+| `ItemEndpoints.cs` | item 十一端点，逻辑最重，见下节 |
 | `TrashEndpoints.cs` | `trash/clear`：先提交 `ClearTrashJob` 清理索引位置、元数据与缓存（缩略图/调色板），再物理删除 `.hawk/trash/` 内容。顺序不能颠倒：先物理删除会让 watcher 的 Deleted 事件抢先摘除位置，DoClearTrash 找不到位置导致元数据与缓存泄漏（Windows 上 watcher 延迟低必现） |
 | `EventsEndpoints.cs` | SSE 订阅端点：循环读 EventBus channel 写 `event:`/`data:` 帧；断连时注销订阅；流式响应不纳入 OpenAPI schema |
 
 ### ItemEndpoints.cs 详解
 
-- **list / detail / count**：纯查询，直接读 `ItemIndex`。detail 的视图自动判断（item 无库内位置时按回收站视图投影）
+- **list / skeleton / detail / count**：纯查询，直接读 `ItemIndex`。list 与 skeleton 共用 `BuildQuery`（同过滤同排序，主键同值按 id 打破平局——前端按 offset 取视口窗口依赖次序逐位一致）；skeleton 不分页、投影 id/width/height/star，供前端虚拟网格建完整布局。detail 的视图自动判断（item 无库内位置时按回收站视图投影）
 - **add**：`path`/`url`/`img_base64` 三选一取内容（url 下载到临时文件，base64 必须能被 ImageSharp 识别否则 `UNSUPPORTED_FORMAT`）→ 推断扩展名与缺省文件名 → 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库 → `SubmitUpsertAsync` 完成索引 → 附带的 tags/annotation/url 经 `SubmitMetadataAsync` 写入元数据
 - **update**：定位操作位置（`path` 指定或主位置；回收站位置用原库内路径匹配）→ 回收站中的文件禁止改名/移动 → `name`/`folder_path` 做真实文件移动并 `SubmitMoveAsync` → tags/star/annotation/url 走 `SubmitMetadataAsync`（star 校验 0–5）
 - **delete / restore**：delete 把文件移入 `.hawk/trash/`（保留目录结构，冲突加 ` (n)` 后缀）；restore 按回收站实际名称去掉前缀后的路径放回，被占用报 `FILE_EXISTS`

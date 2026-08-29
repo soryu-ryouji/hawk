@@ -98,7 +98,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 │  ───────── │  ItemGrid                        │  注释(可改)          │
 │  ˅文件夹树  │   齐行网格：行内等高，宽度按宽高比    │  URL(可改)          │
 │  (增/删/改) │   卡片下方：name.ext + 尺寸         │  标签 chips         │
-│  ˅分类     │   无限滚动分页（100/页）            │  分类 chips ＋      │
+│  ˅分类     │   虚拟渲染：只画视口±4行，离屏占位    │  分类 chips ＋      │
 │  (增/删/改) │   懒加载 <img loading=lazy>        │  文件夹 chips ＋    │
 │  ˅标签列表 N│   多选：Shift 连选 / Cmd 点选       │  基本信息(评分并入)  │
 │  (增/删/改) │   双击/空格 → 预览浮层（Esc 关闭）   │  文件位置            │
@@ -111,9 +111,9 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
   文件夹/分类/标签三个分区标题可点击折叠/展开（v-show 保留树节点状态）
 ```
 
-布局为 Eagle 式三栏：侧栏与检查器通高到窗口上沿，顶栏（`TitleBar.vue`）只覆盖中间内容区，顶部功能区按列分开不混在一起。窗口控制按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 条高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证）；Windows/Linux 为无边框窗口（`frame: false`），自绘窗口控制 fixed 在窗口右上角，经 preload 白名单 IPC 驱动主进程。三条顶条均为窗口拖拽区（双击空白切换最大化），顶栏交互控件单独 `no-drag`；侧栏隐藏时顶栏通栏：macOS 左端预留 78px 避让原生红绿灯，Windows/Linux 右端预留 130px 避让 fixed 的窗口控制。侧栏与检查器宽度可拖拽调整：栏分界线上压 7px 命中区手柄（App.vue 内联 style 控制 grid 列宽，拖拽期间 body 锁定 col-resize 光标并禁用文本选择），侧栏 180–480px、检查器 240–560px，宽度持久化到 localStorage（`hawk:panelWidths`，全局生效不随素材库变）。无独立状态栏：计数在侧栏各行徽章（全部素材/根目录素材/未分类素材/未标签素材/文件夹/分类/标签/回收站），选中数在顶栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
+布局为 Eagle 式三栏：侧栏与检查器通高到窗口上沿，顶栏（`TitleBar.vue`）只覆盖中间内容区，顶部功能区按列分开不混在一起。窗口控制按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 条高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证）；Windows/Linux 为无边框窗口（`frame: false`），自绘窗口控制 fixed 在窗口右上角，经 preload 白名单 IPC 驱动主进程。三条顶条均为窗口拖拽区（双击空白切换最大化），顶栏交互控件单独 `no-drag`；侧栏隐藏时顶栏通栏：macOS 左端预留 78px 避让原生红绿灯，Windows/Linux 右端预留 130px 避让 fixed 的窗口控制。侧栏与检查器宽度可拖拽调整：栏分界线上紧贴右侧压 7px 命中区手柄（避开左侧面板右缘的纵向滚动条，防止拖滚动条误触调宽；App.vue 内联 style 控制 grid 列宽，拖拽期间 body 锁定 col-resize 光标并禁用文本选择），侧栏 180–480px、检查器 240–560px，宽度持久化到 localStorage（`hawk:panelWidths`，全局生效不随素材库变）。无独立状态栏：计数在侧栏各行徽章（全部素材/根目录素材/未分类素材/未标签素材/文件夹/分类/标签/回收站），选中数在顶栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
 
-网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
+网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。**虚拟渲染（Eagle 式滚动条）**：store 持当前视图全量骨架（`skeleton`：id/width/height/star，经 `item/skeleton` 一次性取回，与 `item/list` 同查询同排序且主键同值时按 id 打破平局——两次查询次序逐位一致），ItemGrid 用骨架算出全部行的 y 偏移，容器总高即时确定，滚动条可自由拖动跳转；只渲染视口 ±4 行（绝对定位 + translateY），行内详情未拉取的单元格只留宽高的占位块（不渲染图片），进入视口时按骨架索引区间经 `ensureWindow` 用 `item/list` 补数据。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
 当前位置体现在侧栏选中态与标题栏：文件夹视图渲染可点击面包屑（根 = 全部素材，逐级跳转），其余视图为固定标题；标题栏前进/后退在会话内浏览历史（`setView` 压栈，重命名跟随/删除回退就地修正当前条目）中移动。回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。文件夹树节点计数由后端 `folder/list` 的 `count` 字段提供（含子级、不含回收站、按 item 去重）；分类/标签计数由 `category/list`、`tag/list` 提供（精确匹配、不含回收站）。
 
@@ -217,6 +217,7 @@ export const api = {
   folderDelete(path: string): Promise<void>;
   folderRestore(path: string): Promise<void>;
   itemList(params: ItemListParams): Promise<{ items: Item[]; total: number; offset: number; limit: number }>;
+  itemSkeleton(params): Promise<{ items: SkeletonItem[]; total_size: number }>;  // 全量骨架：同过滤同排序（确定性次序）、不分页，虚拟网格建完整布局用
   itemDetail(id: string): Promise<Item>;
   itemCount(): Promise<number>;
   itemAddByPath(path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }): Promise<{ item: Item; already_existed: boolean }>;
@@ -250,9 +251,11 @@ export function connectEvents(handlers: {
 // ---- state ----
 view: ViewState;                 // 默认 all
 query: QueryState;               // 默认 { keywords: [], orderBy: 'modification_time', order: 'desc' }
-items: Item[];                   // 当前视图已加载页（无限滚动累加）
-total: number; loading: boolean; endReached: boolean;
-selection: string[];             // 选中 id，有序；末位为主选中/连选锚点
+skeleton: SkeletonItem[];        // 当前视图全量骨架（item/skeleton 一次取回）：布局与滚动条总高的唯一依据
+details: Map<string, Item>;      // 已拉取详情（视口窗口 + 预取），按 id 索引
+total: number;                   // = skeleton.length
+totalSize: number; loading: boolean; windowLoading: boolean;   // 整表加载中 / 视口窗口补数据中
+selection: string[];             // 选中 id，有序；末位为主选中/连选锚点（selectAll 基于全量骨架）
 folders: FolderNode | null;      // 完整树（含根）
 library: LibraryInfo | null;
 thumbSize: number;               // 网格卡片边长偏好（默认 160，内存态不持久化）
@@ -276,9 +279,9 @@ setView(v: ViewState): void;                     // 切视图：压浏览历史 
 goBack() / goForward(): void;                    // 标题栏前进/后退（canGoBack/canGoForward 驱动禁用态）
 toggleSidebar(): void;                           // 侧栏显隐开关
 setQuery(patch: Partial<QueryState>): void;        // → resetList
-resetList(): Promise<void>;      // items 清空 → fetchMore 第一页
-fetchMore(): Promise<void>;      // offset=items.length, limit=100；in_trash/folders 由 view 派生
-refresh(): Promise<void>;        // 重查已加载范围并替换（SSE 用，保滚动位置）
+resetList(): Promise<void>;      // 取全量骨架（skeletonVersion 作废过期响应）→ 清 details → ensureWindow(0, 150)
+ensureWindow(start, end): Promise<void>;  // 视口窗口补数据：按骨架索引区间拉 item/list（次序逐位对齐），已缓存则跳过
+reloadSkeleton(): Promise<void>; // SSE 驱动骨架重载：成员/次序以服务端为准；滚动位置不动，详情缓存保留并清理失效项
 select(id: string, mod?: 'range' | 'toggle'): void;
 selectAll(): void; clearSelection(): void;
 updateItem(id: string, patch): Promise<void>;      // 就地更新 items；ApiError → toast
@@ -312,7 +315,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
-| `ItemGrid.vue` | — | — | 滚动容器渲染 store.items；sentinel 翻页；空态 EmptyState；右键/双击/点选转发 store |
+| `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标 |
 | `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
@@ -325,7 +328,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 ### composables
 
-通用能力不重复造：无限滚动用 VueUse `useIntersectionObserver` 直接写在 ItemGrid.vue（观察底部哨兵，`!loading && !endReached` 时翻页）；拖拽用 `useDropZone`；全局监听用 `useEventListener`。业务 composable 只保留三个：
+通用能力不重复造：滚动驱动用原生 `@scroll` + rAF（可见区间计算在 ItemGrid.vue 内联，配合骨架布局做虚拟渲染）；拖拽用 `useDropZone`；全局监听用 `useEventListener`。业务 composable 只保留三个：
 
 | composable | 签名与行为 |
 | ---------- | ---------- |
@@ -354,18 +357,18 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 | 事件 | 处理 |
 | ---- | ---- |
-| `item.updated` | 负载是完整 Item。无过滤的「全部素材」视图**就地替换**（成员资格不可能变化）；过滤视图/激活查询条件时防抖 200ms 重查当前页（成员判定以服务端查询为准，如摘掉当前分类后 item 即时消失）。updateItem 响应走同一入口 |
-| `item.added` / `item.restored` | 涉及排序位置，防抖 200ms 重查当前页 |
-| `item.trashed` / `item.removed` | 普通视图就地移除；回收站视图防抖重查 |
+| `item.updated` | 负载是完整 Item。详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。过滤视图/激活查询条件时防抖 200ms 重载骨架（成员判定以服务端查询为准，如摘掉当前分类后 item 即时消失）。updateItem 响应走同一入口 |
+| `item.added` / `item.restored` | 新 item 落点（成员/次序）以服务端为准，防抖 200ms 重载骨架 |
+| `item.trashed` / `item.removed` | 就地移除（详情 + 骨架 + 选择），回收站视图同事件意味着「进来」，统一防抖重载兜底 |
 | 任何事件 | 防抖刷新文件夹树（见「已知缺口」） |
 
-断线自动重连（EventSource 原生行为），重连后全量重查对齐。
+断线自动重连（EventSource 原生行为），重连后 reloadSkeleton + refreshFolders 全量对齐。
 
 ## 功能清单 v1（验收标准）
 
 1. 启动选库：首次启动弹目录选择；记住上次素材库与上次浏览的文件夹视图（按库路径存 localStorage，文件夹已删则回退全部素材）；菜单可更换库
 2. 侧栏：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站）/ 文件夹树 / 分类列表 / 标签列表（三分区均支持「＋」新建与右键重命名/删除）
-3. 网格：缩略图懒加载、无限滚动、单选/Shift 连选/Cmd 点选、双击预览浮层
+3. 网格：缩略图懒加载、虚拟渲染（打开即知总高、滚动条自由拖动、离屏不渲染）、单选/Shift 连选/Cmd 点选、双击预览浮层
 4. 搜索与筛选：关键词（命中名称/备注）、star 精确筛选、四种排序双向
 5. 检查器：1024 预览；名称、标签（chip 增删）、评分（点星）、备注、URL 编辑即存（失焦/回车提交）；只读信息：尺寸、大小、mtime、全部路径
 6. 导入：拖拽文件/文件夹到网格 → `item/add`（folder 路径取当前文件夹；文件夹由前端递归展开为文件逐个导入）
@@ -378,7 +381,6 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 ## 非目标（v1 明确不做）
 
 - 瀑布流不等高布局、框选、颜色标签、标签云
-- 虚拟滚动（十万级素材再上 vue-virtual-scroller；无限滚动 + 懒加载先行）
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
 - 前端单元测试框架（Vitest 暂缓；契约层由 server 的 smoke.sh 兜底）
@@ -423,7 +425,7 @@ npm run build       # vue-tsc --noEmit && vite build
 ## 已知缺口与风险
 
 1. **文件夹树无 SSE 事件**：外部进程增删文件夹时前端不自动刷新。v1 缓解：item 事件时防抖重拉文件夹树；后续建议后端补 `folder.changed` 事件（开放问题，实现前定）
-2. **大图库网格性能**：无限滚动不卸载已渲染节点，数千项后 DOM 变大；`loading=lazy` 控制解码开销。超十万级需虚拟滚动，届时评估 vue-virtual-scroller
+2. **超大库的骨架传输**：`item/skeleton` 一次性回全量 dim，十万级条目约数 MB 本地传输、布局计算 O(n)（毫秒级）；若未来成为瓶颈，骨架可再压缩（数组元组/增量推送）
 3. **格式兜底**：后端暂不支持的格式（RAW/HEIC）无缩略图，前端渲染占位图（ext 角标）
 4. **token 暴露面**：localhost + hash 注入 + 内存保存，本机风险可控；不写盘
 5. **后端配合点**：`TokenAuthMiddleware` 需对 `GET /api/v1/item/thumbnail` 放行 `?token=`（`<img>` 无法带请求头，与 events 同款处理）——实现期修改，仅此一处

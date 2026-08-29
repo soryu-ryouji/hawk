@@ -36,6 +36,10 @@ public static class ItemEndpoints
 
     public sealed record ItemListResponse(ItemDto[] Items, int Total, long TotalSize, int Offset, int Limit);
 
+    /// <summary>虚拟网格骨架：全量 dim（与 item/list 同过滤同排序、不分页），前端据此建立完整布局后按 offset 取窗口
+    /// </summary>
+    public sealed record ItemSkeletonResponse(ItemSkeletonDto[] Items, long TotalSize);
+
     public sealed record ItemAddRequest
     {
         public string? Path { get; init; }
@@ -76,31 +80,19 @@ public static class ItemEndpoints
 
         group.MapPost("/list", (ItemListRequest? req, ItemIndex index) =>
         {
-            req ??= new ItemListRequest();
-            LabColor? color = null;
-            if (req.Color is not null)
-            {
-                if (ColorMath.ParseHex(req.Color) is not { } rgb)
-                {
-                    throw ApiException.InvalidParam($"非法颜色值: {req.Color}");
-                }
-
-                color = ColorMath.RgbToLab(rgb.R, rgb.G, rgb.B);
-            }
-
-            var query = new ItemQuery
-            {
-                Ids = req.Ids, Keywords = req.Keywords, Tags = req.Tags, Star = req.Star,
-                Folders = req.Folders, FoldersExact = req.FoldersExact, Categories = req.Categories, CategoriesMatch = req.CategoriesMatch,
-                ExcludeCategories = req.ExcludeCategories, ExcludeTags = req.ExcludeTags,
-                WithoutCategories = req.WithoutCategories, WithoutTags = req.WithoutTags,
-                Ext = req.Ext, Annotation = req.Annotation, Url = req.Url, Color = color,
-                InTrash = req.InTrash, OrderBy = req.OrderBy, Order = req.Order,
-                Offset = req.Offset, Limit = req.Limit,
-            };
+            var query = BuildQuery(req);
             var items = index.Query(query, out var total, out var totalSize);
             var response = new ItemListResponse(items.ToArray(), total, totalSize, query.Offset, query.Limit);
             return TypedResults.Ok(Envelope<ItemListResponse>.Ok(response));
+        });
+
+        // 骨架：与 /list 完全相同的过滤与排序（确定性次序），不分页，只回布局所需的最低字段。
+        // 前端虚拟网格用它一次性算出全部内容的总高（滚动条可自由拖动），视口内再按 offset 用 /list 取详情。
+        group.MapPost("/skeleton", (ItemListRequest? req, ItemIndex index) =>
+        {
+            var query = BuildQuery(req);
+            var items = index.QuerySkeleton(query, out var totalSize);
+            return TypedResults.Ok(Envelope<ItemSkeletonResponse>.Ok(new ItemSkeletonResponse(items.ToArray(), totalSize)));
         });
 
         group.MapGet("/detail", (string id, ItemIndex index) =>
@@ -162,6 +154,35 @@ public static class ItemEndpoints
             await thumbnails.GenerateAsync(req.Id, source, config.Current.ThumbnailSizes, force: true);
             return TypedResults.Ok(new Envelope<object>("success", null));
         });
+    }
+
+    // ---------- list/skeleton 共用查询构造 ----------
+
+    /// <summary>ItemListRequest → ItemQuery：/list 与 /skeleton 必须走同一条路径，保证两次查询次序逐位一致</summary>
+    private static ItemQuery BuildQuery(ItemListRequest? req)
+    {
+        req ??= new ItemListRequest();
+        LabColor? color = null;
+        if (req.Color is not null)
+        {
+            if (ColorMath.ParseHex(req.Color) is not { } rgb)
+            {
+                throw ApiException.InvalidParam($"非法颜色值: {req.Color}");
+            }
+
+            color = ColorMath.RgbToLab(rgb.R, rgb.G, rgb.B);
+        }
+
+        return new ItemQuery
+        {
+            Ids = req.Ids, Keywords = req.Keywords, Tags = req.Tags, Star = req.Star,
+            Folders = req.Folders, FoldersExact = req.FoldersExact, Categories = req.Categories, CategoriesMatch = req.CategoriesMatch,
+            ExcludeCategories = req.ExcludeCategories, ExcludeTags = req.ExcludeTags,
+            WithoutCategories = req.WithoutCategories, WithoutTags = req.WithoutTags,
+            Ext = req.Ext, Annotation = req.Annotation, Url = req.Url, Color = color,
+            InTrash = req.InTrash, OrderBy = req.OrderBy, Order = req.Order,
+            Offset = req.Offset, Limit = req.Limit,
+        };
     }
 
     // ---------- add ----------

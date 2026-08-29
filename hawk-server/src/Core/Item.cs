@@ -90,6 +90,15 @@ public sealed record PaletteColorDto
 }
 
 /// <summary>API 的 Item 对象（字段命名经全局 snake_case 策略序列化）</summary>
+/// <summary>网格骨架：虚拟布局所需的最低限度信息（ItemDto 的同序轻量投影）</summary>
+public sealed record ItemSkeletonDto
+{
+    public required string Id { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public int Star { get; init; }
+}
+
 public sealed record ItemDto
 {
     public required string Id { get; init; }

@@ -260,4 +260,23 @@ public class ItemIndexTests
         Assert.Equal(2, _index.LocationsUnder("dir/").Length);
         Assert.Empty(_index.LocationsUnder("missing/"));
     }
+
+    [Fact]
+    public void 同主键多次查询次序一致_骨架与分页窗口逐位对齐()
+    {
+        // 相同 modification_time（批量导入常见）：List.Sort 不稳定，靠 id 打破平局保证
+        // 骨架查询与窗口查询（分页）次序逐位一致，前端虚拟网格按 offset 取窗口才不错位
+        AddItem("h1", "a/1.jpg", mtime: 1000);
+        AddItem("h2", "a/2.jpg", mtime: 1000);
+        AddItem("h3", "a/3.jpg", mtime: 1000);
+
+        var q = new ItemQuery { Offset = 0, Limit = 2 };
+        var page1 = _index.Query(q, out _, out _).Select(d => d.Id).ToArray();
+        var page1Again = _index.Query(q, out _, out _).Select(d => d.Id).ToArray();
+        var skeleton = _index.QuerySkeleton(q, out _).Select(d => d.Id).ToArray();
+
+        Assert.Equal(page1, page1Again);
+        Assert.Equal(3, skeleton.Length);
+        Assert.Equal(skeleton.Take(2), page1);
+    }
 }

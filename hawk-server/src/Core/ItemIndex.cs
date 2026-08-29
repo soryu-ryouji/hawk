@@ -263,6 +263,35 @@ public sealed class ItemIndex
     {
         lock (_gate)
         {
+            var dtos = FilterAndSort(q);
+            total = dtos.Count;
+            totalSize = dtos.Sum(d => d.Size);
+            return dtos.Skip(Math.Max(0, q.Offset)).Take(Math.Max(1, q.Limit)).ToList();
+        }
+    }
+
+    /// <summary>
+    /// 骨架查询：与 Query 同过滤、同排序（含确定性次序），投影为 id/width/height/star，不分页。
+    /// 前端虚拟网格据此建立完整布局（滚动条总高），再按 offset 用 Query 取视口窗口详情。
+    /// </summary>
+    public List<ItemSkeletonDto> QuerySkeleton(ItemQuery q, out long totalSize)
+    {
+        lock (_gate)
+        {
+            var dtos = FilterAndSort(q);
+            totalSize = dtos.Sum(d => d.Size);
+            return dtos.Select(d => new ItemSkeletonDto { Id = d.Id, Width = d.Width, Height = d.Height, Star = d.Star }).ToList();
+        }
+    }
+
+    /// <summary>
+    /// 过滤 + 排序。主键同值时按 id 字典序打破平局：List.Sort 不稳定，
+    /// 前端骨架与视口窗口是两次独立查询，次序必须逐位一致，否则按 offset 取窗口会错位。
+    /// </summary>
+    private List<ItemDto> FilterAndSort(ItemQuery q)
+    {
+        lock (_gate)
+        {
             IEnumerable<Item> items = _byHash.Values.Where(i => q.InTrash ? i.HasTrashLocations : i.HasLibraryLocations);
 
             if (q.Ids is { Length: > 0 } ids)
@@ -340,8 +369,6 @@ public sealed class ItemIndex
             }
 
             var dtos = items.Select(i => i.ToDto(q.InTrash)).ToList();
-            total = dtos.Count;
-            totalSize = dtos.Sum(d => d.Size);
 
             var desc = !string.Equals(q.Order, "asc", StringComparison.OrdinalIgnoreCase);
             dtos.Sort((a, b) =>
@@ -353,10 +380,15 @@ public sealed class ItemIndex
                     "star" => a.Star.CompareTo(b.Star),
                     _ => a.ModificationTime.CompareTo(b.ModificationTime),
                 };
+                if (c == 0)
+                {
+                    c = string.CompareOrdinal(a.Id, b.Id);
+                }
+
                 return desc ? -c : c;
             });
 
-            return dtos.Skip(Math.Max(0, q.Offset)).Take(Math.Max(1, q.Limit)).ToList();
+            return dtos;
         }
     }
 
