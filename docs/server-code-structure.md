@@ -55,7 +55,7 @@ Program.cs 做的事（按执行顺序）：
 | `ItemIndex.cs` | 内存索引：hash→item 与位置路径→hash 两个字典，一把锁保护；`Query` 实现 item/list 的全部过滤（AND 语义）、排序与分页；`QuerySkeleton` 同过滤排序投影 dim 全量（虚拟网格布局）；排序主键同值按 id 打破平局，保证骨架与分页窗口两次查询次序逐位一致 |
 | `ThumbnailService.cs` | ImageSharp 封装：`Identify` 只读头部取尺寸；`GenerateAsync` 按配置尺寸输出 WebP（`ResizeMode.Max` 等比缩小、不放大小图）；缩略图按 hash 内容寻址存储 |
 | `ColorMath.cs` | 颜色纯函数：hex 解析/格式化、sRGB→CIELAB（D65）、CIE76 ΔE² 距离 |
-| `ColorService.cs` | 调色板提炼（降采样 64px → Wu 量化 ≤10 色 → 像素占比，alpha<128 不参与）与缓存读写（库外缓存目录 `colors/<hash前2位>/<hash>.json`，带算法版本号）；检索原理见 [color-search.md](color-search.md) |
+| `ColorService.cs` | 调色板提炼（降采样 64px → Wu 量化 ≤10 色 → 像素占比，alpha<128 不参与）与缓存读写（库外缓存目录 `colors/<hash>.json`，平铺不分桶，带算法版本号）；检索原理见 [color-search.md](color-search.md) |
 | `LibraryScanner.cs` | 目录遍历：跳过 `.hawk/` 内部（只深入 trash 子树）、库内应用 ignore 规则、枚举失败静默跳过 |
 | `LibraryWatcher.cs` | FileSystemWatcher 封装：Created/Changed→upsert、Deleted、Renamed→move、Error→溢出回调；过滤 `.hawk` 内部，config.toml 与注册表文件单独上报；另有周期对账扫描（`HAWK_RESCAN_INTERVAL`，默认 60s）兜底静默丢事件 |
 | `EventBus.cs` | SSE 事件总线：每个订阅者一条有界 channel；消费跟不上就断开该订阅（前端重连后用 item/list 全量对齐） |

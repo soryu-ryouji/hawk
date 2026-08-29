@@ -18,6 +18,10 @@ AUTH="Authorization: Bearer $TOKEN"
 rm -rf "$WORK"
 mkdir -p "$LIB/海报"
 
+# 库外派生缓存目录：~/.local/share/hawk/cache/<库标识>（库标识 = 库根路径 SHA-256 前 16 位，见 LibraryPaths.LibraryKey）
+CACHE_KEY=$(printf '%s' "$LIB" | sha256sum | cut -c1-16)
+CACHE="${XDG_DATA_HOME:-$HOME/.local/share}/hawk/cache/$CACHE_KEY"
+
 # 生成三张不同内容的 PNG（4x2 / 2x4 / 8x8）
 python3 - "$LIB" <<'PYEOF'
 import struct, zlib, sys, os
@@ -142,7 +146,7 @@ check "颜色检索异色不命中" "$(post_json "$BASE/api/v1/item/list" '{"col
 check "颜色检索限定文件夹范围" "$(post_json "$BASE/api/v1/item/list" '{"color":"#00ff00","folders":["海报"]}' | jq -r .data.total)" 1
 check "颜色检索范围外不命中" "$(post_json "$BASE/api/v1/item/list" '{"color":"#ff0000","folders":["海报"]}' | jq -r .data.total)" 0
 check "非法颜色值返回 400" "$(post_json "$BASE/api/v1/item/list" '{"color":"red"}' -o /dev/null -w '%{http_code}')" 400
-check "调色板缓存已落盘" "$(ls "$LIB/.hawk/colors/${SUNSET_ID:0:2}/$SUNSET_ID.json" >/dev/null 2>&1 && echo yes)" yes
+check "调色板缓存已落盘" "$(ls "$CACHE/colors/$SUNSET_ID.json" >/dev/null 2>&1 && echo yes)" yes
 
 # --- item/add ---
 TINY_PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -242,8 +246,8 @@ post_json "$BASE/api/v1/item/delete" "{\"id\":\"$SUNSET_ID\"}" >/dev/null
 check "trash/clear" "$(post_json "$BASE/api/v1/trash/clear" '{}' | jq -r .status)" success
 check "清空后回收站为空" "$(post_json "$BASE/api/v1/item/list" '{"in_trash":true}' | jq -r .data.total)" 0
 check "元数据已清理" "$(ls "$LIB/.hawk/metadata/$SUNSET_ID.toml" >/dev/null 2>&1 && echo yes || echo no)" no
-check "缩略图已清理" "$(ls "$LIB/.hawk/thumbnails/256/${SUNSET_ID:0:2}/$SUNSET_ID.webp" >/dev/null 2>&1 && echo yes || echo no)" no
-check "调色板缓存已清理" "$(ls "$LIB/.hawk/colors/${SUNSET_ID:0:2}/$SUNSET_ID.json" >/dev/null 2>&1 && echo yes || echo no)" no
+check "缩略图已清理" "$(ls "$CACHE/thumbnails/256/$SUNSET_ID.webp" >/dev/null 2>&1 && echo yes || echo no)" no
+check "调色板缓存已清理" "$(ls "$CACHE/colors/$SUNSET_ID.json" >/dev/null 2>&1 && echo yes || echo no)" no
 
 # --- 重启验证：哈希复用（mtime 不变不重算）且元数据保持 ---
 kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true

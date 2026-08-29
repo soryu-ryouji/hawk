@@ -9,7 +9,7 @@ namespace Hawk.Server.Core;
 
 /// <summary>
 /// 调色板服务：从图像提炼代表颜色（降采样 → Wu 量化 → 像素占比统计），
-/// 缓存于 .hawk/colors/&lt;hash前2位&gt;/&lt;hash&gt;.json。
+/// 缓存于库外缓存目录（LibraryPaths.ColorsDir：&lt;系统缓存&gt;/hawk/cache/&lt;库标识&gt;/colors/&lt;hash&gt;.json）。
 /// 与缩略图同属可重建的内容寻址本地缓存；缓存带算法版本号，算法变更后旧缓存自动重建。
 /// </summary>
 public sealed class ColorService
@@ -32,7 +32,7 @@ public sealed class ColorService
         _logger = logger;
     }
 
-    public string GetPath(string hash) => Path.Combine(_paths.ColorsDir, hash[..2], hash + ".json");
+    public string GetPath(string hash) => Path.Combine(_paths.ColorsDir, hash + ".json");
 
     public bool Exists(string hash) => File.Exists(GetPath(hash));
 

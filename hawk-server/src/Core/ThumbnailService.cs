@@ -6,7 +6,7 @@ namespace Hawk.Server.Core;
 
 /// <summary>
 /// 缩略图服务：ImageSharp 解码 + 缩放，输出 WebP。
-/// 存储于库外缓存目录（LibraryPaths.ThumbnailsDir：&lt;系统缓存&gt;/hawk/cache/&lt;库标识&gt;/thumbnails/&lt;size&gt;/&lt;hash前2位&gt;/&lt;hash&gt;.webp），本地缓存可重建。
+/// 存储于库外缓存目录（LibraryPaths.ThumbnailsDir：&lt;系统缓存&gt;/hawk/cache/&lt;库标识&gt;/thumbnails/&lt;size&gt;/&lt;hash&gt;.webp），本地缓存可重建。
 /// </summary>
 public sealed class ThumbnailService
 {
@@ -20,7 +20,7 @@ public sealed class ThumbnailService
     }
 
     public string GetPath(string hash, int size) =>
-        Path.Combine(_paths.ThumbnailsDir, size.ToString(), hash[..2], hash + ".webp");
+        Path.Combine(_paths.ThumbnailsDir, size.ToString(), hash + ".webp");
 
     public bool Exists(string hash, int size) => File.Exists(GetPath(hash, size));
 

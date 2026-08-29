@@ -40,7 +40,7 @@
 入库/扫描 → IndexPipeline（单写者，不解码图像）
   → 派发后台 worker（与缩略图同一队列）
       解码图像 → 生成缩略图 + 提炼调色板
-      → 调色板写缓存文件 .hawk/colors/<hash前2位>/<hash>.json
+      → 调色板写缓存文件 <库外缓存目录>/colors/<hash>.json
       → 提交 PaletteJob 回流水线 → item.Palette 更新 → 发 item.updated
 启动复用路径（哈希复用、不读文件内容）
   → 调色板缓存文件存在则直接读入索引（几十字节，极快）
@@ -56,10 +56,8 @@
 ### 缓存文件
 
 ```text
-.hawk/
-└── colors/              ← 本地专用，可重建（加入 .hawk/.gitignore）
-    └── ab/
-        └── abcdef123....json
+<库外缓存目录>/colors/   ← 库外系统缓存目录，本地专用、可重建（见 storage.md）
+└── abcdef123....json
 ```
 
 ```json
@@ -136,7 +134,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | ---- | ---- |
 | `src/Core/ColorMath.cs`（新增） | 纯函数：hex 解析/格式化、sRGB→Lab、ΔE。便于单测 |
 | `src/Core/ColorService.cs`（新增） | 调色板提炼（降采样 + Wu 量化 + 占比统计）与缓存文件读写，仿 ThumbnailService 单例 |
-| `src/Core/LibraryPaths.cs` | `colors/` 目录路径与缓存路径换算；`EnsureLayout` 建目录、`.gitignore` 加 `colors/` |
+| `src/Core/LibraryPaths.cs` | `colors/` 目录路径（库外缓存目录，与 thumbnails 同级） |
 | `src/Core/Item.cs` | `Palette` 字段（含预算 Lab）；`ItemDto` 增加 `palette` |
 | `src/Core/ItemIndex.cs` | `ItemQuery.Color`；`Query` 增加颜色过滤；`SetPalette` 加锁写方法 |
 | `src/Core/IndexPipeline.cs` | `ApplyUpsert` 加载调色板缓存；worker 顺带提炼；`PaletteJob` 回写索引并发 `item.updated`；清回收站时清理颜色缓存 |
@@ -155,7 +153,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 | 文件 | 改动 |
 | ---- | ---- |
-| `docs/storage.md` | `.hawk/colors/` 目录与 gitignore |
+| `docs/storage.md` | 库外缓存目录中的 `colors/` 目录 |
 | `docs/server-rest-api-v1.md` | palette 字段与 color 参数 |
 | `docs/server-code-structure.md` | 新文件职责与流水线变化 |
 | `hawk-server.Tests/` | ColorMath（hex/Lab/ΔE 已知向量）、提炼（纯色→1 色~100%、双色各半、全透明→空）、ItemIndex 颜色过滤、流水线集成（缓存写入/加载、PaletteJob、漂移丢弃） |
@@ -175,7 +173,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 已实现（2026-08）。审批确认的结论：
 
-1. 调色板落 `.hawk/colors/` 缓存文件（与缩略图同模型）
+1. 调色板落库外缓存目录的 `colors/` 缓存文件（与缩略图同模型）
 2. 调色板 10 色、ΔE 阈值 25（`ItemIndex.ColorMatchThreshold`，可按真实图库调参）
 3. v1 只做单色检索（点击色块，在当前视图范围内过滤）；多色组合与全局色条选色器留待后续
 

@@ -123,19 +123,18 @@ thumbnail_sizes = [256, 512, 1024]
 ```text
 <库外缓存目录>/thumbnails/     # 见「目录结构」一节，%LOCALAPPDATA%/hawk/cache/<库标识>/ 等
 ├── 256/                    # 列表视图
-│   ├── ab/
-│   │   └── abcdef123...webp
-│   └── cd/
+│   └── abcdef123....webp
 ├── 512/                    # 列表视图（大图/高分屏）
-│   └── ab/
+│   └── abcdef123....webp
 └── 1024/                   # 预览面板
-    ├── ab/
-    └── cd/
+    └── abcdef123....webp
 
 <库外缓存目录>/colors/        # 调色板缓存（提炼算法见 docs/color-search.md）
-└── ab/
-    └── abcdef123....json   # { "v": 1, "palette": [{ "color", "percentage" }] }
+└── abcdef123....json   # { "v": 1, "palette": [{ "color", "percentage" }] }
 ```
+
+缓存文件直接平铺在尺寸/类型目录下，不再按哈希前两位分桶：访问一律按内容哈希直接寻址、从不枚举目录，
+现代文件系统（NTFS/APFS/ext4）承载单目录数万文件没有实际问题；省去分桶后路径计算与排障都更直白。
 
 调色板缓存带算法版本号 `v`：提炼算法变更时版本 +1，旧缓存视为缺失自动重建。清空回收站时随缩略图一并清理。
 

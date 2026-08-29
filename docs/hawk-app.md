@@ -35,7 +35,7 @@ Eagle 主窗口的关键特征：
 | 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类列表与标签列表（见 category.md，分类为扁平受控词表）；智能文件夹不做 |
 | 框选 | 不做 | 保留 Shift/Cmd 点选 |
 | 评分筛选、颜色标签 | 评分筛选做（标题栏），颜色标签不做 | API 支持 star 过滤 |
-| 浏览器扩展采集 | 不做 | 属生态接入，后端 API 已就绪 |
+| 浏览器扩展采集 | 已交付（hawk-browser-extension） | 独立 WXT 扩展，经 `GET /api/v1/app/token` 免配置接入；主界面不做导入入口，API 已就绪 |
 
 ## 进程模型与启动流程
 
@@ -144,12 +144,15 @@ web/
     ├── components/
     │   ├── TitleBar.vue
     │   ├── WindowControls.vue
+    │   ├── Icon.vue           # 描边小图标（feather 风格 inline SVG，侧栏/按钮行首）
+    │   ├── SetupScreen.vue    # 引导页：选库/连接失败整页态（带拖拽条与窗口控制）
     │   ├── Sidebar.vue
     │   ├── FolderTreeNode.vue
     │   ├── ItemGrid.vue
     │   ├── ItemCard.vue
     │   ├── Inspector.vue
     │   ├── TagEditor.vue      # 标签 chip 编辑器（Inspector 的子组件）
+    │   ├── CategoryPickerDialog.vue # 分类选择模态（可选已有，也可输入新名字）
     │   ├── StarRating.vue     # 点星评分（Inspector/右键菜单共用）
     │   ├── PromptDialog.vue   # 文本输入模态（添加标签/新建文件夹）
     │   ├── FolderPickerDialog.vue # 文件夹选择模态（移动到文件夹）
@@ -184,6 +187,7 @@ export type ViewState =
 export interface QueryState {
   keywords: string[];
   star?: number;
+  color?: string;   // 颜色检索（#hex）；Inspector 调色板点击设置/再点当前色清除
   orderBy: 'modification_time' | 'name' | 'size' | 'star';
   order: 'asc' | 'desc';
 }
@@ -228,6 +232,15 @@ export const api = {
   itemRestore(id: string, path?: string): Promise<void>;
   refreshThumbnail(id: string): Promise<void>;
   trashClear(): Promise<void>;
+  // category / tag 注册表端点（见 server-rest-api-v1.md 与 category.md）
+  categoryList(): Promise<CategoryInfo[]>;                        // [{ name, count }]
+  categoryCreate(name: string): Promise<void>;
+  categoryUpdate(name: string, newName: string): Promise<void>;   // 重命名，目标已存在时合并
+  categoryDelete(name: string): Promise<void>;
+  tagList(): Promise<TagInfo[]>;                                  // [{ name, count }]
+  tagCreate(name: string): Promise<void>;
+  tagUpdate(name: string, newName: string): Promise<void>;        // 重命名，全部 item 跟随
+  tagDelete(name: string): Promise<void>;
   thumbnailUrl(id: string, size?: number): string;  // 拼 ?token= 的 <img> URL；size 须命中服务端 thumbnail_sizes 白名单
   fileUrl(id: string): string;  // 原图 URL（预览浮层用），同样拼 ?token=
 };
@@ -315,12 +328,15 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；引导页/失败页带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | — | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
+| `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
+| `SetupScreen.vue` | — | — | 引导页：无连接参数/选库/启动失败的整页态；经 preload `selectLibrary()` 换库后主进程改 URL hash，`hashchange` 触发重新 boot |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标 |
 | `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
+| `CategoryPickerDialog.vue` | `title: string` | `confirm(name: string)`、`cancel` | 分类输入模态：输入框带已有分类候选（datalist），可输入新名字；确认单个分类名（Inspector「＋添加到分类」与多选批量添加共用） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
@@ -405,7 +421,9 @@ hawk-app/
 │   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
-│   └── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
+│   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
+│   ├── build-server.mjs    # dotnet publish 产出指定 RID 的 hawk-server 自包含单文件
+│   └── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）
 └── web/                    # Vue 3 + Vite 前端，src/ 详档见「前端信息架构 · 目录结构」
 ```
 
@@ -430,8 +448,7 @@ npm run build       # vue-tsc --noEmit && vite build
 2. **超大库的骨架传输**：`item/skeleton` 一次性回全量 dim，十万级条目约数 MB 本地传输、布局计算 O(n)（毫秒级）；若未来成为瓶颈，骨架可再压缩（数组元组/增量推送）
 3. **格式兜底**：后端暂不支持的格式（RAW/HEIC）无缩略图，前端渲染占位图（ext 角标）
 4. **token 暴露面**：localhost + hash 注入 + 内存保存，本机风险可控；不写盘
-5. **后端配合点**：`TokenAuthMiddleware` 需对 `GET /api/v1/item/thumbnail` 放行 `?token=`（`<img>` 无法带请求头，与 events 同款处理）——实现期修改，仅此一处
-6. **macOS 公证/Windows 签名**：打包分发阶段再处理，v1 不涉及
+5. **macOS 公证/Windows 签名**：打包分发阶段再处理，v1 不涉及
 
 ## 里程碑
 

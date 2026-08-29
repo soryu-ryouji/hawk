@@ -129,6 +129,8 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 - [hawk-server 代码导读](docs/server-code-structure.md)：逐文件职责与关键流程串联
 - [hawk-app 设计](docs/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
 - [REST API V1](docs/server-rest-api-v1.md)：接口定义
+- [Category 虚拟分类维度](docs/category.md)：三维组织模型、注册表与批量迁移
+- [颜色检索](docs/color-search.md)：调色板提炼与 ΔE 颜色匹配
 - [存储设计](docs/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存
 
 ## 许可证
