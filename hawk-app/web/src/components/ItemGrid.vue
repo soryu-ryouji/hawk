@@ -91,9 +91,12 @@ const layout = computed<LayoutRow[]>(() => {
     if (row.length === 0) {
       return;
     }
-    const h = Math.round(
-      isLast ? targetH : Math.min(Math.max((width - (row.length - 1) * GAP) / ratiosSum, targetH * 0.5), targetH * 1.75),
-    );
+    // 行宽绝不超出容器。非末行：上限防行过高、下限防行过矮；末行保持目标高。
+    // 但移动端窄屏遇全景图等宽行时，0.5×下限/末行规则会把行推出视口——
+    // fitH（按容器宽反推）是硬顶，任何夹紧结果都不得宽于它（桌面容器宽，fitH 极少生效）
+    const fitH = (width - (row.length - 1) * GAP) / ratiosSum;
+    const ideal = isLast ? targetH : Math.min(Math.max(fitH, targetH * 0.5), targetH * 1.75);
+    const h = Math.max(1, Math.floor(Math.min(ideal, fitH)));
     // 行高 = 卡片总高（缩略图 + meta + 边框），行槽位与真实卡片一致，杜绝行间重叠
     const rowH = h + META_H + CARD_BORDER;
     rows.push({

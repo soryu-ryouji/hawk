@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('hawkShell', {
   // 运行平台（darwin/win32/linux），前端据此区分系统称呼
   platform: process.platform,
-  /** 更换素材库：弹目录选择框，主进程重启 server 并重载窗口 */
+  /** 更换素材库：弹目录选择框并拉起新 server；就绪经 onServerStarted 通知 */
   selectLibrary: () => ipcRenderer.invoke('hawk:select-library'),
   /** 复制库内文件的绝对路径到剪贴板 */
   copyPath: (relPath) => ipcRenderer.invoke('hawk:copy-path', relPath),
@@ -12,8 +12,10 @@ contextBridge.exposeInMainWorld('hawkShell', {
   copyImage: (relPath) => ipcRenderer.invoke('hawk:copy-image', relPath),
   /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
   getLanSettings: () => ipcRenderer.invoke('hawk:get-lan-settings'),
-  /** 保存 [web] 配置并重启 hawk-server（失败自动回滚），返回 { ok, error? } */
+  /** 保存 [web] 配置并重启 hawk-server（失败自动回滚），返回 { ok, error? }；重启后 onServerStarted 带新地址到达 */
   saveLanSettings: (web) => ipcRenderer.invoke('hawk:save-lan-settings', web),
+  /** 真正退出应用（启动错误屏用；区别于 closeWindow 的隐藏到托盘） */
+  quitApp: () => ipcRenderer.invoke('hawk:quit-app'),
   /** 在系统文件管理器中显示库内文件（相对路径） */
   showInFinder: (relPath) => ipcRenderer.invoke('hawk:show-in-finder', relPath),
   /** 拖拽导入时取文件绝对路径（Electron webUtils） */
@@ -30,10 +32,22 @@ contextBridge.exposeInMainWorld('hawkShell', {
     ipcRenderer.on('hawk:win-maximized', listener);
     return () => ipcRenderer.removeListener('hawk:win-maximized', listener);
   },
-  /** 订阅 server 扫描进度（启动/换库进度页用）：{ phase, processed, total }，total=0 表示不定态 */
+  /** 订阅 server 扫描进度（应用内启动屏用）：{ phase, processed, total }，total=0 表示不定态 */
   onServerProgress: (cb) => {
     const listener = (_event, progress) => cb(progress);
     ipcRenderer.on('hawk:server-progress', listener);
     return () => ipcRenderer.removeListener('hawk:server-progress', listener);
+  },
+  /** 订阅 server 就绪：{ address, token }（冷启动/换库/应用设置重启都会到达，需重配 API 并重启数据） */
+  onServerStarted: (cb) => {
+    const listener = (_event, conn) => cb(conn);
+    ipcRenderer.on('hawk:server-started', listener);
+    return () => ipcRenderer.removeListener('hawk:server-started', listener);
+  },
+  /** 订阅 server 启动/运行失败：{ message } */
+  onServerError: (cb) => {
+    const listener = (_event, error) => cb(error);
+    ipcRenderer.on('hawk:server-error', listener);
+    return () => ipcRenderer.removeListener('hawk:server-error', listener);
   },
 });

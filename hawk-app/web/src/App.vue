@@ -6,6 +6,7 @@ import { useLibraryStore } from './stores/library';
 import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
 import { useIsMobile } from './composables/useIsMobile';
+import { useStartup } from './composables/useStartup';
 import Sidebar from './components/Sidebar.vue';
 import TitleBar from './components/TitleBar.vue';
 import WindowControls from './components/WindowControls.vue';
@@ -16,10 +17,17 @@ import ImageEditDialog from './components/ImageEditDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import SetupScreen from './components/SetupScreen.vue';
 import ConnectScreen from './components/ConnectScreen.vue';
+import StartingScreen from './components/StartingScreen.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
 
 const store = useLibraryStore();
 const isMobile = useIsMobile();
+// 启动阶段状态机：starting（应用内启动屏，等 server 就绪）→ ready（主界面）；
+// 旁路：setup（未配置素材库）/ connect（浏览器 token 门页）/ error（启动失败）。
+// 就绪信号与进度来自 useStartup（Electron 走 IPC，浏览器走轮询）
+const phase = ref<'starting' | 'ready' | 'setup' | 'connect' | 'error'>('starting');
+const bootError = ref<string | null>(null);
+const { readyCount, failed, progress, poll } = useStartup();
 // 移动端侧栏为抽屉式：进入移动端默认收起（抽屉关闭），回桌面恢复双栏
 watch(
   isMobile,
@@ -28,11 +36,6 @@ watch(
   },
   { immediate: true },
 );
-const bootError = ref<string | null>(null);
-// 无连接参数但在 Electron 内：素材库未配置，进引导页
-const setupMode = ref(false);
-// 浏览器直连（局域网 web 查看）：token 缺失或失效，进门页输入
-const needToken = ref(false);
 const showSettings = ref(false);
 let disconnectEvents: (() => void) | null = null;
 
@@ -97,54 +100,81 @@ function startResize(side: 'left' | 'right') {
   window.addEventListener('mouseup', stopResize);
 }
 
-async function boot() {
-  needToken.value = false;
-  if (!initApi()) {
-    if (window.hawkShell) {
-      setupMode.value = true;
-    } else {
-      bootError.value = '缺少后端连接参数';
-    }
-    return;
-  }
+// 连接就绪（冷启动/换库/应用设置重启都会触发）：拉取数据 + 重连 SSE，成功后进入主界面。
+// server 重启会换新地址，useStartup 已先重配 API；SSE 先断后连，避免挂到旧服务上
+async function runBoot() {
+  bootError.value = null;
   try {
     await store.init();
+    disconnectEvents?.();
+    disconnectEvents = connectEvents({
+      onAdded: (item) => store.applyEvent('item.added', item),
+      onUpdated: (item) => store.applyEvent('item.updated', item),
+      onTrashed: (id) => store.applyEvent('item.trashed', { id }),
+      onRestored: (item) => store.applyEvent('item.restored', item),
+      onRemoved: (id) => store.applyEvent('item.removed', { id }),
+      onTaskProgress: (p) => store.applyEvent('task.progress', p),
+      onFolderChanged: () => store.applyEvent('folder.changed', {}),
+      onReconnect: () => {
+        void store.reloadSkeleton();
+        void store.refreshFolders();
+      },
+    });
+    phase.value = 'ready';
   } catch (e) {
     if (e instanceof ApiError && e.code === 'UNAUTHORIZED') {
       // token 缺失/失效：清掉本地残留,进门页重新输入
       clearStoredToken(apiConfig().api);
-      needToken.value = true;
+      phase.value = 'connect';
     } else {
-      bootError.value = '无法连接 hawk-server，请确认后端已启动';
+      bootError.value = e instanceof Error ? e.message : String(e);
+      phase.value = 'error';
     }
-    return;
   }
-  setupMode.value = false;
-  bootError.value = null;
-  disconnectEvents?.();
-  disconnectEvents = connectEvents({
-    onAdded: (item) => store.applyEvent('item.added', item),
-    onUpdated: (item) => store.applyEvent('item.updated', item),
-    onTrashed: (id) => store.applyEvent('item.trashed', { id }),
-    onRestored: (item) => store.applyEvent('item.restored', item),
-    onRemoved: (id) => store.applyEvent('item.removed', { id }),
-    onTaskProgress: (p) => store.applyEvent('task.progress', p),
-    onFolderChanged: () => store.applyEvent('folder.changed', {}),
-    onReconnect: () => {
-      void store.reloadSkeleton();
-      void store.refreshFolders();
-    },
-  });
 }
 
-// 引导页选定素材库后，主进程仅在原 URL 上改 hash 注入连接参数；仅 hash 变化的导航是
-// same-document 导航（页面不重载、onMounted 不重跑），需监听 hashchange 重新走启动流程，
-// 否则会一直停留在引导页
-function onHashChange() {
-  if (setupMode.value || bootError.value || needToken.value) {
-    void boot();
+watch(readyCount, () => void runBoot());
+
+// server 启动/运行失败：token 哨兵值转门页，其余进错误屏（含退出入口）
+watch(failed, (message) => {
+  if (!message) {
+    return;
+  }
+  if (message === 'UNAUTHORIZED') {
+    clearStoredToken(apiConfig().api);
+    phase.value = 'connect';
+  } else {
+    bootError.value = message;
+    phase.value = 'error';
+  }
+});
+
+// 浏览器路径（无 IPC）：进入 starting 即自行轮询启动状态。
+// immediate 必须——移动端（局域网浏览器）初始即 starting 且不再变化，不立即触发会永远卡在启动屏
+watch(
+  phase,
+  (p) => {
+    if (p === 'starting' && !window.hawkShell) {
+      void poll();
+    }
+  },
+  { immediate: true },
+);
+
+// ConnectScreen 验证通过：token 已注入，重回 starting。浏览器靠轮询就绪后 runBoot；
+// Electron 的 server 必已就绪（token 由主进程持有，401 场景实际不可达），直接 boot
+function onConnected() {
+  phase.value = 'starting';
+  if (window.hawkShell) {
+    void runBoot();
   }
 }
+
+function quitApp() {
+  void window.hawkShell?.quitApp();
+}
+
+/** 移动端：点击侧栏导航项（智能条目/文件夹/分类/标签）后收起抽屉 */
 
 /** 移动端：点击侧栏导航项（智能条目/文件夹/分类/标签）后收起抽屉 */
 function onSidebarNav(e: MouseEvent) {
@@ -156,14 +186,18 @@ function onSidebarNav(e: MouseEvent) {
   }
 }
 
+// 初始阶段判定（同步，须在 phase 监听器注册前完成：无参数时把 starting 纠正为 setup/error，
+// 否则 immediate 监听器会对 setup/error 误发起轮询）
+if (!initApi()) {
+  phase.value = window.hawkShell ? 'setup' : 'error';
+  bootError.value = window.hawkShell ? null : '缺少后端连接参数';
+}
+
 onMounted(() => {
   loadPanelWidths();
-  void boot();
-  window.addEventListener('hashchange', onHashChange);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('hashchange', onHashChange);
   disconnectEvents?.();
   // 拖拽中组件被卸载（如切到引导页）时兜底清理
   if (dragSide.value) {
@@ -176,15 +210,17 @@ useDragImport();
 </script>
 
 <template>
-  <!-- 引导页/启动失败页/局域网 token 门页：无边框窗口下仍需拖拽区与窗口控制按钮 -->
-  <div v-if="setupMode || bootError || needToken" class="standalone">
+  <!-- 启动/引导/门页/错误：单页内的前置阶段；无边框窗口下仍需拖拽区与窗口控制按钮 -->
+  <div v-if="phase !== 'ready'" class="standalone">
     <div class="drag-bar"><WindowControls /></div>
-    <SetupScreen v-if="setupMode" />
-    <ConnectScreen v-else-if="needToken" @connect="boot" />
-    <div v-else class="boot-error">
-      <p>{{ bootError }}</p>
-      <p>请从 hawk 桌面端启动本应用</p>
-    </div>
+    <StartingScreen
+      v-if="phase === 'starting' || phase === 'error'"
+      :progress="progress"
+      :error="phase === 'error' ? bootError : null"
+      @quit="quitApp"
+    />
+    <SetupScreen v-else-if="phase === 'setup'" @selected="phase = 'starting'" />
+    <ConnectScreen v-else-if="phase === 'connect'" @connect="onConnected" />
   </div>
 
   <!-- Eagle 式布局：侧栏/检查器通高，标题栏只覆盖中栏；窗口控制 fixed 于窗口右上角（Windows/Linux） -->

@@ -11,7 +11,7 @@ const crypto = require('node:crypto');
 const isDev = !app.isPackaged;
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'hawk-app.json');
 
-/** @type {{ child: import('child_process').ChildProcess, address: string, token: string } | null} */
+/** @type {{ child: import('child_process').ChildProcess, address: string, token: string, ready: Promise<void>, markStopped(): void } | null} */
 let server = null;
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
@@ -89,82 +89,97 @@ function webDistDir() {
 }
 
 /**
- * 拉起 hawk-server：先监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
- * 轮询 GET /api/v1/app/startup：starting（带进度，转发进度页）→ ready（resolve）/ error（reject，带原因）。
+ * 拉起 hawk-server：监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
+ * 页面已先行加载并显示应用内启动屏，此处不再等待就绪——进度/就绪/错误经 IPC 事件推送：
+ *   hawk:server-progress（starting 阶段进度）→ hawk:server-started（就绪，含地址与 token）→ hawk:server-error（失败原因）。
+ * spawn 失败、异常退出（stopServer 除外）、60s 超时就 hawk:server-error；返回句柄含 ready Promise（save-lan-settings 回滚要用）。
  */
-async function startServer(libPath) {
+function startServer(libPath, address, token) {
   const { command, args } = resolveServerCommand();
-  const token = crypto.randomBytes(32).toString('hex');
-  const port = await probeFreePort();
-  const address = `http://127.0.0.1:${port}`;
-  const child = spawn(command, [...args, '--library', libPath, '--port', String(port), '--web-dist', webDistDir()], {
-    env: { ...process.env, HAWK_TOKEN: token },
-    stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错
-    // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
-    windowsHide: true,
+  // 闭包级标志：有意停止（换库/应用设置重启）时抑制 exit 广播——旧子进程终止可能晚于
+  // 新 server 的拉起，全局标志会被新一轮复位，造成误报异常退出
+  let intentionalExit = false;
+  const child = spawn(
+    command,
+    [...args, '--library', libPath, '--port', String(new URL(address).port), '--web-dist', webDistDir()],
+    {
+      env: { ...process.env, HAWK_TOKEN: token },
+      stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错
+      // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
+      windowsHide: true,
+    },
+  );
+
+  let settleReady;
+  const ready = new Promise((resolve, reject) => {
+    settleReady = { resolve, reject };
+  });
+  let stderrTail = '';
+  let poll = 0;
+  let timeout = 0;
+  /** 失败统一出口：通知渲染进程 + reject ready（一次性） */
+  const fail = (message) => {
+    clearInterval(poll);
+    clearTimeout(timeout);
+    mainWindow?.webContents.send('hawk:server-error', { message });
+    settleReady.reject(new Error(message));
+  };
+
+  // 留 stderr 尾部用于报错；开发态同时转发到终端
+  child.stderr.on('data', (chunk) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-4000);
+    if (isDev) {
+      process.stderr.write(chunk);
+    }
+  });
+  child.on('error', (error) => fail(`hawk-server 启动失败: ${error.message}`));
+  child.on('exit', (code) => {
+    if (!intentionalExit) {
+      fail(`hawk-server 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}`);
+    }
   });
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let stderrTail = '';
-    const finish = (error, value) => {
-      if (settled) {
+  poll = setInterval(async () => {
+    try {
+      const res = await fetch(`${address}/api/v1/app/startup`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        return; // 服务已监听但未到可查询状态，继续轮询
+      }
+      const body = await res.json();
+      const state = body.data;
+      if (state.status === 'starting') {
+        mainWindow?.webContents.send('hawk:server-progress', {
+          phase: state.phase || 'scan',
+          processed: state.processed || 0,
+          total: state.total || 0,
+        });
         return;
       }
-      settled = true;
       clearInterval(poll);
       clearTimeout(timeout);
-      if (error) {
-        reject(error);
+      if (state.status === 'ready') {
+        mainWindow?.webContents.send('hawk:server-started', { address, token });
+        settleReady.resolve();
       } else {
-        resolve(value);
+        fail(state.message || 'hawk-server 初始索引构建失败');
       }
-    };
-    // 留 stderr 尾部用于报错；开发态同时转发到终端
-    child.stderr.on('data', (chunk) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-4000);
-      if (isDev) {
-        process.stderr.write(chunk);
-      }
-    });
-    child.on('error', (error) => finish(new Error(`hawk-server 启动失败: ${error.message}`)));
-    child.on('exit', (code) =>
-      finish(new Error(`hawk-server 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}`)));
+    } catch {
+      // 连接拒绝：server 尚未监听，继续轮询
+    }
+  }, 200);
+  timeout = setTimeout(() => fail('hawk-server 启动超时'), 60000);
 
-    const poll = setInterval(async () => {
-      try {
-        const res = await fetch(`${address}/api/v1/app/startup`, {
-          headers: { authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) {
-          return; // 服务已监听但未到可查询状态，继续轮询
-        }
-        const body = await res.json();
-        const state = body.data;
-        if (state.status === 'starting') {
-          mainWindow?.webContents.send('hawk:server-progress', {
-            phase: state.phase || 'scan',
-            processed: state.processed || 0,
-            total: state.total || 0,
-          });
-          return;
-        }
-        if (state.status === 'ready') {
-          finish(null, { child, address, token });
-        } else {
-          finish(new Error(state.message || 'hawk-server 初始索引构建失败'));
-        }
-      } catch {
-        // 连接拒绝：server 尚未监听，继续轮询
-      }
-    }, 200);
-    const timeout = setTimeout(() => finish(new Error('hawk-server 启动超时')), 60000);
-  });
+  return { child, address, token, ready, markStopped: () => (intentionalExit = true) };
 }
 
 function stopServer() {
-  if (server && !server.child.killed) {
-    server.child.kill();
+  if (server) {
+    server.markStopped();
+    if (!server.child.killed) {
+      server.child.kill();
+    }
   }
   server = null;
 }
@@ -183,26 +198,12 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
-function loadMainPage() {
-  const hash = `api=${encodeURIComponent(server.address)}&token=${server.token}`;
+function loadMainPage(conn) {
+  const hash = conn ? `api=${encodeURIComponent(conn.address)}&token=${conn.token}` : '';
   if (isDev) {
-    mainWindow.loadURL(`http://localhost:5173/#${hash}`);
+    mainWindow.loadURL(`http://localhost:5173/${hash ? `#${hash}` : ''}`);
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'web', 'dist', 'index.html'), { hash });
-  }
-}
-
-/** 启动进度页：server 扫描索引期间先展示有反馈的静态页，就绪后再切主界面 */
-function loadLoadingPage() {
-  mainWindow.loadFile(path.join(__dirname, 'loading.html'));
-}
-
-/** 未配置素材库时的引导页：不带连接参数，由页面按钮触发目录选择框 */
-function loadSetupPage() {
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173/');
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'web', 'dist', 'index.html'));
   }
 }
 
@@ -212,6 +213,7 @@ function createWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 600,
+    show: false,
     backgroundColor: '#1e1e1e',
     // macOS：隐藏系统标题栏但保留原生红绿灯（悬停 glyph、失焦置灰、全屏行为由系统保证），
     // trafficLightPosition 按 40px 标题栏垂直居中；Windows/Linux：无边框，窗口控制由前端自绘
@@ -224,6 +226,9 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
+  // 首帧渲染完成后再显示窗口：GPU 驱动不认可 backgroundColor、合成器首帧延迟（秒级）时，
+  // 提前 show 会把空白/白窗暴露给用户——ready-to-show 是「内容已可见」的可靠信号
+  mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Eagle 式关窗：拦截 close 改为隐藏到托盘（真正退出经托盘菜单，见 before-quit 的 isQuitting）
   mainWindow.on('close', (event) => {
@@ -236,7 +241,7 @@ function createWindow() {
   // 同步最大化状态给渲染进程（标题栏 最大化/还原 图标切换）
   mainWindow.on('maximize', () => mainWindow?.webContents.send('hawk:win-maximized', true));
   mainWindow.on('unmaximize', () => mainWindow?.webContents.send('hawk:win-maximized', false));
-  // server 未就绪前不加载页面；启动/换库流程在 server 就绪后调用 loadMainPage
+  // 窗口内容单页生命周期：启动/引导/进度全在页面内呈现，主进程不再驱动二次导航
 
   // 无头自检：HAWK_SCREENSHOT=<路径> 时加载完成后截图落盘
   if (process.env.HAWK_SCREENSHOT) {
@@ -284,11 +289,11 @@ async function pickLibrary() {
   return result.canceled ? null : result.filePaths[0];
 }
 
-async function switchLibrary(libPath) {
+async function switchLibrary(libPath, address, token) {
   stopServer();
   writeConfig({ libraryPath: libPath });
   libraryRoot = libPath;
-  server = await startServer(libPath);
+  return startServer(libPath, address, token);
 }
 
 // ---------- 局域网 web 查看（[web] 段按库隔离，存于 .hawk/config.toml） ----------
@@ -360,6 +365,12 @@ function lanAddresses() {
 
 // ---------- 白名单 IPC ----------
 
+// 真正退出应用（启动错误屏的「退出 hawk」按钮）：置放行标志后退出，回收 server
+ipcMain.handle('hawk:quit-app', () => {
+  isQuitting = true;
+  app.quit();
+});
+
 // 自绘标题栏的窗口控制（无边框窗口没有原生按钮）
 ipcMain.handle('hawk:win-minimize', () => mainWindow?.minimize());
 ipcMain.handle('hawk:win-maximize-toggle', () => {
@@ -380,16 +391,17 @@ ipcMain.handle('hawk:select-library', async () => {
   if (!selected) {
     return false;
   }
-  loadLoadingPage(); // 换库同样要重新扫描索引，先切进度页
   try {
-    await switchLibrary(selected);
+    // 端口/token 即选即生成；页面切应用内启动屏，就绪经 hawk:server-started 通知
+    const token = crypto.randomBytes(32).toString('hex');
+    const port = await probeFreePort();
+    server = await switchLibrary(selected, `http://127.0.0.1:${port}`, token);
+    return true;
   } catch (error) {
-    // 失败时留在当前页并给出可见错误，而不是让 IPC 静默 reject
+    // 失败时留在引导页并给出可见错误，而不是让 IPC 静默 reject
     dialog.showErrorBox('hawk-server 启动失败', String(error && error.message ? error.message : error));
     return false;
   }
-  loadMainPage();
-  return true;
 });
 
 ipcMain.handle('hawk:get-lan-settings', () => ({
@@ -410,17 +422,22 @@ ipcMain.handle('hawk:save-lan-settings', async (_event, web) => {
   const file = libraryConfigFile();
   const backup = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
   writeWebSection(file, norm);
-  // 端口/绑定的生效需重启监听;失败回滚配置并尝试恢复原服务
-  loadLoadingPage();
+  // 端口/绑定的生效需重启监听。await ready 以支持失败回滚（spawn 同步失败由 select-library 路径的
+  // 系统弹窗兜底；此处失败信号来自 ready reject / hawk:server-error 事件）
   try {
-    stopServer();
-    server = await startServer(libraryRoot);
+    const token = crypto.randomBytes(32).toString('hex');
+    const port = await probeFreePort();
+    server = await switchLibrary(libraryRoot, `http://127.0.0.1:${port}`, token);
+    await server.ready;
   } catch (error) {
     if (backup === null) fs.rmSync(file, { force: true });
     else fs.writeFileSync(file, backup);
     try {
       stopServer();
-      server = await startServer(libraryRoot);
+      const token = crypto.randomBytes(32).toString('hex');
+      const port = await probeFreePort();
+      server = await switchLibrary(libraryRoot, `http://127.0.0.1:${port}`, token);
+      await server.ready;
     } catch {
       // 尽力恢复;仍失败则保持现状由用户重启应用
     }
@@ -428,7 +445,7 @@ ipcMain.handle('hawk:save-lan-settings', async (_event, web) => {
     dialog.showErrorBox('应用设置失败', message);
     return { ok: false, error: message };
   }
-  loadMainPage();
+  // 无需重载页面：hawk:server-started 事件驱动渲染进程原地换地址重启数据
   return { ok: true };
 });
 
@@ -479,19 +496,22 @@ app.whenReady().then(async () => {
 
   const libPath = readConfig().libraryPath;
   if (!libPath || !fs.existsSync(libPath)) {
-    loadSetupPage(); // 素材库未配置或已失效：进引导页，不再直接弹目录选择框
+    loadMainPage(); // 素材库未配置或已失效：进应用内引导页（无连接参数）
     return;
   }
 
-  loadLoadingPage(); // 窗口立即给出进度反馈，server 扫描索引完成后再切主界面
+  // 端口/token 先生成、页面立即加载并显示应用内启动屏，server 后台拉起——
+  // 窗口内容单页生命周期，无 loading→主界面二次导航，杜绝切换白屏
   try {
-    await switchLibrary(libPath);
+    const token = crypto.randomBytes(32).toString('hex');
+    const port = await probeFreePort();
+    server = await switchLibrary(libPath, `http://127.0.0.1:${port}`, token);
+    loadMainPage({ address: server.address, token: server.token });
   } catch (error) {
     dialog.showErrorBox('hawk-server 启动失败', String(error));
     app.quit();
     return;
   }
-  loadMainPage();
 });
 
 // 关窗只是隐藏到托盘（close 已被拦截，正常不会走到这里）；不监听此事件的话 Electron 默认关窗即退出

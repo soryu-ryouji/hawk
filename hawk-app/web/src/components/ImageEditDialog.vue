@@ -20,7 +20,15 @@ const saving = ref(false);
 const confirming = ref(false);
 
 const dirty = computed(() => angle.value !== 0);
-const imageStyle = computed(() => ({ transform: `rotate(${angle.value}deg)` }));
+// 90/270° 旋转后视觉宽高互换：盒约束同步互换，否则竖屏下方盒宽旋转后成为视觉高、长边水平超出屏幕
+const imageStyle = computed(() => {
+  const swapped = angle.value === 90 || angle.value === 270;
+  return {
+    transform: `rotate(${angle.value}deg)`,
+    maxWidth: swapped ? '82vh' : '90vw',
+    maxHeight: swapped ? '90vw' : '82vh',
+  };
+});
 const imageUrl = computed(() => api.fileUrl(props.item.id));
 
 function rotate(step: 90 | -90) {

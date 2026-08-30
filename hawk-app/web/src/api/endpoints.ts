@@ -1,6 +1,10 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
 import { apiConfig, request } from './client';
+import type { components } from './schema';
 import type { CategoryInfo, FolderNode, Item, ItemListRequest, ItemListResult, ItemSkeletonResult, LibraryInfo, TagInfo } from '../types';
+
+/** server 启动状态（GET /app/startup，浏览器无 IPC 时由前端轮询） */
+type StartupInfo = components['schemas']['StartupInfo'];
 
 export interface ItemPatch {
   name?: string;
@@ -26,6 +30,7 @@ export const api = {
       'GET',
       '/api/v1/app/info',
     ),
+  startupStatus: () => request<StartupInfo>('GET', '/api/v1/app/startup'),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
 

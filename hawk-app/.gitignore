@@ -3,3 +3,6 @@ web/dist/
 dist/
 resources/
 tools/.tmp/
+
+# 移动端冒烟测试产物
+.tmp/

@@ -57,6 +57,14 @@ declare global {
       minimizeWindow(): Promise<void>;
       toggleMaximizeWindow(): Promise<boolean>;
       closeWindow(): Promise<void>;
+      /** 真正退出应用（启动错误屏用；区别于 closeWindow 的隐藏到托盘） */
+      quitApp(): Promise<void>;
+      /** 订阅 server 就绪（冷启动/换库/应用设置重启都会到达，携带新地址与 token） */
+      onServerStarted(cb: (conn: { address: string; token: string }) => void): () => void;
+      /** 订阅 server 启动/运行失败 */
+      onServerError(cb: (error: { message: string }) => void): () => void;
+      /** 订阅 server 扫描进度（应用内启动屏用）：{ phase, processed, total }，total=0 表示不定态 */
+      onServerProgress(cb: (progress: { phase: string; processed: number; total: number }) => void): () => void;
       onWindowMaximized(cb: (maximized: boolean) => void): () => void;
     };
   }

@@ -82,6 +82,9 @@ const pullAnim = ref(false);
 const pullY = ref(0);
 const PULL_CLOSE_MIN = 96; // 触发关闭的阻尼后位移
 
+// 移动端详情条：触屏无检查器面板且点按不开选中，预览内 ⓘ 开关底部只读详情（Eagle 信息面板的最小集）
+const showInfo = ref(false);
+
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 20;
 
@@ -125,6 +128,12 @@ const overlayStyle = computed(() => {
 
 watch(() => props.item.id, resetView);
 
+function formatSize(bytes: number): string {
+  if (bytes >= 1 << 20) return (bytes / (1 << 20)).toFixed(2) + ' MB';
+  if (bytes >= 1 << 10) return (bytes / (1 << 10)).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
 function resetView() {
   scale.value = 1;
   tx.value = 0;
@@ -135,6 +144,7 @@ function resetView() {
   pullActive.value = false;
   pullAnim.value = false;
   pullY.value = 0;
+  showInfo.value = false;
   // pager/键盘切换同样受益于相邻预加载
   preloadNeighbors();
 }
@@ -293,6 +303,23 @@ function onPointerCancel() {
         <button class="page-btn" title="下一个 (→)" @click.stop="emit('navigate', 1)">›</button>
       </div>
       <button class="close" title="关闭 (Esc)" @click="emit('close')">×</button>
+      <!-- 移动端：ⓘ 开关底部详情条（触屏无检查器，详情只读；桌面走右侧面板不出现） -->
+      <template v-if="isMobile">
+        <button class="info-toggle" :class="{ open: showInfo }" title="详情" @click.stop="showInfo = !showInfo">i</button>
+        <div v-if="showInfo" class="info-sheet" @click.stop>
+          <div class="info-name">{{ item.name }}.{{ item.ext }}</div>
+          <div class="info-grid">
+            <span>尺寸</span><span>{{ item.width }} × {{ item.height }}</span>
+            <span>大小</span><span>{{ formatSize(Number(item.size)) }}</span>
+            <span>评分</span><span>{{ Number(item.star) > 0 ? '★'.repeat(Number(item.star)) : '—' }}</span>
+            <span>标签</span><span>{{ item.tags?.length ? item.tags.join('、') : '—' }}</span>
+            <span>分类</span><span>{{ item.categories?.length ? item.categories.join('、') : '—' }}</span>
+            <span>文件夹</span><span>{{ item.folders?.[0] || '—' }}</span>
+            <span>修改时间</span><span>{{ new Date(Number(item.modification_time)).toLocaleString() }}</span>
+          </div>
+          <div v-if="item.annotation" class="info-annotation">{{ item.annotation }}</div>
+        </div>
+      </template>
     </div>
   </Teleport>
 </template>
@@ -400,5 +427,76 @@ function onPointerCancel() {
   min-width: 64px;
   text-align: center;
   user-select: none;
+}
+
+/* 移动端详情条：右上角 ⓘ 开关，底部滑出只读面板（顶栏 close 在移动端隐藏，位置不与它冲突） */
+.info-toggle {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(30, 30, 30, 0.6);
+  color: var(--fg-1);
+  font-size: 16px;
+  font-style: italic;
+  font-family: Georgia, serif;
+}
+
+.info-toggle.open {
+  color: var(--fg-0);
+  border-color: var(--accent);
+}
+
+.info-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  /* 滑动手势不作用在条上，条内独立滚动（触屏纵向滚动与下拉关闭手势隔离） */
+  touch-action: pan-y;
+  padding: 14px 16px 20px;
+  border-top: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  background: rgba(30, 30, 30, 0.92);
+  backdrop-filter: blur(12px);
+}
+
+.info-name {
+  font-size: 14px;
+  font-weight: 600;
+  word-break: break-all;
+  margin-bottom: 10px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  font-size: 12px;
+}
+
+.info-grid > span:nth-child(odd) {
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+
+.info-grid > span:nth-child(even) {
+  word-break: break-all;
+}
+
+.info-annotation {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-1);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

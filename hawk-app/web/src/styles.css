@@ -196,11 +196,25 @@ body.col-resizing {
   display: none;
 }
 
-/* 窄屏顶栏减负：缩略图滑杆/评分筛选/选中计数隐藏，保留搜索与排序 */
+/* 窄屏顶栏减负（390px 手机实测内容 ~540px 会横向溢出，搜索/设置被顶出屏外）：
+   缩略图尺寸组/排序/评分筛选/选中计数整体隐藏，搜索压缩、标题超长省略——
+   保留 汉堡/前进后退/搜索/设置 核心交互 */
+.app.mobile .group.center,
+.app.mobile select.sort,
 .app.mobile .thumb-slider,
 .app.mobile select.filter,
 .app.mobile .selected {
   display: none;
+}
+
+.app.mobile .search-box input {
+  width: 88px;
+}
+
+.app.mobile .location {
+  max-width: 34vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app.mobile .grid-scroll {
@@ -345,14 +359,4 @@ body.mobile .bar button {
   to {
     margin-left: 60%;
   }
-}
-
-.boot-error {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--fg-1);
 }

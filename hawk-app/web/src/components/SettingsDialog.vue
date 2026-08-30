@@ -62,8 +62,10 @@ async function save() {
     });
     if (!res.ok) {
       error.value = res.error ?? '应用失败';
+    } else {
+      // 成功：server 已重启就绪（新地址/token 经 server-started 事件推送到 App 原地重载数据），关闭本对话框
+      emit('close');
     }
-    // 成功：主进程已切 loading 页并将在就绪后重载主界面,本对话框随页面重载消失
   } catch (e) {
     error.value = `应用失败：${e instanceof Error ? e.message : String(e)}（请完全重启 hawk 后重试）`;
   } finally {

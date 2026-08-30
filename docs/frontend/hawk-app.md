@@ -43,20 +43,25 @@ Eagle 主窗口的关键特征：
 
 ```text
 Electron 主进程启动
-  → 读用户配置（userData/hawk-app.json）取最近素材库；无 → 加载引导页（SetupScreen）
-  → 创建 BrowserWindow，立即加载静态进度页 electron/loading.html（不等待后端）
-  → 预选空闲环回端口（net.listen(0)）+ 生成随机 token
+  → 读用户配置（userData/hawk-app.json）取最近素材库；无/失效 → 加载应用页（无连接参数，页面内进 SetupScreen）
+  → 预选空闲环回端口（net.listen(0)）+ 生成随机 token，创建 BrowserWindow（show:false）
+  → 立即加载应用页并注入 hash（开发：localhost:5173/#api=...&token=...；打包：file://index.html#...）——
+    端口/token 先生成、页面先行，server 后台拉起；窗口内容单页生命周期，无二次导航，杜绝切换白屏
+  → 首帧渲染完成后 ready-to-show 才 show 窗口（GPU 驱动不认可 backgroundColor、合成器首帧延迟时
+    提前 show 会把空白/白窗暴露给用户）
   → spawn hawk-server（开发：dotnet 运行 dll；打包：process.resourcesPath 内二进制）
       环境变量传入 HAWK_TOKEN，参数 --library <path> --port <预选端口> --web-dist <web/dist>
       （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录）
-  → 轮询 GET /api/v1/app/startup（200ms，Bearer token；server 先监听、索引后台构建）：
-      starting → 进度帧（phase/processed/total）转发进度页
-      ready    → 加载主界面（开发：localhost:5173/#api=...&token=...；打包：file://index.html#...）
-      error    → 错误框（message 为后端给出的失败原因）
-    子进程异常退出 / 60s 超时 → 错误框（stderr 尾部）
+  → 轮询 GET /api/v1/app/startup（200ms，Bearer token；server 先监听、索引后台构建），事件推送页面：
+      starting → hawk:server-progress（phase/processed/total，应用内启动屏呈现）
+      ready    → hawk:server-started（含 address/token）→ 渲染进程重配 API（restart 会换端口）并 boot 数据
+      error    → hawk:server-error（message 为后端给出的失败原因，页面内错误屏 + 退出入口）
+    子进程异常退出 / spawn 失败 / 60s 超时 → hawk:server-error（stderr 尾部；有意 stopServer 除外）
 退出
   → 杀掉子进程（含异常退出路径，防止孤儿进程）
 ```
+
+启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。换库（引导页选库）与应用设置重启 server 不再重载页面——`hawk:server-started` 带新地址/token 到达后渲染进程原地重配 API、重启数据（store.init + SSE 重连）。
 
 握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。
 
@@ -84,7 +89,10 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
-| `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），启动/换库进度页（loading.html）用；返回退订函数 |
+| `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），应用内启动屏用；返回退订函数 |
+| `onServerStarted(cb)` | 订阅 server 就绪：`{ address, token }`（冷启动/换库/应用设置重启都会到达；restart 会换端口，渲染进程须先重配 API 再重启数据）；返回退订函数 |
+| `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message }`（页面内错误屏呈现）；返回退订函数 |
+| `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的隐藏到托盘） |
 
 ## 契约与类型生成
 
@@ -120,7 +128,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 布局为 Eagle 式三栏：侧栏与检查器通高到窗口上沿，顶栏（`TitleBar.vue`）只覆盖中间内容区，顶部功能区按列分开不混在一起。窗口控制按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 条高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证）；Windows/Linux 为无边框窗口（`frame: false`），自绘窗口控制 fixed 在窗口右上角，经 preload 白名单 IPC 驱动主进程。三条顶条均为窗口拖拽区（双击空白切换最大化），顶栏交互控件单独 `no-drag`；侧栏隐藏时顶栏通栏：macOS 左端预留 78px 避让原生红绿灯，Windows/Linux 右端预留 130px 避让 fixed 的窗口控制。侧栏与检查器宽度可拖拽调整：栏分界线上紧贴右侧压 4px 命中区手柄（避开左侧面板右缘的纵向滚动条，防止拖滚动条误触调宽；App.vue 内联 style 控制 grid 列宽，拖拽期间 body 锁定 col-resize 光标并禁用文本选择），侧栏 180–480px、检查器 240–560px，宽度持久化到 localStorage（`hawk:panelWidths`，全局生效不随素材库变）。无独立状态栏：计数在侧栏各行徽章（全部素材/根目录素材/未分类素材/未标签素材/文件夹/分类/标签/回收站），选中数在顶栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
 
-**移动端竖屏适配**（断点 `max-width: 720px`，`useIsMobile` 判定并同步 `body.mobile`，局域网 web 查看的手机场景）：`.app` 改单栏（`1fr`），侧栏变**抽屉**（fixed + `translateX(-105%)` 滑出，`drawer-open` 滑入；`no-panels` 在移动端不 display:none 侧栏——显隐由 transform 管，否则滑入滑出动画被 display 切换扼杀），汉堡按钮在顶栏左上角（复用侧栏开关），点导航项/遮罩自动收起；检查器与栏宽拖拽手柄隐藏，顶栏隐藏缩略图滑杆/评分筛选/选中计数（保留搜索/排序）；**触屏无双击**：点按卡片直接开预览（ItemGrid onSelect 移动端分支）；**预览全沉浸**：图片占满 100vw/100vh，关闭 × 与底部翻页栏隐藏——横向滑动切换上一张/下一张（传送带动效，相邻原图预加载免解码闪烁），**下拉关闭**（阻尼跟手 + 背景随位移渐亮，≥96px 松手下滑出关闭，桌面保留 ×/Esc/点遮罩）；编辑窗口底栏按钮加大命中区（`body.mobile` 命中，浮层 Teleport 到 body 不在 `.app` 内）。桌面布局与交互完全不变。
+**移动端竖屏适配**（断点 `max-width: 720px`，`useIsMobile` 判定并同步 `body.mobile`，局域网 web 查看的手机场景）：`.app` 改单栏（`1fr`），侧栏变**抽屉**（fixed + `translateX(-105%)` 滑出，`drawer-open` 滑入；`no-panels` 在移动端不 display:none 侧栏——显隐由 transform 管，否则滑入滑出动画被 display 切换扼杀），汉堡按钮在顶栏左上角（复用侧栏开关），点导航项/遮罩自动收起；检查器与栏宽拖拽手柄隐藏，顶栏隐藏缩略图尺寸组/排序/评分筛选/选中计数、压缩搜索宽度（保留汉堡/前进后退/搜索/设置，390px 实测防横向溢出）；**触屏无双击**：点按卡片直接开预览（ItemGrid onSelect 移动端分支）；**网格行宽硬顶**：齐行布局的行高夹紧（0.5×–1.75×目标高）与末行规则不得把行推出容器——行高最终以容器宽反推值（fitH）为硬顶，桌面容器宽极少生效，移动端窄屏遇全景图等宽行时杜绝图片出屏；**预览全沉浸**：图片占满 100vw/100vh，关闭 × 与底部翻页栏隐藏——横向滑动切换上一张/下一张（传送带动效，相邻原图预加载免解码闪烁），**下拉关闭**（阻尼跟手 + 背景随位移渐亮，≥96px 松手下滑出关闭，桌面保留 ×/Esc/点遮罩），右上角 **ⓘ 开关底部详情条**（检查器在移动端无入口，预览内只读查看名称/尺寸/大小/评分/标签/分类/文件夹/修改时间/注释，条内独立滚动与下拉关闭手势隔离）；**编辑窗口旋转约束互换**：90/270° 旋转后视觉宽高互换，`max-width`/`max-height` 约束同步互换，否则竖屏下旋转长边水平出屏；编辑窗口底栏按钮加大命中区（`body.mobile` 命中，浮层 Teleport 到 body 不在 `.app` 内）。桌面布局与交互完全不变。
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。**虚拟渲染（Eagle 式滚动条）**：store 持当前视图全量骨架（`skeleton`：id/width/height/star，经 `item/skeleton` 一次性取回，与 `item/list` 同查询同排序且主键同值时按 id 打破平局——两次查询次序逐位一致），ItemGrid 用骨架算出全部行的 y 偏移，容器总高即时确定，滚动条可自由拖动跳转；只渲染视口 ±4 行（绝对定位 + translateY），行内详情未拉取的单元格只留宽高的占位块（不渲染图片），进入视口时按骨架索引区间经 `ensureWindow` 用 `item/list` 补数据。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
@@ -150,11 +158,13 @@ web/
     │   └── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
     │   └── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
     │   └── useIsMobile.ts     # 移动端判定（matchMedia ≤720px，同步 body.mobile）：驱动抽屉侧栏/点按开预览/顶栏减负
+    │   └── useStartup.ts      # 启动状态机：server-started/error/progress 事件（Electron IPC）或浏览器轮询 /app startup，就绪计数驱动 App (re)boot
     ├── components/
     │   ├── TitleBar.vue
     │   ├── WindowControls.vue
     │   ├── Icon.vue           # 描边小图标（feather 风格 inline SVG，侧栏/按钮行首）
-    │   ├── SetupScreen.vue    # 引导页：选库（Electron 内素材库未配置）
+    │   ├── SetupScreen.vue    # 引导页：选库（Electron 内素材库未配置），选定后经 server-started 事件进启动屏
+    │   ├── StartingScreen.vue # 应用内启动屏：server 扫描索引期间的进度反馈（替代旧独立 loading.html，单页生命周期无切换白屏）
     │   ├── ConnectScreen.vue  # 连接门页：局域网 web 查看先输入 token，验证通过后记忆、再访问免输入直连
     │   ├── Sidebar.vue
     │   ├── FolderTreeNode.vue
@@ -358,13 +368,13 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApi（无参数时 Electron→SetupScreen、纯浏览器→同源+ConnectScreen 门页）→ store.init（401 → 清残留 token 进门页）→ connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；引导页/连接门页/失败页带拖拽条与窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；右端设置齿轮（仅 Electron，打开 SettingsDialog）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
-| `SetupScreen.vue` | — | — | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库后主进程改 URL hash，`hashchange` 触发重新 boot |
+| `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close` | 设置面板（仅桌面端，TitleBar 齿轮打开）：局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-server（失败自动回滚并弹错，成功切 loading → 主界面重载） |
+| `SettingsDialog.vue` | — | `close` | 设置面板（仅桌面端，TitleBar 齿轮打开）：局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-server（await ready 以支持失败自动回滚并弹错）；成功不重启页面——server-started 事件驱动 App 原地换地址重载数据，本对话框 emit close |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
@@ -375,7 +385,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
-| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式磨砂玻璃遮罩覆盖底层界面，右上角 × 关闭；滚轮以光标为不动点缩放、双击复位；**手势两级语义**：缩放>1 单图平移模式（v-if 互斥，缩放=1 为 carousel 模式）；carousel = **三图轨道**（前|当前|后 并排，iOS 相册式）：横向拖动时左右邻图实时可见，过 56px 阈值松手邻图滑至屏幕中央（轨道动画结束才提交切换并无缝复位，配合相邻原图 `new Image()` 预加载免解码等待），首/末张边缘橡皮筋阻尼（0.35x），不足阈值回弹；**手势层与位移层分离**（`.swipe-track` 固定全屏承接 pointer 事件，内层 `.track-row` 承载 transform——位移会改变元素命中区域，同层会导致按下即丢失命中）；移动端另支持**下拉关闭**（阻尼跟手+背景渐亮，≥96px 松手滑出关闭；桌面下拉不触发，保留 ×/Esc/点遮罩）；`previewItem` 为 sticky（详情未加载不置空，防浮层卸载重建）；Esc/点遮罩/空格关闭；←/→ 或底部按钮切换（**移动端隐藏翻页栏与 ×**）；右键菜单：在文件管理器中显示/复制文件路径/复制图片/编辑图片（仅 jpg/png/webp，`store.openEditor`，保存后本浮层经 previewId 切换到新 id 显示旋转结果；放弃则保持原图）/删除图片（删除后跳到下一张，末张关闭） |
+| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式磨砂玻璃遮罩覆盖底层界面，右上角 × 关闭；滚轮以光标为不动点缩放、双击复位；**手势两级语义**：缩放>1 单图平移模式（v-if 互斥，缩放=1 为 carousel 模式）；carousel = **三图轨道**（前|当前|后 并排，iOS 相册式）：横向拖动时左右邻图实时可见，过 56px 阈值松手邻图滑至屏幕中央（轨道动画结束才提交切换并无缝复位，配合相邻原图 `new Image()` 预加载免解码等待），首/末张边缘橡皮筋阻尼（0.35x），不足阈值回弹；**手势层与位移层分离**（`.swipe-track` 固定全屏承接 pointer 事件，内层 `.track-row` 承载 transform——位移会改变元素命中区域，同层会导致按下即丢失命中）；移动端另支持**下拉关闭**（阻尼跟手+背景渐亮，≥96px 松手滑出关闭；桌面下拉不触发，保留 ×/Esc/点遮罩）与**ⓘ 底部详情条**（只读展示当前项元信息，补检查器在移动端的缺位）；`previewItem` 为 sticky（详情未加载不置空，防浮层卸载重建）；Esc/点遮罩/空格关闭；←/→ 或底部按钮切换（**移动端隐藏翻页栏与 ×**）；右键菜单：在文件管理器中显示/复制文件路径/复制图片/编辑图片（仅 jpg/png/webp，`store.openEditor`，保存后本浮层经 previewId 切换到新 id 显示旋转结果；放弃则保持原图）/删除图片（删除后跳到下一张，末张关闭） |
 | `ImageEditDialog.vue` | `item: Item` | `close` | 图片编辑窗口：全屏 Eagle 式遮罩（观感同预览浮层、层级高于它），底部中间工具条为 ↺/↻ 旋转 + 「已旋转 n°」+ 退出/保存；`store.editorTarget` 驱动、App.vue 全局挂载（网格与预览浮层右键「编辑图片…」均可打开）。编辑期间旋转只作用于预览角（CSS 变换）；「保存」或带修改退出（×/退出/Esc/点遮罩）时三选确认（保存/不保存/取消）才经 `store.saveImageEdit` 做客户端重编码（canvas，EXIF 方向烘焙进像素；JPEG EXIF 字节级回填、Orientation 重置为 1）并提交 `item/replace`；id 漂移后详情就地替换、预览若正打开则跟随新 id；写回保留原修改时间，素材在按时间排序中不挪位 |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
@@ -456,13 +466,14 @@ hawk-app/
 ├── electron-builder.yml
 ├── electron/
 │   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、关窗隐藏到托盘 + 系统托盘、单实例锁、拉起/回收 server、token、库选择、白名单 IPC
-│   ├── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/扫描进度）+ webUtils
-│   └── loading.html        # 启动进度页：server 扫描索引期间的静态页（图标 + 进度条 + 阶段文案），HAWK_PROGRESS 驱动，就绪后切主界面
+│   ├── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/server 进度·就绪·错误事件/退出应用）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
 │   ├── build-server.mjs    # dotnet publish 产出指定 RID 的 hawk-server 自包含单文件
-│   └── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）
+│   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）
+│   ├── test-mobile-web.mjs # 移动端网页冒烟测试编排（临时库 + server + 断言）
+│   └── mobile-web-probe.cjs# 测试探针：无 preload 的 sandbox Electron 窗口模拟手机浏览器，输出 JSONL 探针与截图
 └── web/                    # Vue 3 + Vite 前端，src/ 详档见「前端信息架构 · 目录结构」
 ```
 
@@ -473,7 +484,10 @@ npm install
 npm run gen:types   # 生成/更新 API 类型（需 hawk-server 已 dotnet build）
 npm run dev         # vite(5173) + electron；server 由 electron 拉起（dotnet dll）
 npm run build       # vue-tsc --noEmit && vite build
+npm run test:mobile # 移动端网页冒烟测试（见下）
 ```
+
+**移动端网页冒烟测试**（`scripts/test-mobile-web.mjs` + `scripts/mobile-web-probe.cjs`，`npm run test:mobile`）：覆盖桌面 IPC 路径之外的另一半——局域网手机浏览器链路（无 `hawkShell` 的轮询启动）。免第三方依赖：程序化生成含全景/竖图的临时素材库（纯色 PNG，免依赖手写编码器）→ 拉起 hawk-server 托管 web/dist → 以 **无 preload 的 sandbox Electron 窗口（390×844）** 模拟手机浏览器 → JSONL 探针断言：启动屏渲染 → **轮询就绪进入主界面（卡在启动屏即失败——2026-08 轮询未触发的回归即由此检出）** → 网格卡片渲染且无横向溢出（顺带校验齐行布局行宽硬顶）→ 点按卡片开预览且中央图在视口内。产物在 `.tmp/mobile-smoke/`（已 gitignore），成功即清理，失败保留截图供排查。
 
 关键依赖：`vue@3`、`pinia`、`@vueuse/core`、`vite`、`@vitejs/plugin-vue`、`vue-tsc`、`electron`、`electron-builder`、`openapi-typescript`。
 

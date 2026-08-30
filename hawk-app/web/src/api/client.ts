@@ -58,6 +58,11 @@ export function setApiToken(token: string): void {
   apiConfig().token = token;
 }
 
+/** server 重启后整体更换连接（主进程经 hawk:server-started 推送新地址/token） */
+export function configureApi(next: { api: string; token: string }): void {
+  config = { ...next };
+}
+
 export function apiConfig(): ApiConfig {
   if (!config) {
     throw new ApiError('NO_CONFIG', '缺少后端连接配置', 0);
