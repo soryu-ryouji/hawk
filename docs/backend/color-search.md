@@ -157,7 +157,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | `docs/server-rest-api-v1.md` | palette 字段与 color 参数 |
 | `docs/server-code-structure.md` | 新文件职责与流水线变化 |
 | `hawk-server.Tests/` | ColorMath（hex/Lab/ΔE 已知向量）、提炼（纯色→1 色~100%、双色各半、全透明→空）、ItemIndex 颜色过滤、流水线集成（缓存写入/加载、PaletteJob、漂移丢弃） |
-| `hawk-server/tools/smoke.sh` | 新增断言：add 纯色 PNG → detail 返回 palette → `color` 检索命中 / 相近色命中 / 无关色不命中 |
+| `tools/smoke.sh` | 新增断言：add 纯色 PNG → detail 返回 palette → `color` 检索命中 / 相近色命中 / 无关色不命中 |
 
 ## 备选方案与取舍
 

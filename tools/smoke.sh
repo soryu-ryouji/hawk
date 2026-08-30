@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# hawk-server 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程。
-# 用法: tools/smoke.sh（需先 dotnet build）
+# hawk-server 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程（语言无关的契约测试）。
+# 用法: tools/smoke.sh [csharp]（需先 cargo build --release / dotnet build）
+#
+# 默认测 Rust 版（hawk-server-rs/target/release/hawk-server.exe）；
+# `tools/smoke.sh csharp` 测 C# 版（dotnet 运行 Debug 产物，保留期内回归用）。
 #
 # Windows Git Bash 注意：curl 是原生 Windows 程序，argv 中的中文会被 MSYS2
 # 转成 ANSI 编码（GBK）导致 JSON 体非法。因此所有 JSON POST 体一律经 stdin
@@ -14,6 +17,16 @@ PORT=27399
 TOKEN="smoke-test-token"
 BASE="http://127.0.0.1:$PORT"
 AUTH="Authorization: Bearer $TOKEN"
+IMPL="${1:-rust}"
+
+case "$IMPL" in
+  rust)   SERVER=("$PWD/hawk-server-rs/target/release/hawk-server.exe") ;;
+  csharp) SERVER=(dotnet hawk-server/bin/Debug/net10.0/hawk-server.dll) ;;
+  *) echo "未知实现: $IMPL（可用: csharp / rust）"; exit 2 ;;
+esac
+if [[ "$IMPL" == rust && ! -x "${SERVER[0]}" ]]; then
+  echo "Rust 二进制不存在，请先 cargo build --release: ${SERVER[0]}"; exit 2
+fi
 
 rm -rf "$WORK"
 mkdir -p "$LIB/海报"
@@ -36,7 +49,7 @@ open(os.path.join(lib, '海报', 'cat.png'), 'wb').write(png(2, 4, (0, 255, 0)))
 open(os.path.join(lib, '海报', 'logo.png'), 'wb').write(png(8, 8, (0, 0, 255)))
 PYEOF
 
-HAWK_TOKEN=$TOKEN dotnet bin/Debug/net10.0/hawk-server.dll --library "$LIB" --port $PORT >"$WORK/server.log" 2>&1 &
+HAWK_TOKEN=$TOKEN "${SERVER[@]}" --library "$LIB" --port $PORT >"$WORK/server.log" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
@@ -46,15 +59,17 @@ for _ in $(seq 1 60); do
 done
 
 # 库外派生缓存目录(随平台:Windows 为 %LOCALAPPDATA%\hawk\cache,见 LibraryPaths 构造)。
+# 缓存子目录 = <库文件夹名>_<库根路径 SHA-256 前16位>。
 # 库标识以 server 报告的库根路径计算:server 看到的 argv 路径经 MSYS 转换,与 shell 变量可能不同,
 # 而 SHA-256 对路径字符串逐字节敏感
 LIB_ABS=$(curl -s -H "$AUTH" "$BASE/api/v1/library/info" | jq -r .data.path)
 CACHE_KEY=$(printf '%s' "$LIB_ABS" | sha256sum | cut -c1-16)
 case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) CACHE="$(cygpath -u "$LOCALAPPDATA")/hawk/cache/$CACHE_KEY" ;;
-  Darwin*) CACHE="$HOME/Library/Application Support/hawk/cache/$CACHE_KEY" ;;
-  *) CACHE="${XDG_DATA_HOME:-$HOME/.local/share}/hawk/cache/$CACHE_KEY" ;;
+  MINGW*|MSYS*|CYGWIN*) CACHE_PARENT="$(cygpath -u "$LOCALAPPDATA")/hawk/cache" ;;
+  Darwin*) CACHE_PARENT="$HOME/Library/Application Support/hawk/cache" ;;
+  *) CACHE_PARENT="${XDG_DATA_HOME:-$HOME/.local/share}/hawk/cache" ;;
 esac
+CACHE="$CACHE_PARENT/library_$CACHE_KEY"
 
 PASS=0; FAIL=0
 check() { # check <描述> <实际> <期望>
@@ -145,15 +160,20 @@ for _ in $(seq 1 20); do
 done
 check "调色板提炼（纯色图为单色）" "$P" 1
 check "cat 调色板就绪（绿色检索命中）" "$G" 1
-check "主色为 #ff0000" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.palette[0].color')" "#ff0000"
-check "主色占比 100" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.palette[0].percentage')" 100
+# 主色允许 ±8 的编解码噪声（有损 WebP 往返：libwebp 对饱和纯色可能 ±1，ImageSharp 恰好往返精确）
+check "主色为红色（容差±8）" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | python3 -c '
+import json, sys
+c = json.load(sys.stdin)["data"]["palette"][0]["color"]
+r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+print("true" if r >= 250 and g <= 8 and b <= 8 else "false")')" true
+check "主色占比 100" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.palette[0].percentage * 10 | round / 10')" 100
 check "颜色检索命中同色" "$(post_json "$BASE/api/v1/item/list" '{"color":"#ff0000"}' | jq -r .data.total)" 1
 check "颜色检索相近色命中" "$(post_json "$BASE/api/v1/item/list" '{"color":"#ee0000"}' | jq -r .data.total)" 1
 check "颜色检索异色不命中" "$(post_json "$BASE/api/v1/item/list" '{"color":"#ffff00"}' | jq -r .data.total)" 0
 check "颜色检索限定文件夹范围" "$(post_json "$BASE/api/v1/item/list" '{"color":"#00ff00","folders":["海报"]}' | jq -r .data.total)" 1
 check "颜色检索范围外不命中" "$(post_json "$BASE/api/v1/item/list" '{"color":"#ff0000","folders":["海报"]}' | jq -r .data.total)" 0
 check "非法颜色值返回 400" "$(post_json "$BASE/api/v1/item/list" '{"color":"red"}' -o /dev/null -w '%{http_code}')" 400
-check "调色板缓存已落盘" "$(ls "$CACHE/colors/$SUNSET_ID.json" >/dev/null 2>&1 && echo yes)" yes
+check "调色板已入元数据 TOML" "$(grep -q '^\[\[palette\]\]' "$LIB/.hawk/metadata/$SUNSET_ID.toml" 2>/dev/null && echo yes || echo no)" yes
 
 # --- item/add ---
 TINY_PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -267,11 +287,10 @@ check "trash/clear" "$(post_json "$BASE/api/v1/trash/clear" '{}' | jq -r .status
 check "清空后回收站为空" "$(post_json "$BASE/api/v1/item/list" '{"in_trash":true}' | jq -r .data.total)" 0
 check "元数据已清理" "$(ls "$LIB/.hawk/metadata/$SUNSET_ID.toml" >/dev/null 2>&1 && echo yes || echo no)" no
 check "缩略图已清理" "$(ls "$CACHE/thumbnails/256/$SUNSET_ID.webp" >/dev/null 2>&1 && echo yes || echo no)" no
-check "调色板缓存已清理" "$(ls "$CACHE/colors/$SUNSET_ID.json" >/dev/null 2>&1 && echo yes || echo no)" no
 
 # --- 重启验证：哈希复用（mtime 不变不重算）且元数据保持 ---
 kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true
-HAWK_TOKEN=$TOKEN dotnet bin/Debug/net10.0/hawk-server.dll --library "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
+HAWK_TOKEN=$TOKEN "${SERVER[@]}" --library "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 60); do curl -sf "$BASE/health" >/dev/null 2>&1 && break; sleep 0.5; done
 DETAIL2=$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$DOT_ID")

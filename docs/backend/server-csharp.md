@@ -1,10 +1,14 @@
 # hawk-server（C# 过渡实现）
 
+> **状态**：C# 过渡版已完成其使命（验证 API 设计、跑通完整后端流程）。app 默认后端已切换为
+> [hawk-server-rs](server-rust.md)，本目录代码保留仅供回归对比（`tools/smoke.sh csharp`），
+> Rust 版充分验证后移除。
+
 > 逐文件的代码职责与流程串联见 [代码导读](server-code-structure.md)。
 
-第一版后端使用 C# 实现，目的是验证 API 设计、跑通完整后端流程。验证完成后将整体替换为 Rust 实现。
+第一版后端使用 C# 实现，目的是验证 API 设计、跑通完整后端流程。验证完成后已由 [hawk-server-rs](server-rust.md) 整体替换。
 
-替换对前端透明：前端只依赖 OpenAPI 契约，不感知后端语言。因此 C# 阶段就要保证 OpenAPI schema 的准确性和完整性，schema 即契约。
+替换对前端透明：前端只依赖 OpenAPI 契约，不感知后端语言。C# 阶段保证了 OpenAPI schema 的准确性和完整性，schema 即契约。
 
 ## 技术选型
 

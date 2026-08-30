@@ -37,9 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          dotnet-version: '10.0.x'
+          workspaces: hawk-server-rs
 
       - uses: actions/setup-node@v4
         with:
@@ -109,9 +111,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      # mac 同机双架构：rust target 分别为 aarch64/x86_64-apple-darwin（C 依赖 sqlite/libwebp 由 cc 按 -arch 编译）
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          dotnet-version: '10.0.x'
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hawk-server-rs
 
       - uses: actions/setup-node@v4
         with:
@@ -124,7 +131,7 @@ jobs:
       - name: Build web
         run: npm run build
 
-      # 前后端都交叉编译到目标架构（electron-builder 直接下载对应 electron 产物；dotnet 同 OS 跨架构发布）
+      # 前后端都构建到目标架构（electron-builder 直接下载对应 electron 产物；rust 同机跨 target 编译）
       # 输出目录：arm64 → dist/mac-arm64；x64 是 mac 默认架构 → dist/mac（无后缀）
       - name: Pack app (arm64)
         run: |

@@ -122,7 +122,7 @@ Program.cs 做的事（按执行顺序）：
 | ---- | ---- |
 | `hawk-server.csproj` | net10.0；依赖：Blake3、SixLabors.ImageSharp、Tomlyn、Serilog.AspNetCore、Microsoft.Data.Sqlite（元数据缓存，原生库随自包含发布打包）、Microsoft.Extensions.FileSystemGlobbing、Microsoft.AspNetCore.OpenApi |
 | `appsettings*.json` | 仅保留默认日志级别配置；Serilog 目前在代码里配置控制台输出 |
-| `tools/smoke.sh` | 端到端冒烟测试（82 项断言）：临时素材库 + curl 覆盖鉴权、索引、过滤、颜色检索、缩略图、去重、文件夹、监听、写入防抖、SSE（item.updated / folder.changed）、batch_update、回收站全流程与重启后哈希复用。库外缓存路径按平台计算、库标识以 server 报告的库根路径换算（Windows 下 argv 路径经 MSYS 转换，与 shell 变量可能不同）。JSON POST 体一律经 stdin 传递（post_json），避免 Windows Git Bash 把 argv 中的中文转成 GBK。运行前先 `dotnet build` |
+| `tools/smoke.sh` | 端到端冒烟测试（81 项断言）：临时素材库 + curl 覆盖鉴权、索引、过滤、颜色检索、缩略图、去重、文件夹、监听、写入防抖、SSE（item.updated / folder.changed）、batch_update、回收站全流程与重启后哈希复用。库外缓存路径按平台计算、库标识以 server 报告的库根路径换算（Windows 下 argv 路径经 MSYS 转换，与 shell 变量可能不同）。JSON POST 体一律经 stdin 传递（post_json），避免 Windows Git Bash 把 argv 中的中文转成 GBK。运行前先 `dotnet build` |
 
 仓库根目录另有 `hawk-server.Tests/`（xunit 单元/集成测试），见下文「测试」一节。
 
@@ -173,7 +173,7 @@ trash/clear:   物理删除 → ClearTrashJob 清位置、清元数据路径；
 | 层 | 位置 | 说明 |
 | ---- | ---- | ---- |
 | 单元/集成测试 | `hawk-server.Tests/`（xunit，208 项） | Core 层纯逻辑（路径、元数据 TOML 往返、IndexDb 注水/写穿/清空、视图偏好注册表、ignore 匹配、索引查询、颜色数学/调色板提炼、BLAKE3 标准向量）+ IndexPipeline 临时目录集成测试（入库/哈希复用/id 漂移继承/移动/多路径/清空回收站/调色板缓存/事件/防抖/批量元数据/元数据对账/排序偏好跟随目录移动/folder.changed）。`dotnet test hawk-server.Tests` |
-| 端到端契约测试 | `hawk-server/tools/smoke.sh`（82 项断言） | 临时素材库 + curl 覆盖 HTTP API 全流程；语言无关，未来 Rust 版可直接复用。运行前先 `dotnet build` |
+| 端到端契约测试 | `tools/smoke.sh`（81 项断言） | 临时素材库 + curl 覆盖 HTTP API 全流程；语言无关，Rust/C# 双实现同跑（`tools/smoke.sh [csharp]`）。运行前先 `cargo build --release` |
 
 测试策略：契约级测试（HTTP/存储格式）优先于内部单元测试——C# 版是过渡实现，Rust 重写后只有契约级测试能原样复用。
 

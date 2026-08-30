@@ -6,3 +6,7 @@
 
 # tools/build.ps1 默认输出目录
 /out/
+
+# Rust 后端构建产物
+hawk-server-rs/target/
+/tools/.tmp/

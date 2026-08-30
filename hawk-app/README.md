@@ -6,12 +6,15 @@
 
 ```bash
 npm install            # 首次（electron 二进制镜像已配在 .npmrc）
-dotnet build ../hawk-server   # 后端产物（Electron 开发态直接 dotnet 运行它）
+cargo build --release --manifest-path ../hawk-server-rs/Cargo.toml   # 后端二进制（Electron 开发态直接运行它）
 npm run gen:types      # 从 hawk-server 的 OpenAPI schema 生成 TS 类型（web/src/api/schema.d.ts）
 npm run dev            # vite + electron 一键起（server 由 electron 拉起）
 npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_TOKEN 可纯浏览器调试
 npm run build          # vue-tsc --noEmit && vite build
 ```
+
+开发态后端二进制取 `hawk-server-rs/target/` 下的构建产物（本机 `release` 优先，其次 `--target` 交叉产物与 `debug`）；
+`HAWK_SERVER_EXE` 环境变量可指向任意二进制覆盖。
 
 ## 测试
 
@@ -22,10 +25,10 @@ node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断
 ## 打包
 
 ```bash
-npm run pack   # 一条命令：build 前端 + 发布当前平台 hawk-server 单文件 + electron-builder 出包（dist/，Windows 为免安装 portable exe）
+npm run pack   # 一条命令：build 前端 + cargo build --release 产出当前平台 hawk-server 单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
 ```
 
-交叉编译其他平台的 server：node scripts/build-server.mjs <RID>（如 osx-arm64），再单独执行 node scripts/pack.mjs。
+交叉编译其他平台的 server：`node scripts/build-server.mjs <RID>`（win-x64 / osx-arm64 / osx-x64 / linux-x64，别名映射 rust target），再单独执行 `node scripts/pack.mjs`。
 
 国内网络首次 pack 需镜像（下载过的会进 electron-builder 缓存，之后不再需要）：
 

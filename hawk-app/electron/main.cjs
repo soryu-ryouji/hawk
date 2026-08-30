@@ -54,11 +54,25 @@ function resolveServerCommand() {
     return { command: process.env.HAWK_SERVER_EXE, args: [] };
   }
   if (isDev) {
-    // 开发态：直接 dotnet 运行本地构建产物
-    const dll = path.join(__dirname, '..', '..', 'hawk-server', 'bin', 'Debug', 'net10.0', 'hawk-server.dll');
-    return { command: 'dotnet', args: [dll] };
+    // 开发态：直接运行 Rust 后端二进制（release 优先；后端开发迭代的 debug 构建亦可）
+    const exe = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
+    const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
+    const targetDir = path.join(__dirname, '..', '..', 'hawk-server-rs', 'target');
+    // 兼容两种 cargo 产物位置：本机直建 target/release 与 --target 交叉建 target/<triple>/release
+    const candidates = [
+      ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release')] : []),
+      path.join(targetDir, 'release'),
+      path.join(targetDir, 'debug'),
+    ];
+    for (const dir of candidates) {
+      const bin = path.join(dir, exe);
+      if (fs.existsSync(bin)) {
+        return { command: bin, args: [] };
+      }
+    }
+    throw new Error('未找到 hawk-server-rs 构建产物，请先 cargo build --release（hawk-server-rs/）');
   }
-  // 打包态：extraResources 携带的自包含二进制
+  // 打包态：extraResources 携带的 Rust 二进制（cargo build --release，见 scripts/build-server.mjs）
   const bin = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
   return { command: path.join(process.resourcesPath, 'hawk-server', bin), args: [] };
 }

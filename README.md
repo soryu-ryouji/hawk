@@ -20,7 +20,7 @@
 ## 路线图
 
 - 1.0 版本
-  - 使用 Rust 重写服务器代码，减小程序体积，提高资源吞吐效率和内存安全性
+  - 使用 Rust 重写服务器代码，减小程序体积，提高资源吞吐效率和内存安全性（已完成并替换 C# 版，见 [hawk-server-rs](docs/backend/server-rust.md)；C# 代码保留至 Rust 版充分验证后移除）
   - 完成 Windows, MacOS 桌面客户端
   - 完成 Chrome, Firefox, Safari 浏览器插件
   - 完成 web 资源查看器：局域网内通过浏览器访问素材库（设置面板按库配置开关/端口/token，只读查看）；后续拓展 ios, android 查看器
@@ -66,14 +66,14 @@ POST http://localhost:27371/api/v1/item/update
 
 ### 环境准备
 
-- [Node.js](https://nodejs.org/) 与 [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Node.js](https://nodejs.org/) 与 [Rust 工具链](https://rustup.rs/)（后端为 Rust 实现 `hawk-server-rs/`；C# 过渡版保留在仓库内，仅供回归对比，需 .NET 10 SDK）
 - 克隆仓库后安装依赖（Electron 二进制镜像已配置在 `hawk-app/.npmrc`，国内网络无需额外设置）：
 
 ```bash
 git clone https://github.com/soryu-ryouji/hawk.git
 cd hawk/hawk-app
 npm install
-dotnet build ../hawk-server
+cargo build --release --manifest-path ../hawk-server-rs/Cargo.toml
 ```
 
 ### 开发调试
@@ -91,7 +91,7 @@ cd hawk-app
 npm run pack
 ```
 
-一条命令完成：前端构建 → `dotnet publish` 产出当前平台的 hawk-server 自包含单文件 → electron-builder 打包。产物在 `hawk-app/dist/`：
+一条命令完成：前端构建 → `cargo build --release` 产出当前平台的 hawk-server 单文件（约 9MB，对比 dotnet 自包含的 70MB+）→ electron-builder 打包。产物在 `hawk-app/dist/`：
 
 - **Windows**：`hawk.zip`（绿色软件，解压到任意目录双击 `hawk.exe` 即用；全 64 位，无安装器）
 - **macOS**：`dist/mac-arm64/hawk.app`（Intel 机器为 `dist/mac/hawk.app`）——不发 dmg，直接构建 .app 目录；对外分发由 CI zip 成 `hawk-mac-<arch>.zip`
@@ -104,7 +104,7 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=9 npm run pack   # 最小体积，约 2 分�
 ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体积 +27MB）
 ```
 
-交叉编译其他平台的后端：`node scripts/build-server.mjs <RID>`（如 `osx-arm64`），再单独执行 `node scripts/pack.mjs`。
+交叉编译其他平台的后端：`node scripts/build-server.mjs <RID>`（如 `osx-arm64`，内部映射 rust target 并自动 `rustup target add`），再单独执行 `node scripts/pack.mjs`。
 
 把应用与浏览器插件构建并拷贝到指定目录（本地安装用）：
 
@@ -135,9 +135,10 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 
 - [hawk-app 设计](docs/frontend/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
 
-**后端**（[hawk-server](hawk-server/)）
+**后端（hawk-server/）**
 
 - [hawk-server（C# 过渡实现）](docs/backend/server-csharp.md)：第一版后端实现细节
+- [hawk-server-rs（Rust 实现）](docs/backend/server-rust.md)：Rust 版实现细节、双实现调试方法
 - [hawk-server 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
