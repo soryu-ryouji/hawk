@@ -123,6 +123,7 @@ public class IndexPipelineTests
         await rig.Pipeline.SubmitMetadataAsync(oldHash, meta =>
         {
             meta.Tags = new List<string> { "保留标签" };
+            meta.Categories = new List<string> { "保留分类" };
             meta.Star = 5;
             meta.Annotation = "迁移备注";
         });
@@ -137,6 +138,7 @@ public class IndexPipelineTests
 
         Assert.NotEqual(oldHash, second!.Item.Id);
         Assert.Equal(["保留标签"], second.Item.Tags);
+        Assert.Equal(["保留分类"], second.Item.Categories);
         Assert.Equal(5, second.Item.Star);
         Assert.Equal("迁移备注", second.Item.Annotation);
 

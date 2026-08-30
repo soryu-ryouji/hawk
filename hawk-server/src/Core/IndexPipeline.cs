@@ -683,6 +683,7 @@ public sealed class IndexPipeline : IDisposable
         {
             created.Url = inheritFrom.Url;
             created.Tags = new List<string>(inheritFrom.Tags);
+            created.Categories = new List<string>(inheritFrom.Categories);
             created.Star = inheritFrom.Star;
             created.Annotation = inheritFrom.Annotation;
         }

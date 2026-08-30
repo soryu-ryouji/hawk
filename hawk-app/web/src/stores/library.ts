@@ -4,6 +4,7 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
+import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
 import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
@@ -709,6 +710,52 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** 图片编辑窗口的目标 item(全局单例):网格/预览浮层右键「编辑图片…」均可打开 */
+  const editorTarget = ref<Item | null>(null);
+
+  function openEditor(item: Item) {
+    editorTarget.value = item;
+  }
+
+  function closeEditor() {
+    editorTarget.value = null;
+  }
+
+  /**
+   * 编辑窗口保存:解码/旋转/重编码在客户端完成(编辑计算归客户端),经 item/replace 提交存储层。
+   * 内容哈希变化导致 id 漂移:新 item 就地替换详情;预览若正打开该 item 则跟随新 id;
+   * 骨架/选择的旧 id 由 SSE item.removed 清理。返回是否成功,调用方据此关闭编辑窗口。
+   */
+  async function saveImageEdit(id: string, angle: RotateAngle): Promise<boolean> {
+    const item = details.value.get(id);
+    if (!item) {
+      return false;
+    }
+    try {
+      // no-store:item/file 带 Cache-Control immutable,<img> 加载会把无 ACAO 的响应存进磁盘缓存,
+      // 默认 cache 模式的 fetch 复用该缓存条目会被 CORS 拒绝(浏览器对 <img> 请求不携 Origin,服务端不返回 ACAO)
+      const res = await fetch(api.fileUrl(item.id), { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error('原图获取失败');
+      }
+      const rotated = await rotateImage(await res.blob(), angle, item.ext);
+      const updated = await api.itemReplace(item.id, await blobToBase64(rotated));
+      const map = new Map(details.value);
+      map.delete(item.id);
+      map.set(updated.id, updated);
+      details.value = map;
+      if (previewId.value === item.id) {
+        previewId.value = updated.id;
+      }
+      showToast('已保存');
+      return true;
+    } catch (e) {
+      // ApiError 走错误码翻译(如 UNSUPPORTED_FORMAT),本地 Error 直接取 message
+      showToast(e instanceof ApiError ? errorText(e) : e instanceof Error ? e.message : String(e));
+      return false;
+    }
+  }
+
   // ---- SSE ----
   function applyEvent(type: string, payload: unknown) {
     switch (type) {
@@ -760,13 +807,13 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible, editorTarget,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes,
     init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,
     refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
-    openPreview, closePreview, navigatePreview, showToast, applyEvent,
+    openPreview, closePreview, navigatePreview, saveImageEdit, openEditor, closeEditor, showToast, applyEvent,
   };
 });

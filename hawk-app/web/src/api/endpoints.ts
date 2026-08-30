@@ -52,6 +52,12 @@ export const api = {
   itemDelete: (id: string, path?: string) => request<void>('POST', '/api/v1/item/delete', { body: { id, path } }),
   itemRestore: (id: string, path?: string) => request<void>('POST', '/api/v1/item/restore', { body: { id, path } }),
   refreshThumbnail: (id: string) => request<void>('POST', '/api/v1/item/refresh_thumbnail', { body: { id } }),
+  /**
+   * 内容替换(item/replace):客户端编辑(旋转/裁切等)后的新内容提交存储层。
+   * 内容哈希变化 → id 漂移,响应为新 Item(新 id),调用方应切换到新 id 继续引用。
+   */
+  itemReplace: (id: string, imgBase64: string, path?: string) =>
+    request<Item>('POST', '/api/v1/item/replace', { body: { id, path, img_base64: imgBase64 } }),
 
   trashClear: () => request<void>('POST', '/api/v1/trash/clear'),
 

@@ -158,8 +158,15 @@ function onDrop(e: DragEvent) {
 }
 
 .node.active {
-  background: var(--accent);
+  /* Eagle 式选中高亮:暗灰微亮(--bg-3),不用亮色 accent */
+  background: var(--bg-3);
   color: #fff;
+}
+
+/* Eagle 式:选中行的计数纯白加粗,灰字压蓝底对比度不足 */
+.node.active .count {
+  color: #fff;
+  font-weight: 600;
 }
 
 /* 素材悬停：整行高亮示意可放置 */
@@ -197,6 +204,7 @@ function onDrop(e: DragEvent) {
   font-size: 11px;
   color: var(--fg-1);
 }
+
 
 .edit {
   flex: 1;

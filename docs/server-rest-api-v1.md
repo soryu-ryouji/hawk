@@ -302,6 +302,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | GET  | `/api/v1/item/thumbnail`         | 获取缩略图     |
 | GET  | `/api/v1/item/file`              | 获取原图文件   |
 | POST | `/api/v1/item/refresh_thumbnail` | 重新生成缩略图 |
+| POST | `/api/v1/item/replace`           | 替换文件内容（客户端编辑后提交存储层） |
 
 ### Item 对象
 
@@ -609,6 +610,33 @@ Item 对象，并附带 `already_existed` 标志：
 ```json
 { "status": "success" }
 ```
+
+### replace
+
+`POST /api/v1/item/replace`
+
+替换已有素材的文件内容。面向**客户端编辑**场景（旋转、裁切等）：编辑计算（解码/变换/重编码）在客户端完成，本端点只做存储层的校验、哈希与写盘——server 不承接用户图片的编辑计算，远程部署时同样成立。
+
+内容哈希几乎必然变化 → **id 漂移**：素材参数（标签/评分/备注/分类/来源）按路径继承迁移，事件（`item.removed` 旧 id + `item.added` 新 id）与缩略图/调色板重建由索引流水线闭环（见「Item 对象」的 id 漂移说明）。响应即新 Item 对象（新 id），客户端应切换到新 id 继续引用。
+
+#### 请求
+
+| 参数       | 类型   | 必填 | 说明                                                       |
+| ---------- | ------ | ---- | ---------------------------------------------------------- |
+| id         | string | 是   | item id                                                    |
+| path       | string | 否   | 指定操作的文件位置（同内容多路径时），缺省为主路径         |
+| img_base64 | string | 是   | 新内容的 Base64 编码                                       |
+
+约束：
+
+- 目标位置必须在库内，回收站中的 item 先恢复再替换，否则 `INVALID_PARAM`
+- 内容必须是可识别的图像，且**格式与文件扩展名一致**（如 `.png` 文件只接受 PNG 内容），否则 `UNSUPPORTED_FORMAT`
+- 内容哈希与当前 id 相同时为幂等 no-op，直接返回当前 Item，不触发漂移
+- 写回时**保留原文件的修改时间与创建时间**：旋转等修正性编辑不改变素材的时序位置（`modification_time` 排序不受编辑影响）
+
+#### 响应
+
+新 Item 对象（内容未变化时为当前 Item 对象）。
 
 ## category
 

@@ -162,6 +162,7 @@ web/
     │   ├── PromptDialog.vue   # 文本输入模态（添加标签/新建文件夹）
     │   ├── FolderPickerDialog.vue # 文件夹选择模态（移动到文件夹）
     │   ├── PreviewOverlay.vue
+    │   ├── ImageEditDialog.vue # 图片编辑窗口（右键「编辑图片…」）：旋转预览 + 保存/放弃/取消三选确认
     │   ├── ContextMenu.vue    # 全局单例自绘菜单
     │   └── EmptyState.vue     # 空库/空结果占位
     └── styles.css             # 深色主题 CSS 变量与全局样式
@@ -237,6 +238,7 @@ export const api = {
   itemDelete(id: string, path?: string): Promise<void>;
   itemRestore(id: string, path?: string): Promise<void>;
   refreshThumbnail(id: string): Promise<void>;
+  itemReplace(id: string, imgBase64: string, path?: string): Promise<Item>;  // 客户端编辑后的内容替换；哈希变化 → id 漂移，响应为新 Item（新 id）
   trashClear(): Promise<void>;
   // category / tag 注册表端点（见 server-rest-api-v1.md 与 category.md）
   categoryList(): Promise<CategoryInfo[]>;                        // [{ name, count }]
@@ -322,6 +324,9 @@ importPaths(paths: string[]): Promise<void>;       // 逐个 itemAddByPath（ser
 importBegin(): boolean;                           // 拖拽落下即占用导入态（并发导入拒绝并 toast）；importPaths 前置
 refreshFolders(): Promise<void>;
 openPreview(id): void; closePreview(): void; navigatePreview(step: 1 | -1): void;
+editorTarget: Item | null;   // 图片编辑窗口目标(全局单例,App.vue 据此挂载 ImageEditDialog)
+openEditor(item): void; closeEditor(): void;   // 网格/预览浮层右键「编辑图片…」
+saveImageEdit(id, angle: 90 | 180 | 270): Promise<boolean>;  // 编辑窗口保存：客户端重编码（canvas，JPEG EXIF 字节级回填并重置 Orientation，见 imageEdit.ts）→ item/replace；id 漂移后新 item 就地替换详情（预览若正打开则跟随新 id）；返回是否成功，调用方据此关闭编辑窗口
 showToast(msg: string): void;
 applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略见下节）
 ```
@@ -341,14 +346,14 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；引导页/失败页带拖拽条与窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；引导页/失败页带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | — | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | — | 引导页：无连接参数/选库/启动失败的整页态；经 preload `selectLibrary()` 换库后主进程改 URL hash，`hashchange` 触发重新 boot |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
-| `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store |
+| `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |
 | `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。单选：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
@@ -356,7 +361,8 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
-| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式：几乎不透明的磨砂玻璃遮罩（`backdrop-filter: blur`）覆盖底层界面，底部中间为「‹ 当前序号/视图总数 ›」翻页器，右上角 × 关闭；滚轮以光标为中心缩放、拖拽平移、双击复位；Esc/点遮罩/空格关闭；←/→ 或底部按钮切换；右键菜单：在文件管理器中显示/复制文件路径/复制图片（主进程 `hawk:copy-path`、`hawk:copy-image` 写剪贴板）/删除图片（删除后跳到下一张，末张关闭） |
+| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式：几乎不透明的磨砂玻璃遮罩（`backdrop-filter: blur`）覆盖底层界面，底部中间为「‹ 当前序号/视图总数 ›」翻页器，右上角 × 关闭；滚轮以光标为中心缩放、拖拽平移、双击复位；Esc/点遮罩/空格关闭；←/→ 或底部按钮切换；右键菜单：在文件管理器中显示/复制文件路径/复制图片/编辑图片（仅 jpg/png/webp，`store.openEditor`，编辑窗口层级高于本浮层，保存后本浮层经 previewId 切换到新 id 显示旋转结果；放弃则保持原图）/删除图片（删除后跳到下一张，末张关闭） |
+| `ImageEditDialog.vue` | `item: Item` | `close` | 图片编辑窗口：全屏 Eagle 式遮罩（观感同预览浮层、层级高于它），底部中间工具条为 ↺/↻ 旋转 + 「已旋转 n°」+ 退出/保存；`store.editorTarget` 驱动、App.vue 全局挂载（网格与预览浮层右键「编辑图片…」均可打开）。编辑期间旋转只作用于预览角（CSS 变换）；「保存」或带修改退出（×/退出/Esc/点遮罩）时三选确认（保存/不保存/取消）才经 `store.saveImageEdit` 做客户端重编码（canvas，EXIF 方向烘焙进像素；JPEG EXIF 字节级回填、Orientation 重置为 1）并提交 `item/replace`；id 漂移后详情就地替换、预览若正打开则跟随新 id；写回保留原修改时间，素材在按时间排序中不挪位 |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
 
@@ -368,7 +374,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | ---------- | ---------- |
 | `useContextMenu()` | 模块级单例响应式状态 `{visible, x, y, items}`（全局唯一菜单）；`open(items, MouseEvent)` 定位（防出屏翻转）；`close()` |
 | `useDragImport()` | `useDropZone` 接 drop → 先 `importBegin()` 占位（收集文件阶段进度条即显示）→ `webkitGetAsEntry()` 递归展开文件夹 → `webUtils.getPathForFile` 取绝对路径 → `store.importPaths`；收集失败 toast |
-| `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
+| `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；**图片编辑窗口打开时（store.editorTarget）整体让行**（窗口自带 Esc/关闭逻辑，否则 Esc 会关底层预览、Delete 会删正在编辑的素材）；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
 
 ### 样式约定
 

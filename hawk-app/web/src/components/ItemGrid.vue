@@ -11,6 +11,7 @@ import EmptyState from './EmptyState.vue';
 import PromptDialog from './PromptDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
+import { isRotatableImage } from '../imageEdit';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
@@ -236,6 +237,8 @@ function onMenu(item: Item, e: MouseEvent) {
         { label: '添加标签…', action: () => (showTagDialog.value = true) },
         { label: '添加到分类…', action: () => (showCategoryDialog.value = true) },
         { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
+        // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
+        ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => store.openEditor(item) }] : []),
         { label: showInFileManagerLabel, action: () => window.hawkShell?.showInFinder(item.paths[0]) },
         { separator: true, label: '' },
         ...[5, 4, 3, 2, 1, 0].map((star) => ({

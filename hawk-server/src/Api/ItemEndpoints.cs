@@ -85,6 +85,14 @@ public static class ItemEndpoints
     public sealed record ItemIdRequest(string Id, string? Path);
     public sealed record ItemRefreshThumbnailRequest(string Id);
 
+    /// <summary>内容替换(item/replace):客户端编辑(旋转/裁切等)后的新内容;编辑计算在客户端,server 只做存储层校验与写盘</summary>
+    public sealed record ItemReplaceRequest
+    {
+        public required string Id { get; init; }
+        public string? Path { get; init; }
+        public required string ImgBase64 { get; init; }
+    }
+
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     public static void MapItemEndpoints(this IEndpointRouteBuilder app)
@@ -121,6 +129,7 @@ public static class ItemEndpoints
         group.MapPost("/batch_update", BatchUpdateAsync);
         group.MapPost("/delete", DeleteAsync);
         group.MapPost("/restore", RestoreAsync);
+        group.MapPost("/replace", ReplaceAsync);
 
         group.MapGet("/thumbnail", (string id, int? size, HttpContext ctx, ItemIndex index, ThumbnailService thumbnails, LibraryConfig config) =>
         {
@@ -199,6 +208,64 @@ public static class ItemEndpoints
             InTrash = req.InTrash, OrderBy = req.OrderBy, Order = req.Order,
             Offset = req.Offset, Limit = req.Limit,
         };
+    }
+
+    // ---------- replace ----------
+
+    /// <summary>
+    /// 内容替换(item/replace):客户端编辑(旋转/裁切等)后的新内容提交存储层。
+    /// 哈希变化 → id 漂移,元数据继承迁移/事件/缩略图重建由索引流水线闭环。
+    /// </summary>
+    private static async Task<IResult> ReplaceAsync(ItemReplaceRequest req, LibraryPaths paths, ItemIndex index, IndexPipeline pipeline, CancellationToken ct)
+    {
+        var loc = index.FindLocation(req.Id, req.Path, wantTrash: null)
+            ?? throw ApiException.ItemNotFound(req.Path ?? req.Id);
+        if (loc.InTrash)
+        {
+            throw ApiException.InvalidParam("回收站中的文件不支持内容替换,请先恢复");
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(req.ImgBase64);
+        }
+        catch (FormatException)
+        {
+            throw ApiException.InvalidParam("img_base64 不是合法的 Base64 数据");
+        }
+
+        // 内容必须是图像且格式与文件扩展名一致:扩展名与内容错位会破坏类型推断与预览
+        var fileExt = LibraryPaths.ExtOf(loc.LibraryPath);
+        var ext = ThumbnailService.DetectExtension(bytes)
+            ?? throw ApiException.UnsupportedFormat("无法识别的图像数据");
+        if (ext != fileExt)
+        {
+            throw ApiException.UnsupportedFormat($"图像格式({ext})与文件扩展名({fileExt})不一致");
+        }
+
+        var hash = ContentHash.HashBytes(bytes);
+        if (hash == req.Id)
+        {
+            // 内容未变化(幂等):不触发漂移,直接返回当前投影
+            var unchanged = index.GetDto(req.Id) ?? throw ApiException.ItemNotFound(req.Id);
+            return TypedResults.Ok(Envelope<ItemDto>.Ok(unchanged));
+        }
+
+        // 写回原路径。保留原修改时间:旋转等修正性编辑不改变素材的时序位置
+        // (mtime 是排序与哈希复用判定的依据);创建时间由截断重写天然保留。
+        var targetAbs = paths.ToAbsolute(loc.Path)!;
+        var lastWriteUtc = File.GetLastWriteTimeUtc(targetAbs);
+        await File.WriteAllBytesAsync(targetAbs, bytes, ct);
+        File.SetLastWriteTimeUtc(targetAbs, lastWriteUtc);
+
+        var result = await pipeline.SubmitUpsertAsync(targetAbs, hash);
+        if (result is null)
+        {
+            throw new ApiException(ErrorCodes.Internal, "索引失败", StatusCodes.Status500InternalServerError);
+        }
+
+        return TypedResults.Ok(Envelope<ItemDto>.Ok(result.Item));
     }
 
     // ---------- add ----------

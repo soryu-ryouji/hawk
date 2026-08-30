@@ -16,6 +16,12 @@ export function useShortcuts() {
       return;
     }
 
+    // 图片编辑窗口打开时接管全部按键(窗口自带 Esc/关闭逻辑),全局快捷键一律让行——
+    // 否则 Esc 会关掉底层预览、Delete 会删掉正在编辑的素材
+    if (store.editorTarget) {
+      return;
+    }
+
     if (e.key === 'Escape') {
       if (store.previewId) {
         store.closePreview();

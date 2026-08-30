@@ -443,12 +443,14 @@ function onTagContextMenu(name: string, e: MouseEvent) {
 }
 
 .entry.active {
-  background: var(--accent);
+  /* Eagle 式选中高亮:暗灰微亮(--bg-3),不用亮色 accent */
+  background: var(--bg-3);
   color: #fff;
 }
 
 .entry.active .count {
-  color: rgba(255, 255, 255, 0.8);
+  color: #fff;
+  font-weight: 600;
 }
 
 .label {
@@ -475,12 +477,14 @@ function onTagContextMenu(name: string, e: MouseEvent) {
 }
 
 .tag-row.active {
-  background: var(--accent);
+  /* Eagle 式选中高亮:暗灰微亮(--bg-3),不用亮色 accent */
+  background: var(--bg-3);
   color: #fff;
 }
 
 .tag-row.active .tag-count {
-  color: rgba(255, 255, 255, 0.8);
+  color: #fff;
+  font-weight: 600;
 }
 
 .tag-name {
@@ -513,12 +517,14 @@ function onTagContextMenu(name: string, e: MouseEvent) {
 }
 
 .cat-row.active {
-  background: var(--accent);
+  /* Eagle 式选中高亮:暗灰微亮(--bg-3),不用亮色 accent */
+  background: var(--bg-3);
   color: #fff;
 }
 
 .cat-row.active .cat-count {
-  color: rgba(255, 255, 255, 0.8);
+  color: #fff;
+  font-weight: 600;
 }
 
 .cat-name {

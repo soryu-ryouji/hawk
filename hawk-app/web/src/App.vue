@@ -11,6 +11,7 @@ import WindowControls from './components/WindowControls.vue';
 import ItemGrid from './components/ItemGrid.vue';
 import Inspector from './components/Inspector.vue';
 import PreviewOverlay from './components/PreviewOverlay.vue';
+import ImageEditDialog from './components/ImageEditDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import SetupScreen from './components/SetupScreen.vue';
 
@@ -197,6 +198,8 @@ useDragImport();
       @close="store.closePreview()"
       @navigate="store.navigatePreview($event)"
     />
+    <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
+    <ImageEditDialog v-if="store.editorTarget" :item="store.editorTarget" @close="store.closeEditor()" />
     <ContextMenu />
 
     <Teleport to="body">

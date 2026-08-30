@@ -54,6 +54,10 @@ Web 前端不依赖 Electron IPC，只通过 REST API 通信。
 
 REST API 由 OpenAPI schema 定义（后端从代码生成），TypeScript 类型从 schema 生成，前后端不允许手写对接口。
 
+**4. 编辑计算归客户端，server 归存储与管理**
+
+图片编辑（旋转、裁切等）的解码/变换/重编码在客户端完成（Web 标准 canvas 能力），server 只提供存储层能力（`item/replace` 内容替换：校验、哈希、写盘、id 漂移闭环）。server 部署为远程服务时不承接用户图片的编辑计算。
+
 ## 部署形态
 
 ### 桌面版（sidecar 模式）
