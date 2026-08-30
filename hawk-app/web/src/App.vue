@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { initApi, apiConfig, clearStoredToken, ApiError } from './api/client';
 import { connectEvents } from './api/events';
 import { useLibraryStore } from './stores/library';
@@ -39,6 +39,21 @@ watch(
 );
 const showSettings = ref(false);
 let disconnectEvents: (() => void) | null = null;
+
+// 索引进度条文案：扫描中带阶段进度（遍历阶段总数未知，只报已处理数）；否则报剩余任务数
+const indexProgressText = computed(() => {
+  const p = store.indexProgress;
+  if (!p) {
+    return '';
+  }
+  if (p.phase) {
+    const label = p.phase === 'scan' ? '扫描' : p.phase === 'hash' ? '哈希' : '应用';
+    const total = p.total ?? 0;
+    const processed = p.processed ?? 0;
+    return total > 0 ? `正在索引素材库 · ${label} ${processed}/${total}` : `正在索引素材库 · 已发现 ${processed} 个文件`;
+  }
+  return `正在索引素材 · 剩余 ${p.pending + p.active}`;
+});
 
 // ---- 侧栏宽度拖拽 ----
 const SIDEBAR_MIN = 180;
@@ -245,6 +260,11 @@ useDragImport();
     <!-- 筛选工具列：顶栏漏斗按钮展开，或评分/颜色条件激活时常驻 -->
     <FilterBar v-if="store.filterBarVisible || store.hasActiveFilters" />
     <ItemGrid />
+    <!-- 索引进度指示：入库队列/扫描进度（与缩略图条同为只读指示） -->
+    <div v-if="store.indexProgress" class="task-bar index">
+      <div class="task-bar-fill" />
+      <span class="task-bar-text">{{ indexProgressText }}</span>
+    </div>
     <!-- 缩略图后台积压指示：细进度条压在网格顶缘（浏览器式加载条），计数归零自动消失 -->
     <div v-if="store.taskBacklog" class="task-bar">
       <div class="task-bar-fill" />

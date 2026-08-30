@@ -322,6 +322,11 @@ body.mobile .bar button {
   white-space: nowrap;
 }
 
+/* 索引进度条与缩略图条同现（导入期间并行）时，文案上下错开避免重叠 */
+.task-bar.index .task-bar-text {
+  top: 28px;
+}
+
 /* 引导页/启动失败页：顶部拖拽条（窗口控制按钮 fixed 在右上角，不占文档流） */
 .standalone {
   height: 100%;

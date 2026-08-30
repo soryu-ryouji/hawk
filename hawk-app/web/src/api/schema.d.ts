@@ -1453,6 +1453,17 @@ export interface components {
             name: null | string;
             parent_path: null | string;
         };
+        IndexBacklog: {
+            /** Format: int32 */
+            pending: number | string;
+            /** Format: int32 */
+            active: number | string;
+            phase: null | string;
+            /** Format: int32 */
+            processed: null | number | string;
+            /** Format: int32 */
+            total: null | number | string;
+        };
         ItemAddRequest: {
             path?: null | string;
             url?: null | string;
@@ -1614,6 +1625,7 @@ export interface components {
         };
         TaskStatus: {
             thumbnail: components["schemas"]["TaskBacklog"];
+            index: components["schemas"]["IndexBacklog"];
         };
         ViewPreferencePutRequest: {
             scope: string;

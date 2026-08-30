@@ -116,11 +116,13 @@ function startServer(libPath, address, token) {
   });
   let stderrTail = '';
   let poll = 0;
-  let timeout = 0;
+  let watchdog = 0;
+  let lastProgressAt = Date.now();
+  let lastProcessed = -1;
   /** 失败统一出口：通知渲染进程 + reject ready（一次性） */
   const fail = (message) => {
     clearInterval(poll);
-    clearTimeout(timeout);
+    clearInterval(watchdog);
     mainWindow?.webContents.send('hawk:server-error', { message });
     settleReady.reject(new Error(message));
   };
@@ -150,15 +152,21 @@ function startServer(libPath, address, token) {
       const body = await res.json();
       const state = body.data;
       if (state.status === 'starting') {
+        const processed = state.processed || 0;
+        if (processed !== lastProcessed) {
+          // 进度在推进：重置停滞计时（初始索引耗时随库规模变化，不设总时长上限）
+          lastProcessed = processed;
+          lastProgressAt = Date.now();
+        }
         mainWindow?.webContents.send('hawk:server-progress', {
           phase: state.phase || 'scan',
-          processed: state.processed || 0,
+          processed,
           total: state.total || 0,
         });
         return;
       }
       clearInterval(poll);
-      clearTimeout(timeout);
+      clearInterval(watchdog);
       if (state.status === 'ready') {
         mainWindow?.webContents.send('hawk:server-started', { address, token });
         settleReady.resolve();
@@ -169,7 +177,14 @@ function startServer(libPath, address, token) {
       // 连接拒绝：server 尚未监听，继续轮询
     }
   }, 200);
-  timeout = setTimeout(() => fail('hawk-server 启动超时'), 60000);
+  // 初始索引（新库首扫 = 全库遍历 + 全量哈希）大库可达数分钟，60s 总时长上限会误杀正常索引。
+  // 改为停滞看门狗：进度（processed）持续推进就一直等；停滞过久才判定死僵。
+  // 容忍 120s 覆盖扫描前无进度帧的元数据对账等静默阶段
+  watchdog = setInterval(() => {
+    if (Date.now() - lastProgressAt >= 120_000) {
+      fail('hawk-server 索引长时间无进展，疑似卡死');
+    }
+  }, 1000);
 
   return { child, address, token, ready, markStopped: () => (intentionalExit = true) };
 }

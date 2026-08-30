@@ -41,7 +41,7 @@
 | ---- | ------------------ | ------------ |
 | GET  | `/api/v1/app/info` | 获取应用信息 |
 | GET  | `/api/v1/app/startup` | 启动状态与索引构建进度（就绪网关唯一放行端点） |
-| GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列；SSE 的 `task.progress` 事件为同一快照的推送版） |
+| GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列 + 索引管道；SSE 的 `task.progress` 事件为同一快照的推送版） |
 | GET  | `/api/v1/app/token` | 发现连接 token（免鉴权，仅限扩展类客户端） |
 
 ### startup
@@ -84,7 +84,7 @@
 
 `GET /api/v1/app/status`
 
-后台任务积压快照。当前仅缩略图（含调色板）worker 队列：导入或初次索引后大量素材等待生成缩略图时，`pending`（排队中）与 `active`（生成中，并发度 `CPU/2`、封顶 16）大于 0；积压清空后两者归零。
+后台任务积压快照：缩略图（含调色板）worker 队列与索引管道。导入或初次索引后大量素材等待生成缩略图时，`thumbnail.pending`（排队中）与 `thumbnail.active`（生成中，并发度 `CPU/4`、封顶 8）大于 0；批量文件入库期间 `index.pending`（管道排队 job + 写入防抖路径）大于 0，扫描期间 `index.active` 为 1 并携带阶段进度。积压清空后归零。
 
 SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送版，服务端 500ms 节流）；本端点供轮询型客户端使用。
 
@@ -93,9 +93,14 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 ```json
 {
   "status": "success",
-  "data": { "thumbnail": { "pending": 236, "active": 4 } }
+  "data": {
+    "thumbnail": { "pending": 236, "active": 4 },
+    "index": { "pending": 12, "active": 0, "phase": "hash", "processed": 1800, "total": 4200 }
+  }
 }
 ```
+
+`index.phase` / `processed` / `total` 仅扫描进行中存在：`total=0` 的遍历阶段表示总量未知（客户端宜显示不定态进度）；空闲时为 `null`。
 
 ### info
 
@@ -716,7 +721,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `item.restored`   | Item 对象 | 首个回收站位置回归库内 |
 | `item.removed`    | `{ "id": "..." }` | 彻底删除(无剩余位置) |
 | `folder.changed`  | `{ "reason": "external" }` | 目录结构可能变化,客户端应重拉 `folder/list`;reason 恒为 `external`,客户端必须忽略取值(结构为将来预留) |
-| `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(当前仅缩略图/调色板队列;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
+| `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(缩略图/调色板队列与索引管道;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
 
 事件名与负载即持久契约(Rust 重写必须逐字兼容);后端以常量集中定义(`ItemEvents`),客户端不许凭代码反推。
 
@@ -744,7 +749,13 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 { "task": "thumbnail", "pending": 236, "active": 4 }
 ```
 
-`pending` 为排队数,`active` 为生成中(并发度 `CPU/2`、封顶 16)。SSE 断开的客户端可轮询 `GET /api/v1/app/status` 获取同一快照。
+`task` 为 `thumbnail`（缩略图/调色板队列）或 `index`（索引管道：入库排队 job 与写入防抖路径）。`pending` 为排队数，`active` 为执行中（缩略图生成并发度 `CPU/4`、封顶 8；索引任务扫描中为 1、否则为 0）。`task=index` 且扫描进行中时额外携带阶段进度：
+
+```json
+{ "task": "index", "pending": 12, "active": 1, "phase": "hash", "processed": 1800, "total": 4200 }
+```
+
+`phase` 为 `scan`（遍历，`total=0` 表示总量未知，客户端宜显示不定态）/ `hash` / `apply`；非扫描期间三个字段省略。SSE 断开的客户端可轮询 `GET /api/v1/app/status` 获取同一快照。
 
 ### 时序与可靠性语义
 

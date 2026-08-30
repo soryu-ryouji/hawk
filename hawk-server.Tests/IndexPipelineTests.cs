@@ -22,6 +22,7 @@ public class IndexPipelineTests
         public required ThumbnailService Thumbnails;
         public required ColorService Colors;
         public required EventBus Bus;
+        public required ThumbnailWorker Worker;
         public required CategoryRegistry Categories;
         public required TagRegistry Tags;
         public required ViewPreferences Prefs;
@@ -49,7 +50,7 @@ public class IndexPipelineTests
                 NullLogger<IndexPipeline>.Instance);
             pipeline.AttachThumbnailWorker(worker);
             pipeline.Start();
-            return new Rig { Paths = paths, Db = db, Store = store, Index = index, Thumbnails = thumbnails, Colors = colors, Bus = bus, Categories = categories, Tags = tags, Prefs = viewPrefs, Pipeline = pipeline };
+            return new Rig { Paths = paths, Db = db, Store = store, Index = index, Thumbnails = thumbnails, Colors = colors, Bus = bus, Worker = worker, Categories = categories, Tags = tags, Prefs = viewPrefs, Pipeline = pipeline };
         }
 
         public void Dispose()
@@ -597,6 +598,41 @@ public class IndexPipelineTests
         Assert.False(all.ContainsKey("folder:d"));
         Assert.Equal(new ViewSort("name", "asc"), all["folder:e/d"]);
         Assert.Equal(new ViewSort("star", "desc"), all["folder:e/d/sub"]);
+    }
+
+    [Fact]
+    public void 缩略图任务_inflight去重()
+    {
+        // 同一 hash 已在队列中时重复派发直接丢弃:对账扫描重放全库不会再灌 no-op 任务
+        using var worker = new ThumbnailWorker(
+            new ThumbnailService(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<ThumbnailService>.Instance),
+            new ColorService(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<ColorService>.Instance),
+            new LibraryConfig(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<LibraryConfig>.Instance),
+            new EventBus(),
+            NullLogger<ThumbnailWorker>.Instance);
+
+        worker.Enqueue("hash-a", "/nonexistent/a.png");
+        worker.Enqueue("hash-a", "/nonexistent/a.png");
+        worker.Enqueue("hash-b", "/nonexistent/b.png");
+
+        var (pending, _) = worker.Backlog;
+        Assert.Equal(2, pending);
+    }
+
+    [Fact]
+    public async Task 对账扫描_缩略图已齐备的文件不再派发任务()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var file = _dir.WriteFile("thumb.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        Assert.True(await WaitUntil(() => rig.Thumbnails.Exists(hash, 256) && rig.Colors.Exists(hash)));
+        Assert.True(await WaitUntil(() => rig.Worker.Backlog is { Pending: 0, Active: 0 }));
+
+        // 全量对账扫描重放全部文件:缩略图与调色板齐备的文件不产生新任务,积压保持为零
+        await rig.Pipeline.RunScanAsync(false);
+        Assert.True(await WaitUntil(() => rig.Worker.Backlog is { Pending: 0, Active: 0 }));
     }
 }
 

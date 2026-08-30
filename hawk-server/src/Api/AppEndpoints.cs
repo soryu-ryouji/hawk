@@ -17,9 +17,13 @@ public static class AppEndpoints
     /// <summary>启动状态查询：初始索引后台构建期间供客户端轮询进度（见 server-rest-api-v1.md「app」节）</summary>
     public sealed record StartupInfo(string Status, string? Phase, int? Processed, int? Total, string? Message);
 
-    /// <summary>后台任务积压快照：缩略图/调色板 worker 队列</summary>
+    /// <summary>后台任务积压快照:缩略图/调色板 worker 队列</summary>
     public sealed record TaskBacklog(int Pending, int Active);
-    public sealed record TaskStatus(TaskBacklog Thumbnail);
+
+    /// <summary>索引管道积压:Pending=排队 job+写入防抖路径,Active=扫描中为 1;扫描期间携带阶段进度</summary>
+    public sealed record IndexBacklog(int Pending, int Active, string? Phase, int? Processed, int? Total);
+
+    public sealed record TaskStatus(TaskBacklog Thumbnail, IndexBacklog Index);
 
     public static void MapAppEndpoints(this IEndpointRouteBuilder app)
     {
@@ -40,10 +44,14 @@ public static class AppEndpoints
             .WithTags("app");
 
         // 后台任务积压:轮询型客户端用(SSE 客户端订阅 task.progress 事件,两者同一份快照)
-        app.MapGet("/api/v1/app/status", (Core.ThumbnailWorker worker) =>
+        app.MapGet("/api/v1/app/status", (Core.ThumbnailWorker worker, Core.IndexPipeline pipeline) =>
             {
                 var (pending, active) = worker.Backlog;
-                return TypedResults.Ok(Envelope<TaskStatus>.Ok(new TaskStatus(new TaskBacklog(pending, active))));
+                var index = pipeline.IndexProgress();
+                var status = new TaskStatus(
+                    new TaskBacklog(pending, active),
+                    new IndexBacklog(index.Pending, index.Active, index.Phase, index.Processed, index.Total));
+                return TypedResults.Ok(Envelope<TaskStatus>.Ok(status));
             })
             .WithTags("app");
 

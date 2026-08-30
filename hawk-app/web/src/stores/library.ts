@@ -73,6 +73,8 @@ export const useLibraryStore = defineStore('library', () => {
   const importProgress = ref<{ total: number; done: number } | null>(null);
   /** 缩略图后台积压（task.progress 事件驱动；null 表示无积压，进度条隐藏） */
   const taskBacklog = ref<{ pending: number; active: number } | null>(null);
+  /** 索引管道进度（task.progress 事件驱动；扫描期间带阶段进度；null 表示空闲） */
+  const indexProgress = ref<{ pending: number; active: number; phase: string | null; processed: number | null; total: number | null } | null>(null);
   const sidebarVisible = ref(true);
   /** 筛选工具列手动展开（评分/颜色等条件激活时条带常驻，见 hasActiveFilters） */
   const filterBarVisible = ref(false);
@@ -434,13 +436,35 @@ export const useLibraryStore = defineStore('library', () => {
   /**
    * SSE 驱动的骨架重载：条目增删/成员资格/次序以服务端查询为准；详情缓存保留，
    * 已不属于当前视图的条目就地清理。滚动位置不动，内容就地增删。
+   * 事件爆发期合并 in-flight 请求：重载进行中再来事件只置脏标记，当前轮结束后补一轮，
+   * 避免高频全量骨架请求占满服务端查询。
    */
+  let skeletonReloading = false;
+  let skeletonDirty = false;
+
   async function reloadSkeleton() {
+    if (skeletonReloading) {
+      skeletonDirty = true;
+      return;
+    }
+
+    skeletonReloading = true;
+    try {
+      do {
+        skeletonDirty = false;
+        await reloadSkeletonOnce();
+      } while (skeletonDirty);
+    } finally {
+      skeletonReloading = false;
+    }
+  }
+
+  async function reloadSkeletonOnce() {
     const version = ++skeletonVersion;
     try {
       const res = await api.itemSkeleton(listParams());
       if (version !== skeletonVersion) {
-        return;
+        return; // 期间已切视图/重载，结果作废
       }
       skeleton.value = res.items;
       totalSize.value = Number(res.total_size);
@@ -519,8 +543,13 @@ export const useLibraryStore = defineStore('library', () => {
    * 详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。
    * 过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖重载骨架——
    * 成员资格可能已变化（移出当前文件夹、摘掉当前分类/标签等），成员判定以服务端查询为准。
+   * 标签/分类集合真的变化时才刷分类计数：缩略图就绪等高频 updated 与计数无关，不再每事件刷 taxonomy。
    */
   function applyUpdatedItem(updated: Item) {
+    const prev = details.value.get(updated.id);
+    const taxonomyChanged =
+      prev !== undefined &&
+      (!sameNameSet(prev.tags, updated.tags) || !sameNameSet(prev.categories, updated.categories));
     if (details.value.has(updated.id)) {
       const map = new Map(details.value);
       map.set(updated.id, updated);
@@ -535,6 +564,16 @@ export const useLibraryStore = defineStore('library', () => {
     if (!isUnfilteredView()) {
       debouncedSkeletonReload(() => void reloadSkeleton());
     }
+    if (taxonomyChanged) {
+      debouncedRefreshTaxonomy(() => void refreshTaxonomy());
+    }
+  }
+
+  /** 名称集合相等比较（标签/分类为无序去重列表） */
+  function sameNameSet(a: string[] | undefined, b: string[] | undefined): boolean {
+    const x = a ?? [];
+    const y = b ?? [];
+    return x.length === y.length && x.every((v) => y.includes(v));
   }
 
   async function trashSelected() {
@@ -873,6 +912,11 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   // ---- SSE ----
+  // 事件与副作用的对应关系（不无条件全刷，后台事件爆发期不制造请求风暴）：
+  // - item.updated：详情/骨架就地更新；标签/分类集合变化才刷分类计数
+  // - item.added/restored/trashed/removed：成员与计数以服务端查询为准 → 防抖重载骨架 + 刷分类计数
+  // - folder.changed：只刷文件夹树（目录结构变化的唯一信号）
+  // - task.progress：只更新对应的后台任务指示
   function applyEvent(type: string, payload: unknown) {
     switch (type) {
       case 'item.updated': {
@@ -883,6 +927,7 @@ export const useLibraryStore = defineStore('library', () => {
       case 'item.restored':
         // 新 item 的落点（成员/次序）只能以服务端查询为准：防抖重载骨架，视口窗口随后按需补齐
         debouncedSkeletonReload(() => void reloadSkeleton());
+        debouncedRefreshTaxonomy(() => void refreshTaxonomy());
         break;
       case 'item.trashed':
       case 'item.removed': {
@@ -898,32 +943,30 @@ export const useLibraryStore = defineStore('library', () => {
         }
         selection.value = selection.value.filter((s) => s !== id);
         debouncedSkeletonReload(() => void reloadSkeleton());
+        debouncedRefreshTaxonomy(() => void refreshTaxonomy());
         break;
       }
       case 'task.progress': {
-        const p = payload as { task: string; pending: number; active: number };
-        if (p.task !== 'thumbnail') {
-          break;
-        }
+        const p = payload as { task: string; pending: number; active: number; phase?: string; processed?: number; total?: number };
         // 积压归零撤掉指示;其余帧更新计数(节流由服务端 500ms 保证)
-        taskBacklog.value = p.pending + p.active > 0 ? { pending: p.pending, active: p.active } : null;
+        if (p.task === 'thumbnail') {
+          taskBacklog.value = p.pending + p.active > 0 ? { pending: p.pending, active: p.active } : null;
+        } else if (p.task === 'index') {
+          indexProgress.value = p.pending + p.active > 0
+            ? { pending: p.pending, active: p.active, phase: p.phase ?? null, processed: p.processed ?? null, total: p.total ?? null }
+            : null;
+        }
         break;
       }
       case 'folder.changed':
         // 目录结构变化(本端操作/外部进程/对账兜底):重拉文件夹树;与骨架成员和分类/标签计数无关
         debouncedRefreshFolders(() => void refreshFolders());
-        return; // 跳过下方 item 事件附带的 taxonomy 防抖刷新
+        break;
     }
-    // task.progress 与文件夹树/分类无关，跳过下面的防抖刷新
-    if (type === 'task.progress') {
-      return;
-    }
-    debouncedRefreshFolders(() => void refreshFolders());
-    debouncedRefreshTaxonomy(() => void refreshTaxonomy());
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, searchText, previewId, toast, importProgress, taskBacklog, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, searchText, previewId, toast, importProgress, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,

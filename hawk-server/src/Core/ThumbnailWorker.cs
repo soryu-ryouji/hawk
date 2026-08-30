@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 
 namespace Hawk.Server.Core;
@@ -26,8 +27,11 @@ public sealed class ThumbnailWorker : IDisposable
     private readonly Channel<ThumbJob> _jobs = Channel.CreateBounded<ThumbJob>(
         new BoundedChannelOptions(4096) { FullMode = BoundedChannelFullMode.Wait, SingleReader = false });
 
+    /// <summary>in-flight 去重:同一 hash 在队列中或生成中时,重复派发直接丢弃(扫描重放全库时不再灌 no-op 任务)</summary>
+    private readonly ConcurrentDictionary<string, byte> _inflight = new();
+
     private readonly CancellationTokenSource _cts = new();
-    private Task[] _workers = [];
+    private Thread[] _workers = [];
 
     private int _queued;
     private int _active;
@@ -61,19 +65,53 @@ public sealed class ThumbnailWorker : IDisposable
 
     public void Start()
     {
-        // 纯 CPU 后台任务(解码/缩放/WebP 编码),与索引互不阻塞;
-        // 并发度与扫描哈希一致(CPU/2、封顶 16)——并发文件数就是并行核数,过低则 CPU 吃不满
-        _workers = Enumerable.Range(0, Math.Clamp(Environment.ProcessorCount / 2, 2, 16))
-            .Select(_ => WorkLoop(_cts.Token))
+        // 纯 CPU 后台任务(解码/缩放/WebP 编码),与 Kestrel 同进程:专用后台线程 + 低于正常优先级,
+        // 与 API 线程争用 CPU 时让出调度(同进程还共享 GC,不能把核吃满);
+        // 并发降为 1/4(封顶 8)——缩略图是尽力而为的缓存,后台任务不追求吞吐上限
+        _workers = Enumerable.Range(0, Math.Clamp(Environment.ProcessorCount / 4, 1, 8))
+            .Select(_ =>
+            {
+                var thread = new Thread(() =>
+                {
+                    try
+                    {
+                        WorkLoop(_cts.Token).GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+                    {
+                        // 正常关闭
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "缩略图 worker 异常退出");
+                    }
+                })
+                {
+                    IsBackground = true,
+                    Priority = ThreadPriority.BelowNormal,
+                    Name = "hawk-thumbnail",
+                };
+                thread.Start();
+                return thread;
+            })
             .ToArray();
     }
 
-    /// <summary>派发缩略图任务(尽力而为:channel 满时丢弃)</summary>
+    /// <summary>派发缩略图任务(尽力而为:channel 满时丢弃;in-flight 期间重复派发丢弃)</summary>
     public void Enqueue(string hash, string sourceAbs)
     {
+        if (!_inflight.TryAdd(hash, 0))
+        {
+            return;
+        }
+
         if (_jobs.Writer.TryWrite(new ThumbJob(hash, sourceAbs)))
         {
             Interlocked.Increment(ref _queued);
+        }
+        else
+        {
+            _inflight.TryRemove(hash, out _);
         }
     }
 
@@ -124,6 +162,7 @@ public sealed class ThumbnailWorker : IDisposable
             }
             finally
             {
+                _inflight.TryRemove(job.Hash, out _);
                 Interlocked.Decrement(ref _active);
                 ReportProgress();
             }
@@ -159,13 +198,9 @@ public sealed class ThumbnailWorker : IDisposable
     {
         _cts.Cancel();
         _jobs.Writer.TryComplete();
-        try
+        foreach (var worker in _workers)
         {
-            Task.WaitAll(_workers, TimeSpan.FromSeconds(5));
-        }
-        catch
-        {
-            // 关闭过程中忽略任务异常
+            worker.Join(TimeSpan.FromSeconds(5));
         }
 
         _cts.Dispose();
@@ -173,4 +208,7 @@ public sealed class ThumbnailWorker : IDisposable
 }
 
 /// <summary>后台任务进度快照(task.progress 事件与 app/status 端点共用)</summary>
-public sealed record TaskProgress(string Task, int Pending, int Active);
+/// <param name="Phase">仅 index 任务在扫描期间携带(scan/hash/apply);thumbnail 恒为 null</param>
+/// <param name="Processed">扫描阶段已处理数;遍历阶段 total 未知(0)时为不定态</param>
+/// <param name="Total">扫描阶段总工作量;遍历阶段为 0</param>
+public sealed record TaskProgress(string Task, int Pending, int Active, string? Phase = null, int? Processed = null, int? Total = null);

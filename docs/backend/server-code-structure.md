@@ -62,12 +62,12 @@ Program.cs 做的事（按执行顺序）：
 | `Item.cs` | 索引中的 item:`ItemLocation`(一个文件位置,回收站位置以 `.hawk/trash/` 开头)与 `Item`(位置列表 + 元数据副本 + 宽高派生信息);`ToDto(trashView)` 负责向 API 投影——回收站视图的 paths 展示原库内路径(恢复目标);`SyncFrom(meta)` 为元数据 → 索引的单向同步(只允许流水线调用) |
 | `ItemIndex.cs` | 内存索引:hash→item 与位置路径→hash 两个字典,一把锁保护。`Query` 实现 item/list 的全部过滤(AND 语义)、排序与分页;`QuerySkeleton` 同过滤排序投影 dim 全量;排序主键同值按 id 打破平局。**读取纪律**:`Get` 返回可变引用,仅限流水线(单写者)与测试;HTTP 层走 `GetDto`(锁内投影)/`Contains`/`FindLocation`/`MainSourceAbs`(不可变快照) |
 | `ItemEvents.cs` | SSE 事件名常量(`item.added`/`updated`/`trashed`/`restored`/`removed`、`folder.changed`、`task.progress`)与发布辅助(`PublishChanged`/`PublishLocationLoss`/`PublishTransition`);负载字段契约见 API 文档 events 节 |
-| `ThumbnailWorker.cs` | 缩略图/调色板后台 worker:独立有界队列 + `CPU/2`(封顶 16)个线程(纯 CPU 后台任务,与索引互不阻塞;并发文件数即并行核数);生成完成回调取 DTO 补发 `item.updated`,调色板提炼完成经回调回流水线 `PaletteJob`(单写者不破);`Backlog` 快照供 `task.progress` 与 `app/status`;队列满丢弃(尽力而为的缓存) |
+| `ThumbnailWorker.cs` | 缩略图/调色板后台 worker:独立有界队列 + `CPU/4`(封顶 8)个专用后台线程(`BelowNormal` 优先级,与 Kestrel 同进程时让出调度;生成完成回调取 DTO 补发 `item.updated`,调色板提炼完成经回调回流水线 `PaletteJob`(单写者不破);`inflight` 去重——同一 hash 队列中/生成中时重复派发丢弃;`Backlog` 快照供 `task.progress` 与 `app/status`;队列满丢弃(尽力而为的缓存) |
 | `TaxonomyMigrator.cs` | 分类/标签级联迁移与元数据写应用:`ApplyMetadata`/`ApplyMetadataBatch`(batch_update)逐个 mutate → 落盘 → 同步索引 → 发事件;`RenameCategory`/`DeleteCategory`/`RenameTag`/`DeleteTag` 全库批迁移;注册表登记与外部改动重载 |
 | `ThumbnailService.cs` | ImageSharp 封装:`Identify` 只读头部取尺寸;`GenerateAsync` 按配置尺寸输出 WebP(`ResizeMode.Max` 等比缩小、不放大小图);缩略图按 hash 内容寻址存储;文件一律共享读打开(`FileShare.ReadWrite\|Delete`)——缩略图生成可跨秒持有句柄,不阻塞源文件的移动/删除 |
 | `ColorMath.cs` | 颜色纯函数：hex 解析/格式化、sRGB→CIELAB（D65）、CIE76 ΔE² 距离 |
 | `ColorService.cs` | 调色板提炼（降采样 64px → Wu 量化 ≤10 色 → 像素占比，alpha<128 不参与）与缓存读写（库外缓存目录 `colors/<hash>.json`，平铺不分桶，带算法版本号）；检索原理见 [color-search.md](color-search.md) |
-| `LibraryScanner.cs` | 目录遍历：跳过 `.hawk/` 内部（只深入 trash 子树）、库内应用 ignore 规则、枚举失败静默跳过 |
+| `LibraryScanner.cs` | 目录遍历：跳过 `.hawk/` 内部（只深入 trash 子树）、库内应用 ignore 规则；目录枚举失败经 `onEnumerationError` 回调上报——调用方据此判定遍历不完整（DoScan 跳过消失对账，避免误删） |
 | `LibraryWatcher.cs` | FileSystemWatcher 封装:Created(目录单独走 `FolderCreated` 事件驱动 folder.changed)/Changed→upsert、Deleted、Renamed→move、Error→溢出回调;过滤 `.hawk` 内部,config.toml 与注册表文件单独上报;另有周期对账扫描(`HAWK_RESCAN_INTERVAL`,默认 60s)兜底静默丢事件 |
 | `EventBus.cs` | SSE 事件总线:每个订阅者一条有界 channel;消费跟不上就断开该订阅(前端重连后用 item/skeleton + folder/list 全量对齐) |
 | `StartupState.cs` | 启动状态：扫描进度快照（Phase/Processed/Total）、就绪标志、失败原因；`/health`、就绪网关与 `app/startup` 端点的共同数据源 |
@@ -83,10 +83,10 @@ Program.cs 做的事（按执行顺序）：
 - **任务类型(分类/标签)**:分类/标签的注册表与级联迁移全部委托 `TaxonomyMigrator`(本文件只保留 job 定义与分发):`CategoryCreateJob` / `CategoryUpdateJob` / `CategoryDeleteJob`、`TagCreateJob` / `TagUpdateJob` / `TagDeleteJob`;`RegistryReloadJob`(外部同步改动注册表文件时经 migrator 重载)
 - **任务类型**:`UpsertJob`(新增/变更,可携带 `KnownHash` 跳过流水线重算、供 item/add 复用 API 侧已算的哈希)、`DeleteJob`(按路径与目录前缀双重匹配,因为删除事件分不清文件还是目录)、`MoveJob` / `DirMoveJob`、`ScanJob`(full 时强制重算全部哈希)、`MetadataSyncJob`(元数据对账,见下)、`ClearTrashJob`、`MetadataJob`(item/update 的元数据写)、`BatchMetadataJob`(item/batch_update 批量元数据,不存在的 id 记入 MissingIds)、`FolderHintJob`(广播 `folder.changed`,fire-and-forget)
 - **两类入口**：watcher 走 fire-and-forget，channel 满则置溢出标记，消费者每批任务后检查并触发全量扫描兜底；API 与启动走携带 `TaskCompletionSource` 的提交，等待处理完成后返回结果
-- **写入防抖**：入库拆成 `PrepareUpsert`（路径过滤、复用判定，不读文件内容）与 `ApplyUpsert`（串行应用变更）两步。判定需要算哈希时，若文件 mtime 距今不足 1 秒（大文件仍在拷贝中），不立即处理，经去重集合延迟重试（上限 120 次）——避免对半截内容反复哈希；携带 KnownHash 或等待结果的提交不防抖（文件由 API 写入，内容已完整）
+- **写入防抖**：入库拆成 `PrepareUpsert`（路径过滤、复用判定，不读文件内容）与 `ApplyUpsert`（串行应用变更）两步。判定需要算哈希时，若文件 mtime 距今不足 1 秒（大文件仍在拷贝中），不立即处理，经去重集合延迟重试（上限 120 次）——避免对半截内容反复哈希；携带 KnownHash 或等待结果的提交不防抖（文件由 API 写入，内容已完整）。**哈希完成后复验 size/mtime**：仍在写入的（慢速拷贝来源 writes 间隔可超过 1 秒）延迟重试，不以半截内容入库——否则拷贝完成后哈希漂移，表现为素材计数先降后升
 - **入库流程(ApplyUpsert)**:哈希漂移时按路径迁移元数据(新 item 继承 tags 等素材参数,旧元数据无引用则删除);回写最新 size/mtime 保持校验依据新鲜;补读图像尺寸;加载调色板缓存(缺失由 ThumbnailWorker 补齐);发 `item.added` / `item.updated`;`UpsertResult` 直接携带锁内投影的 DTO(API 响应与事件同源);缩略图派发到 ThumbnailWorker(见该文件)
 - **`DoMove` / `MoveOne`**:索引 rekey 不重算哈希;lib→lib 时元数据路径跟随,lib↔trash 时去掉前缀后库内路径不变,元数据保持原路径作为恢复目标;目录移动后广播 `folder.changed` 并补扫新位置,吸收 watcher 遗漏的子文件事件
-- **`DoScan`(两阶段扫描)**:阶段一串行遍历做复用判定(命中元数据的直接应用,不读内容);阶段二对需要哈希的文件并行计算(`ProcessorCount/2`,纯计算不碰共享状态);阶段三串行应用结果并做消失检测。单写者模型不变,仅哈希计算并行。全程经 `OnScanProgress` 上报进度(`scan`/`hash`/`apply`/`done` 四相、150ms 节流,由 `StartupState` 汇总后经 `/api/v1/app/startup` 提供给客户端);完成后广播一次 `folder.changed`(外部删空目录等不产生任何事件,对账扫描是目录结构变化的兜底)
+- **`DoScan`(两阶段扫描)**:阶段一串行遍历做复用判定(命中元数据的直接应用,不读内容);阶段二对需要哈希的文件并行计算(`ProcessorCount/2`,纯计算不碰共享状态,哈希后复验 size/mtime、仍在写入的延迟重试);阶段三串行应用结果并做消失检测——遍历不完整(部分目录枚举失败)时跳过消失对账,避免误删已索引位置。单写者模型不变,仅哈希计算并行。全程经 `OnScanProgress` 上报进度(`scan`/`hash`/`apply`/`done` 四相、150ms 节流,由 `StartupState` 汇总后经 `/api/v1/app/startup` 提供给客户端),同时经 `task.progress`(`task=index`,500ms 节流)推送给已就绪客户端,`IndexProgress()` 快照供 `/api/v1/app/status`;完成后广播一次 `folder.changed`(外部删空目录等不产生任何事件,对账扫描是目录结构变化的兜底)
 - **`DoMetadataSync`(元数据对账,只进不出)**:`.hawk/metadata/` 的 TOML 是唯一权威源(参与网盘同步),本机 SQLite 缓存与内存副本经此跟随外部变更。按文件 mtime 与 `IndexDb.source_mtime` 比对,只有变化的文件才重解析;新增/变更 → `MetadataStore.ApplyExternalToml` 载入后刷新索引副本、登记注册表、发 `item.updated`;TOML 消失 → `ClearExternal` 清空素材参数(item 与位置由扫描决定存续);解析失败跳过且不清空状态,下轮重试。启动时 `Start()` 先入队一轮(先于初始扫描),此后跟随周期对账(60s)——保证扫描做迁移继承时拿到的是最新元数据。本机写入在 Save 时已同步缓存,对账轮通常为 no-op
 - **`DoClearTrash`**:摘除回收站位置并清理元数据路径;内容在库内无其他引用时删除元数据与缩略图
 - **事件语义**(发布辅助集中在 `ItemEvents`):位置归零 → `item.removed`;只剩回收站位置 → `item.trashed`;首个库内位置回归 → `item.restored`;其余变化 → `item.updated`
@@ -97,7 +97,7 @@ Program.cs 做的事（按执行顺序）：
 | ---- | ---- |
 | `Envelope.cs` | 统一信封（`Envelope<T>` / `ErrorEnvelope`）、错误码常量、`ApiException`（携带错误码与 HTTP 状态）、`ErrorHandlingMiddleware`（异常 → 错误信封，未知异常 500 INTERNAL） |
 | `AuthMiddleware.cs` | `/api/*` 必须携带 `Authorization: Bearer <token>`；`/api/v1/events` 接受 `?token=`（EventSource 无法设请求头）；`/health`、`/openapi` 不在 `/api` 前缀下天然放行 |
-| `AppEndpoints.cs` | `GET /health`(探活:索引完成前 503)、`GET /api/v1/app/startup`(启动状态 starting/ready/error + 进度)、`GET /api/v1/app/status`(后台任务积压:读 `ThumbnailWorker.Backlog`)、`GET /api/v1/app/info`(版本/平台/可执行路径) |
+| `AppEndpoints.cs` | `GET /health`(探活:索引完成前 503)、`GET /api/v1/app/startup`(启动状态 starting/ready/error + 进度)、`GET /api/v1/app/status`(后台任务积压:缩略图 `ThumbnailWorker.Backlog` + 索引 `IndexPipeline.IndexProgress`)、`GET /api/v1/app/info`(版本/平台/可执行路径) |
 | `LibraryEndpoints.cs` | `library/info`(显示名取 config 的 name,缺省为目录名)、`library/reindex`(入队全量重哈希扫描,立即返回) |
 | `FolderEndpoints.cs` | folder 五端点。folder 即真实目录:list 实时从文件系统建树(排除 `.hawk` 与 ignore 目录);create/update/delete/restore 先做校验(名称合法、父目录存在、目标占用 → `FILE_EXISTS`、禁止移入自身子目录),再做真实目录操作;create 完成后 `NotifyFolderChanged`,update/delete/restore 经 `SubmitDirMoveAsync` 同步索引(DirMoveJob 内广播 folder.changed) |
 | `ItemEndpoints.cs` | item 十二端点，逻辑最重，见下节 |

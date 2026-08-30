@@ -61,9 +61,17 @@ public sealed class IndexPipeline : IDisposable
 
     private readonly CancellationTokenSource _cts = new();
     private int _overflow;
+    private int _scanning;
+
+    /// <summary>初始化为构造时刻:管道空闲的常态不发帧,只有「非空闲→空闲」才发清零帧</summary>
+    private long _lastIndexProgressAt = DateTime.UtcNow.Ticks;
+    private bool _indexProgressIdle = true;
     private Task? _consumer;
     private Task? _reconciler;
     private ThumbnailWorker? _thumbWorker;
+
+    /// <summary>最近一次扫描进度(task.progress("index") 与 app/status 共用);非扫描期为 done</summary>
+    public ScanProgress? LastScan { get; private set; }
 
     // 防抖:仍在写入中的文件(mtime 距今不足 StabilityWindow)不立即哈希,延迟重试
     private static readonly TimeSpan StabilityWindow = TimeSpan.FromSeconds(1);
@@ -99,6 +107,45 @@ public sealed class IndexPipeline : IDisposable
         _prefs = prefs;
         _settings = settings;
         _logger = logger;
+    }
+
+    /// <summary>索引管道积压快照:排队 job + 防抖延迟路径 + 是否扫描中</summary>
+    public (int Queued, int Deferred, bool Scanning) Backlog =>
+        (_jobs.Reader.Count, _deferredPaths.Count, System.Threading.Volatile.Read(ref _scanning) == 1);
+
+    /// <summary>索引进度快照(task.progress("index") 事件与 app/status 端点共用同一构造)</summary>
+    public TaskProgress IndexProgress()
+    {
+        var (queued, deferred, scanning) = Backlog;
+        var scan = LastScan;
+        var inScan = scanning && scan is not null && scan.Phase != "done";
+        return new TaskProgress("index", queued + deferred, scanning ? 1 : 0,
+            inScan ? scan!.Phase : null, inScan ? scan!.Processed : null, inScan ? scan!.Total : null);
+    }
+
+    /// <summary>
+    /// 索引进度节流推送(500ms 一帧);刚从非空闲转空闲时补发一帧清零,客户端据此撤掉进度指示。
+    /// 触发点:消费循环每处理完一个 job、扫描期间的进度上报。
+    /// </summary>
+    private void PublishIndexProgress(bool force = false)
+    {
+        var progress = IndexProgress();
+        var idle = progress.Pending == 0 && progress.Active == 0;
+        var now = DateTime.UtcNow.Ticks;
+        var last = Interlocked.Read(ref _lastIndexProgressAt);
+        var due = now - last >= TimeSpan.TicksPerMillisecond * 500;
+        if (!force && !due && !(idle && !_indexProgressIdle))
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _lastIndexProgressAt, now, last) != last)
+        {
+            return;
+        }
+
+        _indexProgressIdle = idle;
+        _bus.Publish(ItemEvents.TaskProgress, progress);
     }
 
     /// <summary>装配缩略图 worker:索引访问与调色板回写的闭环在本类(单写者),worker 只负责生成</summary>
@@ -347,6 +394,8 @@ public sealed class IndexPipeline : IDisposable
                     _logger.LogInformation("检测到事件丢失,执行全量扫描");
                     DoScan(full: false, ct);
                 }
+
+                PublishIndexProgress();
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -498,7 +547,42 @@ public sealed class IndexPipeline : IDisposable
         }
 
         var hash = job.KnownHash ?? pending.ReusedHash ?? TryComputeHash(pending.AbsPath, ct);
-        return hash is null ? null : ApplyUpsert(pending, hash, ct);
+        if (hash is null)
+        {
+            return null;
+        }
+
+        // 复验:哈希计算期间文件被继续写入(慢速来源常见)时,不得以半截内容入库,
+        // 延迟重试直至写入稳定;API 提交(knownHash)信任调用方,维持原语义
+        if (job.KnownHash is null && pending.ReusedHash is null && FileChangedSincePrepare(pending))
+        {
+            if (allowDefer && job.Attempt < MaxDebounceAttempts)
+            {
+                DeferUpsert(job.AbsPath, job.Attempt);
+                return null;
+            }
+
+            _logger.LogWarning("文件哈希后仍在变化,按现状入库(后续事件自愈): {Path}", job.AbsPath);
+        }
+
+        return ApplyUpsert(pending, hash, ct);
+    }
+
+    /// <summary>
+    /// 哈希前 stat(size/mtime)与现状是否一致。不一致(含文件消失、stat 失败)视为仍在写入;
+    /// 无副作用——文件消失的清理由删除事件/对账扫描兜底,可在并行哈希线程安全调用。
+    /// </summary>
+    private static bool FileChangedSincePrepare(PendingUpsert p)
+    {
+        try
+        {
+            var file = new FileInfo(p.AbsPath);
+            return !file.Exists || file.Length != p.Size || LibraryPaths.ToUnixMs(file.LastWriteTimeUtc) != p.Mtime;
+        }
+        catch (Exception)
+        {
+            return true;
+        }
     }
 
     /// <summary>
@@ -624,9 +708,18 @@ public sealed class IndexPipeline : IDisposable
             ItemEvents.PublishChanged(_bus, item);
         }
 
-        _thumbWorker?.Enqueue(hash, pending.AbsPath);
+        // 缩略图/调色板齐备的文件(如对账扫描重放)不再派发:no-op 任务会把队列与积压计数灌满失真
+        if (_thumbWorker is { } thumbWorker && NeedsThumbnailWork(hash))
+        {
+            thumbWorker.Enqueue(hash, pending.AbsPath);
+        }
+
         return new UpsertResult(item.ToDto(trashView: !item.HasLibraryLocations), AlreadyExisted: !created);
     }
+
+    /// <summary>缩略图任一配置尺寸或调色板缺失时才需要后台生成</summary>
+    private bool NeedsThumbnailWork(string hash) =>
+        !_colors.Exists(hash) || _config.Current.ThumbnailSizes.Any(s => !_thumbnails.Exists(hash, s));
 
     /// <summary>文件最近一秒内仍在写入,视为不稳定</summary>
     private static bool IsUnstable(FileInfo file) =>
@@ -851,9 +944,26 @@ public sealed class IndexPipeline : IDisposable
     /// </summary>
     private void DoScan(bool full, CancellationToken ct)
     {
+        Interlocked.Increment(ref _scanning);
+        try
+        {
+            DoScanCore(full, ct);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _scanning);
+
+            // 扫描结束强制发一帧(扫描期间的进度由 Report 闭包节流推送),客户端据此撤掉进度指示
+            PublishIndexProgress(force: true);
+        }
+    }
+
+    private void DoScanCore(bool full, CancellationToken ct)
+    {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var pending = new List<PendingUpsert>();
         var count = 0;
+        var walkIncomplete = false;
 
         // 进度上报:按 150ms 节流,阶段切换/总数变化时强制发一帧
         var reportState = (At: DateTime.MinValue, Phase: string.Empty, Total: -1);
@@ -865,11 +975,13 @@ public sealed class IndexPipeline : IDisposable
                 return;
             }
             reportState = (now, phase, total);
+            LastScan = new ScanProgress(phase, processed, total);
             OnScanProgress?.Invoke(new ScanProgress(phase, processed, total));
+            PublishIndexProgress();
         }
 
         Report("scan", 0, 0, force: true);
-        foreach (var abs in _scanner.WalkLibrary())
+        foreach (var abs in _scanner.WalkLibrary(() => walkIncomplete = true))
         {
             ct.ThrowIfCancellationRequested();
             if (_paths.ToRelative(abs) is { } rel)
@@ -903,11 +1015,20 @@ public sealed class IndexPipeline : IDisposable
             Parallel.ForEach(pending, new ParallelOptions { MaxDegreeOfParallelism = HashParallelism, CancellationToken = ct },
                 p =>
                 {
-                    p.Hash = TryComputeHash(p.AbsPath, ct);
-                    // 图像头部解析与哈希同属只读阶段,一并并行:避免串行 Identify 阻塞消费循环拖慢扫描
-                    if (p.Hash is not null)
+                    if (TryComputeHash(p.AbsPath, ct) is { } hash)
                     {
+                        // 图像头部解析与哈希同属只读阶段,一并并行:避免串行 Identify 阻塞消费循环拖慢扫描
                         p.Dim = ThumbnailService.Identify(p.AbsPath);
+
+                        // 复验:哈希期间仍在写入的文件不半截入库,延迟重试(与 DoUpsert 同一纪律)
+                        if (!FileChangedSincePrepare(p))
+                        {
+                            p.Hash = hash;
+                        }
+                        else if (File.Exists(p.AbsPath))
+                        {
+                            DeferUpsert(p.AbsPath, attempt: 0);
+                        }
                     }
 
                     Report("hash", Interlocked.Increment(ref hashed), pending.Count);
@@ -927,15 +1048,24 @@ public sealed class IndexPipeline : IDisposable
 
         Report("done", count, count, force: true);
 
-        // 扫描未发现的位置 → 文件已消失
-        foreach (var rel in _index.AllLocationPaths())
+        if (walkIncomplete)
         {
-            if (!seen.Contains(rel))
+            // 遍历不完整(部分目录枚举失败)时 seen 不可信:本轮跳过消失对账,避免误删已索引位置,
+            // 最终一致由下一轮对账扫描保证
+            _logger.LogWarning("扫描遍历不完整(目录枚举失败),跳过本轮消失对账");
+        }
+        else
+        {
+            // 扫描未发现的位置 → 文件已消失
+            foreach (var rel in _index.AllLocationPaths())
             {
-                var item = _index.RemoveLocation(rel);
-                if (item is not null)
+                if (!seen.Contains(rel))
                 {
-                    ItemEvents.PublishLocationLoss(_bus, _index, item.Id);
+                    var item = _index.RemoveLocation(rel);
+                    if (item is not null)
+                    {
+                        ItemEvents.PublishLocationLoss(_bus, _index, item.Id);
+                    }
                 }
             }
         }

@@ -16,11 +16,13 @@ public sealed class LibraryScanner
     }
 
     /// <summary>遍历整个素材库（含回收站），产出全部文件绝对路径</summary>
-    public IEnumerable<string> WalkLibrary() => WalkDirectory(_paths.Root, isTrashSubtree: false);
+    /// <param name="onEnumerationError">目录枚举失败（权限不足/遍历期间被删等瞬时错误）时回调；调用方据此判定遍历结果不完整</param>
+    public IEnumerable<string> WalkLibrary(Action? onEnumerationError = null) =>
+        WalkDirectory(_paths.Root, isTrashSubtree: false, onEnumerationError);
 
     /// <summary>遍历指定目录（目录创建事件后的补扫）</summary>
     public IEnumerable<string> WalkDirectory(string absDir) =>
-        WalkDirectory(absDir, isTrashSubtree: IsTrashPath(absDir));
+        WalkDirectory(absDir, isTrashSubtree: IsTrashPath(absDir), onEnumerationError: null);
 
     private bool IsTrashPath(string absDir)
     {
@@ -28,7 +30,7 @@ public sealed class LibraryScanner
         return rel is not null && LibraryPaths.IsInTrash(rel + "/");
     }
 
-    private IEnumerable<string> WalkDirectory(string absDir, bool isTrashSubtree)
+    private IEnumerable<string> WalkDirectory(string absDir, bool isTrashSubtree, Action? onEnumerationError)
     {
         var pending = new Stack<string>();
         pending.Push(absDir);
@@ -43,7 +45,9 @@ public sealed class LibraryScanner
             }
             catch (Exception)
             {
-                continue; // 权限不足或遍历期间被删除
+                // 权限不足或遍历期间被删除。瞬时错误会让本次遍历不完整，回调通知调用方
+                onEnumerationError?.Invoke();
+                continue;
             }
 
             foreach (var entry in entries)

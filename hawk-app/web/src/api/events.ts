@@ -6,6 +6,12 @@ export interface TaskProgress {
   task: string;
   pending: number;
   active: number;
+  /** 仅 index 任务在扫描期间携带（scan/hash/apply） */
+  phase?: string;
+  /** 扫描阶段已处理数；遍历阶段 total 未知（0）时为不定态 */
+  processed?: number;
+  /** 扫描阶段总工作量；遍历阶段为 0 */
+  total?: number;
 }
 
 export interface EventHandlers {
