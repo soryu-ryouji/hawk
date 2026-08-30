@@ -1,19 +1,21 @@
 <script setup lang="ts">
 // Eagle 式中栏顶栏（只覆盖内容区，左右栏通高）：侧栏开关 · 前进/后退 · 位置面包屑 ‖ 缩略图滑杆 ‖ 排序/筛选 · 搜索。
 // 整条为窗口拖拽区域（双击空白切换最大化），交互控件单独 no-drag。
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import { useLayout } from '../composables/useLayout';
 import Icon from './Icon.vue';
+import SearchBox from './SearchBox.vue';
 import type { QueryState } from '../types';
 
 const store = useLibraryStore();
 const { open: openMenu } = useContextMenu();
+const { touch } = useLayout();
 const emit = defineEmits<{ 'open-settings': [] }>();
-const searchText = ref('');
 const isMac = window.hawkShell?.platform === 'darwin';
-/** 桌面端（Electron）才有设置面板入口 */
-const hasShell = !!window.hawkShell;
+/** 设置面板入口：桌面端（Electron）与触屏设备（浏览器移动端）可用 */
+const hasSettings = !!window.hawkShell || touch;
 // 窗口控制为 fixed 在窗口右上角的自绘按钮（仅 Windows/Linux 渲染）：侧栏隐藏时本栏通栏，右端需预留避让
 const reserveControls = !!window.hawkShell && !isMac;
 
@@ -69,14 +71,6 @@ function openSortMenu(e: MouseEvent) {
   );
 }
 
-function submitSearch() {
-  store.setQuery({ keywords: searchText.value.trim().split(/\s+/).filter(Boolean) });
-}
-
-function stepThumb(delta: number) {
-  store.thumbSize = Math.min(280, Math.max(120, store.thumbSize + delta));
-}
-
 /** 双击标题栏空白区切换最大化；点在控件上不触发 */
 function onDblClick(e: MouseEvent) {
   if ((e.target as HTMLElement).closest('button, input, select, .search-box')) {
@@ -125,14 +119,6 @@ function onDblClick(e: MouseEvent) {
 
     <div class="spacer" />
 
-    <div class="group center">
-      <button class="bar-btn" title="缩小缩略图" @click="stepThumb(-16)"><Icon name="minus" :size="13" /></button>
-      <input v-model.number="store.thumbSize" class="thumb-slider" type="range" min="120" max="280" step="8" title="缩略图尺寸" />
-      <button class="bar-btn" title="放大缩略图" @click="stepThumb(16)"><Icon name="plus" :size="13" /></button>
-    </div>
-
-    <div class="spacer" />
-
     <div class="group right">
       <button
         class="bar-btn filter-btn"
@@ -147,12 +133,9 @@ function onDblClick(e: MouseEvent) {
         <Icon name="arrowUpDown" :size="14" />
       </button>
 
-      <div class="search-box">
-        <Icon name="search" :size="13" />
-        <input v-model="searchText" type="search" placeholder="搜索" @keydown.enter="submitSearch" />
-      </div>
+      <SearchBox />
 
-      <button v-if="hasShell" class="bar-btn" title="设置" @click="emit('open-settings')">
+      <button v-if="hasSettings" class="bar-btn" title="设置" @click="emit('open-settings')">
         <Icon name="settings" :size="14" />
       </button>
     </div>
@@ -202,7 +185,6 @@ function onDblClick(e: MouseEvent) {
 .spacer {
   flex: 1;
 }
-
 .bar-btn {
   display: flex;
   align-items: center;
@@ -278,33 +260,4 @@ function onDblClick(e: MouseEvent) {
   white-space: nowrap;
 }
 
-.center {
-  gap: 2px;
-}
-
-.thumb-slider {
-  width: 140px;
-  padding: 0;
-  border: none;
-  background: transparent;
-}
-
-.search-box {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg-2);
-  color: var(--fg-1);
-  align-self: center;
-}
-
-.search-box input {
-  width: 160px;
-  padding: 4px 0;
-  border: none;
-  background: transparent;
-}
 </style>

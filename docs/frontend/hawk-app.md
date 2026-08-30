@@ -13,7 +13,7 @@ Eagle 主窗口的关键特征：
 ```text
 ┌──────────┬────────────────────────────────────┬───────────────┐
 │ 侧栏      │ 顶栏：侧栏开关·前进/后退·面包屑      │ 检查器         │
-│ · 素材库  │  ‖ 缩略图滑杆 ‖ 筛选·搜索           │ · 大图预览     │
+│ · 素材库  │  ‖ 筛选·排序 ‖ 搜索                 │ · 大图预览     │
 │ · 文件夹树├────────────────────────────────────┤ · 名称/评分    │
 │ · 标签    │ 素材网格（瀑布流）                   │ · 标签/备注    │
 │ · 回收站  │  · 缩略图卡片                       │ · URL/文件信息 │
@@ -29,7 +29,7 @@ Eagle 主窗口的关键特征：
 
 | Eagle 特性 | 决策 | 说明 |
 | ---------- | ---- | ---- |
-| 三栏布局（左右栏通高，顶栏只覆盖中栏） | 采纳 | 侧栏/检查器色块通高到窗口上沿，不被顶栏隔断；中栏顶栏集成侧栏开关/前进后退/面包屑/缩略图滑杆/筛选/搜索；macOS 用系统原生红绿灯（`titleBarStyle: 'hidden'`，压在侧栏顶条左侧），Windows/Linux 无边框（`frame: false`）+ 自绘窗口控制（fixed 于窗口右上角）；不做状态栏 |
+| 三栏布局（左右栏通高，顶栏只覆盖中栏） | 采纳 | 侧栏/检查器色块通高到窗口上沿，不被顶栏隔断；中栏顶栏集成侧栏开关/前进后退/面包屑/筛选/搜索（缩略图滑杆移至设置面板，不占顶栏）；macOS 用系统原生红绿灯（`titleBarStyle: 'hidden'`，压在侧栏顶条左侧），Windows/Linux 无边框（`frame: false`）+ 自绘窗口控制（fixed 于窗口右上角）；不做状态栏 |
 | 深色主题 | 采纳 | 自定义 CSS，不引组件库 |
 | 瀑布流（不等高）网格 | 采纳（齐行布局） | Eagle 实为「行内等高、宽度按宽高比」的 justified 布局；自研贪心装行算法，不引库 |
 | 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类列表与标签列表（见 category.md，分类为扁平受控词表）；智能文件夹不做 |
@@ -110,7 +110,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 ┌────────────┬──────────────────────────────────┬─────────────────────┐
 │ Sidebar    │ TitleBar                         │ Inspector           │
 │  拖拽条¹[开关]│  [侧栏²][‹][›] 面包屑·已选N        │  拖拽条¹            │
-│  库名 ⌄    │  [−滑杆＋]  [漏斗][排序][🔍搜索]    │  预览图(格式角标)    │
+│  库名 ⌄    │  [漏斗][排序][🔍搜索]              │  预览图(格式角标)    │
 │  全部素材 N ├──────────────────────────────────┤  名称(可改)          │
 │  ───────── │  FilterBar（条件激活/漏斗展开）      │  注释(可改)          │
 │  ˅文件夹树  │   评分 chip（弹星级菜单）· 颜色 chip │  URL(可改)          │
@@ -133,9 +133,11 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 布局为 Eagle 式三栏：侧栏与检查器通高到窗口上沿，顶栏（`TitleBar.vue`）只覆盖中间内容区，顶部功能区按列分开不混在一起。排序不设顶栏大下拉——排序按钮弹二级菜单（字段 × 方向，当前项打勾）；评分等条件筛选收进顶栏下方的筛选工具列（`FilterBar.vue`）：点击顶栏漏斗按钮展开，或查询带筛选条件（评分/颜色）时常驻，条件 chip 可就地查看与清除。窗口控制按平台区分：macOS 隐藏系统标题栏但保留原生红绿灯（`titleBarStyle: 'hidden'`，`trafficLightPosition` 按 40px 条高垂直居中，悬停 glyph/失焦置灰/全屏行为由系统保证）；Windows/Linux 为无边框窗口（`frame: false`），自绘窗口控制 fixed 在窗口右上角，经 preload 白名单 IPC 驱动主进程。三条顶条均为窗口拖拽区（双击空白切换最大化），顶栏交互控件单独 `no-drag`；侧栏隐藏时顶栏通栏：macOS 左端预留 78px 避让原生红绿灯，Windows/Linux 右端预留 130px 避让 fixed 的窗口控制。侧栏与检查器宽度可拖拽调整：栏分界线上紧贴右侧压 4px 命中区手柄（避开左侧面板右缘的纵向滚动条，防止拖滚动条误触调宽；App.vue 内联 style 控制 grid 列宽，拖拽期间 body 锁定 col-resize 光标并禁用文本选择），侧栏 180–480px、检查器 240–560px，宽度持久化到 localStorage（`hawk:panelWidths`，全局生效不随素材库变）。无独立状态栏：计数在侧栏各行徽章（全部素材/根目录素材/未分类素材/未标签素材/文件夹/分类/标签/回收站），选中数在顶栏面包屑旁。侧栏行首为描边小图标（Icon.vue，feather 风格 inline SVG）。
 
-**窄屏适配**（断点 `max-width: 1200px`：三栏最小健康宽度 = 220 侧栏 + ~700 顶栏固有最小内容（前进后退/滑杆组/排序/筛选按钮/搜索/设置的 flex 最小值之和）+ 280 检查器，grid 的 `1fr` = `minmax(auto,1fr)` 随内容最小宽度增长，低于此宽度中栏撑破页面——iPad 除 12.9" 横屏（1366）外全部、拖窄的桌面窗口均走 narrow；`useLayout` 判定 narrow 并同步 `body.mobile`；宽屏桌面与 12.9" iPad 横屏为 wide 布局，只此一处按布局分支，业务组件不做端判断）：`.app` 改单栏（`minmax(0,1fr)`），侧栏变**抽屉**（fixed + `translateX(-105%)` 滑出，`drawer-open` 滑入；`no-panels` 在移动端不 display:none 侧栏——显隐由 transform 管，否则滑入滑出动画被 display 切换扼杀），汉堡按钮在顶栏左上角（复用侧栏开关），触屏点导航项/遮罩自动收起（鼠标设备保持展开，桌面窄窗可连续切换）；检查器与栏宽拖拽手柄隐藏，顶栏隐藏缩略图尺寸组/排序按钮/筛选按钮/筛选工具列/选中计数、压缩搜索宽度（保留汉堡/前进后退/搜索/设置，390px 实测防横向溢出）；**触屏按布局分两种交互**（ItemGrid onSelect 按 pointerdown 实际指针分流，先按实际输入区分触屏/鼠标，再按 narrow 分）：触屏/笔下 narrow（竖屏，检查器隐藏）——单击直接开预览，同时选中（旋转到横屏时右栏即显示其属性）；触屏/笔下 wide（横屏，检查器可见，iPad 横屏场景）——单击选中看右栏属性、双击打开预览（iOS 禁用双击缩放后不保证触发 dblclick，按「同一张卡片 300ms 内两次点按」自行判定，点不同卡片重置计时）；鼠标任何布局——单击选择/多选（shift/ctrl）、双击打开走原生 dblclick（ItemCard @dblclick）。混合设备（触控笔记本、iPad 接触控板）两种输入各自可用）；**网格行宽硬顶**：齐行布局的行高夹紧（0.5×–1.75×目标高）与末行规则不得把行推出容器——行高最终以容器宽反推值（fitH）为硬顶，桌面容器宽极少生效，移动端窄屏遇全景图等宽行时杜绝图片出屏；**预览全沉浸**：图片占满 100vw/100vh，翻页栏隐藏——横向滑动切换上一张/下一张（传送带动效，相邻原图预加载免解码闪烁）；**触屏手势**（`useLayout` 判定 touch = `(pointer: coarse)` 或 `maxTouchPoints>0`——iPad Safari 默认「请求桌面网站」时 pointer: coarse 不命中（iPadOS 因支持触控板/鼠标上报精细指针），仅靠 pointer 会把 iPad 误判为鼠标设备：iOS 双击不产生 dblclick，预览打不开；同步 `body.touch`，与 narrow 独立——iPad Pro 12.9" 横屏（1366px）为 wide+touch，手机横屏（≤932px）仍 narrow）：**下拉关闭**（阻尼跟手 + 背景随位移渐亮，≥96px 松手下滑出关闭，桌面鼠标不触发，保留 ×/Esc/点遮罩），**关闭 × 隐藏**（下拉关闭/点遮罩替代）；右上角 **ⓘ 开关底部详情条**（仅 narrow；检查器在移动端无入口，预览内只读查看名称/尺寸/大小/评分/标签/分类/文件夹/修改时间/注释，条内独立滚动与下拉关闭手势隔离）；**编辑窗口旋转约束互换**：90/270° 旋转后视觉宽高互换，`max-width`/`max-height` 约束同步互换，否则竖屏下旋转长边水平出屏；编辑窗口底栏按钮加大命中区（`body.mobile` 命中，浮层 Teleport 到 body 不在 `.app` 内）。桌面布局与交互完全不变。全端 `body` 禁双击缩放（`touch-action: manipulation`，保留滚动与双指缩放）——iPad Safari 双击侧栏/图片会按点击处锚点缩放页面，缩放级别累积不回弹，视觉上即"面板忽宽忽窄"（面板宽度实为 grid 固定列，代码无点击改宽路径）。
+**窄屏适配**（断点 `max-width: 1200px`：三栏最小健康宽度 = 220 侧栏 + ~700 顶栏固有最小内容（前进后退/排序/筛选按钮/搜索/设置的 flex 最小值之和）+ 280 检查器，grid 的 `1fr` = `minmax(auto,1fr)` 随内容最小宽度增长，低于此宽度中栏撑破页面——iPad 除 12.9" 横屏（1366）外全部、拖窄的桌面窗口均走 narrow；`useLayout` 判定 narrow 并同步 `body.mobile`；宽屏桌面与 12.9" iPad 横屏为 wide 布局，只此一处按布局分支，业务组件不做端判断）：`.app` 改单栏（`minmax(0,1fr)`），侧栏变**抽屉**（fixed + `translateX(-105%)` 滑出，`drawer-open` 滑入；`no-panels` 在移动端不 display:none 侧栏——显隐由 transform 管，否则滑入滑出动画被 display 切换扼杀），汉堡按钮在顶栏左上角（复用侧栏开关），触屏点导航项/遮罩自动收起（鼠标设备保持展开，桌面窄窗可连续切换）；检查器与栏宽拖拽手柄隐藏，顶栏隐藏排序按钮/筛选按钮/筛选工具列/选中计数、压缩搜索宽度（保留汉堡/前进后退/搜索/设置，390px 实测防横向溢出）；**触屏按布局分两种交互**（ItemGrid onSelect 按 pointerdown 实际指针分流，先按实际输入区分触屏/鼠标，再按 narrow 分）：触屏/笔下 narrow（竖屏，检查器隐藏）——单击直接开预览，同时选中（旋转到横屏时右栏即显示其属性）；触屏/笔下 wide（横屏，检查器可见，iPad 横屏场景）——单击选中看右栏属性、双击打开预览（iOS 禁用双击缩放后不保证触发 dblclick，按「同一张卡片 300ms 内两次点按」自行判定，点不同卡片重置计时）；鼠标任何布局——单击选择/多选（shift/ctrl）、双击打开走原生 dblclick（ItemCard @dblclick）。混合设备（触控笔记本、iPad 接触控板）两种输入各自可用）；**网格行宽硬顶**：齐行布局的行高夹紧（0.5×–1.75×目标高）与末行规则不得把行推出容器——行高最终以容器宽反推值（fitH）为硬顶，桌面容器宽极少生效，移动端窄屏遇全景图等宽行时杜绝图片出屏；**预览全沉浸**：图片占满 100vw/100vh，翻页栏隐藏——横向滑动切换上一张/下一张（传送带动效，相邻原图预加载免解码闪烁）；**触屏手势**（`useLayout` 判定 touch = `(pointer: coarse)` 或 `maxTouchPoints>0`——iPad Safari 默认「请求桌面网站」时 pointer: coarse 不命中（iPadOS 因支持触控板/鼠标上报精细指针），仅靠 pointer 会把 iPad 误判为鼠标设备：iOS 双击不产生 dblclick，预览打不开；同步 `body.touch`，与 narrow 独立——iPad Pro 12.9" 横屏（1366px）为 wide+touch，手机横屏（≤932px）仍 narrow）：**下拉关闭**（阻尼跟手 + 背景随位移渐亮，≥96px 松手下滑出关闭，桌面鼠标不触发，保留 ×/Esc/点遮罩），**关闭 × 隐藏**（下拉关闭/点遮罩替代）；右上角 **ⓘ 开关底部详情条**（仅 narrow；检查器在移动端无入口，预览内只读查看名称/尺寸/大小/评分/标签/分类/文件夹/修改时间/注释，条内独立滚动与下拉关闭手势隔离）；**编辑窗口旋转约束互换**：90/270° 旋转后视觉宽高互换，`max-width`/`max-height` 约束同步互换，否则竖屏下旋转长边水平出屏；编辑窗口底栏按钮加大命中区（`body.mobile` 命中，浮层 Teleport 到 body 不在 `.app` 内）。桌面布局与交互完全不变。全端 `body` 禁双击缩放（`touch-action: manipulation`，保留滚动与双指缩放）——iPad Safari 双击侧栏/图片会按点击处锚点缩放页面，缩放级别累积不回弹，视觉上即"面板忽宽忽窄"（面板宽度实为 grid 固定列，代码无点击改宽路径）。
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。**虚拟渲染（Eagle 式滚动条）**：store 持当前视图全量骨架（`skeleton`：id/width/height/star，经 `item/skeleton` 一次性取回，与 `item/list` 同查询同排序且主键同值时按 id 打破平局——两次查询次序逐位一致），ItemGrid 用骨架算出全部行的 y 偏移，容器总高即时确定，滚动条可自由拖动跳转；只渲染视口 ±4 行（绝对定位 + translateY），行内详情未拉取的单元格只留宽高的占位块（不渲染图片），进入视口时按骨架索引区间经 `ensureWindow` 用 `item/list` 补数据。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
+
+**触屏横屏适配**（wide + touch，如 iPad 横屏；纯 CSS（`body.touch .app:not(.mobile)`），与 narrow 互斥、桌面鼠标布局不变）：横向空间宝贵而检查器可见——搜索框从顶栏挪进检查器顶部条（`SearchBox` 双实例按布局切换可见性；浏览器端该 40px 条本是无拖拽需求的空条），顶栏空间留给筛选/排序按钮；侧栏库名上移到顶部拖拽条与侧栏开关同排（`in-head` 变体），正文整体上移填充空位。窄屏（手机）检查器隐藏，搜索框留在顶栏、排序/筛选按钮维持隐藏。
 
 当前位置体现在侧栏选中态与标题栏：文件夹视图渲染可点击面包屑（根 = 全部素材，逐级跳转），其余视图为固定标题；标题栏前进/后退在会话内浏览历史（`setView` 压栈，重命名跟随/删除回退就地修正当前条目）中移动。回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。文件夹树节点计数由后端 `folder/list` 的 `count` 字段提供（含子级、不含回收站、按 item 去重）；分类/标签计数由 `category/list`、`tag/list` 提供（精确匹配、不含回收站）。
 
@@ -174,6 +176,7 @@ web/
     │   ├── ConnectScreen.vue  # 连接门页：局域网 web 查看先输入 token，验证通过后记忆、再访问免输入直连
     │   ├── Sidebar.vue
     │   ├── FolderTreeNode.vue
+    │   ├── SearchBox.vue      # 搜索框（TitleBar/Inspector 顶共用；触屏横屏挪到检查器顶）
     │   ├── ItemGrid.vue
     │   ├── ItemCard.vue
     │   ├── Inspector.vue
@@ -334,6 +337,7 @@ init(): Promise<void>;           // libraryInfo + folders + resetList；失败�
 setView(v: ViewState): void;                     // 切视图：压浏览历史 → 清空选择 → resetList
 goBack() / goForward(): void;                    // 标题栏前进/后退（canGoBack/canGoForward 驱动禁用态）
 toggleSidebar(): void;                           // 侧栏显隐开关
+searchText: string; submitSearch(): void;       // 搜索框草稿与提交（TitleBar/Inspector 顶搜索框共用，回车按空格拆 keywords）
 setQuery(patch: Partial<QueryState>): void;        // → resetList
 resetList(): Promise<void>;      // 取全量骨架（skeletonVersion 作废过期响应）→ 清 details → ensureWindow(0, 150)
 ensureWindow(start, end): Promise<void>;  // 视口窗口补数据：按骨架索引区间拉 item/list（次序逐位对齐），已缓存则跳过
@@ -375,18 +379,19 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
 | `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
-| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）；读写 store.query（搜索框回车按空格拆 keywords）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；右端设置齿轮（仅 Electron，打开 SettingsDialog）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；右端设置齿轮（Electron 或触屏设备显示，打开 SettingsDialog）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `SearchBox.vue` | — | — | 搜索框（store.searchText 草稿 + 回车 submitSearch）：TitleBar 与 Inspector 顶部共用同一实例模板；styles.css 按布局切换可见性——桌面/窄屏在顶栏，触屏横屏（wide+touch，检查器可见）挪到 Inspector 顶，把顶栏空间留给筛选/排序按钮 |
 | `FilterBar.vue` | — | — | 筛选工具列（TitleBar 下方一行 chip，App.vue 以 `filterBarVisible || hasActiveFilters` 控制显隐）：评分 chip（点击弹星级单选菜单：全部/0–5 星，激活时显示当前值并高亮）+ 颜色 chip（条件激活时显示色块与 hex，× 就地清除） |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close` | 设置面板（仅桌面端，TitleBar 齿轮打开）：局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-server（await ready 以支持失败自动回滚并弹错）；成功不重启页面——server-started 事件驱动 App 原地换地址重载数据，本对话框 emit close |
-| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
+| `SettingsDialog.vue` | — | `close` | 设置面板（TitleBar 齿轮打开；Electron 与触屏设备可开）：缩略图尺寸滑杆（−/滑杆/＋，v-model store.thumbSize 实时生效，所有端可用）；局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表——远程设置依赖 Electron preload 通道，`v-if="hasShell"` 渲染，移动端（浏览器触屏）不可见；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-server（await ready 以支持失败自动回滚并弹错）；成功不重启页面——server-started 事件驱动 App 原地换地址重载数据，本对话框 emit close；无 shell 时底部仅「关闭」（滑杆实时生效无需保存）；宽度 `min(420px, 100vw-32px)` 适配手机竖屏 |
+| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |
-| `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。单选（触屏只读，`readOnly = touch`）：与桌面版同样的信息结构全部静态展示（名称/注释/网址链接/标签/分类 chips/文件夹/评分★/基本信息/文件位置，无输入控件与 ◎），实际生效于 wide 布局的 iPad 横屏（narrow 下检查器隐藏）；桌面编辑版：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
+| `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。SearchBox（`.inspector-search`，默认隐藏；触屏横屏 wide+touch 时填充顶部条——`flex:1` 占满、`no-drag` 退出拖拽区，浏览器端该条本是无拖拽需求的空条）。单选（触屏只读，`readOnly = touch`）：与桌面版同样的信息结构全部静态展示（名称/注释/网址链接/标签/分类 chips/文件夹/评分★/基本信息/文件位置，无输入控件与 ◎），实际生效于 wide 布局的 iPad 横屏（narrow 下检查器隐藏）；桌面编辑版：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
 | `CategoryPickerDialog.vue` | `title: string` | `confirm(name: string)`、`cancel` | 分类输入模态：输入框带已有分类候选（datalist），可输入新名字；确认单个分类名（Inspector「＋添加到分类」与多选批量添加共用） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |

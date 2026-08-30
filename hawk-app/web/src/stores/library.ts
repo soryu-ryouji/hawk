@@ -62,6 +62,8 @@ export const useLibraryStore = defineStore('library', () => {
   const untaggedCount = ref(0);
   const library = ref<LibraryInfo | null>(null);
   const thumbSize = ref(160);
+  /** 搜索框草稿（顶栏与检查器顶搜索框共用一份，回车提交为 keywords） */
+  const searchText = ref('');
   const previewId = ref<string | null>(null);
   const toast = ref<string | null>(null);
   /** 导入进度：null 无任务；total=0 表示收集文件阶段（不定态），done 为已处理数 */
@@ -279,6 +281,11 @@ export const useLibraryStore = defineStore('library', () => {
   function setQuery(patch: Partial<QueryState>) {
     Object.assign(query.value, patch);
     void resetList();
+  }
+
+  /** 搜索框回车提交：按空格拆关键词 */
+  function submitSearch() {
+    setQuery({ keywords: searchText.value.trim().split(/\s+/).filter(Boolean) });
   }
 
   async function resetList() {
@@ -830,9 +837,9 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible, filterBarVisible, editorTarget, viewerMode,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, searchText, previewId, toast, importProgress, taskBacklog, sidebarVisible, filterBarVisible, editorTarget, viewerMode,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes, hasActiveFilters,
-    init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetList, ensureWindow, reloadSkeleton,
+    init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,

@@ -193,17 +193,33 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   <aside class="sidebar">
     <!-- 顶部拖拽条：侧栏色块通高到窗口上沿；macOS 原生红绿灯压在本条左侧；右端为侧栏开关 -->
     <div class="sidebar-head" @dblclick="onHeadDblClick">
+      <!-- 触屏：库名上移到本条与开关同排，正文整体上移填充空位；桌面/macOS 保持库名在正文首行（避让红绿灯） -->
+      <button
+        v-if="hasShell"
+        class="library-name in-head"
+        :title="store.library?.path + '（点击更换素材库）'"
+        @click="selectLibrary"
+        @dblclick.stop
+      >
+        <Icon name="library" />
+        <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
+        <Icon name="chevronDown" :size="12" />
+      </button>
+      <div v-else class="library-name in-head static">
+        <Icon name="library" />
+        <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
+      </div>
       <button class="panel-toggle" title="侧栏与检查器" @click="store.toggleSidebar()" @dblclick.stop>
         <Icon name="panelLeft" :size="16" />
       </button>
     </div>
     <div class="sidebar-body">
-      <button v-if="hasShell" class="library-name" :title="store.library?.path + '（点击更换素材库）'" @click="selectLibrary">
+      <button v-if="hasShell" class="library-name in-body" :title="store.library?.path + '（点击更换素材库）'" @click="selectLibrary">
         <Icon name="library" />
         <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
         <Icon name="chevronDown" :size="12" />
       </button>
-      <div v-else class="library-name static">
+      <div v-else class="library-name in-body static">
         <Icon name="library" />
         <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
       </div>
@@ -377,6 +393,25 @@ function onTagContextMenu(name: string, e: MouseEvent) {
   border-radius: 5px;
   background: transparent;
   text-align: left;
+  /* 顶条内实例（触屏）须退出拖拽区 */
+  -webkit-app-region: no-drag;
+}
+
+/* 顶条内实例默认隐藏；触屏显示并与开关同排（flex:1 吃掉中段空白，名称超长省略） */
+.library-name.in-head {
+  display: none;
+}
+
+body.touch .library-name.in-head {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  margin: 0 4px 0 8px;
+  padding: 4px 6px;
+}
+
+body.touch .library-name.in-body {
+  display: none;
 }
 
 .library-name:hover {

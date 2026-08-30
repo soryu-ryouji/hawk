@@ -6,6 +6,7 @@ import { useLayout } from '../composables/useLayout';
 import { showInFileManagerLabel } from '../platform';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
+import SearchBox from './SearchBox.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
 
@@ -188,7 +189,11 @@ function batchMoveFolder(path: string) {
 <template>
   <aside class="inspector">
     <!-- 顶部拖拽条：检查器色块通高到窗口上沿；Windows/Linux 自绘窗口控制 fixed 在本条右侧 -->
-    <div class="inspector-head" @dblclick="onHeadDblClick" />
+    <!-- 顶部拖拽条：检查器色块通高到窗口上沿；Windows/Linux 自绘窗口控制 fixed 在本条右侧。
+         搜索框默认隐藏；触屏横屏（wide+touch）时填充本条（浏览器端本条本是无拖拽需求的空条） -->
+    <div class="inspector-head" @dblclick="onHeadDblClick">
+      <SearchBox class="inspector-search" @dblclick.stop />
+    </div>
     <div class="inspector-body">
     <!-- 单选：完整编辑（布局参考 Eagle） -->
     <template v-if="item && store.selection.length === 1">
@@ -424,6 +429,9 @@ function batchMoveFolder(path: string) {
 .inspector-head {
   flex: none;
   height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
   -webkit-app-region: drag;
 }
 

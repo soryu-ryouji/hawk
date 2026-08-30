@@ -1,11 +1,15 @@
 <script setup lang="ts">
-// 设置面板（仅桌面端）：局域网 web 查看开关/端口/token，按库隔离存于 .hawk/config.toml 的 [web] 段。
-// 保存 = 主进程写配置并重启 hawk-server（loading → 主界面），失败自动回滚并弹错。
+// 设置面板：缩略图尺寸（实时生效，所有端可用）；局域网 web 查看开关/端口/token（仅 Electron，
+// 按库隔离存于 .hawk/config.toml 的 [web] 段；保存 = 主进程写配置并重启 hawk-server，失败自动回滚并弹错）。
+// 移动端（浏览器触屏）可打开本面板调整缩略图尺寸，但无 hawkShell，局域网设置段不渲染。
 import { onMounted, ref } from 'vue';
+import { useLibraryStore } from '../stores/library';
 import type { LanSettings } from '../types';
 
 const emit = defineEmits<{ close: [] }>();
 
+const store = useLibraryStore();
+const hasShell = !!window.hawkShell;
 const loading = ref(true);
 const saving = ref(false);
 const error = ref<string | null>(null);
@@ -15,6 +19,11 @@ const token = ref('');
 const addresses = ref<string[]>([]);
 
 onMounted(async () => {
+  if (!hasShell) {
+    // 浏览器触屏端：无局域网设置可加载（滑杆段实时生效，无需加载态）
+    loading.value = false;
+    return;
+  }
   try {
     const shell = window.hawkShell;
     if (!shell?.getLanSettings) {
@@ -38,6 +47,11 @@ function regenerate() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   token.value = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** 缩略图尺寸步进（滑杆 ± 按钮） */
+function stepThumb(delta: number) {
+  store.thumbSize = Math.min(280, Math.max(120, store.thumbSize + delta));
 }
 
 async function save() {
@@ -80,50 +94,63 @@ async function save() {
       <div class="dialog" role="dialog" aria-modal="true">
         <div class="title">设置</div>
 
-        <div v-if="loading" class="hint">加载中…</div>
-        <template v-else>
-          <section>
-            <div class="section-title">局域网查看</div>
-            <label class="row">
-              <input v-model="enabled" type="checkbox" />
-              <span>启用局域网 web 查看（只读）</span>
-            </label>
-            <p class="hint">其他设备通过浏览器访问本素材库；查看端仅可浏览，不能修改素材库。</p>
-          </section>
+        <section>
+          <div class="section-title">缩略图尺寸</div>
+          <div class="slider-row">
+            <button title="缩小" @click="stepThumb(-8)">−</button>
+            <input v-model.number="store.thumbSize" type="range" min="120" max="280" step="8" />
+            <button title="放大" @click="stepThumb(8)">＋</button>
+            <span class="slider-val">{{ store.thumbSize }}</span>
+          </div>
+        </section>
 
-          <section>
-            <div class="section-title">端口</div>
-            <input v-model.number="port" type="number" min="1" max="65535" :disabled="!enabled" />
-          </section>
+        <!-- 远程设置：依赖 Electron preload 的局域网通道，移动端（浏览器触屏）不渲染 -->
+        <template v-if="hasShell">
+          <div v-if="loading" class="hint">加载中…</div>
+          <template v-else>
+            <section>
+              <div class="section-title">局域网查看</div>
+              <label class="row">
+                <input v-model="enabled" type="checkbox" />
+                <span>启用局域网 web 查看（只读）</span>
+              </label>
+              <p class="hint">其他设备通过浏览器访问本素材库；查看端仅可浏览，不能修改素材库。</p>
+            </section>
 
-          <section>
-            <div class="section-title">访问 token</div>
-            <div class="token-row">
-              <input v-model="token" type="text" :disabled="!enabled" autocomplete="off" spellcheck="false" />
-              <button :disabled="!enabled" @click="regenerate">重新生成</button>
-            </div>
-            <p class="hint">局域网设备打开下方地址后输入该 token 即可查看。</p>
-          </section>
+            <section>
+              <div class="section-title">端口</div>
+              <input v-model.number="port" type="number" min="1" max="65535" :disabled="!enabled" />
+            </section>
 
-          <section>
-            <div class="section-title">局域网访问地址（其他设备用浏览器打开）</div>
-            <ul class="addrs">
-              <li v-for="ip in addresses" :key="ip">
-                <a :href="`http://${ip}:${port}`" target="_blank" rel="noreferrer">http://{{ ip }}:{{ port }}</a>
-              </li>
-              <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
-            </ul>
-            <p class="hint">地址随上方端口实时变化；打开后输入访问 token 即可查看素材库。</p>
-            <p v-if="!enabled" class="hint">启用「局域网查看」后以上地址生效。</p>
-            <p class="hint">首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。</p>
-          </section>
+            <section>
+              <div class="section-title">访问 token</div>
+              <div class="token-row">
+                <input v-model="token" type="text" :disabled="!enabled" autocomplete="off" spellcheck="false" />
+                <button :disabled="!enabled" @click="regenerate">重新生成</button>
+              </div>
+              <p class="hint">局域网设备打开下方地址后输入该 token 即可查看。</p>
+            </section>
 
-          <div v-if="error" class="error">{{ error }}</div>
+            <section>
+              <div class="section-title">局域网访问地址（其他设备用浏览器打开）</div>
+              <ul class="addrs">
+                <li v-for="ip in addresses" :key="ip">
+                  <a :href="`http://${ip}:${port}`" target="_blank" rel="noreferrer">http://{{ ip }}:{{ port }}</a>
+                </li>
+                <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
+              </ul>
+              <p class="hint">地址随上方端口实时变化；打开后输入访问 token 即可查看素材库。</p>
+              <p v-if="!enabled" class="hint">启用「局域网查看」后以上地址生效。</p>
+              <p class="hint">首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。</p>
+            </section>
+
+            <div v-if="error" class="error">{{ error }}</div>
+          </template>
         </template>
 
         <div class="actions">
-          <button :disabled="saving || loading" @click="emit('close')">取消</button>
-          <button class="primary" :disabled="saving || loading" @click="save">
+          <button :disabled="saving || loading" @click="emit('close')">{{ hasShell ? '取消' : '关闭' }}</button>
+          <button v-if="hasShell" class="primary" :disabled="saving || loading" @click="save">
             {{ saving ? '应用中…（正在重启服务）' : '保存并重启服务' }}
           </button>
         </div>
@@ -144,7 +171,8 @@ async function save() {
 }
 
 .dialog {
-  width: 420px;
+  /* 手机竖屏也放得下（移动端可打开本面板） */
+  width: min(420px, calc(100vw - 32px));
   max-height: 84vh;
   overflow-y: auto;
   padding: 18px 20px;
@@ -154,6 +182,26 @@ async function save() {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-row input[type='range'] {
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.slider-val {
+  min-width: 32px;
+  text-align: right;
+  color: var(--fg-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .title {
