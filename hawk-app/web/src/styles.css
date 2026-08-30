@@ -206,7 +206,8 @@ body.col-resizing {
 .app.mobile select.sort,
 .app.mobile .thumb-slider,
 .app.mobile select.filter,
-.app.mobile .selected {
+/* 选中计数（.selected-count，勿用 .selected——与网格卡片选中态同名会连卡片一起隐藏） */
+.app.mobile .selected-count {
   display: none;
 }
 

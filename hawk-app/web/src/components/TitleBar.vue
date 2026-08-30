@@ -102,7 +102,7 @@ function onDblClick(e: MouseEvent) {
       </nav>
       <span v-else class="location title">{{ locationTitle }}</span>
 
-      <span v-if="store.selection.length" class="selected">已选 {{ store.selection.length }} 项</span>
+      <span v-if="store.selection.length" class="selected-count">已选 {{ store.selection.length }} 项</span>
     </div>
 
     <div class="spacer" />
@@ -263,7 +263,7 @@ function onDblClick(e: MouseEvent) {
   color: var(--fg-1);
 }
 
-.selected {
+.selected-count {
   color: var(--fg-1);
   font-size: 12px;
   white-space: nowrap;
