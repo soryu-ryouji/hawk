@@ -44,6 +44,10 @@ declare global {
     hawkShell?: {
       platform: string;
       selectLibrary(): Promise<boolean>;
+      /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
+      getLanSettings(): Promise<LanSettings>;
+      /** 保存 [web] 配置并重启 hawk-server（失败自动回滚），返回 { ok, error? } */
+      saveLanSettings(web: { enabled: boolean; port: number; token: string }): Promise<{ ok: boolean; error?: string }>;
       showInFinder(relPath: string): Promise<void>;
       /** 复制库内文件的绝对路径到剪贴板 */
       copyPath(relPath: string): Promise<void>;
@@ -56,4 +60,13 @@ declare global {
       onWindowMaximized(cb: (maximized: boolean) => void): () => void;
     };
   }
+}
+
+/** 局域网查看设置（config.toml 的 [web] 段，按库隔离） */
+export interface LanSettings {
+  enabled: boolean;
+  port: number;
+  token: string;
+  /** 本机局域网 IPv4 地址列表（展示用） */
+  addresses: string[];
 }

@@ -19,13 +19,43 @@ export class ApiError extends Error {
   }
 }
 
-/** 解析连接参数；都缺时返回 null（启动失败态） */
+/** 解析连接参数；都缺时返回 null（启动失败态）。浏览器直连 hawk-server（局域网 web 查看）时无显式参数，回退同源 */
 export function initApi(): ApiConfig | null {
   const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
-  const api = hash.get('api') || (import.meta.env.VITE_HAWK_API as string | undefined);
-  const token = hash.get('token') || (import.meta.env.VITE_HAWK_TOKEN as string | undefined);
-  config = api && token ? { api, token } : null;
+  const search = new URLSearchParams(location.search);
+  // Electron 壳必须经 hash 注入（dev 也可用 VITE_HAWK_API）；纯浏览器则假定页面由 hawk-server 托管（同源）
+  const api =
+    hash.get('api') ||
+    (import.meta.env.VITE_HAWK_API as string | undefined) ||
+    (!window.hawkShell ? location.origin : null);
+  if (!api) {
+    config = null;
+    return null;
+  }
+  // token 优先级：hash（Electron 注入）> ?token= 查询参数 > 本地存储（按 api 地址隔离，记住上次验证通过的 token）
+  const token =
+    hash.get('token') || search.get('token') || localStorage.getItem(tokenStorageKey(api)) || '';
+  config = { api, token };
   return config;
+}
+
+/** token 在 localStorage 的存储键：按 api host 隔离，多素材库/多服务端互不覆盖 */
+export function tokenStorageKey(api: string): string {
+  return `hawk:token:${new URL(api).host}`;
+}
+
+/** 记住验证通过的 token（局域网查看器下次免输入直连） */
+export function storeToken(api: string, token: string): void {
+  localStorage.setItem(tokenStorageKey(api), token);
+}
+
+export function clearStoredToken(api: string): void {
+  localStorage.removeItem(tokenStorageKey(api));
+}
+
+/** 更新当前连接 token（ConnectScreen 验证通过后注入） */
+export function setApiToken(token: string): void {
+  apiConfig().token = token;
 }
 
 export function apiConfig(): ApiConfig {

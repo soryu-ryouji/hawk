@@ -6,8 +6,11 @@ import { useLibraryStore } from '../stores/library';
 import Icon from './Icon.vue';
 
 const store = useLibraryStore();
+const emit = defineEmits<{ 'open-settings': [] }>();
 const searchText = ref('');
 const isMac = window.hawkShell?.platform === 'darwin';
+/** 桌面端（Electron）才有设置面板入口 */
+const hasShell = !!window.hawkShell;
 // 窗口控制为 fixed 在窗口右上角的自绘按钮（仅 Windows/Linux 渲染）：侧栏隐藏时本栏通栏，右端需预留避让
 const reserveControls = !!window.hawkShell && !isMac;
 
@@ -139,6 +142,10 @@ function onDblClick(e: MouseEvent) {
         <Icon name="search" :size="13" />
         <input v-model="searchText" type="search" placeholder="搜索" @keydown.enter="submitSearch" />
       </div>
+
+      <button v-if="hasShell" class="bar-btn" title="设置" @click="emit('open-settings')">
+        <Icon name="settings" :size="14" />
+      </button>
     </div>
   </header>
 </template>

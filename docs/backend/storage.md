@@ -99,7 +99,7 @@ annotation = "Beautiful sunset"         # 备注
 
 ## 项目配置
 
-每个项目的设置保存在 `.hawk/config.toml` 中，随素材目录一起同步、备份：
+每个项目的设置保存在 `.hawk/config.toml` 中，随素材目录一起同步、备份。库首次打开时若缺失会自动生成带注释的默认模板（已存在绝不覆盖，用户手工编辑安全）：
 
 ```toml
 # .hawk/config.toml 示例
@@ -112,7 +112,15 @@ ignore = ["node_modules", "*.tmp"]
 
 # 生成的缩略图尺寸
 thumbnail_sizes = [256, 512, 1024]
+
+# 局域网 web 查看（只读；桌面端设置面板读写,按库隔离,多库可同时开启互不冲突）
+[web]
+enabled = false      # 开启后 server 追加监听 0.0.0.0:<port>,并托管前端页面
+port = 27372
+token = ""           # 查看者 token;浏览器打开 http://<电脑IP>:<port> 后输入,仅可浏览
 ```
+
+`[web]` 的读取热更（文件监听 Reload），但**端口/绑定/token 的生效需重启监听**——保存后由桌面端重启 hawk-server。viewer token 通过时写端点一律 `403 READ_ONLY`（放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）。
 
 全局配置文件位于 `~/.config/hawk/config.toml`，只存放跨项目的全局设置（目前没有全局配置项）。
 

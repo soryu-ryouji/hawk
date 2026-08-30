@@ -6,6 +6,14 @@ contextBridge.exposeInMainWorld('hawkShell', {
   platform: process.platform,
   /** 更换素材库：弹目录选择框，主进程重启 server 并重载窗口 */
   selectLibrary: () => ipcRenderer.invoke('hawk:select-library'),
+  /** 复制库内文件的绝对路径到剪贴板 */
+  copyPath: (relPath) => ipcRenderer.invoke('hawk:copy-path', relPath),
+  /** 复制图片文件本身到剪贴板 */
+  copyImage: (relPath) => ipcRenderer.invoke('hawk:copy-image', relPath),
+  /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
+  getLanSettings: () => ipcRenderer.invoke('hawk:get-lan-settings'),
+  /** 保存 [web] 配置并重启 hawk-server（失败自动回滚），返回 { ok, error? } */
+  saveLanSettings: (web) => ipcRenderer.invoke('hawk:save-lan-settings', web),
   /** 在系统文件管理器中显示库内文件（相对路径） */
   showInFinder: (relPath) => ipcRenderer.invoke('hawk:show-in-finder', relPath),
   /** 拖拽导入时取文件绝对路径（Electron webUtils） */

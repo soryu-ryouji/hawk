@@ -22,20 +22,28 @@ const indexText = computed(() => {
 // 预览展示原图（缩略图是压缩过的 WebP）
 const imageUrl = computed(() => api.fileUrl(props.item.id));
 
-// 右键菜单：打开所在文件夹 / 复制文件路径 / 复制图片 / 编辑图片 / 删除
+// 右键菜单：打开所在文件夹 / 复制文件路径 / 复制图片 / 编辑图片 / 删除。
+// 浏览器（无 hawkShell）隐藏系统相关项；只读查看（viewer）隐藏全部写操作，无可用项时不弹菜单。
 function onMenu(e: MouseEvent) {
-  menu.open(
-    [
-      { label: showInFileManagerLabel, action: () => void window.hawkShell?.showInFinder(props.item.paths[0]) },
-      { label: '复制文件路径', action: () => void window.hawkShell?.copyPath(props.item.paths[0]) },
-      { label: '复制图片', action: () => void window.hawkShell?.copyImage(props.item.paths[0]) },
-      // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
-      ...(isRotatableImage(props.item.ext) ? [{ label: '编辑图片…', action: () => store.openEditor(props.item) }] : []),
-      { separator: true, label: '' },
-      { label: '删除图片', danger: true, action: () => void trashCurrent() },
-    ],
-    e,
-  );
+  const items = [
+    ...(window.hawkShell
+      ? [
+          { label: showInFileManagerLabel, action: () => void window.hawkShell?.showInFinder(props.item.paths[0]) },
+          { label: '复制文件路径', action: () => void window.hawkShell?.copyPath(props.item.paths[0]) },
+          { label: '复制图片', action: () => void window.hawkShell?.copyImage(props.item.paths[0]) },
+        ]
+      : []),
+    // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口;viewer 下禁用
+    ...(isRotatableImage(props.item.ext) && !store.viewerMode
+      ? [{ label: '编辑图片…', action: () => store.openEditor(props.item) }]
+      : []),
+    ...(!store.viewerMode ? [{ separator: true, label: '' }] : []),
+    ...(!store.viewerMode ? [{ label: '删除图片', danger: true, action: () => void trashCurrent() }] : []),
+  ];
+  if (items.length === 0) {
+    return;
+  }
+  menu.open(items, e);
 }
 
 // 删除当前预览项：跳到下一张（无下一张则上一张，都没有则关闭预览）

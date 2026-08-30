@@ -32,11 +32,6 @@ async function selectLibrary() {
   }
 }
 
-// 设置面板尚未实现：先以 toast 占位，接入后改为打开设置面板
-function openSettings() {
-  store.showToast('设置面板尚未实现');
-}
-
 function createRootFolder(name: string) {
   showCreateFolder.value = false;
   void store.folderCreate('', name);
@@ -103,6 +98,10 @@ function onTreeDragLeave(kind: DropKind, e: DragEvent) {
 }
 
 function onTreeDragOver(e: DragEvent) {
+  // 只读查看（局域网 viewer）：拖拽移动素材即写操作,不允许放置
+  if (store.viewerMode) {
+    return;
+  }
   itemsDragOver(e);
 }
 
@@ -127,11 +126,17 @@ function onTreeDrop(kind: DropKind, e: DragEvent) {
 }
 
 function onCategoryContextMenu(e: MouseEvent) {
+  if (store.viewerMode) {
+    return;
+  }
   menu.open([{ label: '新建分类', action: () => (showCreateCategory.value = true) }], e);
 }
 
 /** 分类右键：重命名/删除 */
 function onCategoryRowContextMenu(name: string, e: MouseEvent) {
+  if (store.viewerMode) {
+    return;
+  }
   menu.open(
     [
       {
@@ -157,6 +162,9 @@ function onCategoryRowContextMenu(name: string, e: MouseEvent) {
 
 /** 标签右键：重命名/删除 */
 function onTagContextMenu(name: string, e: MouseEvent) {
+  if (store.viewerMode) {
+    return;
+  }
   menu.open(
     [
       {
@@ -235,7 +243,7 @@ function onTagContextMenu(name: string, e: MouseEvent) {
           <Icon name="chevronRight" :size="12" class="chev" :class="{ open: !collapsed.folder }" />
           文件夹
         </span>
-        <button class="add" title="新建文件夹" @click.stop="showCreateFolder = true">＋</button>
+        <button v-if="!store.viewerMode" class="add" title="新建文件夹" @click.stop="showCreateFolder = true">＋</button>
       </div>
       <div v-show="!collapsed.folder" class="tree" @contextmenu.prevent="onTreeContextMenu">
         <FolderTreeNode v-for="node in store.folders?.children ?? []" :key="node.path" :node="node" :depth="0" />
@@ -246,7 +254,7 @@ function onTagContextMenu(name: string, e: MouseEvent) {
           <Icon name="chevronRight" :size="12" class="chev" :class="{ open: !collapsed.category }" />
           分类
         </span>
-        <button class="add" title="新建分类" @click.stop="showCreateCategory = true">＋</button>
+        <button v-if="!store.viewerMode" class="add" title="新建分类" @click.stop="showCreateCategory = true">＋</button>
       </div>
       <div
         v-show="!collapsed.category"
@@ -277,7 +285,7 @@ function onTagContextMenu(name: string, e: MouseEvent) {
           <Icon name="chevronRight" :size="12" class="chev" :class="{ open: !collapsed.tag }" />
           标签
         </span>
-        <button class="add" title="新建标签" @click.stop="showCreateTag = true">＋</button>
+        <button v-if="!store.viewerMode" class="add" title="新建标签" @click.stop="showCreateTag = true">＋</button>
       </div>
       <div
         v-show="!collapsed.tag"
@@ -302,13 +310,6 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         </div>
       </div>
 
-    </div>
-
-    <!-- 底部固定区（不随列表滚动）：设置入口 -->
-    <div class="sidebar-foot">
-      <button class="settings" title="设置" @click="openSettings">
-        <Icon name="settings" />
-      </button>
     </div>
   </aside>
 
@@ -542,30 +543,5 @@ function onTagContextMenu(name: string, e: MouseEvent) {
 .tag-count {
   font-size: 11px;
   color: var(--fg-1);
-}
-
-/* 底部固定区：设置按钮常驻侧栏左下角（Eagle 式），与滚动列表分离 */
-.sidebar-foot {
-  flex: none;
-  padding: 4px 8px;
-  border-top: 1px solid var(--border);
-}
-
-.settings {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--fg-1);
-}
-
-.settings:hover {
-  background: var(--bg-2);
-  color: var(--fg-0);
 }
 </style>

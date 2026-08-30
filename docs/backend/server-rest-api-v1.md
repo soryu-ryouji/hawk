@@ -21,7 +21,7 @@
 }
 ```
 
-错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`
+错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（viewer token 访问写端点，403）
 
 ### ID 规范
 
@@ -111,7 +111,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
   "data": {
     "version": "1.0.0",
     "platform": "windows",
-    "exec_path": "C:/Tools/hawk/hawk-server.exe"
+    "exec_path": "C:/Tools/hawk/hawk-server.exe",
+    "access": "admin"
   }
 }
 ```
@@ -121,6 +122,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | version   | string | 后端版本号                    |
 | platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
+| access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看只读 token，见 storage.md 的 `[web]` 配置） |
 
 ### health
 

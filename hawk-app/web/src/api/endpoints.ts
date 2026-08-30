@@ -21,7 +21,11 @@ export interface ItemBatchPatch {
 }
 
 export const api = {
-  appInfo: () => request<{ version: string; platform: string; exec_path: string }>('GET', '/api/v1/app/info'),
+  appInfo: () =>
+    request<{ version: string; platform: string; exec_path: string; /** viewer=局域网只读查看 token */ access: 'viewer' | 'admin' }>(
+      'GET',
+      '/api/v1/app/info',
+    ),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
 

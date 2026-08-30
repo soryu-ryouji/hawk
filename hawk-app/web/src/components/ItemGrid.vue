@@ -223,6 +223,10 @@ function confirmClearTrash() {
 }
 
 function onMenu(item: Item, e: MouseEvent) {
+  // 只读查看（局域网 viewer）：写入口整体隐藏,不出右键菜单
+  if (store.viewerMode) {
+    return;
+  }
   // 右键未选中项时先选中它
   if (!store.selection.includes(item.id)) {
     store.select(item.id);
@@ -239,7 +243,8 @@ function onMenu(item: Item, e: MouseEvent) {
         { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
         // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
         ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => store.openEditor(item) }] : []),
-        { label: showInFileManagerLabel, action: () => window.hawkShell?.showInFinder(item.paths[0]) },
+        // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现
+        ...(window.hawkShell ? [{ label: showInFileManagerLabel, action: () => window.hawkShell?.showInFinder(item.paths[0]) }] : []),
         { separator: true, label: '' },
         ...[5, 4, 3, 2, 1, 0].map((star) => ({
           label: `评分 ${star} 星`,

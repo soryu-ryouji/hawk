@@ -42,6 +42,10 @@ export function useShortcuts() {
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
+      // 只读查看（局域网 viewer）：写操作快捷键禁用
+      if (store.viewerMode) {
+        return;
+      }
       if (store.selection.length > 0) {
         void (store.isTrash ? store.restoreSelected() : store.trashSelected());
       }

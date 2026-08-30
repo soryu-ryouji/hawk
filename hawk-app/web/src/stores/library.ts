@@ -155,7 +155,12 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   // ---- 初始与查询 ----
+  /** 局域网 web 查看（viewer token）：只读模式，全部写入口隐藏；服务端 403 为最终防线 */
+  const viewerMode = ref(false);
+
   async function init() {
+    const info = await api.appInfo();
+    viewerMode.value = info.access === 'viewer';
     library.value = await api.libraryInfo();
     await Promise.all([refreshFolders(), refreshTaxonomy()]);
     restoreView();
@@ -807,7 +812,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible, editorTarget,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible, editorTarget, viewerMode,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes,
     init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,

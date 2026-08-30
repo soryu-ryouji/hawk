@@ -45,6 +45,10 @@ async function submitEdit() {
 }
 
 function onContextMenu(e: MouseEvent) {
+  // 只读查看（局域网 viewer）：文件夹写操作入口隐藏
+  if (store.viewerMode) {
+    return;
+  }
   menu.open(
     [
       { label: '新建子文件夹', action: () => startEdit('create') },

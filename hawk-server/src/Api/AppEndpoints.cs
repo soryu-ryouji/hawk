@@ -12,7 +12,7 @@ public static class AppEndpoints
         typeof(AppEndpoints).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion?.Split('+')[0] ?? "1.0.0";
 
-    public sealed record AppInfo(string Version, string Platform, string ExecPath);
+    public sealed record AppInfo(string Version, string Platform, string ExecPath, string Access);
 
     /// <summary>启动状态查询：初始索引后台构建期间供客户端轮询进度（见 server-rest-api-v1.md「app」节）</summary>
     public sealed record StartupInfo(string Status, string? Phase, int? Processed, int? Total, string? Message);
@@ -47,12 +47,13 @@ public static class AppEndpoints
             })
             .WithTags("app");
 
-        app.MapGet("/api/v1/app/info", () =>
+        app.MapGet("/api/v1/app/info", (HttpContext ctx) =>
             {
                 var platform = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "windows"
                     : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "macos"
                     : "linux";
-                var info = new AppInfo(Version, platform, Environment.ProcessPath ?? "");
+                var access = ctx.Items[TokenAuthMiddleware.AccessItemKey] as string ?? "admin";
+                var info = new AppInfo(Version, platform, Environment.ProcessPath ?? "", access);
                 return TypedResults.Ok(Envelope<AppInfo>.Ok(info));
             })
             .WithTags("app");

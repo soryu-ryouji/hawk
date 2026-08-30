@@ -47,7 +47,8 @@ Electron 主进程启动
   → 创建 BrowserWindow，立即加载静态进度页 electron/loading.html（不等待后端）
   → 预选空闲环回端口（net.listen(0)）+ 生成随机 token
   → spawn hawk-server（开发：dotnet 运行 dll；打包：process.resourcesPath 内二进制）
-      环境变量传入 HAWK_TOKEN，参数 --library <path> --port <预选端口>
+      环境变量传入 HAWK_TOKEN，参数 --library <path> --port <预选端口> --web-dist <web/dist>
+      （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录）
   → 轮询 GET /api/v1/app/startup（200ms，Bearer token；server 先监听、索引后台构建）：
       starting → 进度帧（phase/processed/total）转发进度页
       ready    → 加载主界面（开发：localhost:5173/#api=...&token=...；打包：file://index.html#...）
@@ -150,7 +151,8 @@ web/
     │   ├── TitleBar.vue
     │   ├── WindowControls.vue
     │   ├── Icon.vue           # 描边小图标（feather 风格 inline SVG，侧栏/按钮行首）
-    │   ├── SetupScreen.vue    # 引导页：选库/连接失败整页态（带拖拽条与窗口控制）
+    │   ├── SetupScreen.vue    # 引导页：选库（Electron 内素材库未配置）
+    │   ├── ConnectScreen.vue  # 连接门页：局域网 web 查看先输入 token，验证通过后记忆、再访问免输入直连
     │   ├── Sidebar.vue
     │   ├── FolderTreeNode.vue
     │   ├── ItemGrid.vue
@@ -202,19 +204,25 @@ export interface MenuItem { label: string; danger?: boolean; separator?: boolean
 
 ### API 层
 
-**client.ts**——模块级单例，启动时从 `location.hash` 解析：
+**client.ts**——模块级单例，启动时解析连接参数（桌面端经 hash 注入；局域网 web 查看走同源回退 + token 门页）：
 
 ```ts
 export class ApiError extends Error {
   constructor(public code: string, message: string, public httpStatus: number) { super(message); }
 }
-export function initApiFromLocation(): { api: string; token: string } | null
-// 优先解析 location.hash（#api=...&token=...，Electron 注入）；
-// 无 hash 时回退 import.meta.env 的 VITE_HAWK_API / VITE_HAWK_TOKEN（纯前端调试）；都缺 → null（启动失败态）
+export function initApi(): ApiConfig | null
+// api 解析优先级：location.hash(#api=…) > VITE_HAWK_API(纯前端调试) > 同源 location.origin(仅纯浏览器:
+// 页面由 hawk-server 托管的局域网 web 查看场景;Electron 内无 hash 视为未配置)
+// token 解析优先级：hash > ?token= 查询参数 > localStorage(键 hawk:token:<host>,ConnectScreen 验证通过后写入,
+// 同一服务端再访问免输入直连)
+export function storeToken(api, token) / clearStoredToken(api): void  // localStorage 按 api host 隔离
+export function setApiToken(token): void  // ConnectScreen 验证通过后更新当前连接
 export async function request<T>(method: string, path: string,
   opts?: { body?: unknown; query?: Record<string, string> }): Promise<T>
 // 行为：拼 Bearer 头；信封解包（status==='error' → throw ApiError）；网络错误 → ApiError('NETWORK')；无 data → undefined
 ```
+
+**局域网 web 查看**（server 侧见 storage.md 的 `[web]` 段与 server-rest-api-v1.md 的 `app/info.access`）：桌面端设置面板配置 enabled/port/token（按库隔离），server 追加监听 `0.0.0.0:<port>` 并托管前端静态文件；浏览器打开 `http://<电脑IP>:<port>` 先进 ConnectScreen 输入 token，验证通过后经 `app/info.access` 进入 viewer/admin 模式——**viewer 为只读**：前端隐藏全部写入口（store.viewerMode 驱动：右键写菜单/编辑窗口/检查器编辑字段/侧栏新建/多选批量/删除快捷键/拖拽导入与放置），服务端写端点对该 token 一律 `403 READ_ONLY` 为最终防线。
 
 **endpoints.ts**——端点一一对应 server-rest-api-v1.md，签名即契约：
 
@@ -325,6 +333,7 @@ importBegin(): boolean;                           // 拖拽落下即占用导入
 refreshFolders(): Promise<void>;
 openPreview(id): void; closePreview(): void; navigatePreview(step: 1 | -1): void;
 editorTarget: Item | null;   // 图片编辑窗口目标(全局单例,App.vue 据此挂载 ImageEditDialog)
+viewerMode: boolean;          // 局域网 viewer token(只读查看):隐藏全部写入口,服务端 403 为最终防线
 openEditor(item): void; closeEditor(): void;   // 网格/预览浮层右键「编辑图片…」
 saveImageEdit(id, angle: 90 | 180 | 270): Promise<boolean>;  // 编辑窗口保存：客户端重编码（canvas，JPEG EXIF 字节级回填并重置 Orientation，见 imageEdit.ts）→ item/replace；id 漂移后新 item 就地替换详情（预览若正打开则跟随新 id）；返回是否成功，调用方据此关闭编辑窗口
 showToast(msg: string): void;
@@ -346,11 +355,13 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApiFromLocation（失败显示「请从 hawk 桌面端启动」）→ store.init → connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；引导页/失败页带拖拽条与窗口控制 |
-| `TitleBar.vue` | — | — | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；启动流程 boot()：initApi（无参数时 Electron→SetupScreen、纯浏览器→同源+ConnectScreen 门页）→ store.init（401 → 清残留 token 进门页）→ connectEvents；`onMounted` 跑 boot() 并监听 `hashchange`——引导页选库后主进程仅改 URL hash 注入连接参数（same-document 导航，页面不重载），需重新 boot() 才能切到主界面；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；引导页/连接门页/失败页带拖拽条与窗口控制 |
+| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数、缩略图滑杆（−/＋步进）、读写 store.query（搜索框回车按空格拆 keywords、star 筛选下拉、颜色筛选 chip、排序下拉）；右端设置齿轮（仅 Electron，打开 SettingsDialog）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
-| `SetupScreen.vue` | — | — | 引导页：无连接参数/选库/启动失败的整页态；经 preload `selectLibrary()` 换库后主进程改 URL hash，`hashchange` 触发重新 boot |
+| `SetupScreen.vue` | — | — | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库后主进程改 URL hash，`hashchange` 触发重新 boot |
+| `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
+| `SettingsDialog.vue` | — | `close` | 设置面板（仅桌面端，TitleBar 齿轮打开）：局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-server（失败自动回滚并弹错，成功切 loading → 主界面重载） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |

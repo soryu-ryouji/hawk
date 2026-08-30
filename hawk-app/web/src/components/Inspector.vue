@@ -204,7 +204,7 @@ function batchMoveFolder(path: string) {
         />
       </div>
 
-      <div class="fields">
+      <div v-if="!store.viewerMode" class="fields">
         <textarea
           ref="nameArea"
           v-model="name"
@@ -282,7 +282,7 @@ function batchMoveFolder(path: string) {
       </div>
     </template>
 
-    <!-- 多选：批量操作（参考 Eagle 多选面板） -->
+    <!-- 多选：批量操作（参考 Eagle 多选面板）；只读查看下隐藏全部写操作，仅保留堆叠预览与基本信息 -->
     <div v-else-if="store.selection.length > 1" class="multi">
       <div class="stack">
         <img
@@ -296,6 +296,7 @@ function batchMoveFolder(path: string) {
 
       <p class="multi-title">已选 <b>{{ store.selection.length }}</b> 个文件</p>
 
+      <template v-if="!store.viewerMode">
       <section>
         <div class="section-title">标签</div>
         <input
@@ -323,14 +324,15 @@ function batchMoveFolder(path: string) {
         <div class="section-title">基本信息</div>
         <dl class="info">
           <dt>评分</dt>
-          <dd><StarRating :model-value="0" @update:model-value="applyStarToAll" /></dd>
+          <dd><StarRating v-if="!store.viewerMode" :model-value="0" @update:model-value="applyStarToAll" /><span v-else>—</span></dd>
           <dt>文件大小</dt>
           <dd>{{ formatSize(totalSelectedSize) }}</dd>
         </dl>
       </section>
 
-      <button v-if="!store.isTrash" class="danger" @click="store.trashSelected()">移入回收站</button>
-      <button v-else @click="store.restoreSelected()">恢复</button>
+      <button v-if="!store.viewerMode && !store.isTrash" class="danger" @click="store.trashSelected()">移入回收站</button>
+      <button v-else-if="!store.viewerMode" @click="store.restoreSelected()">恢复</button>
+      </template>
     </div>
 
     <!-- 无选中：当前分区状态（参考 Eagle：分区名 + 基本信息） -->

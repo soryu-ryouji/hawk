@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
-import { initApi } from './api/client';
+import { initApi, apiConfig, clearStoredToken, ApiError } from './api/client';
 import { connectEvents } from './api/events';
 import { useLibraryStore } from './stores/library';
 import { useShortcuts } from './composables/useShortcuts';
@@ -14,11 +14,16 @@ import PreviewOverlay from './components/PreviewOverlay.vue';
 import ImageEditDialog from './components/ImageEditDialog.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import SetupScreen from './components/SetupScreen.vue';
+import ConnectScreen from './components/ConnectScreen.vue';
+import SettingsDialog from './components/SettingsDialog.vue';
 
 const store = useLibraryStore();
 const bootError = ref<string | null>(null);
 // 无连接参数但在 Electron 内：素材库未配置，进引导页
 const setupMode = ref(false);
+// 浏览器直连（局域网 web 查看）：token 缺失或失效，进门页输入
+const needToken = ref(false);
+const showSettings = ref(false);
 let disconnectEvents: (() => void) | null = null;
 
 // ---- 侧栏宽度拖拽 ----
@@ -83,6 +88,7 @@ function startResize(side: 'left' | 'right') {
 }
 
 async function boot() {
+  needToken.value = false;
   if (!initApi()) {
     if (window.hawkShell) {
       setupMode.value = true;
@@ -93,8 +99,14 @@ async function boot() {
   }
   try {
     await store.init();
-  } catch {
-    bootError.value = '无法连接 hawk-server，请确认后端已启动';
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'UNAUTHORIZED') {
+      // token 缺失/失效：清掉本地残留,进门页重新输入
+      clearStoredToken(apiConfig().api);
+      needToken.value = true;
+    } else {
+      bootError.value = '无法连接 hawk-server，请确认后端已启动';
+    }
     return;
   }
   setupMode.value = false;
@@ -119,7 +131,7 @@ async function boot() {
 // same-document 导航（页面不重载、onMounted 不重跑），需监听 hashchange 重新走启动流程，
 // 否则会一直停留在引导页
 function onHashChange() {
-  if (setupMode.value || bootError.value) {
+  if (setupMode.value || bootError.value || needToken.value) {
     void boot();
   }
 }
@@ -144,10 +156,11 @@ useDragImport();
 </script>
 
 <template>
-  <!-- 引导页/启动失败页：无边框窗口下仍需拖拽区与窗口控制按钮 -->
-  <div v-if="setupMode || bootError" class="standalone">
+  <!-- 引导页/启动失败页/局域网 token 门页：无边框窗口下仍需拖拽区与窗口控制按钮 -->
+  <div v-if="setupMode || bootError || needToken" class="standalone">
     <div class="drag-bar"><WindowControls /></div>
     <SetupScreen v-if="setupMode" />
+    <ConnectScreen v-else-if="needToken" @connect="boot" />
     <div v-else class="boot-error">
       <p>{{ bootError }}</p>
       <p>请从 hawk 桌面端启动本应用</p>
@@ -166,7 +179,7 @@ useDragImport();
     }"
   >
     <Sidebar class="sidebar" />
-    <TitleBar class="titlebar" />
+    <TitleBar class="titlebar" @open-settings="showSettings = true" />
     <ItemGrid />
     <!-- 缩略图后台积压指示：细进度条压在网格顶缘（浏览器式加载条），计数归零自动消失 -->
     <div v-if="store.taskBacklog" class="task-bar">
@@ -200,6 +213,7 @@ useDragImport();
     />
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
     <ImageEditDialog v-if="store.editorTarget" :item="store.editorTarget" @close="store.closeEditor()" />
+    <SettingsDialog v-if="showSettings" @close="showSettings = false" />
     <ContextMenu />
 
     <Teleport to="body">

@@ -29,6 +29,10 @@ export function useDragImport() {
 
   useDropZone(document, {
     onDrop: async (_files, event) => {
+      // 只读查看（局域网 viewer）：导入即写操作,禁用
+      if (store.viewerMode) {
+        return;
+      }
       // 库内素材拖拽（拖到侧栏文件夹/分类/标签）：不是文件导入，静默忽略
       if (event.dataTransfer?.types.includes(ITEMS_MIME)) {
         return;

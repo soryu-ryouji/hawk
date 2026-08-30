@@ -17,11 +17,15 @@ public sealed class ServerSettings
     /// <summary>周期对账扫描间隔（秒），0 关闭。文件监听可能静默丢事件，周期扫描（复用哈希、不读内容）保证最终一致</summary>
     public int RescanIntervalSeconds { get; init; } = 60;
 
+    /// <summary>局域网 web 查看托管的前端静态文件目录（Electron 传入 web/dist）；不存在则不托管</summary>
+    public string? WebDist { get; init; }
+
     public static ServerSettings FromArgs(string[] args)
     {
         string? library = Environment.GetEnvironmentVariable("HAWK_LIBRARY");
         int? port = ParseInt(Environment.GetEnvironmentVariable("HAWK_PORT"));
         var token = Environment.GetEnvironmentVariable("HAWK_TOKEN");
+        string? webDist = Environment.GetEnvironmentVariable("HAWK_WEB_DIST");
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -32,6 +36,9 @@ public sealed class ServerSettings
                     break;
                 case "--port" when i + 1 < args.Length:
                     port = ParseInt(args[++i]);
+                    break;
+                case "--web-dist" when i + 1 < args.Length:
+                    webDist = args[++i];
                     break;
             }
         }
@@ -58,6 +65,7 @@ public sealed class ServerSettings
             Port = port ?? DefaultPort,
             Token = token,
             RescanIntervalSeconds = ParseInt(Environment.GetEnvironmentVariable("HAWK_RESCAN_INTERVAL")) ?? 60,
+            WebDist = webDist,
         };
     }
 

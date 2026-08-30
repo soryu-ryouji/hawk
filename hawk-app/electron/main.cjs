@@ -1,8 +1,9 @@
 // hawk-app Electron 主进程：窗口管理（关窗隐藏到托盘）、系统托盘、单实例、拉起/回收 hawk-server、token 注入、库选择、白名单 IPC。
 // 业务数据一律走 REST，不经 IPC（见 docs/architecture.md、docs/frontend/hawk-app.md）。
-const { app, BrowserWindow, dialog, ipcMain, shell, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, Menu, Tray, nativeImage, clipboard } = require('electron');
 const { spawn } = require('node:child_process');
 const net = require('node:net');
+const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -74,6 +75,19 @@ function probeFreePort() {
   });
 }
 
+/** LAN web 查看托管的前端产物：与 loadMainPage 同一目录（dev 与打包形态路径一致）。
+ *  打包态 web/dist 经 asarUnpack 落在 app.asar.unpacked 物理路径——Kestrel 读不到 asar 内部 */
+function webDistDir() {
+  const dist = path.join(__dirname, '..', 'web', 'dist');
+  if (!isDev) {
+    const unpacked = dist.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+    if (fs.existsSync(unpacked)) {
+      return unpacked;
+    }
+  }
+  return dist;
+}
+
 /**
  * 拉起 hawk-server：先监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
  * 轮询 GET /api/v1/app/startup：starting（带进度，转发进度页）→ ready（resolve）/ error（reject，带原因）。
@@ -83,7 +97,7 @@ async function startServer(libPath) {
   const token = crypto.randomBytes(32).toString('hex');
   const port = await probeFreePort();
   const address = `http://127.0.0.1:${port}`;
-  const child = spawn(command, [...args, '--library', libPath, '--port', String(port)], {
+  const child = spawn(command, [...args, '--library', libPath, '--port', String(port), '--web-dist', webDistDir()], {
     env: { ...process.env, HAWK_TOKEN: token },
     stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错
     // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
@@ -277,6 +291,73 @@ async function switchLibrary(libPath) {
   server = await startServer(libPath);
 }
 
+// ---------- 局域网 web 查看（[web] 段按库隔离，存于 .hawk/config.toml） ----------
+
+const WEB_DEFAULTS = { enabled: false, port: 27372, token: '' };
+
+function libraryConfigFile() {
+  return path.join(libraryRoot, '.hawk', 'config.toml');
+}
+
+/** 文本级读取 [web] 段（保留文件其余内容不解析；TOML 由 server 权威解析） */
+function readWebSection(file) {
+  const out = { ...WEB_DEFAULTS };
+  try {
+    let inWeb = false;
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const section = line.match(/^\s*\[([^\]]+)\]\s*$/);
+      if (section) {
+        inWeb = section[1] === 'web';
+        continue;
+      }
+      if (!inWeb) continue;
+      const kv = line.match(/^\s*([A-Za-z_]+)\s*=\s*(.+?)\s*$/);
+      if (!kv) continue;
+      const key = kv[1].toLowerCase();
+      const quoted = kv[2].match(/^"(.*)"$/) ?? kv[2].match(/^'(.*)'$/);
+      const value = quoted ? quoted[1] : kv[2].replace(/\s+#.*$/, '');
+      if (key === 'enabled') out.enabled = value === 'true';
+      else if (key === 'port') out.port = Number.parseInt(value, 10) || WEB_DEFAULTS.port;
+      else if (key === 'token') out.token = value;
+    }
+  } catch { /* 文件不存在等,用默认 */ }
+  if (!(out.port > 0 && out.port <= 65535)) out.port = WEB_DEFAULTS.port;
+  return out;
+}
+
+/** 文本级写回 [web] 段：整段替换、其余段原样保留，新段追加文件末尾 */
+function writeWebSection(file, web) {
+  const lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/) : [];
+  const kept = [];
+  let inWeb = false;
+  for (const line of lines) {
+    const section = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (section) {
+      inWeb = section[1] === 'web'; // 丢弃旧 [web] 段头,段体随 inWeb 跳过
+      if (!inWeb) kept.push(line);
+      continue;
+    }
+    if (!inWeb) kept.push(line);
+  }
+  while (kept.length && kept[kept.length - 1].trim() === '') kept.pop();
+  const token = String(web.token).replace(/["\\]/g, '');
+  kept.push('[web]', `enabled = ${web.enabled ? 'true' : 'false'}`, `port = ${web.port}`, `token = "${token}"`, '');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, kept.join('\n'));
+}
+
+function lanAddresses() {
+  const addresses = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const item of list ?? []) {
+      // Node 18+ family 为数字 4/6（旧版本为字符串 'IPv4'/'IPv6'），两种都兼容
+      const isIpv4 = item.family === 4 || item.family === 'IPv4';
+      if (isIpv4 && !item.internal) addresses.push(item.address);
+    }
+  }
+  return addresses;
+}
+
 // ---------- 白名单 IPC ----------
 
 // 自绘标题栏的窗口控制（无边框窗口没有原生按钮）
@@ -311,6 +392,46 @@ ipcMain.handle('hawk:select-library', async () => {
   return true;
 });
 
+ipcMain.handle('hawk:get-lan-settings', () => ({
+  ...readWebSection(libraryConfigFile()),
+  addresses: lanAddresses(),
+}));
+
+ipcMain.handle('hawk:save-lan-settings', async (_event, web) => {
+  const norm = {
+    enabled: !!web?.enabled,
+    port: Number.parseInt(web?.port, 10) || WEB_DEFAULTS.port,
+    token: String(web?.token ?? '').trim(),
+  };
+  if (norm.enabled && !norm.token) {
+    return { ok: false, error: '启用局域网查看需要填写访问 token' };
+  }
+
+  const file = libraryConfigFile();
+  const backup = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  writeWebSection(file, norm);
+  // 端口/绑定的生效需重启监听;失败回滚配置并尝试恢复原服务
+  loadLoadingPage();
+  try {
+    stopServer();
+    server = await startServer(libraryRoot);
+  } catch (error) {
+    if (backup === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, backup);
+    try {
+      stopServer();
+      server = await startServer(libraryRoot);
+    } catch {
+      // 尽力恢复;仍失败则保持现状由用户重启应用
+    }
+    const message = String(error && error.message ? error.message : error);
+    dialog.showErrorBox('应用设置失败', message);
+    return { ok: false, error: message };
+  }
+  loadMainPage();
+  return { ok: true };
+});
+
 ipcMain.handle('hawk:show-in-finder', (_event, relPath) => {
   if (typeof relPath !== 'string' || relPath.includes('..')) {
     return;
@@ -321,6 +442,34 @@ ipcMain.handle('hawk:show-in-finder', (_event, relPath) => {
   }
   shell.showItemInFolder(abs);
 });
+
+// 复制文件路径/图片本体到剪贴板（预览右键菜单）
+ipcMain.handle('hawk:copy-path', (_event, relPath) => {
+  const abs = resolveLibraryPath(relPath);
+  if (abs) {
+    clipboard.writeText(abs);
+  }
+});
+
+ipcMain.handle('hawk:copy-image', (_event, relPath) => {
+  const abs = resolveLibraryPath(relPath);
+  if (!abs) {
+    return;
+  }
+  const image = nativeImage.createFromPath(abs);
+  if (!image.isEmpty()) {
+    clipboard.writeImage(image);
+  }
+});
+
+/** 库内相对路径 → 绝对路径（含越界守卫），非法路径返回 null */
+function resolveLibraryPath(relPath) {
+  if (typeof relPath !== 'string' || relPath.includes('..') || !libraryRoot) {
+    return null;
+  }
+  const abs = path.join(libraryRoot, ...relPath.split('/'));
+  return path.resolve(abs).startsWith(path.resolve(libraryRoot)) ? abs : null;
+}
 
 // ---------- 生命周期 ----------
 

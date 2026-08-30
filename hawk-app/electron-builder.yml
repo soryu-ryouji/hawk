@@ -19,6 +19,9 @@ extraResources:
   # 各平台 hawk-server 自包含单文件（dotnet publish，见 scripts/build-server.mjs）
   - from: resources/hawk-server
     to: hawk-server
+# LAN web 查看：hawk-server 以物理路径托管该目录（asar 内 Kestrel 读不到）
+asarUnpack:
+  - web/dist/**/*
 mac:
   category: public.app-category.graphics-design
   # dir：只构建 .app 目录，不做镜像打包（zip 由 CI 负责）

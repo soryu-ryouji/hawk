@@ -11,7 +11,7 @@ var settings = ServerSettings.FromArgs(args);
 var port = ResolvePort(settings.Port);
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+builder.WebHost.UseUrls(BuildUrls(settings, port));
 builder.Host.UseSerilog((_, lc) => lc.WriteTo.Console());
 
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -48,6 +48,17 @@ builder.Services.AddSingleton<StartupState>();
 var app = builder.Build();
 
 app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+
+// 局域网 web 查看：Electron 传入 web/dist 目录时托管前端静态文件（页面无鉴权，API 仍全鉴权）。
+// SPA 回退到 index.html，/api 与 /health 不受影响。目录不存在（如未构建）则静默跳过，仅提供 API。
+if (!string.IsNullOrEmpty(settings.WebDist) && Directory.Exists(settings.WebDist))
+{
+    var fileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(settings.WebDist);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fileProvider });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = fileProvider });
+    app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fileProvider });
+}
+
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseMiddleware<TokenAuthMiddleware>();
 app.UseMiddleware<ReadyGateMiddleware>();
@@ -126,4 +137,37 @@ static int ResolvePort(int preferred)
     {
         return 0;
     }
+}
+
+/// <summary>
+/// 监听地址：桌面 API 恒为环回；[web] 启用且配好 token 时追加局域网绑定。
+/// LAN 端口被占用直接启动失败（报错可见），不做静默回退——局域网访问依赖固定端口。
+/// </summary>
+static string BuildUrls(ServerSettings settings, int port)
+{
+    var urls = $"http://127.0.0.1:{port}";
+    var web = LibraryConfig.PeekWeb(settings.LibraryRoot);
+    if (web.Enabled)
+    {
+        if (string.IsNullOrEmpty(web.Token))
+        {
+            Console.Error.WriteLine("[web] enabled 但缺少 token，局域网查看未启动（在设置面板配置 token）");
+            return urls;
+        }
+
+        try
+        {
+            var probe = new TcpListener(IPAddress.Any, web.Port);
+            probe.Start();
+            probe.Stop();
+            urls += $";http://0.0.0.0:{web.Port}";
+        }
+        catch (SocketException)
+        {
+            Console.Error.WriteLine($"局域网查看端口 {web.Port} 被占用，hawk-server 启动失败：请更换端口或关闭占用进程");
+            Environment.Exit(3);
+        }
+    }
+
+    return urls;
 }
