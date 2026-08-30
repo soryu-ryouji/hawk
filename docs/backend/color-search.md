@@ -51,12 +51,12 @@
 
 - **计算时机挂在缩略图 worker 上**：生成缩略图时图像已解码，顺带提炼，零额外解码成本。仅调色板缺失而缩略图齐全时，解码最小的已有缩略图（256px WebP）而非原图，避免为补缓存全库解码原图
 - **单写者规则不破**：worker 不直接改索引，计算结果经 `PaletteJob` 回到流水线消费循环应用；job 携带 hash，若期间内容已漂移（item 不存在或 hash 变化）直接丢弃——幂等
-- **不写元数据**：storage.md 既定原则「派生信息不写入元数据」；且不同机器算法版本可能不同，写入同步目录会制造冲突
+- **写元数据（2026-02 设计修订）**：调色板是内容的纯函数，同 hash 各平台/各设备计算结果必然一致，直接入 `.hawk/metadata/<hash>.toml`（`[[palette]]` 表 + `palette_version`）——一台计算全平台复用，无派生缓存；算法演进由 palette_version 判定旧结果重新提炼
 
 ### 缓存文件
 
 ```text
-<库外缓存目录>/colors/   ← 库外系统缓存目录，本地专用、可重建（见 storage.md）
+index.db 的 items.palette 列 ← 库外系统缓存目录，本地专用、可重建（见 storage.md）
 └── abcdef123....json
 ```
 
@@ -134,7 +134,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | ---- | ---- |
 | `src/Core/ColorMath.cs`（新增） | 纯函数：hex 解析/格式化、sRGB→Lab、ΔE。便于单测 |
 | `src/Core/ColorService.cs`（新增） | 调色板提炼（降采样 + Wu 量化 + 占比统计）与缓存文件读写，仿 ThumbnailService 单例 |
-| `src/Core/LibraryPaths.cs` | `colors/` 目录路径（库外缓存目录，与 thumbnails 同级） |
+| `src/Core/LibraryPaths.cs` | 缓存目录布局（缩略图在 thumbnails/，调色板并入 index.db） |
 | `src/Core/Item.cs` | `Palette` 字段（含预算 Lab）；`ItemDto` 增加 `palette` |
 | `src/Core/ItemIndex.cs` | `ItemQuery.Color`；`Query` 增加颜色过滤；`SetPalette` 加锁写方法 |
 | `src/Core/IndexPipeline.cs` | `ApplyUpsert` 加载调色板缓存；worker 顺带提炼；`PaletteJob` 回写索引并发 `item.updated`；清回收站时清理颜色缓存 |
@@ -153,7 +153,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 | 文件 | 改动 |
 | ---- | ---- |
-| `docs/storage.md` | 库外缓存目录中的 `colors/` 目录 |
+| `docs/storage.md` | 库外缓存目录布局与 index.db 中的调色板存储 |
 | `docs/server-rest-api-v1.md` | palette 字段与 color 参数 |
 | `docs/server-code-structure.md` | 新文件职责与流水线变化 |
 | `hawk-server.Tests/` | ColorMath（hex/Lab/ΔE 已知向量）、提炼（纯色→1 色~100%、双色各半、全透明→空）、ItemIndex 颜色过滤、流水线集成（缓存写入/加载、PaletteJob、漂移丢弃） |

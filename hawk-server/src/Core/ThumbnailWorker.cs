@@ -21,6 +21,9 @@ public sealed class ThumbnailWorker : IDisposable
     /// <summary>生成完成后取 item 投影(补发 item.updated);返回 null 表示 item 已消失,跳过</summary>
     private Func<string, ItemDto?> _getItemDto = _ => null;
 
+    /// <summary>调色板是否已提炼(查元数据 TOML);PaletteJob 回写由流水线单写者完成</summary>
+    private Func<string, bool> _hasPalette = _ => true;
+
     /// <summary>调色板提炼完成后回写流水线(单写者);队列满时由调用方丢弃</summary>
     private Action<string, PaletteColor[]> _enqueuePalette = (_, _) => { };
 
@@ -53,9 +56,10 @@ public sealed class ThumbnailWorker : IDisposable
     }
 
     /// <summary>由 IndexPipeline 装配:索引访问与调色板回写的闭环在流水线侧(单写者)</summary>
-    public void Attach(Func<string, ItemDto?> getItemDto, Action<string, PaletteColor[]> enqueuePalette)
+    public void Attach(Func<string, ItemDto?> getItemDto, Func<string, bool> hasPalette, Action<string, PaletteColor[]> enqueuePalette)
     {
         _getItemDto = getItemDto;
+        _hasPalette = hasPalette;
         _enqueuePalette = enqueuePalette;
     }
 
@@ -124,7 +128,7 @@ public sealed class ThumbnailWorker : IDisposable
             try
             {
                 var sizes = _config.Current.ThumbnailSizes.Where(s => !_thumbnails.Exists(job.Hash, s)).ToArray();
-                var needPalette = !_colors.Exists(job.Hash);
+                var needPalette = !_hasPalette(job.Hash);
                 if (sizes.Length == 0 && !needPalette)
                 {
                     continue;
@@ -132,7 +136,8 @@ public sealed class ThumbnailWorker : IDisposable
 
                 var generated = sizes.Length > 0 && await _thumbnails.GenerateAsync(job.Hash, job.SourceAbs, sizes, ct: ct);
 
-                // 调色板从最小尺寸的已有缩略图提炼:原图只由缩略图生成解码一次,此处解码小图代价极低
+                // 调色板从最小尺寸的已有缩略图提炼:原图只由缩略图生成解码一次,此处解码小图代价极低;
+                // 提炼结果(含空数组负缓存)经 PaletteJob 写入元数据 TOML——内容的纯函数,全平台复用
                 if (needPalette)
                 {
                     var source = _config.Current.ThumbnailSizes.OrderBy(s => s)
@@ -140,8 +145,7 @@ public sealed class ThumbnailWorker : IDisposable
                         .FirstOrDefault(File.Exists);
                     if (source is not null && _colors.Extract(source) is { } palette)
                     {
-                        _colors.Save(job.Hash, palette);
-                        // 回流水线应用(单写者);队列满时丢弃——缓存已落盘,兜底扫描由 ApplyUpsert 载入
+                        // 回流水线应用(单写者);队列满时丢弃——PaletteJob 幂等,下轮对账/刷新会再触发
                         _enqueuePalette(job.Hash, palette);
                     }
                 }

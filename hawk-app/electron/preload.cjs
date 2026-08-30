@@ -6,6 +6,10 @@ contextBridge.exposeInMainWorld('hawkShell', {
   platform: process.platform,
   /** 更换素材库：弹目录选择框并拉起新 server；就绪经 onServerStarted 通知 */
   selectLibrary: () => ipcRenderer.invoke('hawk:select-library'),
+  /** 本机打开过的素材库历史（最近在前，含目录存在性）与当前库路径 */
+  listLibraries: () => ipcRenderer.invoke('hawk:list-libraries'),
+  /** 打开历史素材库（仅限历史记录内的路径）；就绪经 onServerStarted 通知 */
+  openLibrary: (path) => ipcRenderer.invoke('hawk:open-library', path),
   /** 复制库内文件的绝对路径到剪贴板 */
   copyPath: (relPath) => ipcRenderer.invoke('hawk:copy-path', relPath),
   /** 复制图片文件本身到剪贴板 */
@@ -37,6 +41,12 @@ contextBridge.exposeInMainWorld('hawkShell', {
     const listener = (_event, progress) => cb(progress);
     ipcRenderer.on('hawk:server-progress', listener);
     return () => ipcRenderer.removeListener('hawk:server-progress', listener);
+  },
+  /** 订阅 server 即将重启（换库/应用设置重启）：旧 server 已停，前端应立即切启动屏，就绪经 onServerStarted 到达 */
+  onServerRestarting: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('hawk:server-restarting', listener);
+    return () => ipcRenderer.removeListener('hawk:server-restarting', listener);
   },
   /** 订阅 server 就绪：{ address, token }（冷启动/换库/应用设置重启都会到达，需重配 API 并重启数据） */
   onServerStarted: (cb) => {

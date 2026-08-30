@@ -37,7 +37,7 @@ public class IndexPipelineTests
             var store = new MetadataStore(paths, db, NullLogger<MetadataStore>.Instance);
             var index = new ItemIndex();
             var thumbnails = new ThumbnailService(paths, NullLogger<ThumbnailService>.Instance);
-            var colors = new ColorService(paths, NullLogger<ColorService>.Instance);
+            var colors = new ColorService(NullLogger<ColorService>.Instance);
             var bus = new EventBus();
             var categories = new CategoryRegistry(paths, NullLogger<CategoryRegistry>.Instance);
             var tags = new TagRegistry(paths, NullLogger<TagRegistry>.Instance);
@@ -46,7 +46,7 @@ public class IndexPipelineTests
             var worker = new ThumbnailWorker(thumbnails, colors, config, bus, NullLogger<ThumbnailWorker>.Instance);
             var migrator = new TaxonomyMigrator(store, index, categories, tags, bus);
             var viewPrefs = new ViewPreferences(paths, NullLogger<ViewPreferences>.Instance);
-            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, colors, bus, scanner, migrator, viewPrefs, settings,
+            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, bus, scanner, migrator, viewPrefs, settings,
                 NullLogger<IndexPipeline>.Instance);
             pipeline.AttachThumbnailWorker(worker);
             pipeline.Start();
@@ -138,7 +138,7 @@ public class IndexPipelineTests
         });
 
         // 等后台 worker 结束（缩略图 + 调色板提炼完成），确保源文件句柄已释放
-        Assert.True(await WaitUntil(() => rig.Colors.Exists(oldHash)));
+        Assert.True(await WaitUntil(() => rig.Store.TryGet(oldHash, out var pm) && pm.Palette is not null));
 
         // 修改内容（mtime 必须前进，否则复用判定会命中）
         File.WriteAllBytes(file, [1, 2, 3, 4, 5, 6]);
@@ -215,7 +215,7 @@ public class IndexPipelineTests
         var hash = result!.Item.Id;
 
         // 等缩略图与调色板缓存生成（后台 worker 异步），确保缩略图句柄已释放
-        Assert.True(await WaitUntil(() => rig.Thumbnails.Exists(hash, 256) && rig.Colors.Exists(hash)));
+        Assert.True(await WaitUntil(() => rig.Thumbnails.Exists(hash, 256) && rig.Store.TryGet(hash, out var pm) && pm.Palette is not null));
 
         var trashAbs = LibraryFs.FindFreeTrashPath(rig.Paths, "only.png", isDirectory: false);
         LibraryFs.EnsureParentDir(trashAbs);
@@ -252,7 +252,7 @@ public class IndexPipelineTests
         var color = Assert.Single(palette);
         Assert.Equal("#ff0000", ColorMath.ToHex(color.R, color.G, color.B));
         Assert.Equal(100f, color.Percentage);
-        Assert.True(rig.Colors.Exists(hash));
+        Assert.True(rig.Store.TryGet(hash, out var pm) && pm.Palette is not null);
     }
 
     [Fact]
@@ -264,7 +264,7 @@ public class IndexPipelineTests
             var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
             var result = await rig.Pipeline.SubmitUpsertAsync(file);
             hash = result!.Item.Id;
-            Assert.True(await WaitUntil(() => rig.Colors.Exists(hash)));
+            Assert.True(await WaitUntil(() => rig.Store.TryGet(hash, out var pm) && pm.Palette is not null));
         }
 
         // 重建一套服务（模拟重启）：哈希复用不读文件内容，调色板应从缓存文件载入
@@ -282,7 +282,7 @@ public class IndexPipelineTests
         var file = _dir.WriteFile("red.png", SolidPng(255, 0, 0));
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
-        Assert.True(await WaitUntil(() => rig.Colors.Exists(hash)));
+        Assert.True(await WaitUntil(() => rig.Store.TryGet(hash, out var pm) && pm.Palette is not null));
 
         var trashAbs = LibraryFs.FindFreeTrashPath(rig.Paths, "red.png", isDirectory: false);
         LibraryFs.EnsureParentDir(trashAbs);
@@ -293,7 +293,7 @@ public class IndexPipelineTests
         await rig.Pipeline.SubmitClearTrashAsync();
 
         Assert.Null(rig.Index.Get(hash));
-        Assert.False(rig.Colors.Exists(hash));
+        Assert.False(rig.Store.TryGet(hash, out var pm) && pm.Palette is not null);
     }
 
     [Fact]
@@ -478,7 +478,7 @@ public class IndexPipelineTests
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
 
         // 等后台缩略图/调色板 worker 释放文件句柄,再模拟外部进程移动目录(watcher 上报时移动已完成)
-        Assert.True(await WaitUntil(() => rig.Colors.Exists(result!.Item.Id)));
+        Assert.True(await WaitUntil(() => rig.Store.TryGet(result!.Item.Id, out var pm) && pm.Palette is not null));
 
         // 事件序列不固定(缩略图 worker 完成也会补发 item.updated):循环读到 folder.changed 为止
         _dir.Mkdir("e");
@@ -606,7 +606,7 @@ public class IndexPipelineTests
         // 同一 hash 已在队列中时重复派发直接丢弃:对账扫描重放全库不会再灌 no-op 任务
         using var worker = new ThumbnailWorker(
             new ThumbnailService(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<ThumbnailService>.Instance),
-            new ColorService(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<ColorService>.Instance),
+            new ColorService(NullLogger<ColorService>.Instance),
             new LibraryConfig(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<LibraryConfig>.Instance),
             new EventBus(),
             NullLogger<ThumbnailWorker>.Instance);
@@ -627,12 +627,107 @@ public class IndexPipelineTests
         var result = await rig.Pipeline.SubmitUpsertAsync(file);
         var hash = result!.Item.Id;
 
-        Assert.True(await WaitUntil(() => rig.Thumbnails.Exists(hash, 256) && rig.Colors.Exists(hash)));
+        Assert.True(await WaitUntil(() => rig.Thumbnails.Exists(hash, 256) && rig.Store.TryGet(hash, out var pm) && pm.Palette is not null));
         Assert.True(await WaitUntil(() => rig.Worker.Backlog is { Pending: 0, Active: 0 }));
 
         // 全量对账扫描重放全部文件:缩略图与调色板齐备的文件不产生新任务,积压保持为零
         await rig.Pipeline.RunScanAsync(false);
         Assert.True(await WaitUntil(() => rig.Worker.Backlog is { Pending: 0, Active: 0 }));
     }
+
+    [Fact]
+    public async Task 启动注水_缓存恢复内存索引()
+    {
+        // 第一轮入库并让元数据缓存完成写穿；第二轮模拟重启——不跑任何扫描，
+        // 内存索引必须由 SQLite 缓存恢复（启动就绪不再依赖全库遍历）
+        string hash;
+        using (var rig1 = Rig.Create(_dir.Root, _dir.CacheRoot))
+        {
+            var file = _dir.WriteFile("hydrate/a.png", TempDir.TinyPng);
+            hash = (await rig1.Pipeline.SubmitUpsertAsync(file))!.Item.Id;
+        }
+
+        using var rig2 = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var dto = rig2.Index.GetDto(hash);
+        Assert.NotNull(dto);
+        Assert.Single(dto!.Paths);
+        Assert.Equal(1, rig2.Index.Count());
+    }
+
+    [Fact]
+    public async Task 启动注水_宽高与调色板随缓存恢复()
+    {
+        string hash;
+        using (var rig1 = Rig.Create(_dir.Root, _dir.CacheRoot))
+        {
+            var file = _dir.WriteFile("dim/b.png", SolidPng(4, 2, 0));
+            hash = (await rig1.Pipeline.SubmitUpsertAsync(file))!.Item.Id;
+
+            // 等后台 worker 提炼调色板落盘（注水喝的是 SQLite 派生列）
+            Assert.True(await WaitUntil(() => rig1.Store.TryGet(hash, out var pm) && pm.Palette is not null));
+        }
+
+        using var rig2 = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var item = rig2.Index.Get(hash);
+        Assert.NotNull(item);
+        Assert.True(item!.Width > 0);
+        Assert.True(item.Height > 0);
+        Assert.NotEmpty(item.Palette);
+    }
+    [Fact]
+    public async Task 增量扫描_快照命中时跳过未变更目录的文件级访问()
+    {
+        // 首扫建立快照;次轮快照一致 → 不深入文件。设计边界:不经 pipeline 直接改文件内容
+        // (文件夹 mtime 不变)增量检测不到——运行期靠 watcher,停机期靠手动刷新(强制遍历)
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var file = _dir.WriteFile("inc/one.png", TempDir.TinyPng);
+        await rig.Pipeline.RunScanAsync(false);
+        // 扫描的写入防抖窗口(1s)后入库
+        Assert.True(await WaitUntil(() => rig.Index.HashByLocation("inc/one.png") is not null));
+        var hash = rig.Index.HashByLocation("inc/one.png")!;
+
+        File.WriteAllBytes(file, [9, 9, 9]);
+        await rig.Pipeline.RunScanAsync(false);
+        Assert.True(rig.Store.TryGet(hash, out var meta));
+        Assert.NotEqual(3, meta.FindPath("inc/one.png")!.Size); // 增量不深入,未收敛(设计边界)
+
+        // 手动刷新(强制遍历):内容变化 → size/mtime 复用失效 → 重哈希收敛;
+        // 刚改写的文件过 1s 防抖窗口后由延迟重试收敛
+        await rig.Pipeline.SubmitRescanAsync();
+        Assert.True(await WaitUntil(() =>
+            rig.Index.HashByLocation("inc/one.png") is { } newHash &&
+            rig.Store.TryGet(newHash, out var m) && m.FindPath("inc/one.png")?.Size == 3));
+    }
+
+    [Fact]
+    public async Task 增量扫描_目录删除文件触发深入并收敛删除()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        _dir.WriteFile("delta/a.png", TempDir.TinyPng);
+        var b = _dir.WriteFile("delta/b.png", [9, 9, 9]); // 与 a 内容不同(内容寻址,同内容会合并为同一 item)
+        await rig.Pipeline.RunScanAsync(false);
+        Assert.True(await WaitUntil(() => rig.Index.Count() == 2));
+
+        // 不经 pipeline 直接删除(文件夹 mtime 更新 → 下轮增量深入 → 消失对账摘除)
+        File.Delete(b);
+        await rig.Pipeline.RunScanAsync(false);
+        Assert.Equal(1, rig.Index.Count());
+        Assert.Null(rig.Index.HashByLocation("delta/b.png"));
+    }
+
+    [Fact]
+    public async Task 增量扫描_整目录删除清理其下全部位置()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        _dir.WriteFile("sub/deep/x.png", TempDir.TinyPng);
+        _dir.WriteFile("sub/y.png", [8, 8, 8]); // 内容不同 → 两个 item
+        await rig.Pipeline.RunScanAsync(false);
+        Assert.True(await WaitUntil(() => rig.Index.Count() == 2));
+
+        Directory.Delete(Path.Combine(_dir.Root, "sub"), recursive: true);
+        await rig.Pipeline.RunScanAsync(false);
+        Assert.Equal(0, rig.Index.Count());
+    }
+
 }
 

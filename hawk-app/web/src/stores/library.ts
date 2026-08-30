@@ -184,6 +184,17 @@ export const useLibraryStore = defineStore('library', () => {
     const info = await api.appInfo();
     viewerMode.value = info.access === 'viewer';
     library.value = await api.libraryInfo();
+
+    // 换库/应用设置重启复用本入口：清掉上一库的会话状态，避免视图/预览/进度指示残留。
+    // 视图回退由 restoreView 负责（无记忆时回默认视图），这里只清与库无关的记忆
+    query.value = { keywords: [], orderBy: 'modification_time', order: 'desc' };
+    searchText.value = '';
+    clearSelection();
+    closePreview();
+    closeEditor();
+    taskBacklog.value = null;
+    indexProgress.value = null;
+
     await Promise.all([refreshFolders(), refreshTaxonomy(), loadViewPrefs()]);
     restoreView();
     applySortForView(view.value); // 恢复的视图应用其记忆的排序
@@ -208,24 +219,23 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function restoreView() {
+    // 恢复不了（无记忆/目标已删/数据损坏）一律回退全部素材：
+    // 换库复用 init 时 view 残留上一库取值，任何 return 路径都必须显式重置
+    const fallback: ViewState = { kind: 'all' };
     try {
       const saved = localStorage.getItem(viewStorageKey());
       if (!saved) {
+        view.value = fallback;
         return;
       }
       const parsed = JSON.parse(saved) as ViewState;
-      if (parsed.kind === 'folder' && !folderExists(parsed.path)) {
-        return; // 上次浏览的文件夹已被删除 → 回退全部素材
-      }
-      if (parsed.kind === 'category' && !categoryExists(parsed.name)) {
-        return;
-      }
-      if (parsed.kind === 'tag' && !tagList.value.some((t) => t.name === parsed.name)) {
-        return;
-      }
-      view.value = parsed;
+      const valid =
+        (parsed.kind !== 'folder' || folderExists(parsed.path)) &&
+        (parsed.kind !== 'category' || categoryExists(parsed.name)) &&
+        (parsed.kind !== 'tag' || tagList.value.some((t) => t.name === parsed.name));
+      view.value = valid ? parsed : fallback;
     } catch {
-      // 损坏的持久化数据忽略
+      view.value = fallback; // 损坏的持久化数据
     }
   }
 
@@ -619,6 +629,16 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** 手动「刷新缓存」：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
+  async function refreshLibrary() {
+    try {
+      await api.rescan();
+      showToast('正在刷新缓存…');
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
   /** 导入开始：拖拽落下即调用，覆盖「收集文件」阶段；已有任务时拒绝并提示 */
   function importBegin(): boolean {
     if (importProgress.value) {
@@ -970,7 +990,7 @@ export const useLibraryStore = defineStore('library', () => {
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
+    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,
     refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
     openPreview, closePreview, navigatePreview, saveImageEdit, openEditor, closeEditor, showToast, applyEvent,

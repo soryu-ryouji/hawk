@@ -6,6 +6,7 @@ import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
 import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
 import PromptDialog from './PromptDialog.vue';
+import type { MenuItem } from '../types';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
@@ -26,10 +27,29 @@ const showRenameTag = ref(false);
 const renameTarget = ref('');
 const showRenameCategory = ref(false);
 
-async function selectLibrary() {
-  if (window.hawkShell) {
-    await window.hawkShell.selectLibrary();
+/**
+ * 库名下拉：列出本机打开过的素材库（主进程记录，最近在前，当前库打勾，目录已删的置灰），
+ * 底部「打开文件夹…」弹系统目录选择框加入新库。换库就绪经 hawk:server-started 事件驱动 App 原地重启数据。
+ */
+async function onLibraryClick(e: MouseEvent) {
+  const shell = window.hawkShell;
+  if (!shell) {
+    return;
   }
+  const res = await shell.listLibraries();
+  const items: MenuItem[] = res.libraries.map((lib) => ({
+    label: lib.exists ? lib.name : `${lib.name}（已删除）`,
+    title: lib.path,
+    checked: lib.path === res.current,
+    disabled: !lib.exists,
+    action: () => {
+      if (lib.path !== res.current) {
+        void shell.openLibrary(lib.path);
+      }
+    },
+  }));
+  items.push({ separator: true, label: '' }, { label: '打开文件夹…', action: () => void shell.selectLibrary() });
+  menu.open(items, e);
 }
 
 function createRootFolder(name: string) {
@@ -197,8 +217,8 @@ function onTagContextMenu(name: string, e: MouseEvent) {
       <button
         v-if="hasShell"
         class="library-name in-head"
-        :title="store.library?.path + '（点击更换素材库）'"
-        @click="selectLibrary"
+        :title="store.library?.path + '（点击切换素材库）'"
+        @click="onLibraryClick"
         @dblclick.stop
       >
         <Icon name="library" />
@@ -214,7 +234,7 @@ function onTagContextMenu(name: string, e: MouseEvent) {
       </button>
     </div>
     <div class="sidebar-body">
-      <button v-if="hasShell" class="library-name in-body" :title="store.library?.path + '（点击更换素材库）'" @click="selectLibrary">
+      <button v-if="hasShell" class="library-name in-body" :title="store.library?.path + '（点击切换素材库）'" @click="onLibraryClick">
         <Icon name="library" />
         <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
         <Icon name="chevronDown" :size="12" />

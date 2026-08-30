@@ -40,7 +40,20 @@ export interface MenuItem {
   separator?: boolean;
   /** 选中标记（排序/筛选等单选菜单的当前项） */
   checked?: boolean;
+  /** 置灰不可点（如下拉中目录已被删除的历史库） */
+  disabled?: boolean;
+  /** 悬停提示（长路径等） */
+  title?: string;
   action?: () => void;
+}
+
+/** 素材库历史条目（主进程记录，最近使用在前） */
+export interface LibraryHistoryItem {
+  path: string;
+  /** 目录名（basename） */
+  name: string;
+  /** 目录仍存在；已删除的历史项展示但不可选 */
+  exists: boolean;
 }
 
 /** Electron preload 注入的白名单通道（浏览器纯前端调试时不存在） */
@@ -49,6 +62,10 @@ declare global {
     hawkShell?: {
       platform: string;
       selectLibrary(): Promise<boolean>;
+      /** 本机打开过的素材库历史与当前库路径 */
+      listLibraries(): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
+      /** 打开历史素材库（仅限历史记录内的路径） */
+      openLibrary(path: string): Promise<boolean>;
       /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
       getLanSettings(): Promise<LanSettings>;
       /** 保存 [web] 配置并重启 hawk-server（失败自动回滚），返回 { ok, error? } */
@@ -68,6 +85,8 @@ declare global {
       onServerStarted(cb: (conn: { address: string; token: string }) => void): () => void;
       /** 订阅 server 启动/运行失败 */
       onServerError(cb: (error: { message: string }) => void): () => void;
+      /** 订阅 server 即将重启（换库/应用设置重启）：旧 server 已停，应立即切启动屏 */
+      onServerRestarting(cb: () => void): () => void;
       /** 订阅 server 扫描进度（应用内启动屏用）：{ phase, processed, total }，total=0 表示不定态 */
       onServerProgress(cb: (progress: { phase: string; processed: number; total: number }) => void): () => void;
       onWindowMaximized(cb: (maximized: boolean) => void): () => void;

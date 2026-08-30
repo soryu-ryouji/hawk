@@ -149,7 +149,12 @@ async function runBoot() {
   }
 }
 
-watch(readyCount, () => void runBoot());
+watch(readyCount, () => {
+  // 冷启动已在 starting；换库/应用设置重启时 phase 还是 ready（主界面挂着旧数据）：
+  // 先回启动屏（进度经 IPC 持续到达）再重启数据，避免换库期间主界面假死误导
+  phase.value = 'starting';
+  void runBoot();
+});
 
 // server 启动/运行失败：token 哨兵值转门页，其余进错误屏（含退出入口）
 watch(failed, (message) => {
@@ -209,6 +214,11 @@ if (!initApi()) {
 
 onMounted(() => {
   loadPanelWidths();
+  // 换库/应用设置重启：主进程停旧 server 时即收到事件（早于 ready），
+  // 立刻切启动屏——旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效（假死）
+  window.hawkShell?.onServerRestarting(() => {
+    phase.value = 'starting';
+  });
 });
 
 onUnmounted(() => {

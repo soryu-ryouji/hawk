@@ -9,7 +9,42 @@ public class ColorServiceTests
 {
     private readonly TempDir _dir = new();
 
-    private ColorService NewService() => new(new LibraryPaths(_dir.Root, _dir.CacheRoot), NullLogger<ColorService>.Instance);
+    private ColorService NewService() => new(NullLogger<ColorService>.Instance);
+
+    [Fact]
+    public void 提炼结果随元数据TOML持久化并跨实例恢复()
+    {
+        // 调色板是内容的纯函数:写入素材元数据 TOML(参与网盘同步),一台计算全平台复用——
+        // 新实例(其他设备/平台)从 TOML 解析即得,无需重新提炼
+        var paths = new LibraryPaths(_dir.Root, _dir.CacheRoot);
+        paths.EnsureLayout();
+        var hash = new string('a', 64);
+        var store = new MetadataStore(paths, new IndexDb(paths, NullLogger<IndexDb>.Instance), NullLogger<MetadataStore>.Instance);
+        store.Save(hash, new ItemMetadata
+        {
+            Width = 640,
+            Height = 480,
+            Palette = [new PaletteEntry("#344441", 3.1f), new PaletteEntry("#ff0000", 96.9f)],
+        });
+
+        // 模拟另一台设备/平台:全新 MetadataStore 从 TOML 解析
+        var restored = new MetadataStore(paths, new IndexDb(paths, NullLogger<IndexDb>.Instance), NullLogger<MetadataStore>.Instance);
+        Assert.True(restored.TryGet(hash, out var meta));
+        Assert.Equal(640, meta.Width);
+        Assert.Equal(480, meta.Height);
+        Assert.Equal(2, meta.Palette!.Count);
+        Assert.Equal("#344441", meta.Palette[0].Color);
+        Assert.Equal(3.1f, meta.Palette[0].Percentage);
+
+        // 索引同步路径:PaletteEntry → PaletteColor(Lab 由 RGB 纯函数重算)
+        var item = new Item { Id = hash };
+        item.SyncFrom(meta);
+        Assert.Equal(640, item.Width);
+        Assert.Equal(2, item.Palette.Length);
+        Assert.Equal("#344441", HexOf(item.Palette[0]));
+        Assert.Equal(3.1f, item.Palette[0].Percentage);
+        Assert.Equal(PaletteColor.FromRgb(0x34, 0x44, 0x41, 3.1f).Lab, item.Palette[0].Lab);
+    }
 
     private static string SavePng(string absPath, Image<Rgba32> image)
     {
@@ -84,59 +119,9 @@ public class ColorServiceTests
     }
 
     [Fact]
-    public void 缓存_写入后可读回且一致()
-    {
-        var service = NewService();
-        var hash = new string('a', 64);
-        var palette = new[]
-        {
-            PaletteColor.FromRgb(0x34, 0x44, 0x41, 3.1f),
-            PaletteColor.FromRgb(0xFF, 0x00, 0x00, 96.9f),
-        };
-
-        service.Save(hash, palette);
-        Assert.True(service.Exists(hash));
-
-        var loaded = service.Load(hash);
-        Assert.NotNull(loaded);
-        Assert.Equal(2, loaded.Length);
-        Assert.Equal("#344441", HexOf(loaded[0]));
-        Assert.Equal(3.1f, loaded[0].Percentage);
-        Assert.Equal("#ff0000", HexOf(loaded[1]));
-        Assert.Equal(96.9f, loaded[1].Percentage);
-        // 读回时重新预算 Lab，与提取结果一致
-        Assert.Equal(palette[0].Lab, loaded[0].Lab);
-    }
-
-    [Fact]
-    public void 缓存_版本不符视为缺失()
-    {
-        var service = NewService();
-        var hash = new string('b', 64);
-        var file = service.GetPath(hash);
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        File.WriteAllText(file, """{"v": 999, "palette": [{"color": "#ff0000", "percentage": 100.0}]}""");
-
-        Assert.True(service.Exists(hash));
-        Assert.Null(service.Load(hash));
-    }
-
-    [Fact]
-    public void 缓存_损坏文件视为缺失()
-    {
-        var service = NewService();
-        var hash = new string('c', 64);
-        var file = service.GetPath(hash);
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        File.WriteAllText(file, "not json");
-
-        Assert.Null(service.Load(hash));
-    }
-
-    [Fact]
     public void 提炼与缓存_从缩略图文件提炼()
     {
-        // 模拟 worker 流程：从落盘的缩略图提炼 → 写缓存 → 读回
+        // 模拟 worker 流程：从落盘的缩略图提炼
         var service = NewService();
         using var image = Solid(256, 256, new Rgba32(0x34, 0x44, 0x41));
         var source = SavePng(Path.Combine(_dir.Root, "thumb.png"), image);

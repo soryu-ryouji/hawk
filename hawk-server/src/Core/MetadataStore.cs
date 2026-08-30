@@ -61,6 +61,13 @@ public sealed class MetadataStore
         }
     }
 
+    /// <summary>全量文件夹快照（增量扫描的对比基准；缓存不可用时返回空表 = 首轮全量深入）</summary>
+    public IReadOnlyDictionary<string, (long Mtime, int Entries)> LoadFolderSnapshots() => _db.LoadFolderSnapshots();
+
+    /// <summary>整体替换文件夹快照（每轮扫描一次；遍历不完整时不调用）</summary>
+    public void ReplaceFolderSnapshots(IReadOnlyDictionary<string, (long Mtime, int Entries)> snapshots) =>
+        _db.ReplaceFolderSnapshots(snapshots);
+
     /// <summary>全部元数据条目快照（批量迁移用）</summary>
     public KeyValuePair<string, ItemMetadata>[] Snapshot()
     {
@@ -289,6 +296,35 @@ public sealed class MetadataStore
             }
         }
 
+        if (table.TryGetValue("width", out var w) && w is long wNum)
+        {
+            meta.Width = (int)wNum;
+        }
+
+        if (table.TryGetValue("height", out var h) && h is long hNum)
+        {
+            meta.Height = (int)hNum;
+        }
+
+        if (table.TryGetValue("palette_version", out var pv) && pv is long pvNum)
+        {
+            meta.PaletteVersion = (int)pvNum;
+        }
+
+        if (table.TryGetValue("palette", out var pal) && pal is IEnumerable palArr)
+        {
+            var palette = new List<PaletteEntry>();
+            foreach (var entry in palArr.Cast<object?>())
+            {
+                if (entry is IDictionary<string, object?> e && e.TryGetValue("color", out var c) && c is string color)
+                {
+                    palette.Add(new PaletteEntry(color, e.TryGetValue("percentage", out var pct) ? Convert.ToSingle(pct) : 0f));
+                }
+            }
+
+            meta.Palette = palette;
+        }
+
         return meta;
     }
 
@@ -325,6 +361,16 @@ public sealed class MetadataStore
             sb.Append("annotation = ").AppendLine(TomlString(meta.Annotation));
         }
 
+        if (meta.Width > 0)
+        {
+            sb.Append("width = ").AppendLine(meta.Width.ToString());
+        }
+
+        if (meta.Height > 0)
+        {
+            sb.Append("height = ").AppendLine(meta.Height.ToString());
+        }
+
         foreach (var p in meta.Paths)
         {
             sb.AppendLine();
@@ -332,6 +378,19 @@ public sealed class MetadataStore
             sb.Append("path = ").AppendLine(TomlString(p.Path));
             sb.Append("size = ").AppendLine(p.Size.ToString());
             sb.Append("modification_time = ").AppendLine(p.ModificationTime.ToString());
+        }
+
+        // 调色板:内容的纯函数,入 TOML 全平台复用;空表是负缓存(已提炼无有效像素),同样持久化
+        if (meta.Palette is not null)
+        {
+            sb.Append("palette_version = ").AppendLine(meta.PaletteVersion.ToString());
+            foreach (var p in meta.Palette)
+            {
+                sb.AppendLine();
+                sb.AppendLine("[[palette]]");
+                sb.Append("color = ").AppendLine(TomlString(p.Color));
+                sb.Append("percentage = ").AppendLine(p.Percentage.ToString("0.0"));
+            }
         }
 
         return sb.ToString();

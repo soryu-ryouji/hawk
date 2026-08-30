@@ -118,7 +118,6 @@ function startServer(libPath, address, token) {
   let poll = 0;
   let watchdog = 0;
   let lastProgressAt = Date.now();
-  let lastProcessed = -1;
   /** 失败统一出口：通知渲染进程 + reject ready（一次性） */
   const fail = (message) => {
     clearInterval(poll);
@@ -149,18 +148,14 @@ function startServer(libPath, address, token) {
       if (!res.ok) {
         return; // 服务已监听但未到可查询状态，继续轮询
       }
+      // 可应答即视为活着（慢任务容忍：缓存重建/TOML 全量解析可达数分钟），重置停滞计时
+      lastProgressAt = Date.now();
       const body = await res.json();
       const state = body.data;
       if (state.status === 'starting') {
-        const processed = state.processed || 0;
-        if (processed !== lastProcessed) {
-          // 进度在推进：重置停滞计时（初始索引耗时随库规模变化，不设总时长上限）
-          lastProcessed = processed;
-          lastProgressAt = Date.now();
-        }
         mainWindow?.webContents.send('hawk:server-progress', {
           phase: state.phase || 'scan',
-          processed,
+          processed: state.processed || 0,
           total: state.total || 0,
         });
         return;
@@ -177,12 +172,11 @@ function startServer(libPath, address, token) {
       // 连接拒绝：server 尚未监听，继续轮询
     }
   }, 200);
-  // 初始索引（新库首扫 = 全库遍历 + 全量哈希）大库可达数分钟，60s 总时长上限会误杀正常索引。
-  // 改为停滞看门狗：进度（processed）持续推进就一直等；停滞过久才判定死僵。
-  // 容忍 120s 覆盖扫描前无进度帧的元数据对账等静默阶段
+  // 停滞看门狗：只防「HTTP 都无响应」的真卡死（Kestrel 线程池耗尽/进程 hang）；
+  // 能应答 startup 就算慢也不超时。进程崩溃由 exit 事件单独上报
   watchdog = setInterval(() => {
     if (Date.now() - lastProgressAt >= 120_000) {
-      fail('hawk-server 索引长时间无进展，疑似卡死');
+      fail('hawk-server 启动无响应，疑似卡死');
     }
   }, 1000);
 
@@ -305,10 +299,33 @@ async function pickLibrary() {
 }
 
 async function switchLibrary(libPath, address, token) {
+  // 前端立刻切启动屏：旧 server 已停、新 server 未 ready 的窗口期，
+  // 主界面所有 API 已失效（假死），不能在 ready 后才切（hawk:server-restarting）
+  mainWindow?.webContents.send('hawk:server-restarting');
   stopServer();
-  writeConfig({ libraryPath: libPath });
+  // 记住当前库并维护历史（最近使用在前、去重、上限 10）：换库下拉经 hawk:list-libraries 直达
+  const history = [libPath, ...(readConfig().libraryHistory ?? []).filter((p) => p !== libPath)].slice(0, 10);
+  writeConfig({ libraryPath: libPath, libraryHistory: history });
   libraryRoot = libPath;
   return startServer(libPath, address, token);
+}
+
+/** 拉起指定素材库的 server（选新目录/历史库/冷启动共用）：端口/token 即选即生成 */
+async function openLibraryAt(libPath) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const port = await probeFreePort();
+  return switchLibrary(libPath, `http://127.0.0.1:${port}`, token);
+}
+
+/** 历史库列表（最近使用在前，含目录存在性；当前库由 libraryRoot 标记） */
+function listLibraries() {
+  const history = readConfig().libraryHistory ?? [];
+  return {
+    current: libraryRoot,
+    libraries: history
+      .filter((p) => typeof p === 'string')
+      .map((p) => ({ path: p, name: path.basename(p), exists: fs.existsSync(p) })),
+  };
 }
 
 // ---------- 局域网 web 查看（[web] 段按库隔离，存于 .hawk/config.toml） ----------
@@ -408,12 +425,26 @@ ipcMain.handle('hawk:select-library', async () => {
   }
   try {
     // 端口/token 即选即生成；页面切应用内启动屏，就绪经 hawk:server-started 通知
-    const token = crypto.randomBytes(32).toString('hex');
-    const port = await probeFreePort();
-    server = await switchLibrary(selected, `http://127.0.0.1:${port}`, token);
+    server = await openLibraryAt(selected);
     return true;
   } catch (error) {
     // 失败时留在引导页并给出可见错误，而不是让 IPC 静默 reject
+    dialog.showErrorBox('hawk-server 启动失败', String(error && error.message ? error.message : error));
+    return false;
+  }
+});
+
+ipcMain.handle('hawk:list-libraries', () => listLibraries());
+
+ipcMain.handle('hawk:open-library', async (_event, libPath) => {
+  // 只接受历史记录内的路径（与目录选择框等效的白名单）
+  if (typeof libPath !== 'string' || !listLibraries().libraries.some((l) => l.path === libPath)) {
+    return false;
+  }
+  try {
+    server = await openLibraryAt(libPath);
+    return true;
+  } catch (error) {
     dialog.showErrorBox('hawk-server 启动失败', String(error && error.message ? error.message : error));
     return false;
   }
@@ -440,18 +471,14 @@ ipcMain.handle('hawk:save-lan-settings', async (_event, web) => {
   // 端口/绑定的生效需重启监听。await ready 以支持失败回滚（spawn 同步失败由 select-library 路径的
   // 系统弹窗兜底；此处失败信号来自 ready reject / hawk:server-error 事件）
   try {
-    const token = crypto.randomBytes(32).toString('hex');
-    const port = await probeFreePort();
-    server = await switchLibrary(libraryRoot, `http://127.0.0.1:${port}`, token);
+    server = await openLibraryAt(libraryRoot);
     await server.ready;
   } catch (error) {
     if (backup === null) fs.rmSync(file, { force: true });
     else fs.writeFileSync(file, backup);
     try {
       stopServer();
-      const token = crypto.randomBytes(32).toString('hex');
-      const port = await probeFreePort();
-      server = await switchLibrary(libraryRoot, `http://127.0.0.1:${port}`, token);
+      server = await openLibraryAt(libraryRoot);
       await server.ready;
     } catch {
       // 尽力恢复;仍失败则保持现状由用户重启应用
@@ -518,9 +545,7 @@ app.whenReady().then(async () => {
   // 端口/token 先生成、页面立即加载并显示应用内启动屏，server 后台拉起——
   // 窗口内容单页生命周期，无 loading→主界面二次导航，杜绝切换白屏
   try {
-    const token = crypto.randomBytes(32).toString('hex');
-    const port = await probeFreePort();
-    server = await switchLibrary(libPath, `http://127.0.0.1:${port}`, token);
+    server = await openLibraryAt(libPath);
     loadMainPage({ address: server.address, token: server.token });
   } catch (error) {
     dialog.showErrorBox('hawk-server 启动失败', String(error));

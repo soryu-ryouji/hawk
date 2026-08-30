@@ -15,6 +15,7 @@ const LABELS: Record<string, string> = {
   scan: '正在扫描素材库…',
   hash: '正在计算文件哈希…',
   apply: '正在更新索引…',
+  sync: '正在同步素材信息…',
   done: '即将完成…',
 };
 </script>

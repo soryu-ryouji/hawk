@@ -58,12 +58,12 @@ Electron 主进程启动
       starting → hawk:server-progress（phase/processed/total，应用内启动屏呈现）
       ready    → hawk:server-started（含 address/token）→ 渲染进程重配 API（restart 会换端口）并 boot 数据
       error    → hawk:server-error（message 为后端给出的失败原因，页面内错误屏 + 退出入口）
-    子进程异常退出 / spawn 失败 / 60s 超时 → hawk:server-error（stderr 尾部；有意 stopServer 除外）
+    子进程异常退出 / spawn 失败 / 启动无响应(HTTP 不可达 120s,能应答 startup 即视为活着——缓存重建可达数分钟) → hawk:server-error（stderr 尾部；有意 stopServer 除外）
 退出
   → 杀掉子进程（含异常退出路径，防止孤儿进程）
 ```
 
-启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。换库（引导页选库）与应用设置重启 server 不再重载页面——`hawk:server-started` 带新地址/token 到达后渲染进程原地重配 API、重启数据（store.init + SSE 重连）。
+启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。换库（引导页选库、侧栏库名下拉选历史库）与应用设置重启 server 不再重载页面——主进程停旧 server 的同时发 `hawk:server-restarting`，渲染进程立即切启动屏（旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效，必须此时就切）；`hawk:server-started` 带新地址/token 到达后原地重配 API、重启数据（store.init 会清掉上一库的会话状态：查询条件/选择/预览/进度指示；视图经 restoreView 恢复或回退全部素材，+SSE 重连）。历史库由主进程记录（userData `hawk-app.json` 的 `libraryHistory`，最近使用在前、去重、上限 10），侧栏库名下拉列出（当前库打勾、已删除的置灰），底部「打开文件夹…」弹系统目录选择框。
 
 握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。
 
@@ -84,7 +84,9 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 | 通道 | 用途 |
 | ---- | ---- |
-| `selectLibrary()` | 更换素材库：弹目录选择框 → 主进程杀掉旧 server 并用新库重启 → 重载窗口 |
+| `selectLibrary()` | 选新素材库：弹系统目录选择框 → 主进程杀掉旧 server 用新库重启（进历史记录） |
+| `listLibraries()` | 本机打开过的素材库历史：`{ current, libraries: [{ path, name, exists }] }`（最近在前；主进程读 `hawk-app.json` 的 `libraryHistory` 并校验目录存在性） |
+| `openLibrary(path)` | 打开历史素材库（仅接受历史记录内的路径），换库就绪经 `onServerStarted` 通知 |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
 | `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
 | `copyImage(path)` | 预览右键「复制图片」：主进程 `nativeImage.createFromPath` + `clipboard.writeImage` |
@@ -92,6 +94,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
 | `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），应用内启动屏用；返回退订函数 |
+| `onServerRestarting(cb)` | 订阅 server 即将重启（换库/应用设置重启）：主进程停旧 server 时即发，前端应立即切启动屏（早于 ready 的 `onServerStarted`）；返回退订函数 |
 | `onServerStarted(cb)` | 订阅 server 就绪：`{ address, token }`（冷启动/换库/应用设置重启都会到达；restart 会换端口，渲染进程须先重配 API 再重启数据）；返回退订函数 |
 | `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message }`（页面内错误屏呈现）；返回退订函数 |
 | `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的隐藏到托盘） |
@@ -387,7 +390,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
 | `SettingsDialog.vue` | — | `close` | 设置面板（TitleBar 齿轮打开；Electron 与触屏设备可开）：缩略图尺寸滑杆（−/滑杆/＋，v-model store.thumbSize 实时生效，所有端可用）；局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表——远程设置依赖 Electron preload 通道，`v-if="hasShell"` 渲染，移动端（浏览器触屏）不可见；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-server（await ready 以支持失败自动回滚并弹错）；成功不重启页面——server-started 事件驱动 App 原地换地址重载数据，本对话框 emit close；无 shell 时底部仅「关闭」（滑杆实时生效无需保存）；宽度 `min(420px, 100vw-32px)` 适配手机竖屏 |
-| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
+| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |

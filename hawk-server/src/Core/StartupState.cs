@@ -7,7 +7,7 @@ namespace Hawk.Server.Core;
 /// </summary>
 public sealed class StartupState
 {
-    /// <summary>当前扫描阶段：scan / hash / apply / done（就绪后为 done）</summary>
+    /// <summary>当前阶段：scan / hash / apply / sync（元数据对账，仅启动期）/ done（就绪后为 done）</summary>
     public string Phase { get; private set; } = "scan";
 
     public int Processed { get; private set; }

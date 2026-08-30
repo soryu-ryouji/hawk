@@ -76,7 +76,7 @@
 | 字段 | 类型 | 说明 |
 | ---- | ---- | ---- |
 | status | string | `starting` / `ready` / `error` |
-| phase | string | 仅 starting 时存在：`scan`（遍历清单，total 恒 0）/ `hash`（并行算哈希）/ `apply`（应用索引） |
+| phase | string | 仅 starting 时存在：`scan`（遍历清单，total 恒 0）/ `hash`（并行算哈希）/ `apply`（应用索引）/ `sync`（元数据对账，初始扫描前，total 恒 0） |
 | processed / total | number | 仅 starting 时存在；`total=0` 表示该阶段总量未知（客户端宜显示不定态进度） |
 | message | string | 仅 error 时存在：失败原因 |
 

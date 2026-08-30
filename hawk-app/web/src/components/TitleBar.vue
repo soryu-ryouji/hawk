@@ -185,6 +185,10 @@ function onDblClick(e: MouseEvent) {
     <div class="spacer" />
 
     <div class="group right">
+      <button class="bar-btn" title="刷新缓存（重新扫描素材库）" @click="store.refreshLibrary()">
+        <Icon name="refresh" :size="14" />
+      </button>
+
       <button
         class="bar-btn filter-btn"
         :class="{ active: store.filterBarVisible || store.hasActiveFilters }"

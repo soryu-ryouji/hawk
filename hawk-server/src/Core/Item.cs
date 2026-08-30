@@ -55,6 +55,18 @@ public sealed class Item
         Categories = new List<string>(meta.Categories);
         Star = meta.Star;
         Annotation = meta.Annotation;
+        Width = meta.Width;
+        Height = meta.Height;
+        // Palette 是内容的纯函数(同 hash 各平台一致),直接随元数据同步;未提炼(null)保持索引现状
+        if (meta.Palette is not null)
+        {
+            Palette = meta.Palette
+                .Select(p => ColorMath.ParseHex(p.Color) is { } rgb
+                    ? PaletteColor.FromRgb(rgb.R, rgb.G, rgb.B, p.Percentage)
+                    : null)
+                .OfType<PaletteColor>()
+                .ToArray();
+        }
     }
 
     /// <summary>主位置：普通视图取首个库内位置，回收站视图取首个回收站位置</summary>

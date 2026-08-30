@@ -24,6 +24,89 @@ public sealed class LibraryScanner
     public IEnumerable<string> WalkDirectory(string absDir) =>
         WalkDirectory(absDir, isTrashSubtree: IsTrashPath(absDir), onEnumerationError: null);
 
+    /// <summary>
+    /// 产出全库目录及 (mtime, 直接子项数)——增量扫描的快照对比输入。
+    /// entries 为原始直接子项数（不过 ignore）：快照对比追求「任何变化都触发深入」，ignore 规则变化只多深入不漏检。
+    /// </summary>
+    public IEnumerable<(string Rel, long Mtime, int Entries)> WalkDirectoryStats(Action? onEnumerationError = null)
+    {
+        var pending = new Stack<string>();
+        pending.Push(_paths.Root);
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+            IEnumerable<string> entries;
+            try
+            {
+                entries = Directory.EnumerateFileSystemEntries(dir);
+            }
+            catch (Exception)
+            {
+                onEnumerationError?.Invoke();
+                continue;
+            }
+
+            int count = 0;
+            foreach (var entry in entries)
+            {
+                count++;
+                if (!Directory.Exists(entry))
+                {
+                    continue;
+                }
+
+                if (_paths.ToRelative(entry) is { } rel)
+                {
+                    if (rel == LibraryPaths.HawkDirName)
+                    {
+                        pending.Push(_paths.TrashDir);
+                        continue;
+                    }
+
+                    pending.Push(entry);
+                }
+            }
+
+            if (_paths.ToRelative(dir) is { } dirRel)
+            {
+                // GetLastWriteTimeUtc 对遍历期间被删的目录返回 1601 而非抛异常：
+                // 快照必然不一致 → 深入时目录已消失，深入枚举容忍即可
+                yield return (dirRel, LibraryPaths.ToUnixMs(Directory.GetLastWriteTimeUtc(dir)), count);
+            }
+        }
+    }
+
+    /// <summary>只枚举目录的直接文件（不深入子目录）——增量扫描按目录深入时用</summary>
+    public IEnumerable<string> WalkFilesInDirectory(string absDir)
+    {
+        IEnumerable<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFiles(absDir);
+        }
+        catch (Exception)
+        {
+            yield break; // 权限不足或遍历期间被删除
+        }
+
+        var isTrashSubtree = IsTrashPath(absDir);
+        foreach (var entry in entries)
+        {
+            var rel = _paths.ToRelative(entry);
+            if (rel is null)
+            {
+                continue;
+            }
+
+            if (!isTrashSubtree && _config.IsIgnored(rel))
+            {
+                continue;
+            }
+
+            yield return entry;
+        }
+    }
+
     private bool IsTrashPath(string absDir)
     {
         var rel = _paths.ToRelative(absDir);

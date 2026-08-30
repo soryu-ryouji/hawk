@@ -107,7 +107,7 @@ public class LibraryPathsTests
 
         // 在库外（不会被库扫描/同步进 iCloud、Dropbox）
         Assert.DoesNotContain(paths.ThumbnailsDir, dir.Root);
-        Assert.DoesNotContain(paths.ColorsDir, dir.Root);
+        Assert.DoesNotContain(paths.IndexDbFile, dir.Root);
         // 按库区分：不同库根 → 不同缓存子目录
         var other = new LibraryPaths(dir.Root + "-other");
         Assert.NotEqual(paths.ThumbnailsDir, other.ThumbnailsDir);
@@ -124,9 +124,58 @@ public class LibraryPathsTests
         paths.EnsureLayout();
 
         Assert.Equal(Path.Combine(dir.CacheRoot, "thumbnails"), paths.ThumbnailsDir);
-        Assert.Equal(Path.Combine(dir.CacheRoot, "colors"), paths.ColorsDir);
+        Assert.Equal(Path.Combine(dir.CacheRoot, "index.db"), paths.IndexDbFile);
         Assert.True(Directory.Exists(paths.ThumbnailsDir));
         Assert.False(Directory.Exists(Path.Combine(dir.Root, ".hawk", "thumbnails")));
-        Assert.False(Directory.Exists(Path.Combine(dir.Root, ".hawk", "colors")));
     }
+    [Fact]
+    public void 缓存目录名_库文件夹名加哈希前缀且同名库可区分()
+    {
+        using var dir = new TempDir();
+        var root = Path.Combine(dir.Root, "Design Refs");
+        Directory.CreateDirectory(root);
+        var paths = new LibraryPaths(root);
+
+        var name = Path.GetFileName(paths.CacheDir);
+        var underscore = name.IndexOf('_');
+        Assert.True(underscore > 0); // 库名前缀
+        Assert.Equal(16, name.Length - underscore - 1); // 16 位哈希
+        Assert.True(name[(underscore + 1)..].All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f'));
+        Assert.StartsWith("Design Refs_", name);
+
+        // 同名库（不同路径）→ 哈希部分不同，目录可区分
+        var otherRoot = Path.Combine(dir.Root, "nested", "Design Refs");
+        Directory.CreateDirectory(otherRoot);
+        var other = new LibraryPaths(otherRoot);
+        Assert.NotEqual(paths.CacheDir, other.CacheDir);
+    }
+
+    [Fact]
+    public void EnsureLayout_旧版纯哈希缓存目录自动改名迁移()
+    {
+        using var dir = new TempDir();
+        // 与实现相同的算法算出旧目录名，预置标记文件
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(dir.Root));
+        var legacyName = Convert.ToHexString(hash)[..16].ToLowerInvariant();
+        var cacheParent = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "hawk", "cache");
+        var legacy = Path.Combine(cacheParent, legacyName);
+        var migrated = Path.Combine(cacheParent, Path.GetFileName(new LibraryPaths(dir.Root).CacheDir));
+        var paths = new LibraryPaths(dir.Root);
+        try
+        {
+            Directory.CreateDirectory(legacy);
+            File.WriteAllText(Path.Combine(legacy, "marker.txt"), "keep");
+
+            paths.EnsureLayout();
+
+            Assert.False(Directory.Exists(legacy));
+            Assert.Equal("keep", File.ReadAllText(Path.Combine(paths.CacheDir, "marker.txt")));
+        }
+        finally
+        {
+            if (Directory.Exists(legacy)) Directory.Delete(legacy, recursive: true);
+            if (Directory.Exists(migrated)) Directory.Delete(migrated, recursive: true);
+        }
+    }
+
 }

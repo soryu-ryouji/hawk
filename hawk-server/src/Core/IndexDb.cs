@@ -114,13 +114,17 @@ public sealed class IndexDb : IDisposable
             var items = new Dictionary<string, (ItemMetadata Meta, long SourceMtime)>(StringComparer.Ordinal);
             using (var cmd = _conn!.CreateCommand())
             {
-                cmd.CommandText = "SELECT hash, url, star, annotation, source_mtime FROM items";
+                cmd.CommandText = "SELECT hash, url, star, annotation, source_mtime, width, height, palette, palette_version FROM items";
                 using var reader = cmd.ExecuteReader();
                 var hashOrd = reader.GetOrdinal("hash");
                 var urlOrd = reader.GetOrdinal("url");
                 var starOrd = reader.GetOrdinal("star");
                 var annOrd = reader.GetOrdinal("annotation");
                 var mtimeOrd = reader.GetOrdinal("source_mtime");
+                var widthOrd = reader.GetOrdinal("width");
+                var heightOrd = reader.GetOrdinal("height");
+                var paletteOrd = reader.GetOrdinal("palette");
+                var paletteVersionOrd = reader.GetOrdinal("palette_version");
                 while (reader.Read())
                 {
                     var meta = new ItemMetadata
@@ -128,6 +132,10 @@ public sealed class IndexDb : IDisposable
                         Url = reader.IsDBNull(urlOrd) ? null : reader.GetString(urlOrd),
                         Star = (int)reader.GetInt64(starOrd),
                         Annotation = reader.IsDBNull(annOrd) ? null : reader.GetString(annOrd),
+                        Width = (int)reader.GetInt64(widthOrd),
+                        Height = (int)reader.GetInt64(heightOrd),
+                        Palette = ParsePaletteJson(reader.IsDBNull(paletteOrd) ? null : reader.GetString(paletteOrd)),
+                        PaletteVersion = (int)reader.GetInt64(paletteVersionOrd),
                     };
                     items[reader.GetString(hashOrd)] = (meta, reader.GetInt64(mtimeOrd));
                 }
@@ -182,11 +190,13 @@ public sealed class IndexDb : IDisposable
             {
                 using var tx = _conn!.BeginTransaction();
                 Execute(
-                    "INSERT INTO items (hash, url, star, annotation, source_mtime) VALUES ($h, $u, $s, $a, $m) " +
-                    "ON CONFLICT(hash) DO UPDATE SET url=$u, star=$s, annotation=$a, source_mtime=$m",
+                    "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, palette_version) " +
+                    "VALUES ($h, $u, $s, $a, $m, $w, $t, $p, $v) " +
+                    "ON CONFLICT(hash) DO UPDATE SET url=$u, star=$s, annotation=$a, source_mtime=$m, width=$w, height=$t, palette=$p, palette_version=$v",
                     tx,
                     ("$h", hash), ("$u", meta.Url ?? (object)DBNull.Value), ("$s", meta.Star),
-                    ("$a", meta.Annotation ?? (object)DBNull.Value), ("$m", sourceMtime));
+                    ("$a", meta.Annotation ?? (object)DBNull.Value), ("$m", sourceMtime),
+                    ("$w", meta.Width), ("$t", meta.Height), ("$p", (object?)PaletteJson(meta.Palette) ?? DBNull.Value), ("$v", meta.PaletteVersion));
                 DeleteChildRows(hash, tx);
                 InsertChildRows(hash, meta, tx);
                 tx.Commit();
@@ -219,6 +229,62 @@ public sealed class IndexDb : IDisposable
         catch (Exception ex)
         {
             Poison(ex, $"元数据缓存删除失败 {hash}");
+        }
+    }
+
+    /// <summary>全量文件夹快照（增量扫描的对比基准）。缓存不可用时返回空表（首轮 = 全量深入）</summary>
+    public IReadOnlyDictionary<string, (long Mtime, int Entries)> LoadFolderSnapshots()
+    {
+        if (!Enabled)
+        {
+            return new Dictionary<string, (long, int)>(StringComparer.Ordinal);
+        }
+
+        lock (_gate)
+        {
+            EnsureUsable();
+            var result = new Dictionary<string, (long, int)>(StringComparer.Ordinal);
+            using var cmd = _conn!.CreateCommand();
+            cmd.CommandText = "SELECT path, mtime, entries FROM folders";
+            using var reader = cmd.ExecuteReader();
+            var pathOrd = reader.GetOrdinal("path");
+            var mtimeOrd = reader.GetOrdinal("mtime");
+            var entriesOrd = reader.GetOrdinal("entries");
+            while (reader.Read())
+            {
+                result[reader.GetString(pathOrd)] = (reader.GetInt64(mtimeOrd), (int)reader.GetInt64(entriesOrd));
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>整体替换文件夹快照（每轮扫描一次；遍历不完整时不调用，保留旧快照）</summary>
+    public void ReplaceFolderSnapshots(IReadOnlyDictionary<string, (long Mtime, int Entries)> snapshots)
+    {
+        if (!Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            lock (_gate)
+            {
+                using var tx = _conn!.BeginTransaction();
+                Execute("DELETE FROM folders", tx);
+                foreach (var (path, snap) in snapshots)
+                {
+                    Execute("INSERT INTO folders (path, mtime, entries) VALUES ($p, $m, $e)", tx,
+                        ("$p", path), ("$m", snap.Mtime), ("$e", snap.Entries));
+                }
+
+                tx.Commit();
+            }
+        }
+        catch (Exception ex)
+        {
+            Poison(ex, "文件夹快照写入失败");
         }
     }
 
@@ -290,27 +356,41 @@ public sealed class IndexDb : IDisposable
             var versionText = ReadMeta("schema_version");
             if (versionText != SchemaVersion.ToString())
             {
-                // 版本不符（含首次建库）：重建全部表；注水标记保持未置位，由 MetadataStore 从 TOML 重建
+                // 版本不符（含首次建库与开发期格式演进）：重建全部表；注水标记保持未置位，
+                // 由 MetadataStore 从 TOML 全量重建。缓存是派生数据，无历史格式兼容义务
                 Execute("DROP TABLE IF EXISTS items");
                 Execute("DROP TABLE IF EXISTS paths");
                 Execute("DROP TABLE IF EXISTS tags");
                 Execute("DROP TABLE IF EXISTS categories");
-                Execute(
-                    "CREATE TABLE items (" +
-                    "hash TEXT PRIMARY KEY, " +
-                    "url TEXT, " +
-                    "star INTEGER NOT NULL DEFAULT 0, " +
-                    "annotation TEXT, " +
-                    "source_mtime INTEGER NOT NULL DEFAULT 0)");
-                Execute("CREATE TABLE paths (hash TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL, PRIMARY KEY (hash, path))");
-                Execute("CREATE TABLE tags (hash TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (hash, tag))");
-                Execute("CREATE TABLE categories (hash TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY (hash, category))");
+                CreateTables();
                 WriteMeta("schema_version", SchemaVersion.ToString());
                 _logger.LogInformation("元数据缓存 schema 已重建 v{Version}", SchemaVersion);
             }
 
             IsHydrated = ReadMeta(HydratedKey) == "1";
+
+            // folders 快照表后加（旧缓存无此表）：幂等补建，免于整库重建
+            Execute("CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, entries INTEGER NOT NULL)");
         }
+    }
+
+    private void CreateTables()
+    {
+        Execute(
+            "CREATE TABLE items (" +
+            "hash TEXT PRIMARY KEY, " +
+            "url TEXT, " +
+            "star INTEGER NOT NULL DEFAULT 0, " +
+            "annotation TEXT, " +
+            "source_mtime INTEGER NOT NULL DEFAULT 0, " +
+            "width INTEGER NOT NULL DEFAULT 0, " +
+            "height INTEGER NOT NULL DEFAULT 0, " +
+            "palette TEXT, " +
+            "palette_version INTEGER NOT NULL DEFAULT 0)");
+        Execute("CREATE TABLE paths (hash TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL, PRIMARY KEY (hash, path))");
+        Execute("CREATE TABLE tags (hash TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (hash, tag))");
+        Execute("CREATE TABLE categories (hash TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY (hash, category))");
+        Execute("CREATE TABLE folders (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, entries INTEGER NOT NULL)");
     }
 
     // ---------- 内部辅助（调用方已持有 _gate） ----------
@@ -318,11 +398,33 @@ public sealed class IndexDb : IDisposable
     private void InsertItem(string hash, ItemMetadata meta, long sourceMtime, SqliteTransaction tx)
     {
         Execute(
-            "INSERT INTO items (hash, url, star, annotation, source_mtime) VALUES ($h, $u, $s, $a, $m)",
+            "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, palette_version) VALUES ($h, $u, $s, $a, $m, $w, $t, $p, $v)",
             tx,
             ("$h", hash), ("$u", meta.Url ?? (object)DBNull.Value), ("$s", meta.Star),
-            ("$a", meta.Annotation ?? (object)DBNull.Value), ("$m", sourceMtime));
+            ("$a", meta.Annotation ?? (object)DBNull.Value), ("$m", sourceMtime),
+            ("$w", meta.Width), ("$t", meta.Height), ("$p", (object?)PaletteJson(meta.Palette) ?? DBNull.Value), ("$v", meta.PaletteVersion));
         InsertChildRows(hash, meta, tx);
+    }
+
+    /// <summary>调色板的镜像存储格式（与 TOML 同款 entry；null = 未提炼）</summary>
+    private static string? PaletteJson(List<PaletteEntry>? palette) =>
+        palette is null ? null : System.Text.Json.JsonSerializer.Serialize(palette);
+
+    private static List<PaletteEntry>? ParsePaletteJson(string? json)
+    {
+        if (json is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<List<PaletteEntry>>(json);
+        }
+        catch (Exception)
+        {
+            return null; // 损坏视为未提炼，worker 重新提炼补齐
+        }
     }
 
     private void InsertChildRows(string hash, ItemMetadata meta, SqliteTransaction tx)

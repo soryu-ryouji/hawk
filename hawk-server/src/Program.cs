@@ -86,16 +86,27 @@ app.MapTaxonomyEndpoints();
 app.MapViewEndpoints();
 app.MapEventsEndpoints();
 
-// 启动顺序（server-csharp.md）：先监听端口（先监听、扫描后台进行），初始索引完成后才算就绪。
-// 客户端（Electron 壳/生态接入）轮询 GET /api/v1/app/startup 获取进度与就绪状态，初始索引期间除该端点外一律 503 NOT_READY。
+// 启动顺序（server-csharp.md）：Kestrel 先监听（注水/缓存重建期间 startup 端点即可答 starting，
+// 客户端有进度反馈），随后装配索引流水线——内存索引由元数据缓存（SQLite 快路径/TOML 回退）注水，
+// 就绪不再等待全库扫描；停机期间的文件增删改由文件监听实时事件 + 后台对账扫描 + 周期对账收敛。
+// 客户端（Electron 壳/生态接入）轮询 GET /api/v1/app/startup；初始注水期间除该端点外一律 503 NOT_READY。
+var startup = app.Services.GetRequiredService<StartupState>();
+
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    app.Services.GetRequiredService<LibraryWatcher>().Dispose();
+    app.Services.GetRequiredService<IndexPipeline>().Dispose();
+});
+
+await app.StartAsync();
+
+// Kestrel 已监听：以下单例的首次构造（元数据副本注水/缓存重建）期间，startup 端点持续可答
 var pipeline = app.Services.GetRequiredService<IndexPipeline>();
 var watcher = app.Services.GetRequiredService<LibraryWatcher>();
-var startup = app.Services.GetRequiredService<StartupState>();
+var prefs = app.Services.GetRequiredService<ViewPreferences>();
 
 pipeline.OnScanProgress = startup.Report;
 pipeline.AttachThumbnailWorker(app.Services.GetRequiredService<ThumbnailWorker>());
-
-var prefs = app.Services.GetRequiredService<ViewPreferences>();
 
 pipeline.Start();
 watcher.FileUpsert += pipeline.NotifyUpsert;
@@ -106,37 +117,28 @@ watcher.ConfigChanged += pipeline.NotifyConfigChanged;
 watcher.RegistryChanged += pipeline.NotifyRegistryChanged;
 watcher.PreferencesChanged += prefs.Reload; // 视图偏好与索引无耦合,直接重载(网盘同步落地同理)
 watcher.Overflowed += pipeline.NotifyOverflow;
-watcher.Start(); // 事件先入队缓冲，与初始扫描天然去重
+watcher.Start(); // 事件先入队缓冲，与对账扫描天然去重
 
-var initialScan = pipeline.RunScanAsync(full: false); // 后台构建，不阻塞端口监听
+startup.MarkReady();
+app.Logger.LogInformation("hawk-server 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
 
-app.Lifetime.ApplicationStopping.Register(() =>
-{
-    watcher.Dispose();
-    pipeline.Dispose();
-});
-
-await app.StartAsync();
-
-var address = app.Services.GetRequiredService<IServer>().Features
-    .Get<IServerAddressesFeature>()!.Addresses.First();
-app.Logger.LogInformation("hawk-server 监听 {Address}，素材库: {Library}，初始索引后台构建中", address, settings.LibraryRoot);
-
-// 初始索引结果异步落定：就绪后 /health 转 200、API 网关放行；失败则记入启动状态供客户端查询
+// 全库对账扫描转后台：完成前停机期间的删除/新增短暂残留（watcher 实时事件已覆盖运行期变更），
+// 失败不置启动错误——周期对账（默认 60s）兜底重试
 _ = Task.Run(async () =>
 {
     try
     {
-        await initialScan;
-        startup.MarkReady();
-        app.Logger.LogInformation("初始索引完成，hawk-server 就绪");
+        await pipeline.RunScanAsync(full: false);
     }
     catch (Exception ex)
     {
-        startup.Fail(ex);
-        app.Logger.LogError(ex, "初始索引构建失败");
+        app.Logger.LogError(ex, "后台对账扫描失败（周期对账将重试）");
     }
 });
+
+var address = app.Services.GetRequiredService<IServer>().Features
+    .Get<IServerAddressesFeature>()!.Addresses.First();
+app.Logger.LogInformation("hawk-server 监听 {Address}，素材库: {Library}", address, settings.LibraryRoot);
 
 await app.WaitForShutdownAsync();
 

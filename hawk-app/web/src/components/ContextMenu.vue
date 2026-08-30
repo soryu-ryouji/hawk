@@ -57,6 +57,8 @@ watch(
             v-else
             class="item"
             :class="{ danger: item.danger, checked: item.checked }"
+            :disabled="item.disabled"
+            :title="item.title"
             @click="
               close();
               item.action?.();
@@ -114,6 +116,11 @@ watch(
 
 .item.danger {
   color: var(--danger);
+}
+
+.item:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .separator {

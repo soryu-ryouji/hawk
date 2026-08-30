@@ -23,10 +23,17 @@ public static class LibraryEndpoints
                 return TypedResults.Ok(Envelope<LibraryInfo>.Ok(info));
             });
 
-        // 全量重建索引：异步执行，立即返回
+        // 全量重建索引：重算全部哈希，异步执行，立即返回
         group.MapPost("/reindex", (IndexPipeline pipeline) =>
         {
             pipeline.RequestScan(full: true);
+            return TypedResults.Ok(new Envelope<object>("success", null));
+        });
+
+        // 刷新缓存：忽略快照强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录。异步执行，立即返回
+        group.MapPost("/rescan", (IndexPipeline pipeline) =>
+        {
+            pipeline.RequestRescan();
             return TypedResults.Ok(new Envelope<object>("success", null));
         });
     }

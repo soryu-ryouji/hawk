@@ -33,6 +33,8 @@ export const api = {
   startupStatus: () => request<StartupInfo>('GET', '/api/v1/app/startup'),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
+  /** 刷新缓存：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
+  rescan: () => request<void>('POST', '/api/v1/library/rescan'),
 
   folderList: () => request<FolderNode>('GET', '/api/v1/folder/list'),
   folderCreate: (name: string, parentPath?: string) =>
