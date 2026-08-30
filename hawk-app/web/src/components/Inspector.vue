@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
+import { useLayout } from '../composables/useLayout';
 import { showInFileManagerLabel } from '../platform';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
@@ -9,6 +10,10 @@ import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
 
 const store = useLibraryStore();
+const { touch } = useLayout();
+// 触屏设备（iPad/手机网页，实际生效于 wide 布局的 iPad 横屏；narrow 下检查器隐藏）检查器只读：
+// 信息与桌面版一致但全部静态展示——触屏上编辑控件易误触，且网页端浏览场景不希望改动素材库
+const readOnly = computed(() => touch.value);
 const showCategoryPicker = ref(false);
 const showFolderPicker = ref(false);
 
@@ -204,7 +209,59 @@ function batchMoveFolder(path: string) {
         />
       </div>
 
-      <div v-if="!store.viewerMode" class="fields">
+      <!-- 触屏只读：与桌面版同样的信息结构，全部静态展示，不可修改 -->
+      <div v-if="readOnly" class="fields ro-fields">
+        <div class="ro-name">{{ item.name }}</div>
+        <div v-if="item.annotation" class="ro-annotation">{{ item.annotation }}</div>
+        <a v-if="item.url" class="ro-url" :href="item.url" target="_blank" rel="noreferrer">{{ item.url }}</a>
+
+        <section>
+          <div class="section-title">标签</div>
+          <div v-if="item.tags?.length" class="chips">
+            <span v-for="tag in item.tags" :key="tag" class="chip">{{ tag }}</span>
+          </div>
+          <span v-else class="ro-empty">—</span>
+        </section>
+
+        <section>
+          <div class="section-title">分类</div>
+          <div v-if="item.categories?.length" class="chips">
+            <span v-for="category in item.categories" :key="category" class="chip">{{ category }}</span>
+          </div>
+          <span v-else class="ro-empty">—</span>
+        </section>
+
+        <section>
+          <div class="section-title">文件夹</div>
+          <span class="ro-text">{{ item.folders?.[0] || '—' }}</span>
+        </section>
+
+        <section>
+          <div class="section-title">基本信息</div>
+          <dl class="info">
+            <dt>评分</dt>
+            <dd>{{ Number(item.star) > 0 ? '★'.repeat(Number(item.star)) : '—' }}</dd>
+            <dt>尺寸</dt>
+            <dd>{{ item.width }} × {{ item.height }}</dd>
+            <dt>文件大小</dt>
+            <dd>{{ formatSize(Number(item.size)) }}</dd>
+            <dt>格式</dt>
+            <dd>{{ item.ext.toUpperCase() }}</dd>
+            <dt>修改时间</dt>
+            <dd>{{ formatTime(Number(item.modification_time)) }}</dd>
+            <dt>ID</dt>
+            <dd :title="item.id">{{ item.id.slice(0, 12) }}…</dd>
+          </dl>
+        </section>
+
+        <section>
+          <div class="section-title">文件位置</div>
+          <div v-for="path in item.paths" :key="path" class="path">{{ path }}</div>
+          <span v-if="!item.paths?.length" class="ro-empty">—</span>
+        </section>
+      </div>
+
+      <div v-else-if="!store.viewerMode" class="fields">
         <textarea
           ref="nameArea"
           v-model="name"
@@ -441,6 +498,36 @@ function batchMoveFolder(path: string) {
   overflow: hidden;
   line-height: 1.45;
   overflow-wrap: break-word;
+}
+
+/* 触屏只读视图：与编辑版同结构，全部静态文本 */
+.ro-name {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.ro-annotation {
+  font-size: 12px;
+  color: var(--fg-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ro-url {
+  font-size: 12px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ro-text,
+.ro-empty {
+  font-size: 12px;
+}
+
+.ro-empty {
+  color: var(--fg-1);
 }
 
 .name-input {

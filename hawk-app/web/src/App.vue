@@ -5,7 +5,7 @@ import { connectEvents } from './api/events';
 import { useLibraryStore } from './stores/library';
 import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
-import { useIsMobile } from './composables/useIsMobile';
+import { useLayout } from './composables/useLayout';
 import { useStartup } from './composables/useStartup';
 import Sidebar from './components/Sidebar.vue';
 import TitleBar from './components/TitleBar.vue';
@@ -21,18 +21,18 @@ import StartingScreen from './components/StartingScreen.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
 
 const store = useLibraryStore();
-const isMobile = useIsMobile();
+const { narrow, touch } = useLayout();
 // 启动阶段状态机：starting（应用内启动屏，等 server 就绪）→ ready（主界面）；
 // 旁路：setup（未配置素材库）/ connect（浏览器 token 门页）/ error（启动失败）。
 // 就绪信号与进度来自 useStartup（Electron 走 IPC，浏览器走轮询）
 const phase = ref<'starting' | 'ready' | 'setup' | 'connect' | 'error'>('starting');
 const bootError = ref<string | null>(null);
 const { readyCount, failed, progress, poll } = useStartup();
-// 移动端侧栏为抽屉式：进入移动端默认收起（抽屉关闭），回桌面恢复双栏
+// 窄屏下侧栏为抽屉式：进入窄屏默认收起（抽屉关闭），回宽屏恢复双栏
 watch(
-  isMobile,
-  (mobile) => {
-    store.sidebarVisible = !mobile;
+  narrow,
+  (isNarrow) => {
+    store.sidebarVisible = !isNarrow;
   },
   { immediate: true },
 );
@@ -174,11 +174,9 @@ function quitApp() {
   void window.hawkShell?.quitApp();
 }
 
-/** 移动端：点击侧栏导航项（智能条目/文件夹/分类/标签）后收起抽屉 */
-
-/** 移动端：点击侧栏导航项（智能条目/文件夹/分类/标签）后收起抽屉 */
+/** 触屏窄屏：点击侧栏导航项（智能条目/文件夹/分类/标签）后收起抽屉；鼠标设备保持展开（桌面窄窗可连续切换） */
 function onSidebarNav(e: MouseEvent) {
-  if (!isMobile.value) {
+  if (!narrow.value || !touch.value) {
     return;
   }
   if ((e.target as HTMLElement).closest('.entry, .node, .cat-row, .tag-row')) {
@@ -227,21 +225,21 @@ useDragImport();
   <div
     v-else
     class="app"
-    :class="{ 'no-panels': !store.sidebarVisible, mobile: isMobile, 'drawer-open': isMobile && store.sidebarVisible }"
+    :class="{ 'no-panels': !store.sidebarVisible, mobile: narrow, 'drawer-open': narrow && store.sidebarVisible }"
     :style="{
-      gridTemplateColumns: isMobile
-        ? '1fr'
+      gridTemplateColumns: narrow
+        ? 'minmax(0, 1fr)'
         : store.sidebarVisible
-          ? `${sidebarWidth}px 1fr ${inspectorWidth}px`
-          : '0 1fr 0',
+          ? `${sidebarWidth}px minmax(0, 1fr) ${inspectorWidth}px`
+          : '0 minmax(0, 1fr) 0',
     }"
   >
     <!-- display:contents 包裹层仅用于移动端「导航后收起抽屉」的点击委托，不改变网格布局 -->
     <div class="sidebar-wrap" @click="onSidebarNav">
       <Sidebar class="sidebar" />
     </div>
-    <!-- 移动端抽屉遮罩：点按空白处收起 -->
-    <div v-if="isMobile && store.sidebarVisible" class="drawer-scrim" @click="store.toggleSidebar()" />
+    <!-- 窄屏抽屉遮罩：点按空白处收起 -->
+    <div v-if="narrow && store.sidebarVisible" class="drawer-scrim" @click="store.toggleSidebar()" />
     <TitleBar class="titlebar" @open-settings="showSettings = true" />
     <ItemGrid />
     <!-- 缩略图后台积压指示：细进度条压在网格顶缘（浏览器式加载条），计数归零自动消失 -->
@@ -253,7 +251,7 @@ useDragImport();
     <WindowControls />
 
     <!-- 侧栏宽度拖拽手柄：4px 命中区紧贴分界线右侧，避开左侧面板的滚动条 -->
-    <template v-if="store.sidebarVisible && !isMobile">
+    <template v-if="store.sidebarVisible && !narrow">
       <div
         class="col-resize-handle"
         :class="{ active: dragSide === 'left' }"

@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
-import { useIsMobile } from '../composables/useIsMobile';
+import { useLayout } from '../composables/useLayout';
 import { isRotatableImage } from '../imageEdit';
 import { showInFileManagerLabel } from '../platform';
 import type { Item } from '../types';
@@ -13,7 +13,7 @@ const emit = defineEmits<{ close: []; navigate: [step: 1 | -1] }>();
 
 const store = useLibraryStore();
 const menu = useContextMenu();
-const isMobile = useIsMobile();
+const { narrow, touch } = useLayout();
 
 // 底部中间序号：当前项在视图中的位置 / 视图总条目数（Eagle 式）
 const indexText = computed(() => {
@@ -184,12 +184,12 @@ function onPointerMove(e: PointerEvent) {
     ty.value = dragStart.ty + (e.clientY - dragStart.y);
     return;
   }
-  // 缩放=1：横向主导 → 滑动切换意图；纵向向下主导（仅移动端）→ 下拉关闭意图
+  // 缩放=1：横向主导 → 滑动切换意图；纵向向下主导（仅触屏）→ 下拉关闭意图
   const dy = e.clientY - dragStart.y;
   if (!swiping.value && !pullActive.value) {
     if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
       swiping.value = true;
-    } else if (isMobile.value && dy > 8 && dy > Math.abs(dx)) {
+    } else if (touch.value && dy > 8 && dy > Math.abs(dx)) {
       pullActive.value = true;
     }
   }
@@ -302,9 +302,9 @@ function onPointerCancel() {
         <span class="page-index">{{ indexText }}</span>
         <button class="page-btn" title="下一个 (→)" @click.stop="emit('navigate', 1)">›</button>
       </div>
-      <button class="close" title="关闭 (Esc)" @click="emit('close')">×</button>
-      <!-- 移动端：ⓘ 开关底部详情条（触屏无检查器，详情只读；桌面走右侧面板不出现） -->
-      <template v-if="isMobile">
+      <button v-if="!touch" class="close" title="关闭 (Esc)" @click="emit('close')">×</button>
+      <!-- 窄屏：ⓘ 开关底部详情条（触屏无检查器，详情只读；桌面走右侧面板不出现） -->
+      <template v-if="narrow">
         <button class="info-toggle" :class="{ open: showInfo }" title="详情" @click.stop="showInfo = !showInfo">i</button>
         <div v-if="showInfo" class="info-sheet" @click.stop>
           <div class="info-name">{{ item.name }}.{{ item.ext }}</div>
@@ -429,7 +429,7 @@ function onPointerCancel() {
   user-select: none;
 }
 
-/* 移动端详情条：右上角 ⓘ 开关，底部滑出只读面板（顶栏 close 在移动端隐藏，位置不与它冲突） */
+/* 移动端详情条：右上角 ⓘ 开关，底部滑出只读面板（close 在触屏隐藏，位置不与它冲突） */
 .info-toggle {
   position: absolute;
   top: 12px;

@@ -93,13 +93,35 @@ app.whenReady().then(async () => {
       }
       return;
     }
-    // 主界面就绪：网格探针 + 截图，然后点按第一张卡片（移动端交互：点按直接开预览）
+    // 主界面就绪：骨架→行布局→卡片渲染有异步窗口，.app 出现后立即探针会撞上 cards=0，
+    // 先轮询等网格首帧（卡片或占位块）出现；点按开预览仅 narrow+touch（pointer: coarse），
+    // 探针窗口为精细指针无法模拟，走窄窗鼠标路径（双击打开）验证预览链路
     shotGrid = true;
     clearInterval(timer);
-    const grid = await win.webContents.executeJavaScript(GRID_SRC).catch(() => null);
+    const gridDeadline = Date.now();
+    let grid = null;
+    while (Date.now() - gridDeadline < 15000) {
+      grid = await win.webContents.executeJavaScript(GRID_SRC).catch(() => null);
+      if (grid && !grid.error && grid.cards + grid.placeholders > 0) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
     emit({ type: 'grid', t: Date.now() - t0, ...(grid ?? { error: true }) });
     await shot('grid');
-    await win.webContents.executeJavaScript(`document.querySelector('.card')?.click()`);
+    const cardDeadline = Date.now();
+    while (Date.now() - cardDeadline < 15000) {
+      const hasCard = await win.webContents
+        .executeJavaScript(`!!document.querySelector('.card')`)
+        .catch(() => false);
+      if (hasCard) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    await win.webContents.executeJavaScript(
+      `document.querySelector('.card')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`,
+    );
     setTimeout(async () => {
       const v = await win.webContents.executeJavaScript(PREVIEW_SRC).catch(() => null);
       emit({ type: 'preview', t: Date.now() - t0, ...(v ?? { error: true }) });

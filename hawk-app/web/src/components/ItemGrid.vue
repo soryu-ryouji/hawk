@@ -4,7 +4,6 @@ import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import { gridNavRows } from '../composables/useGridNav';
-import { useIsMobile } from '../composables/useIsMobile';
 import { showInFileManagerLabel } from '../platform';
 import type { Item } from '../types';
 import ItemCard from './ItemCard.vue';
@@ -13,10 +12,11 @@ import PromptDialog from './PromptDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import { isRotatableImage } from '../imageEdit';
+import { useLayout } from '../composables/useLayout';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
-const isMobile = useIsMobile();
+const { narrow } = useLayout();
 
 const showTagDialog = ref(false);
 const showFolderDialog = ref(false);
@@ -216,10 +216,34 @@ watch(
   },
 );
 
+// 混合设备（触控笔记本、iPad 接触控板）按实际输入分流：记录卡片上最近一次 pointerdown 的指针类型。
+// 触屏/笔：
+//   narrow（竖屏，无检查器）——单击直接开预览，同时选中（旋转到横屏时右栏即显示其属性）；
+//   wide（横屏，检查器可见）——单击选中看右栏属性，双击打开预览。iOS 禁用双击缩放后不保证触发
+//   dblclick，双击按「同一张卡片 300ms 内两次点按」自行判定，点不同卡片重置计时。
+// 鼠标任何布局：单击选择/多选、双击打开（ItemCard @dblclick）。
+let lastPointerType = 'mouse';
+const DOUBLE_TAP_MS = 300;
+let lastTap: { id: string | null; time: number } = { id: null, time: 0 };
+
+function onCardPointerDown(e: PointerEvent) {
+  lastPointerType = e.pointerType;
+}
+
 function onSelect(item: Item, e: MouseEvent) {
-  // 触屏无双击：移动端点按卡片直接开预览（选择/多选为桌面交互）
-  if (isMobile.value) {
-    store.openPreview(item.id);
+  if (lastPointerType !== 'mouse') {
+    store.select(item.id);
+    if (narrow.value) {
+      store.openPreview(item.id);
+      return;
+    }
+    const now = Date.now();
+    if (lastTap.id === item.id && now - lastTap.time < DOUBLE_TAP_MS) {
+      lastTap = { id: null, time: 0 };
+      store.openPreview(item.id);
+      return;
+    }
+    lastTap = { id: item.id, time: now };
     return;
   }
   const mod = e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : undefined;
@@ -286,6 +310,7 @@ function onMenu(item: Item, e: MouseEvent) {
             :width="cell.width"
             :height="cell.height"
             @select="onSelect"
+            @pointerdown="onCardPointerDown"
             @open="store.openPreview"
             @menu="onMenu"
           />

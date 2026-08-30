@@ -30,6 +30,9 @@ body {
   background: var(--bg-0);
   user-select: none;
   overflow: hidden;
+  /* 禁用双击缩放：iPad Safari 双击侧栏/图片会缩放页面（锚点在点击处），
+     缩放级别累积不回弹，视觉上表现为面板忽宽忽窄。保留滚动与双指缩放 */
+  touch-action: manipulation;
 }
 
 input,
@@ -147,7 +150,7 @@ body.col-resizing {
 }
 
 /* ==================== 移动端竖屏适配 ====================
-   断点 720px（useIsMobile）；.app.mobile 由 App.vue 绑定，body.mobile 由 useIsMobile 同步
+   断点 1200px（useLayout：narrow 时生效）；.app.mobile 由 App.vue 绑定，body.mobile 由 useLayout 同步
    （浮层经 Teleport 挂到 body，只能用 body.mobile 命中）。桌面布局与交互不变。 */
 
 /* 侧栏外包层仅用于移动端「导航后收抽屉」点击委托，不产生盒子 */
@@ -221,9 +224,12 @@ body.col-resizing {
   padding: 8px;
 }
 
-/* 触屏无双击/无悬停：预览的关闭/翻页控件在移动端隐藏——沉浸看图，滑动切换 + 下拉关闭（iOS 相册式）；桌面保留 × 与翻页器 */
-body.mobile .overlay .pager,
-body.mobile .overlay .close {
+/* 翻页器仅在窄屏隐藏（手机横屏走 wide 布局时仍显示，滑动切换并存）；
+   关闭 × 在触屏隐藏——下拉关闭/点遮罩替代（iOS 相册式），桌面保留 */
+body.mobile .overlay .pager {
+  display: none;
+}
+body.touch .overlay .close {
   display: none;
 }
 

@@ -213,7 +213,7 @@ try {
       check(false, '网格探针', '未执行');
     }
     if (preview) {
-      check(!preview.error && preview.overlay, '点按打开预览');
+      check(!preview.error && preview.overlay, '双击打开预览');
       check(!preview.error && preview.centerInViewport, '预览中央图在视口内', preview.error ? '' : `vw=${preview.vw} vh=${preview.vh}`);
     } else if (sawApp) {
       check(false, '预览探针', '未执行');
