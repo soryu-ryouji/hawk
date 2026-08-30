@@ -4,6 +4,7 @@ import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import { gridNavRows } from '../composables/useGridNav';
+import { useIsMobile } from '../composables/useIsMobile';
 import { showInFileManagerLabel } from '../platform';
 import type { Item } from '../types';
 import ItemCard from './ItemCard.vue';
@@ -15,6 +16,7 @@ import { isRotatableImage } from '../imageEdit';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
+const isMobile = useIsMobile();
 
 const showTagDialog = ref(false);
 const showFolderDialog = ref(false);
@@ -212,6 +214,11 @@ watch(
 );
 
 function onSelect(item: Item, e: MouseEvent) {
+  // 触屏无双击：移动端点按卡片直接开预览（选择/多选为桌面交互）
+  if (isMobile.value) {
+    store.openPreview(item.id);
+    return;
+  }
   const mod = e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : undefined;
   store.select(item.id, mod);
 }

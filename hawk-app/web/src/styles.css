@@ -96,10 +96,15 @@ button.danger {
 }
 
 /* 侧栏开关同时显隐左右两栏（Eagle 式）；列宽由内联 style 统一处理 */
-
-.app.no-panels > .sidebar,
-.app.no-panels > .inspector {
+.app.no-panels .sidebar,
+.app.no-panels .inspector {
   display: none;
+}
+
+/* 移动端例外：抽屉关闭时侧栏也不得 display:none——否则滑入/滑出动画被扼杀，
+   显隐由 .app.mobile .sidebar 的 transform 负责（no-panels 仍在时保持固定定位移出视口） */
+.app.mobile.no-panels .sidebar {
+  display: flex;
 }
 
 /* 栏宽度拖拽手柄：4px 命中区紧贴分界线右侧（Eagle 宽度的量级，避免误触）。
@@ -129,16 +134,96 @@ body.col-resizing {
   grid-area: titlebar;
 }
 
-.app > .sidebar {
+.app .sidebar {
   grid-area: sidebar;
 }
 
-.app > .grid-scroll {
+.app .grid-scroll {
   grid-area: main;
 }
 
-.app > .inspector {
+.app .inspector {
   grid-area: inspector;
+}
+
+/* ==================== 移动端竖屏适配 ====================
+   断点 720px（useIsMobile）；.app.mobile 由 App.vue 绑定，body.mobile 由 useIsMobile 同步
+   （浮层经 Teleport 挂到 body，只能用 body.mobile 命中）。桌面布局与交互不变。 */
+
+/* 侧栏外包层仅用于移动端「导航后收抽屉」点击委托，不产生盒子 */
+.sidebar-wrap {
+  display: contents;
+}
+
+/* 抽屉遮罩（移动端侧栏展开时） */
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.app.mobile {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "titlebar"
+    "main";
+}
+
+/* 侧栏变抽屉：默认滑出视口，drawer-open 时滑入 */
+.app.mobile .sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: min(300px, 84vw);
+  z-index: 160;
+  transform: translateX(-105%);
+  transition: transform 0.18s ease;
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.55);
+  background: var(--bg-1);
+}
+
+.app.mobile.drawer-open .sidebar {
+  transform: none;
+}
+
+.app.mobile .inspector {
+  display: none;
+}
+
+.app.mobile .col-resize-handle {
+  display: none;
+}
+
+/* 窄屏顶栏减负：缩略图滑杆/评分筛选/选中计数隐藏，保留搜索与排序 */
+.app.mobile .thumb-slider,
+.app.mobile select.filter,
+.app.mobile .selected {
+  display: none;
+}
+
+.app.mobile .grid-scroll {
+  padding: 8px;
+}
+
+/* 触屏无双击/无悬停：预览的关闭/翻页控件在移动端隐藏——沉浸看图，滑动切换 + 下拉关闭（iOS 相册式）；桌面保留 × 与翻页器 */
+body.mobile .overlay .pager,
+body.mobile .overlay .close {
+  display: none;
+}
+
+/* 移动端预览图片占满全屏（桌面保留 90vw/90vh 边距观感） */
+body.mobile .overlay .image,
+body.mobile .overlay .track-img {
+  max-width: 100vw;
+  max-height: 100vh;
+  padding: 0;
+}
+
+/* 编辑窗口底栏按钮在触屏上加大命中区 */
+body.mobile .bar button {
+  padding: 10px 18px;
 }
 
 /* 缩略图积压指示条：与网格同占 main 区（网格叠放），压顶缘呈现浏览器式加载条。

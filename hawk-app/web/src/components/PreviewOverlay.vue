@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import { useIsMobile } from '../composables/useIsMobile';
 import { isRotatableImage } from '../imageEdit';
 import { showInFileManagerLabel } from '../platform';
 import type { Item } from '../types';
@@ -12,6 +13,7 @@ const emit = defineEmits<{ close: []; navigate: [step: 1 | -1] }>();
 
 const store = useLibraryStore();
 const menu = useContextMenu();
+const isMobile = useIsMobile();
 
 // 底部中间序号：当前项在视图中的位置 / 视图总条目数（Eagle 式）
 const indexText = computed(() => {
@@ -58,20 +60,68 @@ async function trashCurrent() {
   }
 }
 
-// ---------- 缩放与平移 ----------
-// scale=1 为适应窗口；滚轮以光标为不动点缩放，左键拖拽平移，双击复位
+// ---------- 缩放与平移 + 滑动切换 ----------
+// scale=1 为适应窗口；滚轮以光标为不动点缩放，双击复位。
+// 拖拽语义分两级：缩放>1 时拖拽平移（查看大图细节）；缩放=1 时横向跟手滑动——
+// 过阈值滑出切换上一张/下一张（触屏与桌面的统一图库手势），不过阈值回弹。
 const scale = ref(1);
 const tx = ref(0);
 const ty = ref(0);
 const dragging = ref(false);
 
+// 滑动切换（scale=1 时的横向手势）
+const swiping = ref(false); // 跟手阶段（意图已判定）
+const swipeAnim = ref(false); // 释放阶段（滑出/回弹过渡）
+const swipeX = ref(0);
+const SWIPE_MIN = 56; // 触发切换的最小位移（CSS px）
+const SWIPE_ANIM_MS = 170;
+
+// 下拉关闭（移动端 scale=1 时的纵向手势；iOS 相册式：跟手+背景渐亮，过阈值松手滑出关闭）
+const pullActive = ref(false);
+const pullAnim = ref(false);
+const pullY = ref(0);
+const PULL_CLOSE_MIN = 96; // 触发关闭的阻尼后位移
+
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 20;
 
+// 预加载相邻原图：内容寻址 immutable，浏览器缓存命中——carousel 拖动时邻图已解码，切换零等待
+function preloadNeighbors() {
+  for (const step of [1, -1] as const) {
+    const id = store.previewNavId(step);
+    if (id) {
+      new Image().src = api.fileUrl(id);
+    }
+  }
+}
+
+onMounted(preloadNeighbors);
+
+// carousel 邻居：id 取自骨架（不依赖详情窗口），拖动时左右邻图已经可见（iOS 相册式）
+const prevId = computed(() => store.previewNavId(-1));
+const nextId = computed(() => store.previewNavId(1));
+const prevUrl = computed(() => (prevId.value ? api.fileUrl(prevId.value) : null));
+const nextUrl = computed(() => (nextId.value ? api.fileUrl(nextId.value) : null));
+
+// 缩放>1 的单图平移模式样式（carousel 模式由 trackStyle 负责）
 const imageStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
-  cursor: dragging.value ? 'grabbing' : scale.value > 1 ? 'grab' : 'default',
+  cursor: dragging.value ? 'grabbing' : 'grab',
 }));
+
+// carousel 轨道：三张并排（前|当前|后），基准 translateX=-100vw 使当前图居中，swipeX 为跟手偏移
+const trackStyle = computed(() => ({
+  transform: `translate(${swipeX.value - window.innerWidth}px, ${pullActive.value || pullAnim.value ? pullY.value : 0}px)`,
+}));
+
+// 下拉跟手时背景随位移渐亮（松手回弹/滑出后恢复默认遮罩）
+const overlayStyle = computed(() => {
+  if (!pullActive.value && !pullAnim.value) {
+    return {};
+  }
+  const dim = Math.max(0, 1 - pullY.value / 420);
+  return { background: `rgba(0, 0, 0, ${(0.85 * dim).toFixed(3)})` };
+});
 
 watch(() => props.item.id, resetView);
 
@@ -79,6 +129,14 @@ function resetView() {
   scale.value = 1;
   tx.value = 0;
   ty.value = 0;
+  swiping.value = false;
+  swipeAnim.value = false;
+  swipeX.value = 0;
+  pullActive.value = false;
+  pullAnim.value = false;
+  pullY.value = 0;
+  // pager/键盘切换同样受益于相邻预加载
+  preloadNeighbors();
 }
 
 function onWheel(e: WheelEvent) {
@@ -98,8 +156,8 @@ function onWheel(e: WheelEvent) {
 let dragStart: { x: number; y: number; tx: number; ty: number } | null = null;
 
 function onPointerDown(e: PointerEvent) {
-  if (e.button !== 0) {
-    return;
+  if (e.button !== 0 || swipeAnim.value || pullAnim.value) {
+    return; // 释放动画期间不接收新手势
   }
   dragStart = { x: e.clientX, y: e.clientY, tx: tx.value, ty: ty.value };
   dragging.value = true;
@@ -110,20 +168,95 @@ function onPointerMove(e: PointerEvent) {
   if (!dragStart) {
     return;
   }
-  tx.value = dragStart.tx + (e.clientX - dragStart.x);
-  ty.value = dragStart.ty + (e.clientY - dragStart.y);
+  const dx = e.clientX - dragStart.x;
+  if (scale.value > 1) {
+    tx.value = dragStart.tx + dx;
+    ty.value = dragStart.ty + (e.clientY - dragStart.y);
+    return;
+  }
+  // 缩放=1：横向主导 → 滑动切换意图；纵向向下主导（仅移动端）→ 下拉关闭意图
+  const dy = e.clientY - dragStart.y;
+  if (!swiping.value && !pullActive.value) {
+    if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
+      swiping.value = true;
+    } else if (isMobile.value && dy > 8 && dy > Math.abs(dx)) {
+      pullActive.value = true;
+    }
+  }
+  if (pullActive.value) {
+    // 向下 0.5 阻尼跟手，向上轻微跟手（rubber-band 质感）
+    pullY.value = dy > 0 ? dy * 0.5 : dy * 0.25;
+    return;
+  }
+  if (swiping.value) {
+    // 边缘橡皮筋：首/末张无邻图一侧,拖动受阻尼（不可拖出空槽）
+    const hasTarget = dx < 0 ? nextId.value !== null : prevId.value !== null;
+    swipeX.value = hasTarget ? dx : dx * 0.35;
+  }
 }
 
 function onPointerUp() {
+  if (!dragStart) {
+    return;
+  }
   dragStart = null;
   dragging.value = false;
+  // 下拉释放：过阈值 → 下滑出 + 背景淡出后关闭；否则回弹（仅移动端会进入 pullActive）
+  if (pullActive.value) {
+    const shouldClose = pullY.value >= PULL_CLOSE_MIN;
+    pullAnim.value = true;
+    if (shouldClose) {
+      pullY.value = window.innerHeight;
+      setTimeout(() => emit('close'), SWIPE_ANIM_MS);
+    } else {
+      pullY.value = 0;
+      setTimeout(() => {
+        pullActive.value = false;
+        pullAnim.value = false;
+      }, SWIPE_ANIM_MS);
+    }
+    return;
+  }
+  if (!swiping.value) {
+    return;
+  }
+  // 释放：过阈值且有目标 → 轨道继续滑动使邻图落位中央,动画结束提交切换并无缝复位;否则回弹
+  const dir: 1 | -1 = swipeX.value < 0 ? 1 : -1;
+  const canNavigate = Math.abs(swipeX.value) >= SWIPE_MIN && (dir === 1 ? nextId.value !== null : prevId.value !== null);
+  swipeAnim.value = true;
+  if (canNavigate) {
+    swipeX.value = -dir * window.innerWidth;
+    setTimeout(() => {
+      emit('navigate', dir);
+      // 提交后轨道静默复位:新邻图已是中央帧,视觉无缝(watch 随即再清一次,同值无害)
+      swipeAnim.value = false;
+      swipeX.value = 0;
+    }, SWIPE_ANIM_MS);
+  } else {
+    swipeX.value = 0;
+    setTimeout(() => {
+      swiping.value = false;
+      swipeAnim.value = false;
+    }, SWIPE_ANIM_MS);
+  }
+}
+
+function onPointerCancel() {
+  dragStart = null;
+  dragging.value = false;
+  swiping.value = false;
+  swipeX.value = 0;
+  pullActive.value = false;
+  pullY.value = 0;
 }
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="overlay" @click.self="emit('close')" @wheel.prevent="onWheel" @contextmenu.prevent="onMenu">
+    <div class="overlay" :style="overlayStyle" @click.self="emit('close')" @wheel.prevent="onWheel" @contextmenu.prevent="onMenu">
+      <!-- 缩放>1：单图平移模式（carousel 轨道隐藏，专注于查看细节） -->
       <img
+        v-if="scale > 1"
         class="image"
         :src="imageUrl"
         :alt="item.name"
@@ -132,9 +265,27 @@ function onPointerUp() {
         @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
-        @pointercancel="onPointerUp"
+        @pointercancel="onPointerCancel"
         @dblclick="resetView"
       />
+      <!-- 缩放=1：carousel（前|当前|后 并排；手势层不位移，内层轨道跟手，iOS 相册式拖动邻图可见） -->
+      <div
+        v-else
+        class="swipe-track"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerCancel"
+        @dblclick="resetView"
+      >
+        <div class="track-row" :class="{ 'track-anim': swipeAnim || pullAnim }" :style="trackStyle">
+          <img v-if="prevUrl" class="track-img" :src="prevUrl" :key="`p-${prevId}`" alt="上一张" draggable="false" />
+          <div v-else class="track-img track-slot" />
+          <img class="track-img" :src="imageUrl" :key="item.id" :alt="item.name" draggable="false" />
+          <img v-if="nextUrl" class="track-img" :src="nextUrl" :key="`n-${nextId}`" alt="下一张" draggable="false" />
+          <div v-else class="track-img track-slot" />
+        </div>
+      </div>
       <!-- 底部中间：序号 + 左右切换（Eagle 式） -->
       <div class="pager">
         <button class="page-btn" title="上一个 (←)" @click.stop="emit('navigate', -1)">‹</button>
@@ -160,12 +311,49 @@ function onPointerUp() {
   backdrop-filter: blur(24px);
 }
 
+/* carousel：手势层 .swipe-track 固定全屏不位移（命中测试与 pointer capture 始终有效），
+   内层 .track-row 承载 transform 跟手/动画（位移会改变元素命中区域,不能放在手势层上） */
+.swipe-track {
+  position: absolute;
+  inset: 0;
+}
+
+.track-row {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  will-change: transform;
+}
+
+.track-img {
+  flex: none;
+  width: 100vw;
+  height: 100%;
+  object-fit: contain;
+  /* 桌面保留 90vw/90vh 观感（网格区内边距），移动端由全局规则清零占满全屏 */
+  padding: 5vh 5vw;
+  box-sizing: border-box;
+  user-select: none;
+  pointer-events: none; /* 手势统一落在轨道上 */
+  touch-action: none;
+}
+
+.track-slot {
+  padding: 0;
+}
+
+.track-row.track-anim {
+  transition: transform 0.17s ease;
+}
+
 .image {
   max-width: 90vw;
   max-height: 90vh;
   object-fit: contain;
   transform-origin: center;
   user-select: none;
+  /* 触屏手势由 pointer 事件接管（滑动切换/拖拽平移），禁止浏览器默认触摸行为 */
+  touch-action: none;
 }
 
 .close {

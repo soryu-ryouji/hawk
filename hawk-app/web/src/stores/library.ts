@@ -93,7 +93,16 @@ export const useLibraryStore = defineStore('library', () => {
     if (v.kind === 'tag' || v.kind === 'category') return v.name;
     return v.path.split('/').pop() ?? '';
   });
-  const previewItem = computed(() => (previewId.value ? (details.value.get(previewId.value) ?? null) : null));
+  /** 预览浮层 sticky item：详情未加载时不置空（浮层不卸载，滑动切换动画与状态不丢）；关闭时随 previewId 归零 */
+  let lastPreviewItem: Item | null = null;
+  const previewItem = computed(() => {
+    const current = previewId.value ? (details.value.get(previewId.value) ?? null) : null;
+    if (current) {
+      lastPreviewItem = current;
+    }
+    // sticky:详情未加载时不置空——避免浮层卸载重建导致滑动切换动画与状态丢失；关闭时随 previewId 归零
+    return current ?? (previewId.value ? lastPreviewItem : null);
+  });
   /** 当前视图条目数（= 骨架长度；骨架未加载时为 0） */
   const total = computed(() => skeleton.value.length);
   const previewIndex = computed(() => skeleton.value.findIndex((i) => i.id === previewId.value));

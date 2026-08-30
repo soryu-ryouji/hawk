@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { initApi, apiConfig, clearStoredToken, ApiError } from './api/client';
 import { connectEvents } from './api/events';
 import { useLibraryStore } from './stores/library';
 import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
+import { useIsMobile } from './composables/useIsMobile';
 import Sidebar from './components/Sidebar.vue';
 import TitleBar from './components/TitleBar.vue';
 import WindowControls from './components/WindowControls.vue';
@@ -18,6 +19,15 @@ import ConnectScreen from './components/ConnectScreen.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
 
 const store = useLibraryStore();
+const isMobile = useIsMobile();
+// 移动端侧栏为抽屉式：进入移动端默认收起（抽屉关闭），回桌面恢复双栏
+watch(
+  isMobile,
+  (mobile) => {
+    store.sidebarVisible = !mobile;
+  },
+  { immediate: true },
+);
 const bootError = ref<string | null>(null);
 // 无连接参数但在 Electron 内：素材库未配置，进引导页
 const setupMode = ref(false);
@@ -136,6 +146,16 @@ function onHashChange() {
   }
 }
 
+/** 移动端：点击侧栏导航项（智能条目/文件夹/分类/标签）后收起抽屉 */
+function onSidebarNav(e: MouseEvent) {
+  if (!isMobile.value) {
+    return;
+  }
+  if ((e.target as HTMLElement).closest('.entry, .node, .cat-row, .tag-row')) {
+    store.toggleSidebar();
+  }
+}
+
 onMounted(() => {
   loadPanelWidths();
   void boot();
@@ -171,14 +191,21 @@ useDragImport();
   <div
     v-else
     class="app"
-    :class="{ 'no-panels': !store.sidebarVisible }"
+    :class="{ 'no-panels': !store.sidebarVisible, mobile: isMobile, 'drawer-open': isMobile && store.sidebarVisible }"
     :style="{
-      gridTemplateColumns: store.sidebarVisible
-        ? `${sidebarWidth}px 1fr ${inspectorWidth}px`
-        : '0 1fr 0',
+      gridTemplateColumns: isMobile
+        ? '1fr'
+        : store.sidebarVisible
+          ? `${sidebarWidth}px 1fr ${inspectorWidth}px`
+          : '0 1fr 0',
     }"
   >
-    <Sidebar class="sidebar" />
+    <!-- display:contents 包裹层仅用于移动端「导航后收起抽屉」的点击委托，不改变网格布局 -->
+    <div class="sidebar-wrap" @click="onSidebarNav">
+      <Sidebar class="sidebar" />
+    </div>
+    <!-- 移动端抽屉遮罩：点按空白处收起 -->
+    <div v-if="isMobile && store.sidebarVisible" class="drawer-scrim" @click="store.toggleSidebar()" />
     <TitleBar class="titlebar" @open-settings="showSettings = true" />
     <ItemGrid />
     <!-- 缩略图后台积压指示：细进度条压在网格顶缘（浏览器式加载条），计数归零自动消失 -->
@@ -190,7 +217,7 @@ useDragImport();
     <WindowControls />
 
     <!-- 侧栏宽度拖拽手柄：4px 命中区紧贴分界线右侧，避开左侧面板的滚动条 -->
-    <template v-if="store.sidebarVisible">
+    <template v-if="store.sidebarVisible && !isMobile">
       <div
         class="col-resize-handle"
         :class="{ active: dragSide === 'left' }"
