@@ -64,6 +64,10 @@ async function trashCurrent() {
 // scale=1 为适应窗口；滚轮以光标为不动点缩放，双击复位。
 // 拖拽语义分两级：缩放>1 时拖拽平移（查看大图细节）；缩放=1 时横向跟手滑动——
 // 过阈值滑出切换上一张/下一张（触屏与桌面的统一图库手势），不过阈值回弹。
+// 捏合（双指，触屏）：以两指中点为不动点缩放，中点本身的平移带动图片（捏合兼双指拖移）；
+// 放大后左右滑动即平移（缩放>1 的既有语义），捏合收回到 ≤1 回到翻页模式。
+// 所有 pointer 手势统一落在始终挂载的全屏 .gesture 层上：平移图/carousel 轨道只是其下
+// pointer-events:none 的视觉层，v-if 切换不打断进行中的手势（捏合跨 scale=1 不丢跟踪）。
 const scale = ref(1);
 const tx = ref(0);
 const ty = ref(0);
@@ -88,6 +92,15 @@ const showInfo = ref(false);
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 20;
 
+// ---- 手势状态（非响应式：仅手势过程内使用）----
+/** 活动指针（pointerId → 最新位置）：双指捏合用 */
+const pointers = new Map<number, { x: number; y: number }>();
+let dragStart: { x: number; y: number; tx: number; ty: number } | null = null;
+/** 捏合进行中：起始指距与起始缩放 */
+let pinch: { startDist: number; startScale: number } | null = null;
+/** 本次按压是否已移动（区分点击与拖拽/捏合：移动过则点击关闭不触发） */
+let moved = false;
+
 // 预加载相邻原图：内容寻址 immutable，浏览器缓存命中——carousel 拖动时邻图已解码，切换零等待
 function preloadNeighbors() {
   for (const step of [1, -1] as const) {
@@ -106,10 +119,9 @@ const nextId = computed(() => store.previewNavId(1));
 const prevUrl = computed(() => (prevId.value ? api.fileUrl(prevId.value) : null));
 const nextUrl = computed(() => (nextId.value ? api.fileUrl(nextId.value) : null));
 
-// 缩放>1 的单图平移模式样式（carousel 模式由 trackStyle 负责）
+// 缩放>1 的单图平移模式样式（carousel 模式由 trackStyle 负责）；手势层负责 cursor
 const imageStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
-  cursor: dragging.value ? 'grabbing' : 'grab',
 }));
 
 // carousel 轨道：三张并排（前|当前|后），基准 translateX=-100vw 使当前图居中，swipeX 为跟手偏移
@@ -145,6 +157,12 @@ function resetView() {
   pullAnim.value = false;
   pullY.value = 0;
   showInfo.value = false;
+  // 手势状态一并清零（切图/复位时手指通常已抬起，兜底防泄漏）
+  pointers.clear();
+  pinch = null;
+  dragStart = null;
+  dragging.value = false;
+  moved = false;
   // pager/键盘切换同样受益于相邻预加载
   preloadNeighbors();
 }
@@ -163,29 +181,68 @@ function onWheel(e: WheelEvent) {
   scale.value = next;
 }
 
-let dragStart: { x: number; y: number; tx: number; ty: number } | null = null;
-
 function onPointerDown(e: PointerEvent) {
-  if (e.button !== 0 || swipeAnim.value || pullAnim.value) {
+  if (e.pointerType === 'mouse' && e.button !== 0) {
+    return;
+  }
+  if (swipeAnim.value || pullAnim.value) {
     return; // 释放动画期间不接收新手势
   }
-  dragStart = { x: e.clientX, y: e.clientY, tx: tx.value, ty: ty.value };
-  dragging.value = true;
   (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  moved = false;
+  if (pointers.size === 2) {
+    // 第二指落下：转捏合，取消进行中的单指手势（平移/滑动/下拉）
+    const [a, b] = [...pointers.values()];
+    pinch = { startDist: Math.hypot(a.x - b.x, a.y - b.y), startScale: scale.value };
+    dragStart = null;
+    dragging.value = false;
+    swiping.value = false;
+    swipeX.value = 0;
+    pullActive.value = false;
+    pullY.value = 0;
+  } else if (pointers.size === 1) {
+    dragStart = { x: e.clientX, y: e.clientY, tx: tx.value, ty: ty.value };
+    dragging.value = true;
+  }
 }
 
 function onPointerMove(e: PointerEvent) {
+  if (!pointers.has(e.pointerId)) {
+    return;
+  }
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch) {
+    if (pointers.size < 2) {
+      return;
+    }
+    const [a, b] = [...pointers.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const next = Math.min(Math.max(pinch.startScale * (dist / pinch.startDist), MIN_SCALE), MAX_SCALE);
+    // 两指中点为不动点缩放；中点本身的平移带动图片（捏合兼双指拖移）
+    const cx = (a.x + b.x) / 2 - window.innerWidth / 2;
+    const cy = (a.y + b.y) / 2 - window.innerHeight / 2;
+    const k = next / scale.value;
+    tx.value = cx - (cx - tx.value) * k;
+    ty.value = cy - (cy - ty.value) * k;
+    scale.value = next;
+    moved = true;
+    return;
+  }
   if (!dragStart) {
     return;
   }
   const dx = e.clientX - dragStart.x;
+  const dy = e.clientY - dragStart.y;
+  if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+    moved = true;
+  }
   if (scale.value > 1) {
     tx.value = dragStart.tx + dx;
-    ty.value = dragStart.ty + (e.clientY - dragStart.y);
+    ty.value = dragStart.ty + dy;
     return;
   }
   // 缩放=1：横向主导 → 滑动切换意图；纵向向下主导（仅触屏）→ 下拉关闭意图
-  const dy = e.clientY - dragStart.y;
   if (!swiping.value && !pullActive.value) {
     if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
       swiping.value = true;
@@ -205,7 +262,24 @@ function onPointerMove(e: PointerEvent) {
   }
 }
 
-function onPointerUp() {
+function onPointerUp(e: PointerEvent) {
+  if (!pointers.has(e.pointerId)) {
+    return;
+  }
+  pointers.delete(e.pointerId);
+  if (pinch) {
+    if (pointers.size >= 2) {
+      return; // 仍有两指：捏合继续
+    }
+    pinch = null;
+    // 双指变单指：剩余手指无缝接管平移（捏合收尾不按滑动/下拉判定）
+    if (pointers.size === 1 && scale.value > 1) {
+      const [p] = pointers.values();
+      dragStart = { x: p.x, y: p.y, tx: tx.value, ty: ty.value };
+      dragging.value = true;
+    }
+    return;
+  }
   if (!dragStart) {
     return;
   }
@@ -251,7 +325,11 @@ function onPointerUp() {
   }
 }
 
-function onPointerCancel() {
+function onPointerCancel(e: PointerEvent) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) {
+    pinch = null;
+  }
   dragStart = null;
   dragging.value = false;
   swiping.value = false;
@@ -259,35 +337,55 @@ function onPointerCancel() {
   pullActive.value = false;
   pullY.value = 0;
 }
+
+/**
+ * 平移模式（缩放>1）点击空白边距关闭；点在图像上、有拖动、或缩放=1（carousel）时不响应——
+ * 与既有语义一致：carousel 点击不关闭，平移模式点图像不关闭。
+ */
+function onGestureClick(e: MouseEvent) {
+  if (moved || scale.value <= 1 || pointInImage(e.clientX, e.clientY)) {
+    return;
+  }
+  emit('close');
+}
+
+/** 平移模式图像显示区域命中测试：基准 90vw/90vh object-fit: contain，transform 以元素中心为原点 */
+function pointInImage(px: number, py: number): boolean {
+  const iw = Number(props.item.width);
+  const ih = Number(props.item.height);
+  if (!iw || !ih) {
+    return true;
+  }
+  const fit = Math.min((window.innerWidth * 0.9) / iw, (window.innerHeight * 0.9) / ih);
+  const w = iw * fit * scale.value;
+  const h = ih * fit * scale.value;
+  const cx = window.innerWidth / 2 + tx.value;
+  const cy = window.innerHeight / 2 + ty.value;
+  return Math.abs(px - cx) <= w / 2 && Math.abs(py - cy) <= h / 2;
+}
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="overlay" :style="overlayStyle" @click.self="emit('close')" @wheel.prevent="onWheel" @contextmenu.prevent="onMenu">
-      <!-- 缩放>1：单图平移模式（carousel 轨道隐藏，专注于查看细节） -->
-      <img
-        v-if="scale > 1"
-        class="image"
-        :src="imageUrl"
-        :alt="item.name"
-        :style="imageStyle"
-        draggable="false"
-        @pointerdown="onPointerDown"
-        @pointermove="onPointerMove"
-        @pointerup="onPointerUp"
-        @pointercancel="onPointerCancel"
-        @dblclick="resetView"
-      />
-      <!-- 缩放=1：carousel（前|当前|后 并排；手势层不位移，内层轨道跟手，iOS 相册式拖动邻图可见） -->
+    <div class="overlay" :style="overlayStyle" @wheel.prevent="onWheel" @contextmenu.prevent="onMenu">
+      <!--
+        手势层：全屏固定、两种缩放模式共用，承接全部 pointer 手势（单指拖拽/滑动/下拉、双指捏合、点击、双击复位）。
+        平移图与 carousel 轨道只是其下 pointer-events:none 的视觉层——v-if 模式切换不打断进行中的手势。
+      -->
       <div
-        v-else
-        class="swipe-track"
+        class="gesture"
+        :class="{ dragging }"
         @pointerdown="onPointerDown"
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerCancel"
         @dblclick="resetView"
-      >
+        @click="onGestureClick"
+      ></div>
+      <!-- 缩放>1：单图平移视觉层 -->
+      <img v-if="scale > 1" class="image" :src="imageUrl" :alt="item.name" :style="imageStyle" draggable="false" />
+      <!-- 缩放=1：carousel 视觉层（手势层不位移，内层轨道跟手，iOS 相册式拖动邻图可见） -->
+      <div v-else class="swipe-track">
         <div class="track-row" :class="{ 'track-anim': swipeAnim || pullAnim }" :style="trackStyle">
           <img v-if="prevUrl" class="track-img" :src="prevUrl" :key="`p-${prevId}`" alt="上一张" draggable="false" />
           <div v-else class="track-img track-slot" />
@@ -338,11 +436,25 @@ function onPointerCancel() {
   backdrop-filter: blur(24px);
 }
 
-/* carousel：手势层 .swipe-track 固定全屏不位移（命中测试与 pointer capture 始终有效），
-   内层 .track-row 承载 transform 跟手/动画（位移会改变元素命中区域,不能放在手势层上） */
+/* carousel：.swipe-track 只是视觉层（全屏定位承载轨道），手势统一落在 .gesture 上 */
 .swipe-track {
   position: absolute;
   inset: 0;
+  pointer-events: none;
+}
+
+/* 手势层：固定全屏承接 pointer 事件（命中测试与 pointer capture 始终有效）；
+   位移由视觉层承载（transform 会改变元素命中区域，不能放在手势层上） */
+.gesture {
+  position: absolute;
+  inset: 0;
+  /* 触屏手势由 pointer 事件接管（滑动切换/捏合/拖拽平移），禁止浏览器默认触摸行为 */
+  touch-action: none;
+  cursor: grab;
+}
+
+.gesture.dragging {
+  cursor: grabbing;
 }
 
 .track-row {
@@ -379,8 +491,8 @@ function onPointerCancel() {
   object-fit: contain;
   transform-origin: center;
   user-select: none;
-  /* 触屏手势由 pointer 事件接管（滑动切换/拖拽平移），禁止浏览器默认触摸行为 */
-  touch-action: none;
+  /* 纯视觉层：手势统一落在 .gesture 上 */
+  pointer-events: none;
 }
 
 .close {
