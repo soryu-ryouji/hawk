@@ -17,12 +17,18 @@ public sealed class LibraryPaths
     public string Root { get; }
     public string HawkDir { get; }
     public string MetadataDir { get; }
+    /// <summary>该库派生缓存目录（thumbnails/colors/index.db 的父级），库外系统缓存目录或测试覆盖</summary>
+    public string CacheDir { get; }
+    /// <summary>元数据 SQLite 派生缓存文件（不参与同步，可删除重建）</summary>
+    public string IndexDbFile => Path.Combine(CacheDir, "index.db");
     public string ThumbnailsDir { get; }
     public string ColorsDir { get; }
     public string TrashDir { get; }
     public string ConfigFile { get; }
     public string CategoriesFile { get; }
     public string TagsFile { get; }
+    /// <summary>视图偏好（排序记忆等，参与同步）；损坏按空表处理</summary>
+    public string ViewFile { get; }
 
     /// <param name="cacheDir">该库派生缓存目录（thumbnails/colors 的父级）的完整路径覆盖；仅供测试指向临时目录，null 时用库外系统缓存目录</param>
     public LibraryPaths(string root, string? cacheDir = null)
@@ -31,15 +37,16 @@ public sealed class LibraryPaths
         HawkDir = Path.Combine(Root, HawkDirName);
         MetadataDir = Path.Combine(HawkDir, "metadata");
         // 缓存按库根路径哈希分目录，多库互不干扰；LocalApplicationData：Windows 为 %LOCALAPPDATA%（iCloud 不同步）
-        var cache = cacheDir ?? Path.Combine(
+        CacheDir = cacheDir ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "hawk", "cache", LibraryKey(Root));
-        ThumbnailsDir = Path.Combine(cache, "thumbnails");
-        ColorsDir = Path.Combine(cache, "colors");
+        ThumbnailsDir = Path.Combine(CacheDir, "thumbnails");
+        ColorsDir = Path.Combine(CacheDir, "colors");
         TrashDir = Path.Combine(HawkDir, TrashDirName);
         ConfigFile = Path.Combine(HawkDir, "config.toml");
         CategoriesFile = Path.Combine(HawkDir, "categories.toml");
         TagsFile = Path.Combine(HawkDir, "tags.toml");
+        ViewFile = Path.Combine(HawkDir, "view.toml");
     }
 
     /// <summary>库标识：根路径的 SHA-256 前 16 位（小写十六进制），作缓存子目录名</summary>

@@ -5,10 +5,13 @@ import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
-import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewState } from '../types';
+import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewPrefs, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
 const INITIAL_WINDOW = 150;
+
+/** 全局默认排序（无任何记忆时的回落） */
+const DEFAULT_SORT: Pick<QueryState, 'orderBy' | 'order'> = { orderBy: 'modification_time', order: 'desc' };
 
 const ERROR_TEXT: Record<string, string> = {
   FILE_EXISTS: '同名文件或文件夹已存在',
@@ -76,6 +79,8 @@ export const useLibraryStore = defineStore('library', () => {
   /** 浏览历史（会话内）：setView 压入，前进/后退在栈内移动 */
   const viewHistory = ref<ViewState[]>([]);
   const historyIndex = ref(-1);
+  /** 视图排序偏好（folder/category/tag 作用域；folder 继承沿父链解析） */
+  const viewPrefs = ref<ViewPrefs>({});
 
   // ---- getters ----
   const isTrash = computed(() => view.value.kind === 'trash');
@@ -177,12 +182,22 @@ export const useLibraryStore = defineStore('library', () => {
     const info = await api.appInfo();
     viewerMode.value = info.access === 'viewer';
     library.value = await api.libraryInfo();
-    await Promise.all([refreshFolders(), refreshTaxonomy()]);
+    await Promise.all([refreshFolders(), refreshTaxonomy(), loadViewPrefs()]);
     restoreView();
+    applySortForView(view.value); // 恢复的视图应用其记忆的排序
     // 历史栈以恢复后的视图为起点
     viewHistory.value = [view.value];
     historyIndex.value = 0;
     await resetList();
+  }
+
+  /** 视图排序偏好：不可用（旧服务端/网络失败）按无记忆处理 */
+  async function loadViewPrefs() {
+    try {
+      viewPrefs.value = await api.viewPreferences();
+    } catch {
+      // 忽略：保持空表
+    }
   }
 
   /** 视图记忆：按素材库路径存 localStorage（同一台机器多库互不干扰） */
@@ -221,10 +236,11 @@ export const useLibraryStore = defineStore('library', () => {
     return categories.value.some((c) => c.name === name);
   }
 
-  /** 应用视图：持久化 + 清选择 + 重查列表（setView/goBack/correctView 的公共收尾） */
+  /** 应用视图：持久化 + 应用记忆排序 + 清选择 + 重查列表（setView/goBack/correctView 的公共收尾） */
   function applyView(v: ViewState) {
     view.value = v;
     localStorage.setItem(viewStorageKey(), JSON.stringify(v));
+    applySortForView(v);
     clearSelection();
     void resetList();
   }
@@ -278,8 +294,78 @@ export const useLibraryStore = defineStore('library', () => {
     filterBarVisible.value = !filterBarVisible.value;
   }
 
+  /** 当前视图的排序偏好 scope；无记忆语义的视图（全部/回收站等）返回 null */
+  function sortScopeOf(v: ViewState): string | null {
+    if (v.kind === 'folder') return `folder:${v.path}`;
+    if (v.kind === 'category') return `category:${v.name}`;
+    if (v.kind === 'tag') return `tag:${v.name}`;
+    return null;
+  }
+
+  /**
+   * 解析视图的有效排序：folder 自底向上沿父链继承（子文件夹自己的设置优先），
+   * category/tag 无层级直接回落默认；无记忆语义的视图用全局默认
+   */
+  function resolveSort(v: ViewState): Pick<QueryState, 'orderBy' | 'order'> {
+    const hit = (scope: string) => {
+      const e = viewPrefs.value[scope];
+      return e ? { orderBy: e.order_by, order: e.order } : undefined;
+    };
+
+    if (v.kind === 'category' || v.kind === 'tag') {
+      return hit(`${v.kind}:${v.name}`) ?? DEFAULT_SORT;
+    }
+
+    if (v.kind === 'folder') {
+      for (let dir = v.path; ; dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '') {
+        const h = hit(`folder:${dir}`);
+        if (h) return h;
+        if (dir === '') break;
+      }
+    }
+
+    return DEFAULT_SORT;
+  }
+
+  /** 应用视图的有效排序（applyView/初始化/恢复默认用；只改排序字段，不动筛选条件；不触发持久化） */
+  function applySortForView(v: ViewState) {
+    const sort = resolveSort(v);
+    query.value.orderBy = sort.orderBy;
+    query.value.order = sort.order;
+  }
+
+  /** 排序变更持久化到当前视图作用域（fire-and-forget；无记忆语义或 viewer 只读时不写） */
+  function persistSortForCurrentView() {
+    const scope = sortScopeOf(view.value);
+    if (scope === null || viewerMode.value) return;
+    const entry = { order_by: query.value.orderBy, order: query.value.order };
+    viewPrefs.value = { ...viewPrefs.value, [scope]: entry };
+    void api.viewPreferenceSet(scope, entry.order_by, entry.order).catch(() => {
+      showToast('排序偏好保存失败');
+      void loadViewPrefs(); // 与服务端不一致时回拉对齐
+    });
+  }
+
+  /** 排序菜单「跟随父级设置/恢复默认排序」：删除当前视图的自有偏好，回到继承/默认 */
+  function resetSort() {
+    const scope = sortScopeOf(view.value);
+    if (scope === null || viewerMode.value || !(scope in viewPrefs.value)) return;
+    const next = { ...viewPrefs.value };
+    delete next[scope];
+    viewPrefs.value = next;
+    applySortForView(view.value);
+    void resetList();
+    void api.viewPreferenceReset(scope).catch(() => {
+      showToast('排序偏好保存失败');
+      void loadViewPrefs();
+    });
+  }
+
   function setQuery(patch: Partial<QueryState>) {
     Object.assign(query.value, patch);
+    if (patch.orderBy !== undefined || patch.order !== undefined) {
+      persistSortForCurrentView();
+    }
     void resetList();
   }
 
@@ -837,9 +923,9 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, searchText, previewId, toast, importProgress, taskBacklog, sidebarVisible, filterBarVisible, editorTarget, viewerMode,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, searchText, previewId, toast, importProgress, taskBacklog, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes, hasActiveFilters,
-    init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, submitSearch, resetList, ensureWindow, reloadSkeleton,
+    init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,

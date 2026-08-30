@@ -215,22 +215,19 @@ body.col-resizing {
 }
 
 /* 窄屏顶栏减负（390px 手机实测内容 ~540px 会横向溢出，搜索/设置被顶出屏外）：
-   排序/筛选按钮/筛选工具列/选中计数整体隐藏，搜索压缩、标题超长省略——
-   保留 汉堡/前进后退/搜索/设置 核心交互 */
+   排序/筛选按钮/选中计数/搜索框整体隐藏——排序与筛选收敛进顶栏右端「排序与筛选」溢出菜单
+   （sliders 图标），搜索退化为搜索按钮（点开浮层输入，见 TitleBar.vue），filterbar 本体放行显示。
+   面包屑只显示当前层级（TitleBar 内 narrow 分支渲染），祖先层级经侧栏抽屉导航 */
 .app.mobile .sort-btn,
 .app.mobile .filter-btn,
-.app.mobile .filterbar,
+.app.mobile .titlebar .search-box,
 /* 选中计数（.selected-count，勿用 .selected——与网格卡片选中态同名会连卡片一起隐藏） */
 .app.mobile .selected-count {
   display: none;
 }
 
-.app.mobile .search-box input {
-  width: 88px;
-}
-
 .app.mobile .location {
-  max-width: 34vw;
+  max-width: 40vw;
   overflow: hidden;
   text-overflow: ellipsis;
 }

@@ -1,17 +1,42 @@
 <script setup lang="ts">
 // Eagle 式中栏顶栏（只覆盖内容区，左右栏通高）：侧栏开关 · 前进/后退 · 位置面包屑 ‖ 缩略图滑杆 ‖ 排序/筛选 · 搜索。
 // 整条为窗口拖拽区域（双击空白切换最大化），交互控件单独 no-drag。
-import { computed } from 'vue';
+// 窄屏（竖屏宽度不足）：排序/筛选收进「排序与筛选」溢出菜单，搜索框退化为搜索按钮（点开浮层），
+// 面包屑只显示当前层级（完整路径经侧栏抽屉导航）。横屏/宽屏布局不受影响。
+import { computed, nextTick, ref, watch } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import { useLayout } from '../composables/useLayout';
 import Icon from './Icon.vue';
 import SearchBox from './SearchBox.vue';
-import type { QueryState } from '../types';
+import type { MenuItem, QueryState } from '../types';
 
 const store = useLibraryStore();
 const { open: openMenu } = useContextMenu();
-const { touch } = useLayout();
+const { narrow, touch } = useLayout();
+
+/** 窄屏搜索浮层：搜索框退化为按钮后的展开形态（Enter 提交并关闭，Esc/点遮罩/× 关闭） */
+const mobileSearchOpen = ref(false);
+const mobileSearchInput = ref<HTMLInputElement | null>(null);
+watch(mobileSearchOpen, async (open) => {
+  if (open) {
+    await nextTick();
+    mobileSearchInput.value?.focus();
+  }
+});
+
+function openMobileSearch() {
+  mobileSearchOpen.value = true;
+}
+
+function closeMobileSearch() {
+  mobileSearchOpen.value = false;
+}
+
+function submitMobileSearch() {
+  store.submitSearch();
+  closeMobileSearch();
+}
 const emit = defineEmits<{ 'open-settings': [] }>();
 const isMac = window.hawkShell?.platform === 'darwin';
 /** 设置面板入口：桌面端（Electron）与触屏设备（浏览器移动端）可用 */
@@ -59,17 +84,51 @@ const currentSortLabel = computed(
   () => SORT_OPTIONS.find((o) => o.orderBy === store.query.orderBy && o.order === store.query.order)?.label ?? '',
 );
 
-/** 排序按钮：弹出二级菜单设置字段与方向（当前项打勾） */
+/** 排序按钮：弹出二级菜单设置字段与方向（当前项打勾）；有自有设置时附「跟随父级/恢复默认」 */
 function openSortMenu(e: MouseEvent) {
+  openMenu(sortMenuItems(), e);
+}
+
+/** 窄屏溢出菜单：筛选工具列开关 + 全部排序项 + 重置项（排序/筛选按钮在窄屏隐藏） */
+function openMoreMenu(e: MouseEvent) {
   openMenu(
-    SORT_OPTIONS.map((o) => ({
-      label: o.label,
-      checked: o.orderBy === store.query.orderBy && o.order === store.query.order,
-      action: () => store.setQuery({ orderBy: o.orderBy, order: o.order }),
-    })),
+    [
+      {
+        label: '筛选工具列',
+        checked: store.filterBarVisible || store.hasActiveFilters,
+        action: () => store.toggleFilterBar(),
+      },
+      { separator: true, label: '' },
+      ...sortMenuItems(),
+    ],
     e,
   );
 }
+
+/** 排序菜单项（宽屏排序按钮与窄屏溢出菜单共用） */
+function sortMenuItems(): MenuItem[] {
+  const items: MenuItem[] = SORT_OPTIONS.map((o) => ({
+    label: o.label,
+    checked: o.orderBy === store.query.orderBy && o.order === store.query.order,
+    action: () => store.setQuery({ orderBy: o.orderBy, order: o.order }),
+  }));
+  const resetLabel = sortResetLabel.value;
+  if (resetLabel) {
+    items.push({ separator: true, label: '' }, { label: resetLabel, action: () => store.resetSort() });
+  }
+
+  return items;
+}
+
+/** 当前视图存在自有排序设置时给出重置入口文案；folder 回到父级继承，category/tag 回到默认 */
+const sortResetLabel = computed(() => {
+  const v = store.view;
+  const has = (scope: string) => scope in store.viewPrefs;
+  if (v.kind === 'folder') return has(`folder:${v.path}`) ? '跟随父级设置' : null;
+  if (v.kind === 'category') return has(`category:${v.name}`) ? '恢复默认排序' : null;
+  if (v.kind === 'tag') return has(`tag:${v.name}`) ? '恢复默认排序' : null;
+  return null;
+});
 
 /** 双击标题栏空白区切换最大化；点在控件上不触发 */
 function onDblClick(e: MouseEvent) {
@@ -100,16 +159,22 @@ function onDblClick(e: MouseEvent) {
       </button>
 
       <nav v-if="breadcrumb" class="location crumbs">
-        <button class="crumb" @click="store.setView({ kind: 'all' })">全部素材</button>
-        <template v-for="(seg, i) in breadcrumb.segs" :key="seg.path">
-          <Icon name="chevronRight" :size="12" class="sep" />
-          <button
-            class="crumb"
-            :class="{ current: i === breadcrumb.segs.length - 1 }"
-            @click="store.setView({ kind: breadcrumb.kind, path: seg.path })"
-          >
-            {{ seg.name }}
-          </button>
+        <template v-if="narrow">
+          <!-- 窄屏只显示当前层级；祖先层级经侧栏抽屉导航 -->
+          <span class="crumb current">{{ breadcrumb.segs.at(-1)?.name }}</span>
+        </template>
+        <template v-else>
+          <button class="crumb" @click="store.setView({ kind: 'all' })">全部素材</button>
+          <template v-for="(seg, i) in breadcrumb.segs" :key="seg.path">
+            <Icon name="chevronRight" :size="12" class="sep" />
+            <button
+              class="crumb"
+              :class="{ current: i === breadcrumb.segs.length - 1 }"
+              @click="store.setView({ kind: breadcrumb.kind, path: seg.path })"
+            >
+              {{ seg.name }}
+            </button>
+          </template>
         </template>
       </nav>
       <span v-else class="location title">{{ locationTitle }}</span>
@@ -133,11 +198,37 @@ function onDblClick(e: MouseEvent) {
         <Icon name="arrowUpDown" :size="14" />
       </button>
 
-      <SearchBox />
+      <SearchBox v-if="!narrow" />
+
+      <!-- 窄屏：搜索框退化为按钮，点开浮层输入 -->
+      <button v-if="narrow" class="bar-btn mobile-search-btn" title="搜索" @click="openMobileSearch">
+        <Icon name="search" :size="14" />
+      </button>
 
       <button v-if="hasSettings" class="bar-btn" title="设置" @click="emit('open-settings')">
         <Icon name="settings" :size="14" />
       </button>
+
+      <!-- 窄屏（手机竖屏等）：顶栏放不下排序/筛选按钮，收敛为一个溢出菜单（filterbar 本体放行显示） -->
+      <button v-if="narrow" class="bar-btn more-btn" title="排序与筛选" @click="openMoreMenu">
+        <Icon name="sliders" :size="14" />
+      </button>
+    </div>
+
+    <!-- 窄屏搜索浮层：占顶栏宽度的搜索框在窄屏退化为按钮后的展开形态 -->
+    <div v-if="mobileSearchOpen" class="mobile-search-mask" @click="closeMobileSearch">
+      <div class="mobile-search-bar" @click.stop>
+        <Icon name="search" :size="14" />
+        <input
+          ref="mobileSearchInput"
+          v-model="store.searchText"
+          type="search"
+          placeholder="搜索"
+          @keydown.enter="submitMobileSearch"
+          @keydown.esc="closeMobileSearch"
+        />
+        <button class="bar-btn" title="关闭" @click="closeMobileSearch"><Icon name="close" :size="14" /></button>
+      </div>
     </div>
   </header>
 </template>
@@ -159,6 +250,41 @@ function onDblClick(e: MouseEvent) {
 .titlebar select,
 .titlebar .search-box {
   -webkit-app-region: no-drag;
+}
+
+/* 窄屏搜索浮层：遮罩整屏（盖住抽屉/预览），搜索条靠顶部 */
+.mobile-search-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.mobile-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(420px, 88vw);
+  height: 40px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.mobile-search-bar input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
 }
 
 .group {

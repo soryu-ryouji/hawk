@@ -31,6 +31,9 @@ export interface QueryState {
   order: 'asc' | 'desc';
 }
 
+/** 视图排序偏好（.hawk/view.toml，随库同步）。scope 键：folder:<路径>（"" 为库根）/category:<名>/tag:<名> */
+export type ViewPrefs = Record<string, { order_by: QueryState['orderBy']; order: 'asc' | 'desc' }>;
+
 export interface MenuItem {
   label: string;
   danger?: boolean;

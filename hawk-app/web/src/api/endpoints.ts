@@ -1,7 +1,7 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
 import { apiConfig, request } from './client';
 import type { components } from './schema';
-import type { CategoryInfo, FolderNode, Item, ItemListRequest, ItemListResult, ItemSkeletonResult, LibraryInfo, TagInfo } from '../types';
+import type { CategoryInfo, FolderNode, Item, ItemListRequest, ItemListResult, ItemSkeletonResult, LibraryInfo, TagInfo, ViewPrefs } from '../types';
 
 /** server 启动状态（GET /app/startup，浏览器无 IPC 时由前端轮询） */
 type StartupInfo = components['schemas']['StartupInfo'];
@@ -81,6 +81,12 @@ export const api = {
   tagUpdate: (name: string, newName: string) =>
     request<void>('POST', '/api/v1/tag/update', { body: { name, new_name: newName } }),
   tagDelete: (name: string) => request<void>('POST', '/api/v1/tag/delete', { body: { name } }),
+
+  /** 视图排序偏好：folder 继承由前端沿父链解析，服务端只存取原始条目 */
+  viewPreferences: () => request<ViewPrefs>('GET', '/api/v1/view/preferences'),
+  viewPreferenceSet: (scope: string, orderBy: 'modification_time' | 'name' | 'size' | 'star', order: 'asc' | 'desc') =>
+    request<void>('PUT', '/api/v1/view/preference', { body: { scope, order_by: orderBy, order } }),
+  viewPreferenceReset: (scope: string) => request<void>('DELETE', '/api/v1/view/preference', { query: { scope } }),
 
   /** 缩略图 URL：size 须命中服务端 thumbnail_sizes 白名单；<img> 无法带请求头，token 走查询参数（后端已放行该端点） */
   thumbnailUrl(id: string, size: number = 256): string {

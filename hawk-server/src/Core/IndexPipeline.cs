@@ -24,6 +24,11 @@ public sealed class IndexPipeline : IDisposable
     private sealed record ClearTrashJob(TaskCompletionSource? Done) : IndexJob;
     private sealed record MetadataJob(string Hash, Action<ItemMetadata> Mutate, TaskCompletionSource? Done) : IndexJob;
     private sealed record BatchMetadataJob(string[] Hashes, Action<ItemMetadata> Mutate, TaskCompletionSource<BatchMetadataResult>? Done) : IndexJob;
+    private sealed record MetadataSyncJob(TaskCompletionSource? Done) : IndexJob
+    {
+        public static readonly MetadataSyncJob Instance = new((TaskCompletionSource?)null);
+    }
+
     private sealed record PaletteJob(string Hash, PaletteColor[] Palette) : IndexJob;
     private sealed record FolderHintJob(string Reason) : IndexJob;
 
@@ -47,6 +52,7 @@ public sealed class IndexPipeline : IDisposable
     private readonly EventBus _bus;
     private readonly LibraryScanner _scanner;
     private readonly TaxonomyMigrator _migrator;
+    private readonly ViewPreferences _prefs;
     private readonly ServerSettings _settings;
     private readonly ILogger<IndexPipeline> _logger;
 
@@ -77,6 +83,7 @@ public sealed class IndexPipeline : IDisposable
         EventBus bus,
         LibraryScanner scanner,
         TaxonomyMigrator migrator,
+        ViewPreferences prefs,
         ServerSettings settings,
         ILogger<IndexPipeline> logger)
     {
@@ -89,6 +96,7 @@ public sealed class IndexPipeline : IDisposable
         _bus = bus;
         _scanner = scanner;
         _migrator = migrator;
+        _prefs = prefs;
         _settings = settings;
         _logger = logger;
     }
@@ -111,6 +119,9 @@ public sealed class IndexPipeline : IDisposable
         _consumer = ConsumeLoop(_cts.Token);
         _thumbWorker?.Start();
         _reconciler = ReconcileLoop(_cts.Token);
+        // 启动先跑一轮元数据对账（入队于初始扫描之前，channel FIFO 保证先于 ScanJob 执行）：
+        // 把停机期间网盘同步落地的外部 TOML 变更并入内存，避免扫描拿旧副本做迁移继承
+        FireAndForget(MetadataSyncJob.Instance);
     }
 
     /// <summary>
@@ -130,6 +141,7 @@ public sealed class IndexPipeline : IDisposable
             while (await timer.WaitForNextTickAsync(ct))
             {
                 FireAndForget(new ScanJob(Full: false, null));
+                FireAndForget(MetadataSyncJob.Instance);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -159,6 +171,14 @@ public sealed class IndexPipeline : IDisposable
 
     /// <summary>异步触发全量扫描(library/reindex:立即返回,过程变更照常推送事件)</summary>
     public void RequestScan(bool full) => FireAndForget(new ScanJob(full, null));
+
+    /// <summary>立即触发一轮元数据对账(TOML → 缓存/索引);正常由周期对账驱动,测试与手动重同步用</summary>
+    public Task SubmitMetadataSyncAsync()
+    {
+        var tcs = NewTcs();
+        Enqueue(new MetadataSyncJob(tcs), tcs);
+        return tcs.Task;
+    }
 
     /// <summary>目录结构可能变化(文件夹增删改移、外部变动、扫描兜底):广播 folder.changed</summary>
     public void NotifyFolderChanged(string reason) => FireAndForget(new FolderHintJob(reason));
@@ -371,6 +391,10 @@ public sealed class IndexPipeline : IDisposable
             case BatchMetadataJob j:
                 Complete(j.Done, DoBatchMetadata(j));
                 break;
+            case MetadataSyncJob j:
+                DoMetadataSync();
+                Complete(j.Done);
+                break;
             case PaletteJob j:
                 // 调色板回写:item 已因内容漂移消失时丢弃(幂等,重复应用无害)
                 if (_index.SetPalette(j.Hash, j.Palette) is { } paletteItem)
@@ -430,6 +454,7 @@ public sealed class IndexPipeline : IDisposable
             case MoveJob j: j.Done?.TrySetException(ex); break;
             case DirMoveJob j: j.Done?.TrySetException(ex); break;
             case ScanJob j: j.Done?.TrySetException(ex); break;
+            case MetadataSyncJob j: j.Done?.TrySetException(ex); break;
             case ClearTrashJob j: j.Done?.TrySetException(ex); break;
             case MetadataJob j: j.Done?.TrySetException(ex); break;
             case BatchMetadataJob j: j.Done?.TrySetException(ex); break;
@@ -696,6 +721,10 @@ public sealed class IndexPipeline : IDisposable
     /// <summary>按相对路径删除:同时按文件(精确)与目录(前缀)匹配,删除事件不区分两者</summary>
     private void DoDelete(string rel)
     {
+        // 目录(或其下的文件)删除:前缀范围内的 folder: 排序偏好一并清除。
+        // 同目录下文件与文件夹不可同名,按前缀匹配不会误伤文件夹设置
+        _prefs.DeletePrefix(rel);
+
         var item = _index.RemoveLocation(rel);
         if (item is not null)
         {
@@ -765,6 +794,9 @@ public sealed class IndexPipeline : IDisposable
                 affected.Add(hash!);
             }
         }
+
+        // 排序偏好跟随目录移动/重命名(含移入回收站,恢复时随之回归)
+        _prefs.RenamePrefix(oldRel, newRel);
 
         var oldInTrash = LibraryPaths.IsInTrash(oldRel + "/");
         var newInTrash = LibraryPaths.IsInTrash(newRel + "/");
@@ -915,11 +947,89 @@ public sealed class IndexPipeline : IDisposable
             count, pending.Count, _index.AllLocationPaths().Length);
     }
 
+    // ---------- 元数据对账（只进不出：TOML → 缓存/索引） ----------
+
+    /// <summary>
+    /// 周期对账：.hawk/metadata/ 的 TOML 是唯一权威源（参与网盘同步），本机 SQLite 缓存与
+    /// 内存副本经此跟随外部变更（网盘同步落地、手工编辑）。按 mtime 与缓存记录比对，
+    /// 只有变化的文件才重新解析。本机写入在 Save 时已同步更新缓存，此轮通常为 no-op。
+    /// 在消费循环内联执行（与全量扫描同纪律）；解析失败的文件跳过且不清空状态，下轮重试。
+    /// </summary>
+    private void DoMetadataSync()
+    {
+        var mtimes = _store.SourceMtimes();
+        if (mtimes is null)
+        {
+            return; // 缓存不可用：跳过本轮（退化为重启才收敛，即旧版本行为）
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(_paths.MetadataDir, "*.toml"))
+        {
+            var hash = Path.GetFileNameWithoutExtension(file);
+            if (hash.Length != 64 || hash.Any(c => !char.IsAsciiHexDigitLower(c)))
+            {
+                continue;
+            }
+
+            seen.Add(hash);
+            long mtime;
+            try
+            {
+                mtime = LibraryPaths.ToUnixMs(File.GetLastWriteTimeUtc(file));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "元数据 mtime 读取失败，跳过: {File}", file);
+                continue;
+            }
+
+            if (mtimes.TryGetValue(hash, out var known) && known == mtime)
+            {
+                continue;
+            }
+
+            if (_store.ApplyExternalToml(hash, file, mtime))
+            {
+                SyncIndexFromMetadata(hash);
+            }
+        }
+
+        // TOML 已消失：清空素材参数（重启后无元数据的等价语义；item 与位置由扫描决定存续）
+        foreach (var hash in mtimes.Keys)
+        {
+            if (!seen.Contains(hash))
+            {
+                _store.ClearExternal(hash);
+                SyncIndexFromMetadata(hash);
+            }
+        }
+    }
+
+    /// <summary>对账应用后刷新索引查询副本、登记分类/标签并推送 item.updated</summary>
+    private void SyncIndexFromMetadata(string hash)
+    {
+        if (!_store.TryGet(hash, out var meta))
+        {
+            return;
+        }
+
+        _migrator.RegisterTaxonomy(meta);
+        if (_index.Get(hash) is { } item)
+        {
+            item.SyncFrom(meta);
+            ItemEvents.PublishChanged(_bus, item);
+        }
+    }
+
     // ---------- 回收站 ----------
 
     /// <summary>清空回收站:清理位置与对应元数据、缩略图(库内仍有引用的内容除外)。物理删除由 API 层完成。</summary>
     private void DoClearTrash()
     {
+        // 回收站内的 folder: 排序偏好随清空一并移除
+        _prefs.DeletePrefix(LibraryPaths.HawkDirName + "/" + LibraryPaths.TrashDirName);
+
         foreach (var rel in _index.AllLocationPaths().Where(LibraryPaths.IsInTrash))
         {
             var item = _index.RemoveLocation(rel);

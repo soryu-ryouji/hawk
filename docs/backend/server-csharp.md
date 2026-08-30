@@ -12,7 +12,7 @@
 | --------- | ---------------------------- | ------------------------------------------------------ |
 | HTTP 框架 | ASP.NET Core Minimal API     |                                                        |
 | 文件监听  | FileSystemWatcher            | 内置                                                   |
-| 索引      | 内存索引                     | 目录扫描 + 路径/size/mtime 比对，仅新增或变动文件算哈希；watcher 增量更新 |
+| 索引      | 内存索引                     | 目录扫描 + 路径/size/mtime 比对，仅新增或变动文件算哈希；watcher 增量更新；元数据经库外 SQLite 派生缓存注水（见 storage.md） |
 | 哈希      | Blake3                         |                                                        |
 | 图像处理  | ImageSharp                   | 解码 JPEG/PNG/GIF/WebP/TIFF/BMP，缩放生成缩略图        |
 | 配置      | Tomlyn                       | TOML 解析                                              |

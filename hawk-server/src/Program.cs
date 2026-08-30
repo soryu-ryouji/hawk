@@ -31,9 +31,11 @@ builder.Services.AddSingleton(sp =>
     return paths;
 });
 builder.Services.AddSingleton<LibraryConfig>();
+builder.Services.AddSingleton<IndexDb>();
 builder.Services.AddSingleton<MetadataStore>();
 builder.Services.AddSingleton<CategoryRegistry>();
 builder.Services.AddSingleton<TagRegistry>();
+builder.Services.AddSingleton<ViewPreferences>();
 builder.Services.AddSingleton<ItemIndex>();
 builder.Services.AddSingleton<ThumbnailService>();
 builder.Services.AddSingleton<ColorService>();
@@ -81,6 +83,7 @@ app.MapFolderEndpoints();
 app.MapItemEndpoints();
 app.MapTrashEndpoints();
 app.MapTaxonomyEndpoints();
+app.MapViewEndpoints();
 app.MapEventsEndpoints();
 
 // 启动顺序（server-csharp.md）：先监听端口（先监听、扫描后台进行），初始索引完成后才算就绪。
@@ -92,6 +95,8 @@ var startup = app.Services.GetRequiredService<StartupState>();
 pipeline.OnScanProgress = startup.Report;
 pipeline.AttachThumbnailWorker(app.Services.GetRequiredService<ThumbnailWorker>());
 
+var prefs = app.Services.GetRequiredService<ViewPreferences>();
+
 pipeline.Start();
 watcher.FileUpsert += pipeline.NotifyUpsert;
 watcher.Deleted += pipeline.NotifyDeleted;
@@ -99,6 +104,7 @@ watcher.Moved += pipeline.NotifyMoved;
 watcher.FolderCreated += _ => pipeline.NotifyFolderChanged(FolderChangedPayload.ReasonExternal);
 watcher.ConfigChanged += pipeline.NotifyConfigChanged;
 watcher.RegistryChanged += pipeline.NotifyRegistryChanged;
+watcher.PreferencesChanged += prefs.Reload; // 视图偏好与索引无耦合,直接重载(网盘同步落地同理)
 watcher.Overflowed += pipeline.NotifyOverflow;
 watcher.Start(); // 事件先入队缓冲，与初始扫描天然去重
 

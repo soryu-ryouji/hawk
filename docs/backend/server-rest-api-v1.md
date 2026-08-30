@@ -664,6 +664,22 @@ Item 对象，并附带 `already_existed` 标志：
 | POST | `/api/v1/tag/update` | `{ "name", "new_name" }`，重命名，全部 item 跟随；目标已存在时合并 |
 | POST | `/api/v1/tag/delete` | `{ "name" }`，全部 item 的该标签清除 |
 
+## view
+
+视图偏好（`.hawk/view.toml`，参与同步）：记住文件夹/分类/标签视图各自的排序方式。
+条目为扁平 map，scope 键三种形态：
+
+- `folder:<库内路径>`（路径 `""` 为库根）——**继承由客户端解析**：沿父链向上查找，子文件夹自己的设置优先于父级
+- `category:<名称>` / `tag:<名称>`——无层级，无条目时回落全局默认（修改时间↓）
+
+服务端只存取原始条目，不理解继承语义。文件夹移动/重命名时 `folder:` 键自动跟随，删除时自动清除。排序值与 `item/list` 的 `order_by`/`order` 同白名单。
+
+| 方法 | 端点 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/api/v1/view/preferences` | 全部条目：`{ "folder:photos": { "order_by", "order" }, ... }` |
+| PUT | `/api/v1/view/preference` | `{ "scope", "order_by", "order" }`，覆盖写；非法 scope/排序值返回 `INVALID_PARAM` |
+| DELETE | `/api/v1/view/preference?scope=<scope>` | 删除条目，回到继承/默认 |
+
 ## trash
 
 回收站内容通过 `item/list`（`in_trash: true`）查询。

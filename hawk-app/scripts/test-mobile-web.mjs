@@ -3,7 +3,8 @@
 //   生成临时素材库（含全景/竖图，顺便校验齐行布局不横向溢出）→ 拉起 hawk-server 托管 web/dist
 //   → 以无 preload 的 Electron 窗口模拟手机浏览器（390×844）→ 断言：
 //   启动屏出现 → 轮询就绪进入主界面（卡在启动屏即失败，正是 2026-08 回归的故障模式）
-//   → 网格渲染且无横向溢出 → 点按卡片开预览且中央图在视口内。
+//   → 网格渲染且无横向溢出 → 窄屏顶栏：排序/筛选收进溢出菜单、搜索退化为按钮并可点开浮层
+//   → 点按卡片开预览且中央图在视口内。
 // 产物（截图/临时库）放在 .tmp/mobile-smoke/，成功即清理，失败保留供排查。
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -169,6 +170,7 @@ try {
   });
   const ticks = [];
   let grid = null;
+  let titlebar = null;
   let preview = null;
   let loadFailed = null;
   let timedOut = false;
@@ -184,6 +186,7 @@ try {
         const msg = JSON.parse(line);
         if (msg.type === 'tick') ticks.push(msg);
         else if (msg.type === 'grid') grid = msg;
+        else if (msg.type === 'titlebar') titlebar = msg;
         else if (msg.type === 'preview') preview = msg;
         else if (msg.type === 'load-failed') loadFailed = msg;
         else if (msg.type === 'timeout') timedOut = true;
@@ -211,6 +214,17 @@ try {
       check(!grid.error && grid.scrollWidth <= grid.innerWidth + 1, '无横向溢出', `scrollWidth=${grid.scrollWidth} / innerWidth=${grid.innerWidth}`);
     } else {
       check(false, '网格探针', '未执行');
+    }
+    if (titlebar) {
+      check(
+        !titlebar.error && titlebar.moreVisible && titlebar.searchBtnVisible && titlebar.searchBoxHidden &&
+          titlebar.sortHidden && titlebar.filterHidden && titlebar.menuOpened && titlebar.hasFilterItem &&
+          titlebar.hasSortItem && titlebar.searchOverlayOpened && titlebar.searchInputFocused && titlebar.searchOverlayClosed,
+        '窄屏顶栏入口（排序筛选菜单/搜索退化）',
+        titlebar.error ? titlebar.message : `menu=${titlebar.menuOpened} searchOverlay=${titlebar.searchOverlayOpened}`,
+      );
+    } else if (sawApp) {
+      check(false, '窄屏顶栏入口（排序筛选菜单/搜索退化）', '探针未执行');
     }
     if (preview) {
       check(!preview.error && preview.overlay, '双击打开预览');

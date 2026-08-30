@@ -6,25 +6,51 @@ using Tomlyn.Model;
 namespace Hawk.Server.Core;
 
 /// <summary>
-/// 元数据存储：.hawk/metadata/&lt;hash&gt;.toml 的读写。
-/// 内存中保留权威副本（含 path → hash 反查表），磁盘为持久化层；
-/// 写入采用「临时文件 + rename」的原子写，避免网盘同步到写了一半的文件。
+/// 元数据存储：.hawk/metadata/&lt;hash&gt;.toml 的读写。.hawk/metadata/ 是唯一权威数据源，
+/// 参与网盘同步；写入采用「临时文件 + rename」的原子写，避免网盘同步到写了一半的文件。
+///
+/// 本类内存中保留权威副本（含 path → hash 反查表）供流水线热路径查询；
+/// 副本的注水来源优先级：SQLite 派生缓存（IndexDb，快路径）→ TOML 全量解析（回退+建缓存）。
 /// 只有索引流水线写入本存储，因此内部状态用一把锁保护即可。
 /// </summary>
 public sealed class MetadataStore
 {
     private readonly LibraryPaths _paths;
+    private readonly IndexDb _db;
     private readonly ILogger<MetadataStore> _logger;
     private readonly object _gate = new();
 
     private readonly Dictionary<string, ItemMetadata> _byHash = new();
     private readonly Dictionary<string, string> _hashByPath = new(); // 库内路径 → hash
 
-    public MetadataStore(LibraryPaths paths, ILogger<MetadataStore> logger)
+    public MetadataStore(LibraryPaths paths, IndexDb db, ILogger<MetadataStore> logger)
     {
         _paths = paths;
+        _db = db;
         _logger = logger;
-        LoadAll();
+
+        List<(string Hash, ItemMetadata Meta, long SourceMtime)>? entries = null;
+        if (_db.IsHydrated)
+        {
+            try
+            {
+                entries = _db.LoadAll();
+                _logger.LogInformation("元数据副本已从 SQLite 缓存注水 {Count} 条", entries.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "元数据缓存读取失败，改由 TOML 全量解析");
+            }
+        }
+
+        if (entries is null)
+        {
+            // 缓存缺失/未注水/读取失败：TOML 全量解析（一次性慢路径），并顺带建好缓存
+            entries = LoadAllFromToml();
+            _db.Hydrate(entries);
+        }
+
+        HydrateMemory(entries);
     }
 
     public bool TryGet(string hash, out ItemMetadata meta)
@@ -53,23 +79,38 @@ public sealed class MetadataStore
         }
     }
 
-    /// <summary>保存元数据（内存 + 磁盘原子写）。</summary>
+    /// <summary>各 TOML 源文件 mtime 快照（后台对账比对依据）；缓存不可用时返回 null（本轮对账跳过）</summary>
+    public IReadOnlyDictionary<string, long>? SourceMtimes() => _db.LoadSourceMtimes();
+
+    /// <summary>
+    /// 保存元数据：先 TOML 原子写（权威层），成功后更新内存副本与 SQLite 缓存。
+    /// 中途崩溃时缓存与内存自然朝 TOML 收敛（后台对账会补齐），故必须先写 TOML。
+    /// </summary>
     public void Save(string hash, ItemMetadata meta)
     {
+        var file = FilePath(hash);
+        var tmp = file + ".tmp";
+        File.WriteAllText(tmp, Serialize(meta));
+        File.Move(tmp, file, overwrite: true);
+        var sourceMtime = LibraryPaths.ToUnixMs(File.GetLastWriteTimeUtc(file));
+
         lock (_gate)
         {
             _byHash[hash] = meta;
             RebuildPathIndex(hash, meta);
         }
 
-        var file = FilePath(hash);
-        var tmp = file + ".tmp";
-        File.WriteAllText(tmp, Serialize(meta));
-        File.Move(tmp, file, overwrite: true);
+        _db.Save(hash, meta, sourceMtime);
     }
 
     public void Delete(string hash)
     {
+        var file = FilePath(hash);
+        if (File.Exists(file))
+        {
+            File.Delete(file);
+        }
+
         lock (_gate)
         {
             if (_byHash.Remove(hash, out var meta))
@@ -85,14 +126,74 @@ public sealed class MetadataStore
             }
         }
 
-        var file = FilePath(hash);
-        if (File.Exists(file))
+        _db.Delete(hash);
+    }
+
+    /// <summary>
+    /// 对账应用（只进不出）：TOML 被外部新增/修改（网盘同步落地、手工编辑）后载入。
+    /// 解析失败返回 false（跳过该文件，不清空任何状态，下一轮对账重试）。
+    /// </summary>
+    public bool ApplyExternalToml(string hash, string file, long sourceMtime)
+    {
+        ItemMetadata meta;
+        try
         {
-            File.Delete(file);
+            meta = Parse(File.ReadAllText(file));
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "元数据解析失败，对账跳过: {File}", file);
+            return false;
+        }
+
+        lock (_gate)
+        {
+            _byHash[hash] = meta;
+            RebuildPathIndex(hash, meta);
+        }
+
+        _db.Save(hash, meta, sourceMtime);
+        return true;
+    }
+
+    /// <summary>
+    /// 对账应用（只进不出）：TOML 已消失 → 清空素材参数字段（等价于重启后无元数据的语义；
+    /// item 本身与位置的存续由文件扫描决定，路径记录随之清空，扫描会按需重建空壳）。
+    /// </summary>
+    public void ClearExternal(string hash)
+    {
+        ItemMetadata meta;
+        lock (_gate)
+        {
+            if (!_byHash.TryGetValue(hash, out meta!))
+            {
+                return;
+            }
+
+            meta.Url = null;
+            meta.Star = 0;
+            meta.Annotation = null;
+            meta.Tags.Clear();
+            meta.Categories.Clear();
+            meta.Paths.Clear();
+        }
+
+        _db.Save(hash, meta, 0);
     }
 
     private string FilePath(string hash) => Path.Combine(_paths.MetadataDir, hash + ".toml");
+
+    private void HydrateMemory(List<(string Hash, ItemMetadata Meta, long SourceMtime)> entries)
+    {
+        lock (_gate)
+        {
+            foreach (var (hash, meta, _) in entries)
+            {
+                _byHash[hash] = meta;
+                RebuildPathIndex(hash, meta);
+            }
+        }
+    }
 
     private void RebuildPathIndex(string hash, ItemMetadata meta)
     {
@@ -107,12 +208,13 @@ public sealed class MetadataStore
         }
     }
 
-    /// <summary>加载全部元数据。只识别 64 位小写 hex 命名的文件，同步冲突副本等一律忽略。</summary>
-    private void LoadAll()
+    /// <summary>TOML 全量解析（缓存缺失时的权威回退路径）。只识别 64 位小写 hex 命名的文件，同步冲突副本等一律忽略。</summary>
+    private List<(string Hash, ItemMetadata Meta, long SourceMtime)> LoadAllFromToml()
     {
+        var entries = new List<(string, ItemMetadata, long)>();
         if (!Directory.Exists(_paths.MetadataDir))
         {
-            return;
+            return entries;
         }
 
         foreach (var file in Directory.EnumerateFiles(_paths.MetadataDir, "*.toml"))
@@ -126,11 +228,8 @@ public sealed class MetadataStore
             try
             {
                 var meta = Parse(File.ReadAllText(file));
-                lock (_gate)
-                {
-                    _byHash[hash] = meta;
-                    RebuildPathIndex(hash, meta);
-                }
+                var mtime = LibraryPaths.ToUnixMs(File.GetLastWriteTimeUtc(file));
+                entries.Add((hash, meta, mtime));
             }
             catch (Exception ex)
             {
@@ -138,7 +237,8 @@ public sealed class MetadataStore
             }
         }
 
-        _logger.LogInformation("已加载 {Count} 条元数据", _byHash.Count);
+        _logger.LogInformation("已从 TOML 全量解析 {Count} 条元数据", entries.Count);
+        return entries;
     }
 
     private static ItemMetadata Parse(string toml)

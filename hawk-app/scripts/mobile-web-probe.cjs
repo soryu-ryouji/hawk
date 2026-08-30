@@ -26,6 +26,48 @@ const GRID_SRC = `(() => ({
   scrollWidth: document.documentElement.scrollWidth,
 }))()`;
 
+// 窄屏顶栏：排序/筛选/搜索框应隐藏；「排序与筛选」溢出菜单与搜索浮层可用
+const TITLEBAR_SRC = `(async () => {
+  const visible = (el) => !!el && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
+  const raf2 = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  try {
+    const more = document.querySelector('.titlebar .more-btn');
+    const searchBtn = document.querySelector('.titlebar .mobile-search-btn');
+    const base = {
+      moreVisible: visible(more),
+      searchBtnVisible: visible(searchBtn),
+      searchBoxHidden: !visible(document.querySelector('.titlebar .search-box')),
+      sortHidden: !visible(document.querySelector('.titlebar .sort-btn')),
+      filterHidden: !visible(document.querySelector('.titlebar .filter-btn')),
+    };
+    if (!base.moreVisible || !base.searchBtnVisible) return base;
+
+    // 「排序与筛选」溢出菜单：含筛选开关与排序项
+    more.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await raf2();
+    const menu = document.querySelector('.mask .menu');
+    const menuText = menu?.textContent ?? '';
+    base.menuOpened = !!menu;
+    base.hasFilterItem = menuText.includes('筛选工具列');
+    base.hasSortItem = menuText.includes('修改时间');
+    document.querySelector('.mask')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await raf2();
+
+    // 搜索浮层：按钮点开 → 输入框出现并聚焦 → 点遮罩关闭
+    searchBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await raf2();
+    const input = document.querySelector('.mobile-search-mask input');
+    base.searchOverlayOpened = !!input;
+    base.searchInputFocused = document.activeElement === input;
+    document.querySelector('.mobile-search-mask')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await raf2();
+    base.searchOverlayClosed = !document.querySelector('.mobile-search-mask');
+    return base;
+  } catch (e) {
+    return { error: true, message: String(e) };
+  }
+})()`;
+
 // carousel 模式下中央帧（index 1）必须完整落在视口内（前/后邻图在屏外属设计行为，不看）
 const PREVIEW_SRC = `(() => {
   const overlay = document.querySelector('.overlay');
@@ -109,6 +151,8 @@ app.whenReady().then(async () => {
     }
     emit({ type: 'grid', t: Date.now() - t0, ...(grid ?? { error: true }) });
     await shot('grid');
+    const titlebar = await win.webContents.executeJavaScript(TITLEBAR_SRC).catch(() => null);
+    emit({ type: 'titlebar', t: Date.now() - t0, ...(titlebar ?? { error: true }) });
     const cardDeadline = Date.now();
     while (Date.now() - cardDeadline < 15000) {
       const hasCard = await win.webContents
@@ -122,11 +166,18 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(
       `document.querySelector('.card')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`,
     );
-    setTimeout(async () => {
-      const v = await win.webContents.executeJavaScript(PREVIEW_SRC).catch(() => null);
-      emit({ type: 'preview', t: Date.now() - t0, ...(v ?? { error: true }) });
-      await shot('preview');
-      app.exit(0);
-    }, 1200);
+    // 预览浮层打开依赖图片加载，固定 sleep 在慢机上会抖动：轮询等浮层出现（上限 8s）再断言
+    const previewDeadline = Date.now();
+    for (;;) {
+      const opened = await win.webContents
+        .executeJavaScript(`!!document.querySelector('.overlay')`)
+        .catch(() => false);
+      if (opened || Date.now() - previewDeadline > 8000) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    const v = await win.webContents.executeJavaScript(PREVIEW_SRC).catch(() => null);
+    emit({ type: 'preview', t: Date.now() - t0, ...(v ?? { error: true }) });
+    await shot('preview');
+    app.exit(0);
   }, 400);
 });

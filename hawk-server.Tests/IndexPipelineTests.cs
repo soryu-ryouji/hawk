@@ -16,6 +16,7 @@ public class IndexPipelineTests
     private sealed class Rig : IDisposable
     {
         public required LibraryPaths Paths;
+        public required IndexDb Db;
         public required MetadataStore Store;
         public required ItemIndex Index;
         public required ThumbnailService Thumbnails;
@@ -23,6 +24,7 @@ public class IndexPipelineTests
         public required EventBus Bus;
         public required CategoryRegistry Categories;
         public required TagRegistry Tags;
+        public required ViewPreferences Prefs;
         public required IndexPipeline Pipeline;
 
         public static Rig Create(string root, string cacheRoot)
@@ -30,7 +32,8 @@ public class IndexPipelineTests
             var paths = new LibraryPaths(root, cacheRoot);
             paths.EnsureLayout();
             var config = new LibraryConfig(paths, NullLogger<LibraryConfig>.Instance);
-            var store = new MetadataStore(paths, NullLogger<MetadataStore>.Instance);
+            var db = new IndexDb(paths, NullLogger<IndexDb>.Instance);
+            var store = new MetadataStore(paths, db, NullLogger<MetadataStore>.Instance);
             var index = new ItemIndex();
             var thumbnails = new ThumbnailService(paths, NullLogger<ThumbnailService>.Instance);
             var colors = new ColorService(paths, NullLogger<ColorService>.Instance);
@@ -41,14 +44,19 @@ public class IndexPipelineTests
             var settings = new ServerSettings { LibraryRoot = root, Token = "test" };
             var worker = new ThumbnailWorker(thumbnails, colors, config, bus, NullLogger<ThumbnailWorker>.Instance);
             var migrator = new TaxonomyMigrator(store, index, categories, tags, bus);
-            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, colors, bus, scanner, migrator, settings,
+            var viewPrefs = new ViewPreferences(paths, NullLogger<ViewPreferences>.Instance);
+            var pipeline = new IndexPipeline(paths, config, store, index, thumbnails, colors, bus, scanner, migrator, viewPrefs, settings,
                 NullLogger<IndexPipeline>.Instance);
             pipeline.AttachThumbnailWorker(worker);
             pipeline.Start();
-            return new Rig { Paths = paths, Store = store, Index = index, Thumbnails = thumbnails, Colors = colors, Bus = bus, Categories = categories, Tags = tags, Pipeline = pipeline };
+            return new Rig { Paths = paths, Db = db, Store = store, Index = index, Thumbnails = thumbnails, Colors = colors, Bus = bus, Categories = categories, Tags = tags, Prefs = viewPrefs, Pipeline = pipeline };
         }
 
-        public void Dispose() => Pipeline.Dispose();
+        public void Dispose()
+        {
+            Pipeline.Dispose();
+            Db.Dispose();
+        }
     }
 
     private static async Task<bool> WaitUntil(Func<bool> condition, int timeoutMs = 5000)
@@ -497,4 +505,98 @@ public class IndexPipelineTests
         rig.Pipeline.NotifyFolderChanged(FolderChangedPayload.ReasonExternal);
         Assert.Equal("folder.changed", (await reader.ReadAsync()).Type);
     }
+    [Fact]
+    public async Task 元数据对账_外部TOML变更进入索引与注册表()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var file = _dir.WriteFile("a.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+        Assert.Empty(result.Item.Tags);
+
+        // 外部机器经网盘同步改写 TOML（带素材参数、无 paths 段）
+        var toml = "tags = [\"外部\", \"tags\"]" + "\n" + "star = 5" + "\n";
+        File.WriteAllText(Path.Combine(rig.Paths.MetadataDir, hash + ".toml"), toml);
+
+        await rig.Pipeline.SubmitMetadataSyncAsync();
+
+        var dto = rig.Index.GetDto(hash);
+        Assert.NotNull(dto);
+        Assert.Equal(["外部", "tags"], dto.Tags);
+        Assert.Equal(5, dto.Star);
+        Assert.Contains("外部", rig.Tags.Snapshot()); // 对账应用的元数据同样登记注册表
+    }
+
+    [Fact]
+    public async Task 元数据对账_TOML删除后素材参数清空但item存续()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var file = _dir.WriteFile("a.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        File.Delete(Path.Combine(rig.Paths.MetadataDir, hash + ".toml"));
+        await rig.Pipeline.SubmitMetadataSyncAsync();
+
+        var dto = rig.Index.GetDto(hash);
+        Assert.NotNull(dto);
+        Assert.Empty(dto.Tags);
+        Assert.Equal(0, dto.Star);
+        Assert.Equal(["a.png"], dto.Paths); // item 与位置由扫描状态决定，不因 TOML 删除而消失
+    }
+
+    [Fact]
+    public async Task 元数据对账_同步冲突副本被忽略()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var file = _dir.WriteFile("a.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        // 网盘同步冲突副本：非 64 位 hex 命名，对账不识别
+        File.WriteAllText(
+            Path.Combine(rig.Paths.MetadataDir, hash + ".sync-conflict-20250101.toml"),
+            "star = 5" + "\n");
+
+        await rig.Pipeline.SubmitMetadataSyncAsync();
+
+        Assert.Equal(0, rig.Index.GetDto(hash)!.Star);
+    }
+
+    [Fact]
+    public async Task 元数据对账_解析失败的TOML跳过且保留原状态()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        var file = _dir.WriteFile("a.png", TempDir.TinyPng);
+        var result = await rig.Pipeline.SubmitUpsertAsync(file);
+        var hash = result!.Item.Id;
+
+        // 同步落地了写坏的文件：解析失败不得清空内存/索引状态，下轮对账重试
+        File.WriteAllText(Path.Combine(rig.Paths.MetadataDir, hash + ".toml"), "not [ valid toml");
+        await rig.Pipeline.SubmitMetadataSyncAsync();
+
+        Assert.True(rig.Store.TryGet(hash, out var meta));
+        Assert.Single(meta.Paths); // 原路径记录保留
+        Assert.Empty(meta.Tags);
+    }
+    [Fact]
+    public async Task 目录移动_排序偏好跟随迁移()
+    {
+        using var rig = Rig.Create(_dir.Root, _dir.CacheRoot);
+        _dir.Mkdir("d");
+        rig.Prefs.Set("folder:d", new ViewSort("name", "asc"));
+        rig.Prefs.Set("folder:d/sub", new ViewSort("star", "desc"));
+
+        _dir.Mkdir("e");
+        var oldDir = Path.Combine(_dir.Root, "d");
+        var newDir = Path.Combine(_dir.Root, "e", "d");
+        Directory.Move(oldDir, newDir);
+        await rig.Pipeline.SubmitDirMoveAsync(oldDir, newDir);
+
+        var all = rig.Prefs.Snapshot();
+        Assert.False(all.ContainsKey("folder:d"));
+        Assert.Equal(new ViewSort("name", "asc"), all["folder:e/d"]);
+        Assert.Equal(new ViewSort("star", "desc"), all["folder:e/d/sub"]);
+    }
 }
+

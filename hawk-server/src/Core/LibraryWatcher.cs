@@ -28,6 +28,9 @@ public sealed class LibraryWatcher : IDisposable
     /// <summary>categories.toml / tags.toml 注册表变更（含外部同步写入）</summary>
     public event Action? RegistryChanged;
 
+    /// <summary>view.toml 视图偏好变更（含外部同步写入）</summary>
+    public event Action? PreferencesChanged;
+
     /// <summary>事件缓冲溢出，需要全量扫描兜底</summary>
     public event Action? Overflowed;
 
@@ -103,6 +106,12 @@ public sealed class LibraryWatcher : IDisposable
             string.Equals(fullPath, _paths.TagsFile, StringComparison.Ordinal))
         {
             RegistryChanged?.Invoke();
+            return;
+        }
+
+        if (string.Equals(fullPath, _paths.ViewFile, StringComparison.Ordinal))
+        {
+            PreferencesChanged?.Invoke();
             return;
         }
 
