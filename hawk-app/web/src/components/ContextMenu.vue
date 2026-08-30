@@ -1,11 +1,27 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { nextTick, onUnmounted, ref, watch } from 'vue';
 import { useContextMenu } from '../composables/useContextMenu';
 
 const { state, close } = useContextMenu();
 
 const menuRef = ref<HTMLElement | null>(null);
 const pos = ref({ x: 0, y: 0 });
+
+/**
+ * 菜单打开期间挂起窗口拖拽区（body.menu-open，全局样式把顶栏/侧栏/检查器顶条改为 no-drag）。
+ * Electron 的 -webkit-app-region: drag 由 OS 命中测试优先消费：浮层遮罩盖在拖拽区上也收不到点击，
+ * 点击空白会被当成窗口拖动，菜单无法关闭——禁用拖拽区后点击空白处才能正常关菜单（不选 = 保持不变）。
+ */
+watch(
+  () => state.visible,
+  (visible) => {
+    document.body.classList.toggle('menu-open', visible);
+  },
+);
+
+onUnmounted(() => {
+  document.body.classList.remove('menu-open');
+});
 
 // 打开后按菜单实际尺寸防出屏翻转
 watch(
@@ -40,13 +56,14 @@ watch(
           <button
             v-else
             class="item"
-            :class="{ danger: item.danger }"
+            :class="{ danger: item.danger, checked: item.checked }"
             @click="
               close();
               item.action?.();
             "
           >
-            {{ item.label }}
+            <span class="check">{{ item.checked ? '✓' : '' }}</span>
+            <span class="label">{{ item.label }}</span>
           </button>
         </template>
       </div>
@@ -75,11 +92,24 @@ watch(
 }
 
 .item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   text-align: left;
   padding: 6px 12px;
   border: none;
   border-radius: 4px;
   background: transparent;
+}
+
+.item .check {
+  width: 12px;
+  flex: none;
+  color: var(--accent);
+}
+
+.item.checked .label {
+  color: var(--fg-0);
 }
 
 .item.danger {

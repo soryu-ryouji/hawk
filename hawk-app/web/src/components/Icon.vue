@@ -1,6 +1,14 @@
 <script setup lang="ts">
-// 极简描边图标（feather 风格，1.8px stroke）
-withDefaults(defineProps<{ name: keyof typeof icons; size?: number }>(), { size: 15 });
+import { computed } from 'vue';
+
+// 极简描边图标（feather 风格，1.8px stroke）；值为数组时渲染多条 path（组合图标）
+const props = withDefaults(defineProps<{ name: keyof typeof icons; size?: number }>(), { size: 15 });
+
+/** 组合图标（arrowUpDown 等）为多条 path，统一规整成数组 */
+const paths = computed(() => {
+  const d = icons[props.name];
+  return Array.isArray(d) ? d : [d];
+});
 
 const icons = {
   library: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z',
@@ -25,6 +33,9 @@ const icons = {
   close: 'M18 6L6 18M6 6l12 12',
   settings:
     'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  filter: 'M22 3H2l8 9.46V19l4 2v-8.54L22 3z',
+  arrowUpDown: ['m21 16-4 4-4-4', 'M17 20V4', 'm3 8 4-4 4 4', 'M7 4v16'],
+  star: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
 };
 </script>
 
@@ -41,7 +52,7 @@ const icons = {
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <path :d="icons[name]" />
+    <path v-for="(d, i) in paths" :key="i" :d="d" />
   </svg>
 </template>
 

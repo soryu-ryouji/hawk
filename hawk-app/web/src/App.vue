@@ -9,6 +9,7 @@ import { useLayout } from './composables/useLayout';
 import { useStartup } from './composables/useStartup';
 import Sidebar from './components/Sidebar.vue';
 import TitleBar from './components/TitleBar.vue';
+import FilterBar from './components/FilterBar.vue';
 import WindowControls from './components/WindowControls.vue';
 import ItemGrid from './components/ItemGrid.vue';
 import Inspector from './components/Inspector.vue';
@@ -241,6 +242,8 @@ useDragImport();
     <!-- 窄屏抽屉遮罩：点按空白处收起 -->
     <div v-if="narrow && store.sidebarVisible" class="drawer-scrim" @click="store.toggleSidebar()" />
     <TitleBar class="titlebar" @open-settings="showSettings = true" />
+    <!-- 筛选工具列：顶栏漏斗按钮展开，或评分/颜色条件激活时常驻 -->
+    <FilterBar v-if="store.filterBarVisible || store.hasActiveFilters" />
     <ItemGrid />
     <!-- 缩略图后台积压指示：细进度条压在网格顶缘（浏览器式加载条），计数归零自动消失 -->
     <div v-if="store.taskBacklog" class="task-bar">

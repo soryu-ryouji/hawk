@@ -280,11 +280,6 @@ function onMenu(item: Item, e: MouseEvent) {
         // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现
         ...(window.hawkShell ? [{ label: showInFileManagerLabel, action: () => window.hawkShell?.showInFinder(item.paths[0]) }] : []),
         { separator: true, label: '' },
-        ...[5, 4, 3, 2, 1, 0].map((star) => ({
-          label: `评分 ${star} 星`,
-          action: () => void store.setStarForSelected(star),
-        })),
-        { separator: true, label: '' },
         { label: '移入回收站', danger: true, action: () => void store.trashSelected() },
       ];
 

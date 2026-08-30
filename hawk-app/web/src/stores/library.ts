@@ -69,12 +69,16 @@ export const useLibraryStore = defineStore('library', () => {
   /** 缩略图后台积压（task.progress 事件驱动；null 表示无积压，进度条隐藏） */
   const taskBacklog = ref<{ pending: number; active: number } | null>(null);
   const sidebarVisible = ref(true);
+  /** 筛选工具列手动展开（评分/颜色等条件激活时条带常驻，见 hasActiveFilters） */
+  const filterBarVisible = ref(false);
   /** 浏览历史（会话内）：setView 压入，前进/后退在栈内移动 */
   const viewHistory = ref<ViewState[]>([]);
   const historyIndex = ref(-1);
 
   // ---- getters ----
   const isTrash = computed(() => view.value.kind === 'trash');
+  /** 查询是否带有筛选条件（评分/颜色）：有则筛选工具列常驻显示 */
+  const hasActiveFilters = computed(() => query.value.star !== undefined || !!query.value.color);
   const canGoBack = computed(() => historyIndex.value > 0);
   const canGoForward = computed(() => historyIndex.value >= 0 && historyIndex.value < viewHistory.value.length - 1);
   const currentFolderPath = computed(() => (view.value.kind === 'folder' ? view.value.path : null));
@@ -265,6 +269,11 @@ export const useLibraryStore = defineStore('library', () => {
   /** Eagle 式侧栏开关：同时显隐左侧栏与右侧检查器 */
   function toggleSidebar() {
     sidebarVisible.value = !sidebarVisible.value;
+  }
+
+  /** 筛选工具列开关（TitleBar 漏斗按钮） */
+  function toggleFilterBar() {
+    filterBarVisible.value = !filterBarVisible.value;
   }
 
   function setQuery(patch: Partial<QueryState>) {
@@ -821,9 +830,9 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible, editorTarget, viewerMode,
-    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes,
-    init, setView, goBack, goForward, toggleSidebar, setQuery, resetList, ensureWindow, reloadSkeleton,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, previewId, toast, importProgress, taskBacklog, sidebarVisible, filterBarVisible, editorTarget, viewerMode,
+    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes, hasActiveFilters,
+    init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,

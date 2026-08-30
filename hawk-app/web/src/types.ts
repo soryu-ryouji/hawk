@@ -35,6 +35,8 @@ export interface MenuItem {
   label: string;
   danger?: boolean;
   separator?: boolean;
+  /** 选中标记（排序/筛选等单选菜单的当前项） */
+  checked?: boolean;
   action?: () => void;
 }
 

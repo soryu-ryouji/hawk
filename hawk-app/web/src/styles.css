@@ -68,6 +68,15 @@ button.danger {
   border-color: var(--danger);
 }
 
+/* 菜单打开期间挂起窗口拖拽区（ContextMenu 打开时挂 body.menu-open）。
+   Electron 的 -webkit-app-region: drag 由 OS 命中测试优先消费，浮层遮罩盖在拖拽区上
+   也收不到点击（会被当成窗口拖动），禁用后点击空白处才能正常关闭菜单 */
+body.menu-open .titlebar,
+body.menu-open .sidebar-head,
+body.menu-open .inspector-head {
+  -webkit-app-region: no-drag;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -92,9 +101,10 @@ button.danger {
   position: relative;
   /* 列宽由 App.vue 内联 style 控制（侧栏可拖拽调宽），此处仅为兜底 */
   grid-template-columns: 220px 1fr 280px;
-  grid-template-rows: 40px 1fr;
+  grid-template-rows: 40px auto 1fr;
   grid-template-areas:
     "sidebar titlebar inspector"
+    "sidebar filterbar inspector"
     "sidebar main inspector";
 }
 
@@ -137,6 +147,10 @@ body.col-resizing {
   grid-area: titlebar;
 }
 
+.app > .filterbar {
+  grid-area: filterbar;
+}
+
 .app .sidebar {
   grid-area: sidebar;
 }
@@ -170,6 +184,7 @@ body.col-resizing {
   grid-template-columns: 1fr;
   grid-template-areas:
     "titlebar"
+    "filterbar"
     "main";
 }
 
@@ -200,12 +215,13 @@ body.col-resizing {
 }
 
 /* 窄屏顶栏减负（390px 手机实测内容 ~540px 会横向溢出，搜索/设置被顶出屏外）：
-   缩略图尺寸组/排序/评分筛选/选中计数整体隐藏，搜索压缩、标题超长省略——
+   缩略图尺寸组/排序/筛选按钮/筛选工具列/选中计数整体隐藏，搜索压缩、标题超长省略——
    保留 汉堡/前进后退/搜索/设置 核心交互 */
 .app.mobile .group.center,
-.app.mobile select.sort,
+.app.mobile .sort-btn,
 .app.mobile .thumb-slider,
-.app.mobile select.filter,
+.app.mobile .filter-btn,
+.app.mobile .filterbar,
 /* 选中计数（.selected-count，勿用 .selected——与网格卡片选中态同名会连卡片一起隐藏） */
 .app.mobile .selected-count {
   display: none;

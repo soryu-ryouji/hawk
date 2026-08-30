@@ -1,11 +1,14 @@
 <script setup lang="ts">
-// Eagle 式中栏顶栏（只覆盖内容区，左右栏通高）：侧栏开关 · 前进/后退 · 位置面包屑 || 缩略图滑杆 || 筛选 · 搜索。
+// Eagle 式中栏顶栏（只覆盖内容区，左右栏通高）：侧栏开关 · 前进/后退 · 位置面包屑 ‖ 缩略图滑杆 ‖ 排序/筛选 · 搜索。
 // 整条为窗口拖拽区域（双击空白切换最大化），交互控件单独 no-drag。
 import { computed, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
+import { useContextMenu } from '../composables/useContextMenu';
 import Icon from './Icon.vue';
+import type { QueryState } from '../types';
 
 const store = useLibraryStore();
+const { open: openMenu } = useContextMenu();
 const emit = defineEmits<{ 'open-settings': [] }>();
 const searchText = ref('');
 const isMac = window.hawkShell?.platform === 'darwin';
@@ -38,21 +41,36 @@ const locationTitle = computed(() => {
   return '';
 });
 
-const sortValue = computed({
-  get: () => `${store.query.orderBy}:${store.query.order}`,
-  set: (value: string) => {
-    const [orderBy, order] = value.split(':') as [typeof store.query.orderBy, typeof store.query.order];
-    store.setQuery({ orderBy, order });
-  },
-});
+/** 排序选项（字段 × 方向，弹层单选；不再用顶栏大下拉） */
+const SORT_OPTIONS: { label: string; orderBy: QueryState['orderBy']; order: 'asc' | 'desc' }[] = [
+  { label: '修改时间 ↓', orderBy: 'modification_time', order: 'desc' },
+  { label: '修改时间 ↑', orderBy: 'modification_time', order: 'asc' },
+  { label: '名称 ↑', orderBy: 'name', order: 'asc' },
+  { label: '名称 ↓', orderBy: 'name', order: 'desc' },
+  { label: '大小 ↓', orderBy: 'size', order: 'desc' },
+  { label: '大小 ↑', orderBy: 'size', order: 'asc' },
+  { label: '评分 ↓', orderBy: 'star', order: 'desc' },
+  { label: '评分 ↑', orderBy: 'star', order: 'asc' },
+];
+
+const currentSortLabel = computed(
+  () => SORT_OPTIONS.find((o) => o.orderBy === store.query.orderBy && o.order === store.query.order)?.label ?? '',
+);
+
+/** 排序按钮：弹出二级菜单设置字段与方向（当前项打勾） */
+function openSortMenu(e: MouseEvent) {
+  openMenu(
+    SORT_OPTIONS.map((o) => ({
+      label: o.label,
+      checked: o.orderBy === store.query.orderBy && o.order === store.query.order,
+      action: () => store.setQuery({ orderBy: o.orderBy, order: o.order }),
+    })),
+    e,
+  );
+}
 
 function submitSearch() {
   store.setQuery({ keywords: searchText.value.trim().split(/\s+/).filter(Boolean) });
-}
-
-function setStar(e: Event) {
-  const value = Number((e.target as HTMLSelectElement).value);
-  store.setQuery({ star: value < 0 ? undefined : value });
 }
 
 function stepThumb(delta: number) {
@@ -116,27 +134,18 @@ function onDblClick(e: MouseEvent) {
     <div class="spacer" />
 
     <div class="group right">
-      <div v-if="store.query.color" class="color-chip" title="颜色筛选">
-        <span class="dot" :style="{ background: store.query.color }" />
-        <span class="hex">{{ store.query.color }}</span>
-        <button class="clear" title="清除颜色筛选" @click="store.setQuery({ color: undefined })">×</button>
-      </div>
+      <button
+        class="bar-btn filter-btn"
+        :class="{ active: store.filterBarVisible || store.hasActiveFilters }"
+        title="筛选工具列"
+        @click="store.toggleFilterBar()"
+      >
+        <Icon name="filter" :size="14" />
+      </button>
 
-      <select :value="store.query.star ?? -1" class="filter" title="评分筛选" @change="setStar">
-        <option :value="-1">全部评分</option>
-        <option v-for="n in 6" :key="n - 1" :value="n - 1">{{ n - 1 }} 星</option>
-      </select>
-
-      <select v-model="sortValue" class="sort" title="排序">
-        <option value="modification_time:desc">修改时间 ↓</option>
-        <option value="modification_time:asc">修改时间 ↑</option>
-        <option value="name:asc">名称 ↑</option>
-        <option value="name:desc">名称 ↓</option>
-        <option value="size:desc">大小 ↓</option>
-        <option value="size:asc">大小 ↑</option>
-        <option value="star:desc">评分 ↓</option>
-        <option value="star:asc">评分 ↑</option>
-      </select>
+      <button class="bar-btn sort-btn" :title="`排序：${currentSortLabel}`" @click="openSortMenu">
+        <Icon name="arrowUpDown" :size="14" />
+      </button>
 
       <div class="search-box">
         <Icon name="search" :size="13" />
@@ -277,43 +286,6 @@ function onDblClick(e: MouseEvent) {
   width: 140px;
   padding: 0;
   border: none;
-  background: transparent;
-}
-
-.filter,
-.sort {
-  padding: 3px 6px;
-  color: var(--fg-1);
-  align-self: center;
-}
-
-.color-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px 2px 8px;
-  border-radius: 10px;
-  background: var(--bg-3);
-  font-size: 12px;
-  align-self: center;
-}
-
-.color-chip .dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-}
-
-.color-chip .clear {
-  padding: 0 4px;
-  border: none;
-  background: transparent;
-  color: var(--fg-1);
-}
-
-.color-chip .clear:hover {
-  color: var(--danger);
   background: transparent;
 }
 
