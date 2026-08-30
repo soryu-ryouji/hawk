@@ -129,7 +129,7 @@ thumbnail_sizes = [256, 512, 1024]
 └── 1024/                   # 预览面板
     └── abcdef123....webp
 
-<库外缓存目录>/colors/        # 调色板缓存（提炼算法见 docs/color-search.md）
+<库外缓存目录>/colors/        # 调色板缓存（提炼算法见 docs/backend/color-search.md）
 └── abcdef123....json   # { "v": 1, "palette": [{ "color", "percentage" }] }
 ```
 

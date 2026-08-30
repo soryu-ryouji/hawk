@@ -1,6 +1,6 @@
 # hawk-app
 
-桌面应用（Electron 壳 + Vue 3 前端），设计文档见 [../docs/hawk-app.md](../docs/hawk-app.md)。
+桌面应用（Electron 壳 + Vue 3 前端），设计文档见 [../docs/frontend/hawk-app.md](../docs/frontend/hawk-app.md)。
 
 ## 开发
 

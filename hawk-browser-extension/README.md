@@ -10,7 +10,7 @@ hawk 浏览器图片收集插件：右键保存网页图片到 hawk 素材库。
 
 ## 工作原理
 
-- 直连本机 hawk-server（默认 `http://127.0.0.1:27371`），`Authorization: Bearer <token>` 鉴权，接口见 [server-rest-api-v1.md](../docs/server-rest-api-v1.md)
+- 直连本机 hawk-server（默认 `http://127.0.0.1:27371`），`Authorization: Bearer <token>` 鉴权，接口见 [server-rest-api-v1.md](../docs/backend/server-rest-api-v1.md)
 - 请求一律从 background 发起（`host_permissions` 覆盖本机地址，不受页面 CORS 限制）
 - 来源网页随保存请求经 `website` 传入，入库为素材的 `url` 字段（与 Eagle 的 `website` 参数同义；`url` 参数只是下载来源）
 

@@ -1,6 +1,6 @@
 namespace Hawk.Server.Core;
 
-/// <summary>SSE 事件名常量与发布辅助。事件负载的字段契约见 docs/server-rest-api-v1.md「events」节。</summary>
+/// <summary>SSE 事件名常量与发布辅助。事件负载的字段契约见 docs/backend/server-rest-api-v1.md「events」节。</summary>
 internal static class ItemEvents
 {
     public const string Added = "item.added";

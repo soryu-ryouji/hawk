@@ -38,7 +38,7 @@ hawk 前后端完全解耦，通过 HTTP API 通信。桌面版中 Electron 只�
     └──────────┘ └──────────┘ └──────────┘
 ```
 
-详见 [技术栈](tech-stack.md) 与 [存储设计](storage.md)。
+详见 [技术栈](tech-stack.md) 与 [存储设计](backend/storage.md)。
 
 ## 核心原则
 
@@ -96,6 +96,6 @@ Electron 退出
 ```text
 hawk/
 ├── hawk-server/     ← C# 后端（桌面版与服务器版共用）
-├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/hawk-app.md）
+├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 └── docs/            ← 设计文档
 ```

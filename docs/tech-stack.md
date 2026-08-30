@@ -13,12 +13,12 @@
 
 分两阶段：
 
-1. **过渡实现（当前）**：C#，见 [hawk-server（C# 过渡实现）](server-csharp.md)
+1. **过渡实现（当前）**：C#，见 [hawk-server（C# 过渡实现）](backend/server-csharp.md)
 2. **目标实现**：Rust。待 API 设计验证完成、C# 版本跑通后整体替换。目标栈：axum、notify、blake3、image + fast_image_resize，索引同样在内存中维护
 
 ## 前端与桌面壳：hawk-app/
 
-Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），设计见 [hawk-app 设计](hawk-app.md)。约束：
+Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），设计见 [hawk-app 设计](frontend/hawk-app.md)。约束：
 
 - 前端只通过 REST API 与后端通信，不依赖 Electron IPC
 - Electron 主进程只负责：创建窗口、拉起/回收后端进程、注入 token

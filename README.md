@@ -124,15 +124,23 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 
 ## 文档
 
+**总体**
+
 - [架构设计](docs/architecture.md)：进程模型、桌面/服务器部署形态、仓库结构
 - [技术栈](docs/tech-stack.md)：语言与框架选型
-- [hawk-server（C# 过渡实现）](docs/server-csharp.md)：第一版后端实现细节
-- [hawk-server 代码导读](docs/server-code-structure.md)：逐文件职责与关键流程串联
-- [hawk-app 设计](docs/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
-- [REST API V1](docs/server-rest-api-v1.md)：接口定义
-- [Category 虚拟分类维度](docs/category.md)：三维组织模型、注册表与批量迁移
-- [颜色检索](docs/color-search.md)：调色板提炼与 ΔE 颜色匹配
-- [存储设计](docs/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存
+
+**前端**（[hawk-app](hawk-app/README.md)）
+
+- [hawk-app 设计](docs/frontend/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
+
+**后端**（[hawk-server](hawk-server/)）
+
+- [hawk-server（C# 过渡实现）](docs/backend/server-csharp.md)：第一版后端实现细节
+- [hawk-server 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
+- [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
+- [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
+- [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配
+- [存储设计](docs/backend/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存
 
 ## 许可证
 

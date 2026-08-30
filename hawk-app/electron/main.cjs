@@ -1,5 +1,5 @@
 // hawk-app Electron 主进程：窗口管理（关窗隐藏到托盘）、系统托盘、单实例、拉起/回收 hawk-server、token 注入、库选择、白名单 IPC。
-// 业务数据一律走 REST，不经 IPC（见 docs/architecture.md、docs/hawk-app.md）。
+// 业务数据一律走 REST，不经 IPC（见 docs/architecture.md、docs/frontend/hawk-app.md）。
 const { app, BrowserWindow, dialog, ipcMain, shell, Menu, Tray, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const net = require('node:net');

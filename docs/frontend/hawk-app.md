@@ -1,6 +1,6 @@
 # hawk-app 设计（Electron 壳 + Vue 前端）
 
-桌面版应用的设计文档。约束来源：[architecture.md](architecture.md)（sidecar 进程模型）、[tech-stack.md](tech-stack.md)（Vue 3 + TypeScript + Vite）、[server-rest-api-v1.md](server-rest-api-v1.md)（接口契约）。
+桌面版应用的设计文档。约束来源：[architecture.md](../architecture.md)（sidecar 进程模型）、[tech-stack.md](../tech-stack.md)（Vue 3 + TypeScript + Vite）、[server-rest-api-v1.md](../backend/server-rest-api-v1.md)（接口契约）。
 
 ## 目标
 
