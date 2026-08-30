@@ -54,9 +54,20 @@ app.UseCors(policy => policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader())
 if (!string.IsNullOrEmpty(settings.WebDist) && Directory.Exists(settings.WebDist))
 {
     var fileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(settings.WebDist);
+    // 缓存策略：vite 产物带内容哈希，/assets/ 下 immutable 长缓存；index.html 与其余路径 no-cache
+    // （每次校验、304 廉价）——不设缓存头时浏览器启发式缓存旧 HTML，重建后手机端仍跑旧 bundle
+    // （2026-08 移动端"横排溢出未解决"实为手机拿的是构建前旧版本）
+    void SetCacheHeaders(Microsoft.AspNetCore.StaticFiles.StaticFileResponseContext ctx)
+    {
+        var path = ctx.Context.Request.Path.Value ?? string.Empty;
+        ctx.Context.Response.Headers["Cache-Control"] = path.StartsWith("/assets/", StringComparison.Ordinal)
+            ? "public, max-age=31536000, immutable"
+            : "no-cache";
+    }
+
     app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fileProvider });
-    app.UseStaticFiles(new StaticFileOptions { FileProvider = fileProvider });
-    app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fileProvider });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = fileProvider, OnPrepareResponse = SetCacheHeaders });
+    app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fileProvider, OnPrepareResponse = SetCacheHeaders });
 }
 
 app.UseMiddleware<ErrorHandlingMiddleware>();

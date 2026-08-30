@@ -51,7 +51,9 @@ Electron 主进程启动
     提前 show 会把空白/白窗暴露给用户）
   → spawn hawk-server（开发：dotnet 运行 dll；打包：process.resourcesPath 内二进制）
       环境变量传入 HAWK_TOKEN，参数 --library <path> --port <预选端口> --web-dist <web/dist>
-      （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录）
+      （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录；
+       缓存头：/assets/ 内容哈希资源 immutable 长缓存，index.html no-cache——防手机浏览器
+       启发式缓存旧 HTML 引用已失效的旧 bundle，重建后手机端拿到构建前版本）
   → 轮询 GET /api/v1/app/startup（200ms，Bearer token；server 先监听、索引后台构建），事件推送页面：
       starting → hawk:server-progress（phase/processed/total，应用内启动屏呈现）
       ready    → hawk:server-started（含 address/token）→ 渲染进程重配 API（restart 会换端口）并 boot 数据
