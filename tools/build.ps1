@@ -7,7 +7,7 @@
 #   ./tools/build.ps1 --platform=app --path=D:/Tools/hawk      # = 写法等价
 #
 # 产物直接输出到 <path>/ 根目录，不再套子文件夹：
-#   应用（当前平台）：Windows 解压后的应用文件（hawk.exe 就地可运行）/ macOS hawk.app 目录 / Linux hawk.AppImage
+#   应用（当前平台）：Windows 为 win-unpacked 目录内容（hawk.exe 就地可运行，跳过 zip 直接同步）/ macOS hawk.app 目录 / Linux hawk.AppImage
 #   浏览器插件：hawk-extension-chrome|firefox/ 目录（已解压的扩展，浏览器「加载已解压扩展程序」直接用）
 #   Safari 版需 macOS + Xcode 转换（见 hawk-browser-extension/README.md），不在本脚本构建
 #
@@ -85,9 +85,12 @@ function Build-App {
         throw 'hawk-app/node_modules 不存在，请先执行：cd hawk-app && npm install'
     }
 
+    $isWin = ($IsWindows -eq $true) -or $env:OS -eq 'Windows_NT'
+
     Push-Location $AppDir
     try {
-        & npm run pack
+        # Windows 本地测试走 --dir：跳过 zip 压缩/解压（mx=5 约 1 分钟），产物为 dist/win-unpacked 目录
+        if ($isWin) { & npm run pack -- --dir } else { & npm run pack }
         if ($LASTEXITCODE -ne 0) { throw "npm run pack 失败（退出码 $LASTEXITCODE）" }
     }
     finally {
@@ -95,15 +98,24 @@ function Build-App {
     }
 
     # electron-builder 产物在 hawk-app/dist：
-    #   Windows: hawk.zip（zip 目标，真身 exe 在其根目录）；macOS: mac*/hawk.app 目录；Linux: hawk.AppImage
+    #   Windows: win-unpacked/ 目录（--dir，zip 真身即其内容）；macOS: mac*/hawk.app 目录；Linux: hawk.AppImage
     $dist = Join-Path $AppDir 'dist'
-    $isWin = ($IsWindows -eq $true) -or $env:OS -eq 'Windows_NT'
-    $artifact = $null
     if ($isWin) {
-        $artifact = Get-ChildItem $dist -Recurse -File -Filter 'hawk.zip' |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        # 直接同步 win-unpacked → 目标路径。先清同名旧条目防残留，robocopy 只拷贝有变化的文件。
+        $unpacked = Join-Path $dist 'win-unpacked'
+        if (-not (Test-Path $unpacked)) { throw "未找到 --dir 产物：$unpacked" }
+        Get-ChildItem $unpacked | ForEach-Object {
+            Remove-StaleArtifact (Join-Path $outRoot $_.Name)
+        }
+        # robocopy 退出码 0~7 均成功（1=有文件拷贝 3=拷贝+跳过），>7 才是失败
+        & robocopy $unpacked $outRoot /E /NFL /NDL /NJH /NJS
+        if ($LASTEXITCODE -gt 7) { throw "robocopy 同步失败（退出码 $LASTEXITCODE）" }
+        Write-Host "[app] 已同步 → $outRoot（hawk.exe 可直接运行）" -ForegroundColor Green
+        return
     }
-    elseif ($IsMacOS -eq $true) {
+
+    $artifact = $null
+    if ($IsMacOS -eq $true) {
         $artifact = Get-ChildItem $dist -Recurse -Directory -Filter 'hawk.app' |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
     }
@@ -112,23 +124,6 @@ function Build-App {
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
     }
     if (-not $artifact) { throw "未在 $dist 找到当前平台的打包产物" }
-
-    if ($isWin) {
-        # Windows：解压 zip 到目标目录，hawk.exe 就地可运行（本地测试免二次解压）。
-        # 先按 zip 顶层条目清掉旧产物再解压，避免已删除的文件残留。
-        # 用系统内置 bsdtar（System32\tar.exe）：PATH 里的 GNU tar（Git 自带）不支持 zip
-        $bsdtar = Join-Path $env:SystemRoot 'System32\tar.exe'
-        $topLevel = & $bsdtar -tf $artifact.FullName | ForEach-Object { ($_ -split '/')[0] } | Sort-Object -Unique
-        foreach ($name in $topLevel) {
-            if ($name -and $name -ne '.' -and $name -ne '..') {
-                Remove-StaleArtifact (Join-Path $outRoot $name)
-            }
-        }
-        & $bsdtar -xf $artifact.FullName -C $outRoot
-        if ($LASTEXITCODE -ne 0) { throw "解压 $($artifact.Name) 失败（退出码 $LASTEXITCODE）" }
-        Write-Host "[app] 已解压 → $outRoot（hawk.exe 可直接运行）" -ForegroundColor Green
-        return
-    }
 
     # 其余平台：产物直接平铺到 <path>/ 根目录
     $target = Join-Path $outRoot $artifact.Name
