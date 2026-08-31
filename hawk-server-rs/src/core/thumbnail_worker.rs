@@ -1,6 +1,12 @@
 //! 缩略图/调色板后台 worker：独立队列与专用线程池(CPU 密集)，不阻塞索引消费循环。
 //! 完成结果经回调回流水线（PaletteJob 回写索引，保持单写者）。
-//! 队列是尽力而为的缓存：满时丢弃，in-flight 去重。与 C# ThumbnailWorker 语义一致。
+//! 队列是尽力而为的缓存：满时丢弃，in-flight 去重。
+//!
+//! 任务两种（generate_thumbs 区分，in-flight 去重 key 分命名空间）：
+//! - 缩略图任务：读取端 /item/thumbnail 未命中时派发，生成缺失尺寸并按需提炼调色板
+//! - 调色板任务：入库/启动对账派发（needs_palette_work），只提炼调色板——
+//!   缩略图是惰性缓存，不在入库时批量生成；颜色搜索依赖全量 palette，必须即时
+//! 与 C# ThumbnailWorker 语义不同（C# 为全量生成）。
 
 use crate::core::color;
 use crate::core::config::LibraryConfig;
@@ -15,6 +21,8 @@ use std::sync::{Arc, Mutex};
 struct ThumbJob {
     hash: String,
     source_abs: String,
+    /// true：生成缺失尺寸缩略图（读取端派发）；false：仅提炼调色板（入库/对账派发）
+    generate_thumbs: bool,
 }
 
 type GetItemDto = Arc<dyn Fn(&str) -> Option<ItemDto> + Send + Sync>;
@@ -122,28 +130,51 @@ impl ThumbnailWorker {
                     &config,
                     &bus,
                 );
-                inflight.lock().unwrap().remove(&job.hash);
+                inflight.lock().unwrap().remove(&job.dedup_key());
                 active.fetch_sub(1, Ordering::SeqCst);
                 report_progress(&bus, &queued, &active, &progress_last, &progress_idle);
             });
         }
     }
 
-    /// 派发缩略图任务。in-flight 去重（队列中/生成中的同 hash 重复派发直接丢弃）——
+    /// 派发缩略图任务：读取端未命中时调用，生成缺失尺寸（含按需调色板）。
+    /// in-flight 去重（队列中/生成中的同 hash 重复派发直接丢弃）——
     /// 幂等，重复派发只产生 no-op 任务（尺寸齐备 + 调色板已提炼时不做事）
-    pub fn enqueue(&self, hash: &str, source_abs: &str) {
-        if !self.inflight.lock().unwrap().insert(hash.to_string()) {
-            return;
-        }
+    pub fn enqueue_thumbs(&self, hash: &str, source_abs: &str) {
+        self.enqueue(hash, source_abs, true);
+    }
+
+    /// 派发调色板任务：入库/启动对账时调用，只提炼调色板，不生成缩略图
+    pub fn enqueue_palette(&self, hash: &str, source_abs: &str) {
+        self.enqueue(hash, source_abs, false);
+    }
+
+    fn enqueue(&self, hash: &str, source_abs: &str, generate_thumbs: bool) {
         let job = ThumbJob {
             hash: hash.to_string(),
             source_abs: source_abs.to_string(),
+            generate_thumbs,
         };
+        if !self.inflight.lock().unwrap().insert(job.dedup_key()) {
+            return;
+        }
         let tx = self.tx.lock().unwrap();
         if let Some(tx) = tx.as_ref() {
             if tx.send(job).is_ok() {
                 self.queued.fetch_add(1, Ordering::SeqCst);
             }
+        }
+    }
+}
+
+impl ThumbJob {
+    /// in-flight 去重 key：缩略图与调色板任务独立命名空间，互不挤占
+    /// （调色板任务在途时到达的缩略图任务必须执行，反之缩略图任务自带调色板检查）
+    fn dedup_key(&self) -> String {
+        if self.generate_thumbs {
+            self.hash.clone()
+        } else {
+            format!("palette:{}", self.hash)
         }
     }
 }
@@ -155,20 +186,26 @@ fn process_job(
     config: &Arc<LibraryConfig>,
     bus: &EventBus,
 ) {
-    let sizes: Vec<i32> = config
-        .current()
-        .thumbnail_sizes
-        .into_iter()
-        .filter(|s| !thumbs.exists(&job.hash, *s))
-        .collect();
     let need_palette = !(callbacks.has_palette)(&job.hash);
+    // 仅调色板任务不生成缩略图（缩略图是惰性缓存，由读取端派发）
+    let sizes: Vec<i32> = if job.generate_thumbs {
+        config
+            .current()
+            .thumbnail_sizes
+            .into_iter()
+            .filter(|s| !thumbs.exists(&job.hash, *s))
+            .collect()
+    } else {
+        Vec::new()
+    };
     if sizes.is_empty() && !need_palette {
         return;
     }
 
     let generated = !sizes.is_empty() && thumbs.generate(&job.hash, &job.source_abs, &sizes, false);
 
-    // 调色板从最小尺寸的已有缩略图提炼：原图只由缩略图生成解码一次，此处解码小图代价极低;
+    // 调色板优先从最小尺寸的已有缩略图提炼（解码代价小）；缩略图尚未生成
+    // （惰性首访前、仅调色板任务）时直接解码原图——内容寻址保证同一内容，提炼结果一致。
     // 提炼结果(含空数组负缓存)经 PaletteJob 写入元数据 TOML——内容的纯函数，全平台复用。
     // 缩略图生成失败但已有任一尺寸缩略图时也照常提炼（与 C# 行为一致：取最小已有）
     if need_palette {
@@ -177,11 +214,10 @@ fn process_job(
         let source = all_sizes
             .into_iter()
             .map(|s| thumbs.get_path(&job.hash, s))
-            .find(|p| std::path::Path::new(p).is_file());
-        if let Some(source) = source {
-            if let Some(palette) = color::extract(&source) {
-                (callbacks.enqueue_palette)(job.hash.clone(), palette);
-            }
+            .find(|p| std::path::Path::new(p).is_file())
+            .unwrap_or_else(|| job.source_abs.clone());
+        if let Some(palette) = color::extract(&source) {
+            (callbacks.enqueue_palette)(job.hash.clone(), palette);
         }
     }
 

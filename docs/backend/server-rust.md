@@ -10,7 +10,7 @@ hawk-server 的 Rust 实现（`hawk-server-rs/`），已整体替换 C# 过渡�
 
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
   CI（`release.yml`）全部使用本实现；C# 过渡版已完成使命并从仓库移除
-- **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/并行哈希/对账扫描）、缩略图（libwebp q80）、
+- **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/并行哈希/对账扫描）、缩略图（libwebp q80，惰性生成）、
   调色板（median-cut，palette_version=2）、SQLite 派生缓存（与 C# v1 schema 兼容）
 - **相对 C# 版的有意差异**（对项目更好，不逐字复刻；C# 版已移除，此处留档）：
   - 宽高在入库时即持久化入 TOML（C# 只在内存更新，重启后靠扫描重新识别——与 storage.md 设计意图不符）
@@ -19,7 +19,8 @@ hawk-server 的 Rust 实现（`hawk-server-rs/`），已整体替换 C# 过渡�
   - 并发度高于 C# 版：哈希并行 `CPU-1`（封顶 24，C# 为 `CPU/2` 封顶 16），缩略图 worker `CPU/2` 封顶 12（C# 为 `CPU/4` 封顶 8 且 BelowNormal 优先级）——桌面端大批量导入/重建索引时吞吐优先，API 让出 1 核
   - 查询路径不克隆完整 DTO：排序在轻量键上进行，`item/list` 只投影分页窗口、`item/skeleton` 只投影轻量骨架（大库下 skeleton 持锁时间降低一个量级，UI 重连重同步不再卡死读路径）
   - 调色板回写按批冲刷（≥500 条或滞留 2s）：TOML 逐条落盘、SQLite 单事务、事件按批平滑补发——全库重提炼（v1→v2 迁移、缓存重建）时无 `item.updated` 洪峰
-  - 缩略图 worker 无界队列 + 周期对账自愈：C# 版「队列满静默丢弃」在批量入库时曾永久丢失 20%+ 素材的派生缓存（24k 库实测丢 5.6k）；Rust 版队列无界（任务 ~100B、in-flight 去重后内存有界），周期对账扫描 palette 缺失项并派发 worker 补齐（完成后补发 `item.updated`，前端占位自动重建）
+  - 缩略图 worker 无界队列 + 周期对账自愈：C# 版「队列满静默丢弃」在批量入库时曾永久丢失 20%+ 素材的派生缓存（24k 库实测丢 5.6k）；Rust 版队列无界（任务 ~100B、in-flight 去重后内存有界），周期对账扫描 palette 缺失项并派发仅调色板任务补齐（缩略图不在对账中批量生成）
+  - **缩略图为惰性缓存**（对 C# 全量生成的有意差异）：入库/启动对账只生成调色板（颜色搜索依赖全量）；缩略图由读取端触发——`/item/thumbnail` 未命中时直接回源原图（浏览器可渲染格式）并后台入队生成，命中后返回 webp。首次查看零等待，未查看的素材零成本
   - 启动注水经 TOML 全量回退时上报进度（每 1000 文件一帧，phase=sync），大库首次启动启动屏有实时反馈
 
 ## 技术选型
@@ -75,7 +76,7 @@ python3 tools/bench-scale.py --items 30000      # 大库全链路：启动→索
 | ---- | ---- |
 | 热启动就绪（3k item） | 0.01s / RSS 27MB |
 | 批量入库（1.5k 小图，watcher 路径） | 73 files/s，洪峰期读 p99 29ms |
-| 缩略图管线（400 张真实照片 650MB） | 40 img/s，314 CPU-ms/图，webp 占比 0.6%/1.9%/6.1%（256/512/1024），palette 97%（12 张源图不可解码） |
+| 缩略图管线（400 张真实照片 650MB，全量生成语义的旧数据，现行为两阶段：调色板即时 + 缩略图读取端触发） | 40 img/s，314 CPU-ms/图，webp 占比 0.6%/1.9%/6.1%（256/512/1024），palette 97%（12 张源图不可解码） |
 | 大库查询（12k item） | list 1.9ms / skeleton 15.5ms / folder 8.4ms / 颜色检索 ~ms 级 |
 | 大库全链路（12k 小图冷建） | 94s，RSS 峰值 91MB，thumbs_missing 0 |
 

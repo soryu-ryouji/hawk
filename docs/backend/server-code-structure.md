@@ -73,10 +73,10 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/core/content_hash.rs` | BLAKE3 流式哈希（1MB 缓冲），即 item id，元数据/缩略图命名依据 |
 | `src/core/events.rs` | SSE 事件总线：tokio broadcast（容量 1024），订阅者消费跟不上（lagged）即由端点断开其订阅；`TaskProgress` 快照结构（task.progress 事件与 app/status 共用）；`folder.changed` 负载构造 |
 | `src/core/fs_util.rs` | 文件操作辅助：建父目录、回收站冲突追加 ` (n)` 后缀（恢复按实际名称放回）、名称合法性校验（禁分隔符/`.`/`..`/`.hawk`） |
-| `src/core/thumbnail.rs` | 图像服务：`identify`（只解码头取尺寸）、`detect_extension_bytes`（guess_format → 扩展名映射，item/add 类型推断用）、`generate`（Max 等比缩小**不放大**、Lanczos3、有损 WebP q80、缺失尺寸才生成/force 强制重建、按内容寻址存库外缓存目录）、`delete`。解码失败记 warn 并返回 false（周期对账自愈重试） |
+| `src/core/thumbnail.rs` | 图像服务：`identify`（只解码头取尺寸）、`detect_extension_bytes`（guess_format → 扩展名映射，item/add 类型推断用）、`generate`（Max 等比缩小**不放大**、Lanczos3、有损 WebP q80、缺失尺寸才生成/force 强制重建、按内容寻址存库外缓存目录）、`delete`。解码失败记 warn 并返回 false（读取端重试自愈）。`is_browser_renderable`：原图扩展名是否可被浏览器直接渲染（jpg/png/gif/webp/bmp），决定读取端未命中时能否回源原图（tiff 等必须走缩略图转换） |
 | `src/core/color.rs` | 调色板提炼：降采样 64px（Triangle 滤波）→ **median-cut** 量化 ≤10 色 → 像素占比（alpha<128 不参与，0–100 保留 1 位小数，四舍五入同 v1 口径）；按占比降序、并列按 RGB 升序保证确定性；`PALETTE_VERSION=2`（C# 版 Wu=v1，旧结果视为未提炼由后台重提炼） |
 | `src/core/color_math.rs` | 颜色纯函数：hex 解析/格式化、sRGB→CIELAB（D65）、CIE76 ΔE 的**平方**（与阈值平方比较免开方） |
-| `src/core/thumbnail_worker.rs` | 缩略图/调色板后台 worker：**无界** mpsc 队列（任务 ~100B，in-flight HashSet 去重；C# 版「队列满静默丢弃」曾丢 20%+ 派生缓存）+ `CPU/2`（封顶 12）个专用 OS 线程（纯 CPU 任务靠 OS 调度让出 API）。`process_job`：生成缺失尺寸缩略图；需调色板时**从最小尺寸的已有缩略图提炼**（原图全程只由缩略图生成解码一次）→ 经回调回流水线（PaletteJob，单写者写入）；生成完成后取最新 DTO 补发 `item.updated`（前端 404 占位据此重建）；积压经 task.progress 500ms 节流可见 |
+| `src/core/thumbnail_worker.rs` | 缩略图/调色板后台 worker：**无界** mpsc 队列（任务 ~100B；C# 版「队列满静默丢弃」曾丢 20%+ 派生缓存）+ `CPU/2`（封顶 12）个专用 OS 线程（纯 CPU 任务靠 OS 调度让出 API）。任务两种（in-flight 去重 key 分命名空间）：`enqueue_thumbs`（**读取端未命中派发**，生成缺失尺寸）与 `enqueue_palette`（**入库/对账派发**，仅提炼调色板——缩略图是惰性缓存，不在入库时批量生成；颜色搜索依赖全量 palette，必须即时）。`process_job`：缩略图任务生成缺失尺寸；需调色板时优先**从最小尺寸的已有缩略图提炼**（解码代价小），无已有缩略图时直接解码原图 → 经回调回流水线（PaletteJob，单写者写入）；生成完成后取最新 DTO 补发 `item.updated`（前端 404 占位据此重建）；积压经 task.progress 500ms 节流可见 |
 | `src/core/taxonomy.rs` | 分类/标签维度：`normalize_category_name`（扁平，无层级）；注册表骨架（固定 schema `key = [字符串数组]`，原子写、排序去重、重命名合并语义）→ `CategoryRegistry`/`TagRegistry`；`ItemEvents`：SSE 事件名常量与发布辅助（`publish_changed`/`publish_location_loss`/`publish_transition`，位置归零 → removed、只剩回收站 → trashed、首个库内位置回归 → restored）；`TaxonomyMigrator`：元数据写应用与全库级联迁移，**只被消费循环调用** |
 | `src/core/view_prefs.rs` | 视图偏好注册表（`.hawk/view.toml`，参与同步）：扁平 map（scope 键 `folder:<路径>`/`category:<名>`/`tag:<名>`），不理解继承语义（前端沿父链解析）；scope/排序值白名单校验；`rename_prefix`/`delete_prefix` 跟随目录移动/删除；外部修改（含网盘同步落地）经 watcher 触发 `reload` |
 | `src/core/scanner.rs` | 目录遍历（只读目录项，不读文件内容）：`walk_directory`（跳过 `.hawk` 内部、只深入 trash 子树、库内应用 ignore）；`walk_directory_stats`（产出 目录 → (mtime, 直接子项数) 供增量扫描快照对比，枚举失败置 `walk_incomplete`——调用方据此跳过消失对账防误删）；`walk_files_in_directory`（增量深入时只枚举直接文件） |
@@ -90,7 +90,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 - **Job 类型**：`Upsert` / `Delete` / `Move` / `DirMove` / `Scan` / `ClearTrash` / `Metadata` / `BatchMetadata` / `MetadataSync` / `Palette` + `PaletteFlush`（调色板批量回写）/ `FolderHint` / `CategoryCreate|Update|Delete` / `TagCreate|Update|Delete` / `RegistryReload`
 - **两类入口**：watcher 走 fire-and-forget，channel 满置 overflow 标记（消费者检查后入队**去重的 ScanJob** 兜底，不内联扫描，避免事件风暴期反复全库遍历）；API 与启动走携带 `oneshot` 回复通道的提交，等待处理完成后返回。消费循环对每个 Job 做 `catch_unwind`，panic 的任务被跳过且等待中的调用方收到错误（不会挂起）
 - **入库（do_upsert）拆两步**：`prepare_upsert`（路径过滤 `.hawk`/ignore、stat、**哈希复用判定**——路径与 size/mtime 同元数据一致即复用不读内容、写入中文件防抖——mtime 距今不足 1s 延迟重试，同路径去重上限 120 次）→ 哈希（`known_hash` 直接采用 / 复用 / 计算）→ **复验 size/mtime**（哈希期间仍在写入则延迟重试，不以半截内容入库，慢速拷贝的哈希漂移由此根治）→ `apply_upsert`（串行应用）
-- **`apply_upsert`**：哈希漂移时先取旧元数据用于继承，再按路径迁移（新 item 继承 tags 等素材参数，旧元数据无引用则删除元数据与缩略图）并发布位置丢失事件；元数据登记路径并回写最新 size/mtime；**宽高在入库时即持久化入 TOML**（C# 版仅内存更新，重启靠扫描重新识别）；索引同步后发 `item.added`/`item.updated`；`needs_thumbnail_work`（任一尺寸缺失或调色板缺失/版本旧）才派发 worker——已齐备文件（对账重放）派发 no-op 任务会把积压计数灌满失真
+- **`apply_upsert`**：哈希漂移时先取旧元数据用于继承，再按路径迁移（新 item 继承 tags 等素材参数，旧元数据无引用则删除元数据与缩略图）并发布位置丢失事件；元数据登记路径并回写最新 size/mtime；**宽高在入库时即持久化入 TOML**（C# 版仅内存更新，重启靠扫描重新识别）；索引同步后发 `item.added`/`item.updated`；`needs_palette_work`（调色板缺失/版本旧）才派发 worker（仅调色板任务）——缩略图为惰性缓存不在入库生成；已齐备文件（对账重放）派发 no-op 任务会把积压计数灌满失真
 - **全库扫描（do_scan，三阶段 + 目录快照）**：阶段一 `walk_directory_stats` 与上轮 `folders` 快照（mtime + 直接子项数）对比，**只有 dirty 目录才深入文件级访问**（clean 目录不碰文件系统）；阶段二 dirty 目录枚举文件做复用判定/入库（复用项立即应用）；阶段三需要哈希的文件**并行计算**（`CPU-1` 封顶 24，留 1 核给 API；图像尺寸识别同属只读阶段一并并行；哈希后复验，仍在写入的延迟重试），索引/元数据应用仍串行（单写者不变）；**消失对账**——所在目录已不存在、或 dirty 目录深入后未见的位置判为消失（clean 目录快照一致则位置必然还在，不访问）；遍历不完整时本轮跳过消失对账与快照替换（防误删），最终一致由下轮对账保证；快照整体替换为本轮统计；完成后广播一次 `folder.changed`
 - **元数据对账（do_metadata_sync，只进不出）**：`.hawk/metadata/` 的 TOML 是唯一权威源（参与网盘同步），本机缓存与内存副本经此跟随外部变更。按文件 mtime 与 `IndexDb.source_mtime` 比对，只有变化的文件才重解析；新增/变更 → `apply_external_toml` 载入后刷新索引副本、登记注册表、发 `item.updated`；TOML 消失 → `clear_external` 清空素材参数（item 与位置由扫描决定存续）；解析失败跳过且不清空状态，下轮重试。每 100 文件经 StartupState 报一帧进度（对账可能持续很久，启动屏靠它续命）。**派生缓存自愈**：`hashes_with_missing_palette` 纯内存扫描出的缺失项派发 worker 补齐（源文件已不在的由 worker 静默跳过，删除对账收敛位置）
 - **调色板批量回写**：worker 提炼结果经 PaletteJob 进入暂存（同 hash 以最新为准），≥500 条立即冲刷、滞留 2s 由一次性定时任务入队 PaletteFlush 唤醒（队列安静期也能落盘）；冲刷 = 逐条 `save_toml`（铁律：TOML 先行）→ `apply_batch` 内存 + SQLite 单事务 → 逐 item 同步索引补发 `item.updated`——全库重提炼（v1→v2 迁移、缓存重建）时无 N 次单条事务、无事件洪峰
@@ -105,7 +105,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 - **update**：经 `find_location` 取位置快照 → 回收站中的文件禁止改名/移动 → `name` 分支做真实 rename 并 `submit_move`；`folder_path` 分支**按移动后的最新位置再移动**（改名+移动同请求时基于新文件名计算目标）→ tags/star(0–5 校验)/categories/annotation/url 走 `submit_metadata` → 响应 `get_dto` 投影
 - **batch_update**：校验后先逐个移动主位置（同名冲突不整体失败，跳过该项记入 missing），再 `submit_batch_metadata` 一次提交（标签/分类并集追加、评分设置）；不存在的 id 由流水线记入 `missing_ids`；无任何更新字段返回 400
 - **delete / restore**：delete 把文件移入 `.hawk/trash/`（保留目录结构，冲突加 ` (n)` 后缀）；restore 按回收站实际名称去掉前缀后的路径放回，被占用报 `FILE_EXISTS`；位置定位均走 `find_location` 快照
-- **thumbnail**：尺寸必须在 `thumbnail_sizes` 白名单内；`Cache-Control: immutable`（id 是内容哈希，内容永不变）；未生成时 404（首次索引期间的正常状态）
+- **thumbnail**：尺寸必须在 `thumbnail_sizes` 白名单内。缩略图为**惰性缓存**（入库/对账不生成）：命中返回 webp；未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ **直接回源原图**（200，同时后台入队生成缓存）；不可渲染格式（tiff 等）后台生成、生成中 404（经 `item.updated` 重建）。响应 `Cache-Control: immutable`（id 是内容哈希，内容永不变）——注意未命中回源的原图响应同样 immutable，客户端可能长期持有原图字节而非升级 webp（视觉无损，接受）
 - **file**：主位置（优先库内）原图二进制，Content-Type 按扩展名 `mime_guess`；同样 immutable、放行 `?token=`
 - **refresh_thumbnail**：取可读主位置强制重建全部尺寸
 - **replace**（`item/replace`）：客户端编辑（旋转/裁切）后的新内容提交存储层。内容必须可识别且**格式与文件扩展名一致**（扩展名与内容错位会破坏类型推断与预览）；哈希相同则幂等直接返回当前投影；写回保留原 mtime（修正性编辑不改变素材的时序位置）；`submit_upsert` 触发 id 漂移闭环（元数据继承迁移/事件/缩略图重建）
@@ -145,7 +145,7 @@ LibraryWatcher（notify 事件折叠 + rename 配对）→ FileUpsert/Deleted/Mo
 周期对账（默认 60s，启动时先跑一轮）→ mtime 与 source_mtime 比对
   → 新增/变更：apply_external_toml 载入 → 刷索引副本 → 登记注册表 → 发 item.updated
   → 消失：clear_external 清空素材参数
-  → palette 缺失项：派发 ThumbnailWorker 补齐（完成后补发 item.updated，前端占位重建）
+  → palette 缺失/版本旧：派发仅调色板任务补齐（缩略图不在对账中批量生成，由读取端惰性触发）
 ```
 
 ### 4. item/add
@@ -187,6 +187,6 @@ trash/clear:   submit_clear_trash 清位置、清元数据 paths；库内无引�
 ## 排查指引
 
 - 索引不一致 → `POST /api/v1/library/reindex` 全量重建；watcher 缓冲溢出会自动触发同样的兜底扫描；`POST /api/v1/library/rescan` 忽略目录快照强制遍历（不读文件内容）
-- 缩略图 404 → 属首次索引期间的正常状态，否则调 `item/refresh_thumbnail`；解码失败的素材靠周期对账自愈（手动换图后自动恢复）
+- 缩略图 404 → 仅应出现在不可渲染格式（tiff 等）生成期间，生成完成后经 `item.updated` 自动重建；持续 404 调 `item/refresh_thumbnail`；解码失败的素材每次查看都会重试（入队以 identify 为闸）
 - 派生缓存损坏 → 删除库外缓存目录（`<系统缓存>/hawk/cache/<库标识>/`）重启自动重建（TOML 是唯一权威源）
 - 行为对齐以 OpenAPI schema（`/openapi/v1.json`）为准，`.hawk/` 存储格式与 SSE 事件契约（事件名、负载形状）为持久化契约

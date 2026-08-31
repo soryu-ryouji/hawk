@@ -1,7 +1,13 @@
 //! 缩略图服务：解码（image crate）+ 缩放（fast_image_resize）+ 有损 WebP 编码
 //! （webp/libwebp，quality 80，与 C# ImageSharp WebpEncoder 对齐）。
 //! 存储于库外缓存目录（<系统缓存>/hawk/cache/<库标识>/thumbnails/<size>/<hash>.webp），本地缓存可重建。
-//! 与 C# ThumbnailService 语义一致（共享读打开、不放大小图、按尺寸跳过）。
+//!
+//! 生成策略（与 C# 全量生成不同，Rust 版为惰性）：
+//! - 入库/启动对账不生成缩略图，仅提炼调色板（pipeline 派发仅调色板任务）
+//! - 读取端 /item/thumbnail 未命中时回源原图并由读取端派发后台生成（thumbnail_worker）
+//! - 不可渲染格式（tiff 等）必须生成缩略图转换，否则 <img> 无法显示
+//!
+//! 共享读打开、不放大小图、按尺寸跳过等语义与 C# ThumbnailService 一致。
 
 use fast_image_resize as fr;
 use std::sync::Arc;
@@ -10,6 +16,9 @@ use std::sync::Arc;
 pub struct ThumbnailService {
     paths: Arc<crate::core::paths::LibraryPaths>,
 }
+
+/// 浏览器 <img> 可直接渲染的扩展名。之外的可解码格式（tiff 等）必须走缩略图转换
+const DIRECT_ORIGINAL_EXTS: [&str; 6] = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
 
 impl ThumbnailService {
     pub fn new(paths: Arc<crate::core::paths::LibraryPaths>) -> ThumbnailService {
@@ -33,6 +42,11 @@ impl ThumbnailService {
     pub fn detect_extension_bytes(data: &[u8]) -> Option<String> {
         let format = image::guess_format(data).ok()?;
         format_to_ext(format)
+    }
+
+    /// 原图能否被浏览器直接渲染（决定读取端未命中时能否回源原图）
+    pub fn is_browser_renderable(abs_path: &str) -> bool {
+        DIRECT_ORIGINAL_EXTS.contains(&crate::core::paths::LibraryPaths::ext_of(abs_path).as_str())
     }
 
     /// 为指定内容生成全部配置尺寸的缩略图；已存在的跳过（force 时强制重建）。

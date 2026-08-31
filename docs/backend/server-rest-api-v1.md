@@ -594,7 +594,13 @@ Item 对象，并附带 `already_existed` 标志：
 
 `GET /api/v1/item/thumbnail?id=<hash>&size=256|512|1024`
 
-返回缩略图二进制（`image/webp`）。`size` 缺省为 256，可取值来自项目配置的 `thumbnail_sizes`。响应带 `Cache-Control: immutable`——item id 是内容哈希，缩略图内容永不变，客户端可永久缓存。缩略图不存在时返回 404（首次索引完成前可能出现）。
+缩略图为**惰性缓存**（入库/启动对账不生成），响应分三种：
+
+1. **命中缓存** → 缩略图二进制（`image/webp`）
+2. **未命中且原图浏览器可渲染**（jpg/png/gif/webp/bmp）→ **直接回源原图**（200，Content-Type 为原图类型），同时后台入队生成缩略图缓存，下次请求即命中 webp
+3. **未命中且不可渲染**（tiff 等）→ 404（后台生成中，生成完成后经 `item.updated` 事件重建，前端已有占位重试闭环）
+
+`size` 缺省为 256，可取值来自项目配置的 `thumbnail_sizes`。响应带 `Cache-Control: immutable`——item id 是内容哈希，内容永不变，客户端可永久缓存。注意：情形 2 的原图响应同样带 immutable，客户端可能长期持有原图字节而不升级到 webp（视觉无损）。
 
 ### file
 

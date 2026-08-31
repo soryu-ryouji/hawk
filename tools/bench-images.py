@@ -5,18 +5,23 @@
 默认从真实素材库随机采样（解码/编码真实照片才有对比意义；合成小图可用 --synthetic）。
 产出: tools/.tmp/bench-images-lib（结束时清理，含系统缓存目录）
 
+管线两阶段（缩略图为惰性缓存，读取端触发）：
+  1. 入库 + 调色板即时生成（颜色搜索依赖全量 palette，wait_idle 等待完成）
+  2. 逐个请求 /item/thumbnail 触发缩略图后台生成（未命中先回源原图并入队）
+
 指标:
-  - img_per_s        缩略图+调色板全管线吞吐（含队列等待）
+  - img_per_s        全管线吞吐（调色板 + 缩略图两阶段合计）
   - cpu_ms_per_img   每图 CPU 毫秒（换缩放算法/编码器/质量参数时的核心对比项）
   - webp_ratio_*     各尺寸 webp 总字节 / 源图总字节（压缩效率）
   - palette_done_pct 调色板覆盖率（丢失/失败检测；应恒 100%）
-  - thumbs_missing   索引 item 数 - 256 缩略图数（worker 队列丢弃回归检测）
+  - thumbs_missing   素材总数 - 256 缩略图数（worker 丢失回归检测）
 """
 import argparse
 import os
 import shutil
 import sys
 import time
+from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from benchlib import (
@@ -57,10 +62,24 @@ def main():
     with Server(LIB, stdout=log_file) as srv:
         cpu0 = srv.cpu_time_s()
         t0 = time.perf_counter()
-        srv.wait_idle()
-        wall = time.perf_counter() - t0
+        srv.wait_idle()  # 阶段1：入库 + 调色板即时管线
         # 调色板批量回写按 2s 时限冲刷：积压归零后再等一拍，确保暂存的回写落盘后再统计
         time.sleep(2.5)
+
+        # 阶段2：缩略图惰性生成——逐个请求端点触发（未命中回源原图并入队，in-flight 去重）
+        listed = srv.api("/api/v1/item/list", {"limit": args.count + 1000, "in_trash": False})["data"]
+        expected = [it["id"] for it in listed["items"]]
+        t1 = time.perf_counter()
+        for item_id in expected:
+            req = Request(
+                f"{srv.base}/api/v1/item/thumbnail?id={item_id}&size=256",
+                headers={"Authorization": f"Bearer {srv.token}"},
+            )
+            with urlopen(req, timeout=60) as r:
+                r.read()  # 响应为原图（未命中回源）或已生成 webp，丢弃即可
+        srv.wait_idle()  # 缩略图生成完毕
+        t_thumb = time.perf_counter() - t1
+        wall = time.perf_counter() - t0
         cpu1 = srv.cpu_time_s()
     log_file.close()
     log_lines = []
@@ -92,11 +111,13 @@ def main():
         "count": stats["items"],
         "src_mb": round(src_bytes / 1e6, 1),
         "wall_s": round(wall, 1),
+        "wall_thumb_s": round(t_thumb, 1),
         "img_per_s": round(stats["items"] / wall, 1),
         "cpu_ms_per_img": round((cpu1 - cpu0) * 1000 / max(stats["items"], 1), 1),
         **ratios,
         "palette_done_pct": round(stats["palette_done"] * 100 / max(stats["items"], 1), 1),
-        "thumbs_missing": stats["items"] - thumbs_256,
+        "thumb_expected": len(expected),
+        "thumbs_missing": len(expected) - thumbs_256,
         "decode_failures": decode_failures,
         "batch_write_failures": batch_failures,
     })

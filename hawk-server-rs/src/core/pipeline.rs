@@ -1168,9 +1168,10 @@ fn apply_upsert(ctx: &Arc<PipelineCtx>, pending: PendingUpsert, hash: &str) -> R
         }
     }
 
-    // 缩略图/调色板齐备的文件(如对账扫描重放)不再派发:no-op 任务会把队列与积压计数灌满失真
-    if needs_thumbnail_work(ctx, hash) {
-        ctx.worker.enqueue(hash, &pending.abs_path);
+    // 缩略图是惰性缓存（读取端未命中时派发），入库/对账只保证调色板（颜色搜索依赖全量 palette）；
+    // 派生齐备的文件(如对账扫描重放)不再派发:no-op 任务会把队列与积压计数灌满失真
+    if needs_palette_work(ctx, hash) {
+        ctx.worker.enqueue_palette(hash, &pending.abs_path);
     }
 
     let dto = ctx
@@ -1183,19 +1184,14 @@ fn apply_upsert(ctx: &Arc<PipelineCtx>, pending: PendingUpsert, hash: &str) -> R
     })
 }
 
-/// 缩略图任一配置尺寸或调色板缺失时才需要后台生成(调色板存在性查元数据)
-fn needs_thumbnail_work(ctx: &PipelineCtx, hash: &str) -> bool {
+/// 调色板缺失或版本旧时才需要后台提炼（存在性查元数据）。缩略图是惰性缓存，
+/// 不在入库/对账时生成，由读取端（/item/thumbnail 未命中）派发
+fn needs_palette_work(ctx: &PipelineCtx, hash: &str) -> bool {
     let palette_missing = match ctx.store.try_get(hash) {
         Some(meta) => meta.palette.is_none() || meta.palette_version != PALETTE_VERSION,
         None => true,
     };
     palette_missing
-        || ctx
-            .config
-            .current()
-            .thumbnail_sizes
-            .iter()
-            .any(|s| !ctx.thumbs.exists(hash, *s))
 }
 
 /// 哈希漂移时按路径迁移:路径从旧元数据移除;旧元数据不再有位置且索引无引用时清理
@@ -1636,13 +1632,12 @@ fn do_metadata_sync(ctx: &PipelineCtx) -> Result<(), String> {
         }
     }
 
-    // 派生缓存自愈：palette 缺失（= 缩略图/调色板派生工作未完成，如 worker 队列高峰期的丢失项、
-    // 解码曾失败的素材）→ 派发 worker 任务补齐（生成缺失尺寸缩略图 + 提炼调色板，完成后补发
-    // item.updated，前端据此重建 404 占位）。纯内存扫描 + in-flight 去重，稳态零开销。
-    // 源文件已不在的项由 worker 静默跳过（删除对账会收敛位置）
+    // 派生缓存自愈：palette 缺失/版本旧（如 worker 队列高峰期的丢失项、解码曾失败的素材）
+    // → 派发仅调色板任务补齐。缩略图不在对账中批量生成（惰性，读取端派发）。
+    // 纯内存扫描 + in-flight 去重，稳态零开销。源文件已不在的项由 worker 静默跳过（删除对账会收敛位置）
     for hash in ctx.store.hashes_with_missing_palette(color::PALETTE_VERSION) {
         if let Some(abs) = ctx.index.main_source_abs(&hash, &ctx.paths) {
-            ctx.worker.enqueue(&hash, &abs);
+            ctx.worker.enqueue_palette(&hash, &abs);
         }
     }
     Ok(())

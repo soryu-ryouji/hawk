@@ -34,10 +34,20 @@ def png(w, h, rgb):
     raw = b''.join(b'\x00' + bytes(rgb) * w for _ in range(h))
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
 
+def png_gray_noise(w, h):
+    """灰度随机噪声：体积 >500KB 的大图（缩略图惰性生成测试对象），调色板为灰色系，不干扰颜色检索断言"""
+    def chunk(t, d):
+        c = struct.pack('>I', len(d)) + t + d
+        return c + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    ihdr = struct.pack('>IIBBBBB', w, h, 8, 0, 0, 0, 0)  # 8-bit 灰度
+    raw = b''.join(b'\x00' + os.urandom(w) for _ in range(h))
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+
 lib = sys.argv[1]
 open(os.path.join(lib, 'sunset.png'), 'wb').write(png(4, 2, (255, 0, 0)))
 open(os.path.join(lib, '海报', 'cat.png'), 'wb').write(png(2, 4, (0, 255, 0)))
-open(os.path.join(lib, '海报', 'logo.png'), 'wb').write(png(8, 8, (0, 0, 255)))
+# 大图：缩略图惰性生成的测试对象（未命中回源原图 + 后台生成）
+open(os.path.join(lib, '海报', 'logo.png'), 'wb').write(png_gray_noise(800, 800))
 PYEOF
 
 HAWK_TOKEN=$TOKEN "${SERVER[@]}" --library "$LIB" --port $PORT >"$WORK/server.log" 2>&1 &
@@ -98,6 +108,7 @@ check "folders 派生" "$(echo "$LIST" | jq -r '.data.items[] | select(.name=="c
 
 SUNSET_ID=$(echo "$LIST" | jq -r '.data.items[] | select(.name=="sunset") | .id')
 check "id 为 64 位 hex" "${#SUNSET_ID}" 64
+LOGO_ID=$(echo "$LIST" | jq -r '.data.items[] | select(.name=="logo") | .id')
 
 # --- 元数据读写 ---
 post_json "$BASE/api/v1/item/update" "{\"id\":\"$SUNSET_ID\",\"tags\":[\"nature\",\"sunset\"],\"star\":4,\"annotation\":\"Beautiful sunset\"}" >/dev/null
@@ -130,17 +141,31 @@ check "标签重命名跟随 item" "$(post_json "$TAG_API/update" '{"name":"suns
 check "排除标签过滤" "$(post_json "$BASE/api/v1/item/list" '{"exclude_tags":["nature"]}' | jq -r .data.total)" 2
 check "标签删除同步清除" "$(post_json "$TAG_API/delete" '{"name":"晚霞"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.tags | join(",")')" "nature"
 
-# --- 缩略图 ---
-for _ in $(seq 1 20); do
-  curl -sf -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256" -o "$WORK/t.webp" && break
+# --- 缩略图（惰性生成：未命中回源原图并后台入队，大小图同逻辑） ---
+# 大图未命中 → 直接回源原图（200 + image/png），同时后台入队生成
+LOGO_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256")
+check "thumbnail 未命中先回源原图" "$LOGO_CT" "image/png"
+# 轮询至后台生成完毕（webp 缓存就绪）
+for _ in $(seq 1 40); do
+  LOGO_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256")
+  [ "$LOGO_CT" = "image/webp" ] && break
   sleep 0.5
 done
-check "thumbnail content-type" "$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256")" "image/webp"
-check "thumbnail 支持 ?token=（<img> 场景）" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256&token=$TOKEN")" 200
-check "thumbnail 错误 token 返回 401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&token=wrong")" 401
-check "thumbnail cache-control" "$(curl -s -D - -o /dev/null -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID" | grep -i cache-control | tr -d '\r' | tr 'A-Z' 'a-z')" "cache-control: public, max-age=31536000, immutable"
-check "thumbnail 不可缓存尺寸 400" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=400")" 400
-check "refresh_thumbnail" "$(post_json "$BASE/api/v1/item/refresh_thumbnail" "{\"id\":\"$SUNSET_ID\"}" | jq -r .status)" success
+check "thumbnail 后台生成后命中缓存" "$LOGO_CT" "image/webp"
+check "thumbnail 支持 ?token=（<img> 场景）" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256&token=$TOKEN")" 200
+check "thumbnail 错误 token 返回 401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&token=wrong")" 401
+check "thumbnail cache-control" "$(curl -s -D - -o /dev/null -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID" | grep -i cache-control | tr -d '\r' | tr 'A-Z' 'a-z')" "cache-control: public, max-age=31536000, immutable"
+check "thumbnail 不可缓存尺寸 400" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=400")" 400
+check "refresh_thumbnail" "$(post_json "$BASE/api/v1/item/refresh_thumbnail" "{\"id\":\"$LOGO_ID\"}" | jq -r .status)" success
+# 小图与大图同逻辑：未命中先回源原图，后台生成缓存
+SUNSET_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256")
+check "小图未命中回源原图" "$SUNSET_CT" "image/png"
+for _ in $(seq 1 40); do
+  SUNSET_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256")
+  [ "$SUNSET_CT" = "image/webp" ] && break
+  sleep 0.5
+done
+check "小图同样后台生成缓存" "$SUNSET_CT" "image/webp"
 
 # --- 调色板与颜色检索 ---
 for _ in $(seq 1 20); do
@@ -272,12 +297,12 @@ post_json "$BASE/api/v1/folder/delete" '{"path":"icons"}' >/dev/null
 check "folder/delete 后树不含 icons" "$(curl -s -H "$AUTH" "$BASE/api/v1/folder/list" | jq -r '.data.children | map(.name) | index("icons") == null')" true
 check "folder/restore 恢复" "$(post_json "$BASE/api/v1/folder/restore" '{"path":"icons"}' | jq -r .status)" success
 
-# trash/clear：删除 sunset 后清空，元数据应被清理
-post_json "$BASE/api/v1/item/delete" "{\"id\":\"$SUNSET_ID\"}" >/dev/null
+# trash/clear：删除 logo（有缩略图缓存）后清空，元数据与派生缓存应被清理
+post_json "$BASE/api/v1/item/delete" "{\"id\":\"$LOGO_ID\"}" >/dev/null
 check "trash/clear" "$(post_json "$BASE/api/v1/trash/clear" '{}' | jq -r .status)" success
 check "清空后回收站为空" "$(post_json "$BASE/api/v1/item/list" '{"in_trash":true}' | jq -r .data.total)" 0
-check "元数据已清理" "$(ls "$LIB/.hawk/metadata/$SUNSET_ID.toml" >/dev/null 2>&1 && echo yes || echo no)" no
-check "缩略图已清理" "$(ls "$CACHE/thumbnails/256/$SUNSET_ID.webp" >/dev/null 2>&1 && echo yes || echo no)" no
+check "元数据已清理" "$(ls "$LIB/.hawk/metadata/$LOGO_ID.toml" >/dev/null 2>&1 && echo yes || echo no)" no
+check "缩略图已清理" "$(ls "$CACHE/thumbnails/256/$LOGO_ID.webp" >/dev/null 2>&1 && echo yes || echo no)" no
 
 # --- 重启验证：哈希复用（mtime 不变不重算）且元数据保持 ---
 kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true

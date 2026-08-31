@@ -10,6 +10,7 @@ use crate::core::fs_util;
 use crate::core::index::LocationSnapshot;
 use crate::core::item::{ItemDto, ItemQuery, ItemSkeletonDto};
 use crate::core::paths::LibraryPaths;
+use crate::core::thumbnail::ThumbnailService;
 use axum::extract::{Query, State};
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -262,7 +263,7 @@ async fn item_add(
             (ext, default_name, Some(bytes), None)
         } else {
             let bytes = decode_base64(req.img_base64.as_deref().unwrap_or_default())?;
-            let ext = crate::core::thumbnail::ThumbnailService::detect_extension_bytes(&bytes)
+            let ext = ThumbnailService::detect_extension_bytes(&bytes)
                 .ok_or_else(|| ApiError::unsupported_format("无法识别的图像数据"))?;
             (ext, "image".to_string(), Some(bytes), None)
         };
@@ -717,11 +718,29 @@ async fn item_thumbnail(
         return Err(ApiError::item_not_found(&q.id));
     }
     let file = state.thumbs.get_path(&q.id, actual_size);
-    if !std::path::Path::new(&file).is_file() {
-        // 首次索引完成前缩略图可能尚未生成
-        return Err(ApiError::item_not_found(format!("thumbnail {} ({})", q.id, actual_size)));
+    if std::path::Path::new(&file).is_file() {
+        return serve_file(&file, "image/webp", true).await;
     }
-    serve_file(&file, "image/webp", true).await
+
+    // 未命中（缩略图为惰性缓存，入库/对账不生成）：
+    // - 浏览器可渲染且可解码 → 直接回源原图（首次查看零等待），同时后台入队生成缓存
+    // - 不可渲染格式（tiff 等）→ 后台生成后以 404 占位，经 item.updated 重建（现有闭环）
+    // 入队以 identify（只解码头）为闸，避免不可解码内容被反复入队空转
+    let source = state
+        .index
+        .main_source_abs(&q.id, &state.paths)
+        .filter(|p| std::path::Path::new(p).is_file())
+        .ok_or_else(|| ApiError::item_not_found(format!("thumbnail {} ({})", q.id, actual_size)))?;
+    let decodable = ThumbnailService::identify(&source).is_some();
+    if ThumbnailService::is_browser_renderable(&source) && decodable {
+        state.worker.enqueue_thumbs(&q.id, &source);
+        let content_type = mime_guess::from_path(&source).first_or_octet_stream().to_string();
+        return serve_file(&source, &content_type, true).await;
+    }
+    if decodable {
+        state.worker.enqueue_thumbs(&q.id, &source);
+    }
+    Err(ApiError::item_not_found(format!("thumbnail {} ({})", q.id, actual_size)))
 }
 
 async fn item_file(State(state): State<SharedState>, Query(q): Query<IdQuery>) -> Result<Response, ApiError> {
@@ -762,6 +781,7 @@ async fn item_refresh_thumbnail(
         .index
         .main_source_abs(&req.id, &state.paths)
         .ok_or_else(|| ApiError::item_not_found(&req.id))?;
+    // 手动强制重建全部尺寸缓存
     state.thumbs.generate(&req.id, &source, &state.config.current().thumbnail_sizes, true);
     Ok(Json(success()))
 }
@@ -792,7 +812,7 @@ async fn item_replace(
 
     // 内容必须是图像且格式与文件扩展名一致:扩展名与内容错位会破坏类型推断与预览
     let file_ext = LibraryPaths::ext_of(&loc.library_path);
-    let ext = crate::core::thumbnail::ThumbnailService::detect_extension_bytes(&bytes)
+    let ext = ThumbnailService::detect_extension_bytes(&bytes)
         .ok_or_else(|| ApiError::unsupported_format("无法识别的图像数据"))?;
     if ext != file_ext {
         return Err(ApiError::unsupported_format(format!(
