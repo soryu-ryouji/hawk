@@ -148,6 +148,35 @@
         }
       }
     },
+    "/api/v1/library/refresh_cache": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRefreshCacheRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeOfLibraryRefreshCacheResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/folder/list": {
       "get": {
         "tags": [
@@ -1212,6 +1241,55 @@
             "type": "string"
           },
           "data": { }
+        }
+      },
+      "LibraryRefreshCacheRequest": {
+        "required": [
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "folder",
+              "category",
+              "tag",
+              "library"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略"
+          }
+        }
+      },
+      "LibraryRefreshCacheResponse": {
+        "required": [
+          "dispatched"
+        ],
+        "type": "object",
+        "properties": {
+          "dispatched": {
+            "type": "integer",
+            "description": "实际入队的修复任务数",
+            "format": "int32"
+          }
+        }
+      },
+      "EnvelopeOfLibraryRefreshCacheResponse": {
+        "required": [
+          "status",
+          "data"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LibraryRefreshCacheResponse"
+          }
         }
       },
       "EnvelopeOfStartupInfo": {

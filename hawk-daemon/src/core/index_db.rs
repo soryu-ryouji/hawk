@@ -90,7 +90,7 @@ impl IndexDb {
         let mut items: HashMap<String, (ItemMetadata, i64)> = HashMap::new();
         {
             let mut stmt = conn.prepare(
-                "SELECT hash, url, star, annotation, source_mtime, width, height, palette, palette_version FROM items",
+                "SELECT hash, url, star, annotation, source_mtime, width, height, palette FROM items",
             )?;
             let rows = stmt.query_map([], |row| {
                 let palette_json: Option<String> = row.get(7)?;
@@ -100,7 +100,6 @@ impl IndexDb {
                         url: row.get(1)?,
                         star: row.get::<_, i64>(2)? as i32,
                         annotation: row.get(3)?,
-                        palette_version: row.get::<_, i64>(8)? as i32,
                         palette: palette_json.as_deref().and_then(parse_palette_json),
                         width: row.get::<_, i64>(5)? as i32,
                         height: row.get::<_, i64>(6)? as i32,
@@ -308,13 +307,13 @@ impl IndexDb {
                 .optional()?;
             if version.as_deref() != Some(SCHEMA_VERSION) {
                 // 版本不符（含首次建库）：重建全部表；注水标记保持未置位，由 MetadataStore 从 TOML 全量重建
-                for table in ["items", "paths", "tags", "categories"] {
+                for table in ["items", "paths", "tags", "categories", "folders"] {
                     conn.execute(&format!("DROP TABLE IF EXISTS {table}"), [])?;
                 }
                 conn.execute(
                     "CREATE TABLE items (hash TEXT PRIMARY KEY, url TEXT, star INTEGER NOT NULL DEFAULT 0, \
                      annotation TEXT, source_mtime INTEGER NOT NULL DEFAULT 0, width INTEGER NOT NULL DEFAULT 0, \
-                     height INTEGER NOT NULL DEFAULT 0, palette TEXT, palette_version INTEGER NOT NULL DEFAULT 0)",
+                     height INTEGER NOT NULL DEFAULT 0, palette TEXT)",
                     [],
                 )?;
                 conn.execute(
@@ -329,14 +328,13 @@ impl IndexDb {
                     "CREATE TABLE categories (hash TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY (hash, category))",
                     [],
                 )?;
+                conn.execute(
+                    "CREATE TABLE folders (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, entries INTEGER NOT NULL)",
+                    [],
+                )?;
                 conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?1) ON CONFLICT(key) DO UPDATE SET value=?1", [SCHEMA_VERSION])?;
                 tracing::info!("元数据缓存 schema 已重建 v{SCHEMA_VERSION}");
             }
-            // folders 快照表后加（旧缓存无此表）：幂等补建，免于整库重建
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, entries INTEGER NOT NULL)",
-                [],
-            )?;
             Ok(())
         }) {
             tracing::error!("元数据缓存 schema 初始化失败，退化为纯 TOML 模式: {e}");
@@ -393,9 +391,9 @@ fn upsert_item(
     source_mtime: i64,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, palette_version) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-         ON CONFLICT(hash) DO UPDATE SET url=?2, star=?3, annotation=?4, source_mtime=?5, width=?6, height=?7, palette=?8, palette_version=?9",
+        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         ON CONFLICT(hash) DO UPDATE SET url=?2, star=?3, annotation=?4, source_mtime=?5, width=?6, height=?7, palette=?8",
         rusqlite::params![
             hash,
             meta.url,
@@ -405,7 +403,6 @@ fn upsert_item(
             meta.width,
             meta.height,
             meta.palette.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()),
-            meta.palette_version,
         ],
     )?;
     delete_child_rows(tx, hash)?;
@@ -414,7 +411,7 @@ fn upsert_item(
 
 fn insert_item(tx: &rusqlite::Transaction, hash: &str, meta: &ItemMetadata, source_mtime: i64) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, palette_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             hash,
             meta.url,
@@ -424,7 +421,6 @@ fn insert_item(tx: &rusqlite::Transaction, hash: &str, meta: &ItemMetadata, sour
             meta.width,
             meta.height,
             meta.palette.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()),
-            meta.palette_version,
         ],
     )?;
     insert_child_rows(tx, hash, meta)

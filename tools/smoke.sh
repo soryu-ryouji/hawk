@@ -142,6 +142,9 @@ check "排除标签过滤" "$(post_json "$BASE/api/v1/item/list" '{"exclude_tags
 check "标签删除同步清除" "$(post_json "$TAG_API/delete" '{"name":"晚霞"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.tags | join(",")')" "nature"
 
 # --- 缩略图（惰性生成：未命中回源原图并后台入队，大小图同逻辑） ---
+# 删缓存制造「未命中」前提：reindex 全量导入通道会同步生成缩略图（item 入库即完整可显示），
+# 不删的话断言与后台生成存在时序竞态（flaky）
+rm -f "$CACHE/thumbnails/256/$LOGO_ID.webp" "$CACHE/thumbnails/512/$LOGO_ID.webp" "$CACHE/thumbnails/1024/$LOGO_ID.webp"
 # 大图未命中 → 直接回源原图（200 + image/png），同时后台入队生成
 LOGO_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256")
 check "thumbnail 未命中先回源原图" "$LOGO_CT" "image/png"
@@ -157,7 +160,8 @@ check "thumbnail 错误 token 返回 401" "$(curl -s -o /dev/null -w '%{http_cod
 check "thumbnail cache-control" "$(curl -s -D - -o /dev/null -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID" | grep -i cache-control | tr -d '\r' | tr 'A-Z' 'a-z')" "cache-control: public, max-age=31536000, immutable"
 check "thumbnail 不可缓存尺寸 400" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=400")" 400
 check "refresh_thumbnail" "$(post_json "$BASE/api/v1/item/refresh_thumbnail" "{\"id\":\"$LOGO_ID\"}" | jq -r .status)" success
-# 小图与大图同逻辑：未命中先回源原图，后台生成缓存
+# 小图与大图同逻辑：删缓存后回源原图，后台重建（同上：删缓存消除时序竞态）
+rm -f "$CACHE/thumbnails/256/$SUNSET_ID.webp" "$CACHE/thumbnails/512/$SUNSET_ID.webp" "$CACHE/thumbnails/1024/$SUNSET_ID.webp"
 SUNSET_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256")
 check "小图未命中回源原图" "$SUNSET_CT" "image/png"
 for _ in $(seq 1 40); do
@@ -313,6 +317,44 @@ DETAIL2=$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$DOT_ID")
 check "重启后 tags 保持" "$(echo "$DETAIL2" | jq -r '.data.tags | join(",")')" "imported"
 check "重启后 count 一致" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -r .data)" 5
 check "重启后颜色检索仍可用（缓存载入）" "$(post_json "$BASE/api/v1/item/list" '{"color":"#00ff00"}' | jq -r .data.total)" 1
+
+# --- refresh_cache：按范围补全派生缓存（补缺失模式，不重建已有文件）---
+wait_thumbs_idle() { # 轮询 thumbnail 队列空闲，避免 in-flight 去重干扰 dispatched 断言
+  for _ in $(seq 1 60); do
+    B=$(curl -s -H "$AUTH" "$BASE/api/v1/app/status" | jq -r '.data.thumbnail | "\(.pending),\(.active)"')
+    [[ "$B" == "0,0" ]] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+check "refresh_cache 文件夹范围派发" "$(post_json "$BASE/api/v1/library/refresh_cache" '{"type":"folder","value":"海报"}' | jq -r .data.dispatched)" 2
+wait_thumbs_idle
+check "refresh_cache 整库派发" "$(post_json "$BASE/api/v1/library/refresh_cache" '{"type":"library"}' | jq -r .data.dispatched)" 5
+wait_thumbs_idle
+check "refresh_cache 分类范围派发" "$(post_json "$BASE/api/v1/library/refresh_cache" '{"type":"category","value":"参考"}' | jq -r .data.dispatched)" 1
+wait_thumbs_idle
+check "refresh_cache 标签范围派发" "$(post_json "$BASE/api/v1/library/refresh_cache" '{"type":"tag","value":"nature"}' | jq -r .data.dispatched)" 1
+wait_thumbs_idle
+check "refresh_cache 未知类型 400" "$(post_json "$BASE/api/v1/library/refresh_cache" '{"type":"nope"}' -o /dev/null -w '%{http_code}')" 400
+check "refresh_cache 缺 value 400" "$(post_json "$BASE/api/v1/library/refresh_cache" '{"type":"category"}' -o /dev/null -w '%{http_code}')" 400
+
+# --- 宽高自愈闭环：模拟入库时 identify 暂时失败落 0 的遗留 ---
+# 停库后从 TOML 删除宽高字段（width=0 序列化时即省略），重启后对账把 0 搬进索引，
+# 自愈三路（周期对账 / item·list 读取端 / refresh_cache）任一收敛即闭环：宽高恢复且回写 TOML
+kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true
+sed -i '/^width = /d; /^height = /d' "$LIB/.hawk/metadata/$SUNSET_ID.toml"
+HAWK_TOKEN=$TOKEN "${SERVER[@]}" --library "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
+PID=$!
+for _ in $(seq 1 60); do curl -sf -H "$AUTH" "$BASE/api/v1/app/status" >/dev/null 2>&1 && break; sleep 0.5; done
+W=0
+for _ in $(seq 1 60); do
+  W=$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.width')
+  [[ "$W" == "4" ]] && break
+  post_json "$BASE/api/v1/item/list" '{}' >/dev/null # 模拟前端拉列表，触发读取端自愈
+  sleep 0.5
+done
+check "宽高自愈恢复（0 × 0 → 4）" "$W" 4
+check "自愈结果回写 TOML" "$(grep -c '^width = 4$' "$LIB/.hawk/metadata/$SUNSET_ID.toml")" 1
 
 echo
 echo "通过 $PASS 项，失败 $FAIL 项"

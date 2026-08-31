@@ -1,12 +1,17 @@
 //! 缩略图/调色板后台 worker：独立队列与专用线程池(CPU 密集)，不阻塞索引消费循环。
-//! 完成结果经回调回流水线（PaletteJob 回写索引，保持单写者）。
-//! 队列是尽力而为的缓存：满时丢弃，in-flight 去重。
+//! 完成结果经回调回流水线（PaletteJob/FixDim 回写索引，保持单写者）。
+//! 队列是尽力而为的缓存：in-flight 去重，重复派发只产生 no-op 任务。
 //!
-//! 任务两种（generate_thumbs 区分，in-flight 去重 key 分命名空间）：
-//! - 缩略图任务：读取端 /item/thumbnail 未命中时派发，生成缺失尺寸并按需提炼调色板
-//! - 调色板任务：增量入库/启动对账派发（needs_palette_work），只提炼调色板——
+//! 任务三种（ThumbJobKind，in-flight 去重 key 分命名空间）：
+//! - PaletteOnly：入库/对账派发，提炼调色板 + 补缺失宽高——
 //!   扫描导入已在并行哈希阶段单次解码产出调色板+缩略图（见 pipeline.rs），
 //!   此任务兜底增量路径与解码失败自愈；颜色搜索依赖全量 palette，必须即时
+//! - Repair：读取端 /item/thumbnail 未命中与范围刷新缓存（library/refresh_cache）派发，
+//!   补缺失宽高 + 生成缺失尺寸缩略图 + 按需提炼调色板（不重建已有文件）
+//! - ForceRebuild：单 item 手动刷新（item/refresh_thumbnail）派发，强制重建全部尺寸
+//!
+//! 补宽高（ensure_dim）是三类任务共有的前置步骤：入库时 decode/identify 暂时失败
+//! （文件占用等）会把 width=0 落库且无自愈路径，此处用 identify（只解头部）兜底回写。
 
 use crate::core::color;
 use crate::core::config::LibraryConfig;
@@ -18,20 +23,33 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// 任务模式
+enum ThumbJobKind {
+    /// 仅提炼调色板 + 补缺失宽高（入库/对账派发）
+    PaletteOnly,
+    /// 补全派生缓存：缺失宽高 + 缺失尺寸缩略图 + 调色板（读取端/范围刷新派发）
+    Repair,
+    /// 强制重建全部尺寸缩略图 + 补宽高 + 调色板（单 item 手动刷新派发）
+    ForceRebuild,
+}
+
 struct ThumbJob {
     hash: String,
     source_abs: String,
-    /// true：生成缺失尺寸缩略图（读取端派发）；false：仅提炼调色板（入库/对账派发）
-    generate_thumbs: bool,
+    kind: ThumbJobKind,
 }
 
 type GetItemDto = Arc<dyn Fn(&str) -> Option<ItemDto> + Send + Sync>;
+type ItemDimZero = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+type FixDim = Arc<dyn Fn(String, i32, i32) + Send + Sync>;
 type HasPalette = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 type EnqueuePalette = Arc<dyn Fn(String, Vec<PaletteColor>) + Send + Sync>;
 
 #[derive(Clone)]
 struct WorkerCallbacks {
     get_item_dto: GetItemDto,
+    item_dim_zero: ItemDimZero,
+    fix_dim: FixDim,
     has_palette: HasPalette,
     enqueue_palette: EnqueuePalette,
 }
@@ -67,6 +85,8 @@ impl ThumbnailWorker {
             active: Arc::new(AtomicI32::new(0)),
             callbacks: Mutex::new(WorkerCallbacks {
                 get_item_dto: Arc::new(|_| None),
+                item_dim_zero: Arc::new(|_| false),
+                fix_dim: Arc::new(|_, _, _| {}),
                 has_palette: Arc::new(|_| true),
                 enqueue_palette: Arc::new(|_, _| {}),
             }),
@@ -77,10 +97,19 @@ impl ThumbnailWorker {
         })
     }
 
-    /// 由 IndexPipeline 装配：索引访问与调色板回写的闭环在流水线侧（单写者）
-    pub fn attach(&self, get_item_dto: GetItemDto, has_palette: HasPalette, enqueue_palette: EnqueuePalette) {
+    /// 由 IndexPipeline 装配：索引访问与回写的闭环在流水线侧（单写者）
+    pub fn attach(
+        &self,
+        get_item_dto: GetItemDto,
+        item_dim_zero: ItemDimZero,
+        fix_dim: FixDim,
+        has_palette: HasPalette,
+        enqueue_palette: EnqueuePalette,
+    ) {
         *self.callbacks.lock().unwrap() = WorkerCallbacks {
             get_item_dto,
+            item_dim_zero,
+            fix_dim,
             has_palette,
             enqueue_palette,
         };
@@ -137,44 +166,49 @@ impl ThumbnailWorker {
         }
     }
 
-    /// 派发缩略图任务：读取端未命中时调用，生成缺失尺寸（含按需调色板）。
-    /// in-flight 去重（队列中/生成中的同 hash 重复派发直接丢弃）——
-    /// 幂等，重复派发只产生 no-op 任务（尺寸齐备 + 调色板已提炼时不做事）
-    pub fn enqueue_thumbs(&self, hash: &str, source_abs: &str) {
-        self.enqueue(hash, source_abs, true);
+    /// 派发 Repair 任务：读取端未命中/范围刷新缓存时调用，补宽高 + 生成缺失尺寸（含按需调色板）。
+    /// 返回是否实际入队（in-flight 去重时丢弃）
+    pub fn enqueue_thumbs(&self, hash: &str, source_abs: &str) -> bool {
+        self.enqueue(hash, source_abs, ThumbJobKind::Repair)
     }
 
-    /// 派发调色板任务：入库/启动对账时调用，只提炼调色板，不生成缩略图
-    pub fn enqueue_palette(&self, hash: &str, source_abs: &str) {
-        self.enqueue(hash, source_abs, false);
+    /// 派发 ForceRebuild 任务：单 item 手动刷新时调用，强制重建全部尺寸
+    pub fn enqueue_force_rebuild(&self, hash: &str, source_abs: &str) -> bool {
+        self.enqueue(hash, source_abs, ThumbJobKind::ForceRebuild)
     }
 
-    fn enqueue(&self, hash: &str, source_abs: &str, generate_thumbs: bool) {
+    /// 派发 PaletteOnly 任务：入库/启动对账/读取端宽高自愈时调用，提炼调色板 + 补宽高
+    pub fn enqueue_palette(&self, hash: &str, source_abs: &str) -> bool {
+        self.enqueue(hash, source_abs, ThumbJobKind::PaletteOnly)
+    }
+
+    fn enqueue(&self, hash: &str, source_abs: &str, kind: ThumbJobKind) -> bool {
         let job = ThumbJob {
             hash: hash.to_string(),
             source_abs: source_abs.to_string(),
-            generate_thumbs,
+            kind,
         };
         if !self.inflight.lock().unwrap().insert(job.dedup_key()) {
-            return;
+            return false;
         }
         let tx = self.tx.lock().unwrap();
         if let Some(tx) = tx.as_ref() {
             if tx.send(job).is_ok() {
                 self.queued.fetch_add(1, Ordering::SeqCst);
+                return true;
             }
         }
+        false
     }
 }
 
 impl ThumbJob {
-    /// in-flight 去重 key：缩略图与调色板任务独立命名空间，互不挤占
-    /// （调色板任务在途时到达的缩略图任务必须执行，反之缩略图任务自带调色板检查）
+    /// in-flight 去重 key：PaletteOnly 与其余任务独立命名空间，互不挤占
+    /// （PaletteOnly 在途时到达的 Repair/ForceRebuild 必须执行，反之 Repair 自带调色板检查）
     fn dedup_key(&self) -> String {
-        if self.generate_thumbs {
-            self.hash.clone()
-        } else {
-            format!("palette:{}", self.hash)
+        match self.kind {
+            ThumbJobKind::PaletteOnly => format!("palette:{}", self.hash),
+            _ => self.hash.clone(),
         }
     }
 }
@@ -186,23 +220,39 @@ fn process_job(
     config: &Arc<LibraryConfig>,
     bus: &EventBus,
 ) {
-    let need_palette = !(callbacks.has_palette)(&job.hash);
-    // 仅调色板任务不生成缩略图（缩略图是惰性缓存，由读取端派发）
-    let sizes: Vec<i32> = if job.generate_thumbs {
-        config
-            .current()
-            .thumbnail_sizes
-            .into_iter()
-            .filter(|s| !thumbs.exists(&job.hash, *s))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    if sizes.is_empty() && !need_palette {
-        return;
+    // 补缺失宽高：identify 只解头部，代价小。回写经回调走流水线（单写者），
+    // item.updated 由回写侧发出；此处只需记住发生了修复，与缩略图生成合并发事件。
+    // 识别失败（非图像/损坏文件）记 debug：非图像文件的宽高合法为 0，对账会周期性重派，warn 会刷屏
+    let mut dim_fixed = false;
+    if (callbacks.item_dim_zero)(&job.hash) {
+        match ThumbnailService::identify(&job.source_abs) {
+            Some((w, h)) => {
+                (callbacks.fix_dim)(job.hash.clone(), w, h);
+                dim_fixed = true;
+            }
+            None => {
+                tracing::debug!("宽高识别失败 {source}: 非图像或损坏文件，0 宽高保持", source = job.source_abs);
+            }
+        }
     }
 
-    let generated = !sizes.is_empty() && thumbs.generate(&job.hash, &job.source_abs, &sizes, false);
+    let need_palette = !(callbacks.has_palette)(&job.hash);
+    // PaletteOnly 不生成缩略图（缩略图是惰性缓存，由读取端派发）
+    let generated = match &job.kind {
+        ThumbJobKind::PaletteOnly => false,
+        ThumbJobKind::Repair => {
+            let sizes: Vec<i32> = config
+                .current()
+                .thumbnail_sizes
+                .into_iter()
+                .filter(|s| !thumbs.exists(&job.hash, *s))
+                .collect();
+            !sizes.is_empty() && thumbs.generate(&job.hash, &job.source_abs, &sizes, false)
+        }
+        ThumbJobKind::ForceRebuild => {
+            thumbs.generate(&job.hash, &job.source_abs, &config.current().thumbnail_sizes, true)
+        }
+    };
 
     // 调色板优先从最小尺寸的已有缩略图提炼（解码代价小）；缩略图尚未生成
     // （惰性首访前、仅调色板任务）时直接解码原图——内容寻址保证同一内容，提炼结果一致。
@@ -221,8 +271,9 @@ fn process_job(
         }
     }
 
-    // 生成完成后补发 item.updated:前端缩略图此前的 404 占位据此重建 <img>
-    if generated {
+    // 完成后补发 item.updated:前端缩略图此前的 404 占位据此重建 <img>；
+    // 宽高修复同样需要前端刷新骨架/卡片（0 × 0 → 实际尺寸）
+    if generated || dim_fixed {
         if let Some(dto) = (callbacks.get_item_dto)(&job.hash) {
             bus.publish(ItemEvents::UPDATED, serde_json::to_value(&dto).unwrap());
         }
@@ -269,5 +320,3 @@ fn report_progress(
         .unwrap(),
     );
 }
-
-

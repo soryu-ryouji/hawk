@@ -54,6 +54,8 @@ function onContextMenu(e: MouseEvent) {
       { label: '新建子文件夹', action: () => startEdit('create') },
       { label: '重命名', action: () => startEdit('rename') },
       { separator: true, label: '' },
+      { label: '刷新缓存', title: '修复该文件夹（含子目录）缺失的宽高/缩略图/调色板', action: () => void store.refreshCache('folder', props.node.path, props.node.name) },
+      { separator: true, label: '' },
       {
         label: '删除（移入回收站）',
         danger: true,

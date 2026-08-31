@@ -74,16 +74,29 @@ impl MetadataStore {
         self.inner.lock().unwrap().hash_by_path.get(library_path).cloned()
     }
 
-    /// 调色板缺失（未提炼或版本过旧）的 hash 列表——派生缓存的自愈依据。
+    /// 调色板缺失（未提炼）的 hash 列表——派生缓存的自愈依据。
     /// palette 缺失是「缩略图/调色板派生工作未完成」的可靠信号（两者由同一 worker 任务补齐），
     /// 纯内存扫描，不碰文件系统
-    pub fn hashes_with_missing_palette(&self, current_version: i32) -> Vec<String> {
+    pub fn hashes_with_missing_palette(&self) -> Vec<String> {
         self.inner
             .lock()
             .unwrap()
             .by_hash
             .iter()
-            .filter(|(_, m)| m.palette.is_none() || m.palette_version != current_version)
+            .filter(|(_, m)| m.palette.is_none())
+            .map(|(h, _)| h.clone())
+            .collect()
+    }
+
+    /// 宽高缺失（入库时解码暂时失败的遗留）的 hash 列表——周期对账宽高自愈的依据。
+    /// 纯内存扫描，不碰文件系统
+    pub fn hashes_with_zero_dim(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .by_hash
+            .iter()
+            .filter(|(_, m)| m.width == 0 || m.height == 0)
             .map(|(h, _)| h.clone())
             .collect()
     }

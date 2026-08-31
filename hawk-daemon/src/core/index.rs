@@ -22,6 +22,15 @@ pub struct LocationSnapshot {
     pub in_trash: bool,
 }
 
+/// 刷新缓存范围：folder 前缀匹配（含子目录，库内位置）/ 分类 / 标签 / 整库（含回收站）。
+/// 供 library/refresh_cache 按范围派发派生缓存修复任务
+pub enum RefreshScope {
+    Folder(String),
+    Category(String),
+    Tag(String),
+    Library,
+}
+
 #[derive(Default)]
 struct IndexInner {
     by_hash: HashMap<String, Item>,
@@ -296,6 +305,39 @@ impl ItemIndex {
                 .collect(),
             total_size,
         )
+    }
+
+    /// 范围内全部 item 的 hash 快照（宽高为 0 的项优先，修复时最先被处理）。
+    /// folder 按库内位置前缀匹配；category/tag 与位置无关；library 含回收站
+    pub fn hashes_in_scope(&self, scope: &RefreshScope) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        let mut hashes: Vec<(String, i32)> = match scope {
+            RefreshScope::Library => inner
+                .by_hash
+                .values()
+                .map(|i| (i.id.clone(), i.width))
+                .collect(),
+            RefreshScope::Folder(f) => inner
+                .by_hash
+                .values()
+                .filter(|i| in_folder(i, f, false, false))
+                .map(|i| (i.id.clone(), i.width))
+                .collect(),
+            RefreshScope::Category(c) => inner
+                .by_hash
+                .values()
+                .filter(|i| i.categories.contains(c))
+                .map(|i| (i.id.clone(), i.width))
+                .collect(),
+            RefreshScope::Tag(t) => inner
+                .by_hash
+                .values()
+                .filter(|i| i.tags.contains(t))
+                .map(|i| (i.id.clone(), i.width))
+                .collect(),
+        };
+        hashes.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        hashes.into_iter().map(|(h, _)| h).collect()
     }
 }
 

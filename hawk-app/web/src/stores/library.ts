@@ -566,10 +566,14 @@ export const useLibraryStore = defineStore('library', () => {
       details.value = map;
     }
     const skIdx = skeleton.value.findIndex((s) => s.id === updated.id);
-    if (skIdx >= 0 && skeleton.value[skIdx].star !== updated.star) {
-      const next = skeleton.value.slice();
-      next[skIdx] = { ...next[skIdx], star: updated.star };
-      skeleton.value = next;
+    if (skIdx >= 0) {
+      const prev = skeleton.value[skIdx];
+      // star 变化影响徽章，宽高变化（0 × 0 自愈修复）影响布局比例；任一变化才替换，避免高频 updated 触发无谓重渲染
+      if (prev.star !== updated.star || prev.width !== updated.width || prev.height !== updated.height) {
+        const next = skeleton.value.slice();
+        next[skIdx] = { ...prev, star: updated.star, width: updated.width, height: updated.height };
+        skeleton.value = next;
+      }
     }
     if (!isUnfilteredView()) {
       debouncedSkeletonReload(() => void reloadSkeleton());
@@ -634,6 +638,16 @@ export const useLibraryStore = defineStore('library', () => {
     try {
       await api.rescan();
       showToast('正在刷新缓存…');
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
+  /** 按范围刷新派生缓存（补缺失模式）：修复 0 × 0 宽高、缺失缩略图/调色板；修复项经 item.updated 自动刷新 */
+  async function refreshCache(type: 'folder' | 'category' | 'tag' | 'library', value?: string, label?: string) {
+    try {
+      const res = await api.refreshCache(type, value);
+      showToast(res.dispatched > 0 ? `正在刷新「${label ?? type}」缓存（${res.dispatched} 项）` : `「${label ?? type}」派生缓存完好，无需修复`);
     } catch (e) {
       showToast(errorText(e));
     }
@@ -998,7 +1012,7 @@ export const useLibraryStore = defineStore('library', () => {
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, importBegin, importPaths,
+    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, importBegin, importPaths,
     folderCreate, folderRename, folderDelete, refreshFolders,
     refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
     openPreview, closePreview, navigatePreview, saveImageEdit, openEditor, closeEditor, showToast, applyEvent,

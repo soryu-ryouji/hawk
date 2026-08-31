@@ -15,9 +15,6 @@ pub const ANALYSIS_SIZE: u32 = 64;
 /// 透明像素的 alpha 阈值：低于该值不参与统计
 const ALPHA_THRESHOLD: u8 = 128;
 
-/// 调色板算法版本：算法或参数变更时 +1，TOML 中的旧版本结果视为未提炼（触发重新提炼）。
-pub const PALETTE_VERSION: i32 = 2;
-
 /// 从图像文件提炼调色板。源文件一般是已有的小尺寸缩略图，解码代价极低。
 /// 解码失败返回 None（下次重试）；图像无有效像素返回空数组（缓存之，不再重试）
 pub fn extract(image_abs: &str) -> Option<Vec<PaletteColor>> {

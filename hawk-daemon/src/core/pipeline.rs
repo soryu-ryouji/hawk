@@ -5,7 +5,7 @@
 //! 宽高在入库即持久化入 TOML，
 //! 且首扫边哈希边入库(流式 apply + items.added 批量事件),不再「全库哈希完才出图」。
 
-use crate::core::color::{self, PALETTE_VERSION};
+use crate::core::color;
 use crate::core::color_math;
 use crate::core::config::LibraryConfig;
 use crate::core::content_hash;
@@ -111,6 +111,11 @@ enum Job {
     Palette {
         hash: String,
         palette: Vec<PaletteColor>,
+    },
+    FixDim {
+        hash: String,
+        w: i32,
+        h: i32,
     },
     FolderHint {
         reason: String,
@@ -297,14 +302,23 @@ impl IndexPipeline {
         }
     }
 
-    /// 装配缩略图 worker:索引访问/调色板判定/回写的闭环在本类(单写者),worker 只负责生成
+    /// 装配缩略图 worker:索引访问/宽高回写/调色板判定回写的闭环在本类(单写者),worker 只负责生成
     fn attach_worker(&self) {
         let index = self.ctx.index.clone();
         let store = self.ctx.store.clone();
+        let index_dim = self.ctx.index.clone();
+        let ctx_dim = self.ctx.clone();
         self.ctx.worker.attach(
             Arc::new(move |hash| index.get_dto(hash)),
+            Arc::new(move |hash| {
+                index_dim.with_item_mut(hash, |item| item.width == 0).unwrap_or(false)
+            }),
+            Arc::new(move |hash, w, h| {
+                // 队列满时丢弃:幂等(仅补 0 值),下轮对账/读取会再触发
+                let _ = try_fire(&ctx_dim, Job::FixDim { hash, w, h });
+            }),
             Arc::new(move |hash| match store.try_get(hash) {
-                Some(meta) => meta.palette.is_some() && meta.palette_version == PALETTE_VERSION,
+                Some(meta) => meta.palette.is_some(),
                 None => false,
             }),
             {
@@ -741,6 +755,9 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             // 空数组是负缓存(已提炼无有效像素),同样持久化。幂等,重复应用无害
             stage_palette(ctx, hash, palette);
         }
+        Job::FixDim { hash, w, h } => {
+            do_fix_dim(ctx, &hash, w, h);
+        }
         Job::PaletteFlush => {
             // 冲刷定时任务到期：队列安静期（无新 job）也能把暂存回写落盘，不依赖任务到达
             ctx.palette_timer.store(false, Ordering::SeqCst);
@@ -836,6 +853,38 @@ fn maybe_flush_palette(ctx: &PipelineCtx) {
     }
 }
 
+/// 宽高回写（worker ensure_dim 派发）：仅补 0 值——幂等守卫，任务在途期间 upsert/其他任务
+/// 可能已写入正确值，不覆盖。索引与 TOML 同步更新后发 item.updated，前端据此重建骨架/卡片（0 × 0 → 实际尺寸）
+fn do_fix_dim(ctx: &PipelineCtx, hash: &str, w: i32, h: i32) {
+    let applied = ctx
+        .index
+        .with_item_mut(hash, |item| {
+            if item.width == 0 && item.height == 0 {
+                item.width = w;
+                item.height = h;
+                true
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+    if !applied {
+        return;
+    }
+    if let Some(mut meta) = ctx.store.try_get(hash) {
+        if meta.width == 0 && meta.height == 0 {
+            meta.width = w;
+            meta.height = h;
+            if ctx.store.save(hash, &meta).is_err() {
+                tracing::warn!("宽高回写 TOML 失败 {hash}");
+            }
+        }
+    }
+    if let Some(dto) = ctx.index.get_dto(hash) {
+        ItemEvents::publish_changed(&ctx.bus, &dto);
+    }
+}
+
 /// 冲刷暂存的调色板回写：逐条落 TOML（铁律：权威层先行），随后内存副本与 SQLite 单事务统一应用，
 /// 最后逐 item 同步索引并补发 item.updated。meta 已随漂移/删除消失时丢弃
 fn flush_palette_batch(ctx: &PipelineCtx) {
@@ -863,7 +912,6 @@ fn flush_palette_batch(ctx: &PipelineCtx) {
                 })
                 .collect(),
         );
-        meta.palette_version = color::PALETTE_VERSION;
         let Ok(source_mtime) = ctx.store.save_toml(&hash, &meta) else {
             continue;
         };
@@ -1235,7 +1283,6 @@ fn apply_upsert(
                 })
                 .collect(),
         );
-        meta.palette_version = PALETTE_VERSION;
         meta_changed = true;
     }
     match meta.find_path_mut(&pending.lib_path) {
@@ -1317,14 +1364,13 @@ fn apply_upsert(
     })
 }
 
-/// 调色板缺失或版本旧时才需要后台提炼（存在性查元数据）。缩略图是惰性缓存，
+/// 调色板缺失时才需要后台提炼（存在性查元数据）。缩略图是惰性缓存，
 /// 不在入库/对账时生成，由读取端（/item/thumbnail 未命中）派发
 fn needs_palette_work(ctx: &PipelineCtx, hash: &str) -> bool {
-    let palette_missing = match ctx.store.try_get(hash) {
-        Some(meta) => meta.palette.is_none() || meta.palette_version != PALETTE_VERSION,
+    match ctx.store.try_get(hash) {
+        Some(meta) => meta.palette.is_none(),
         None => true,
-    };
-    palette_missing
+    }
 }
 
 /// 哈希漂移时按路径迁移:路径从旧元数据移除;旧元数据不再有位置且索引无引用时清理
@@ -1779,12 +1825,21 @@ fn do_metadata_sync(ctx: &PipelineCtx) -> Result<(), String> {
         }
     }
 
-    // 派生缓存自愈：palette 缺失/版本旧（如 worker 队列高峰期的丢失项、解码曾失败的素材）
+    // 派生缓存自愈：palette 缺失（如 worker 队列高峰期的丢失项、解码曾失败的素材）
     // → 派发仅调色板任务补齐。缩略图不在对账中批量生成（惰性，读取端派发）。
     // 纯内存扫描 + in-flight 去重，稳态零开销。源文件已不在的项由 worker 静默跳过（删除对账会收敛位置）
-    for hash in ctx.store.hashes_with_missing_palette(color::PALETTE_VERSION) {
+    for hash in ctx.store.hashes_with_missing_palette() {
         if let Some(abs) = ctx.index.main_source_abs(&hash, &ctx.paths) {
             ctx.worker.enqueue_palette(&hash, &abs);
+        }
+    }
+    // 宽高自愈：入库时 decode/identify 暂时失败（文件占用等）会把 width=0 落库且无自愈路径，
+    // 增量扫描按 size/mtime 复用不再触及 → 永久滞留 0 × 0。同一任务（PaletteOnly 含补宽高）兜底
+    for hash in ctx.store.hashes_with_zero_dim() {
+        if ctx.index.with_item_mut(&hash, |item| item.width == 0).unwrap_or(false) {
+            if let Some(abs) = ctx.index.main_source_abs(&hash, &ctx.paths) {
+                ctx.worker.enqueue_palette(&hash, &abs);
+            }
         }
     }
     Ok(())

@@ -35,6 +35,9 @@ export const api = {
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
   /** 刷新缓存：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
   rescan: () => request<void>('POST', '/api/v1/library/rescan'),
+  /** 按范围刷新派生缓存（补缺失模式）：补 0 × 0 宽高 + 缺失缩略图/调色板，不重建已有文件 */
+  refreshCache: (type: 'folder' | 'category' | 'tag' | 'library', value?: string) =>
+    request<{ dispatched: number }>('POST', '/api/v1/library/refresh_cache', { body: { type, value } }),
 
   folderList: () => request<FolderNode>('GET', '/api/v1/folder/list'),
   folderCreate: (name: string, parentPath?: string) =>

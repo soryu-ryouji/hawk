@@ -11,15 +11,14 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
   CI（`release.yml`）全部使用本实现
 - **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描导入通道：并行哈希+单次解码产出派生+流式 apply/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
-  调色板（median-cut，palette_version=2）、SQLite 派生缓存（schema v1）
+  调色板（median-cut）、SQLite 派生缓存（schema v1）
 - **设计与实现要点**：
   - 宽高在入库时即持久化入 TOML（与 storage.md 设计意图一致，重启无需靠扫描重新识别）
-  - `palette_version` 与标量同列于 `[[paths]]` 之前（置于其后会被解析进 paths 表内，读不回来）
-  - 调色板算法为 median-cut（v2）；旧版本结果由后台 worker 一次性重提炼
+  - 调色板算法为 median-cut，同 hash 结果确定性一致（按占比降序、并列按 RGB 升序）
   - 并发度：哈希并行 `CPU-1`（封顶 24），缩略图 worker `CPU/2` 封顶 12——桌面端大批量导入/重建索引时吞吐优先，API 让出 1 核
   - 查询路径不克隆完整 DTO：排序在轻量键上进行，`item/list` 只投影分页窗口、`item/skeleton` 只投影轻量骨架（大库下 skeleton 持锁时间降低一个量级，UI 重连重同步不再卡死读路径）
-  - 调色板回写按批冲刷（≥500 条或滞留 2s）：TOML 逐条落盘、SQLite 单事务、事件按批平滑补发——全库重提炼（算法版本迁移、缓存重建）时无 `item.updated` 洪峰
-  - 缩略图 worker 无界队列 + 周期对账自愈：队列无界（任务 ~100B、in-flight 去重后内存有界），周期对账扫描 palette 缺失项并派发仅调色板任务补齐（缩略图不在对账中批量生成）
+  - 调色板回写按批冲刷（≥500 条或滞留 2s）：TOML 逐条落盘、SQLite 单事务、事件按批平滑补发——全库重提炼（缓存重建）时无 `item.updated` 洪峰
+  - 缩略图 worker 无界队列 + 周期对账自愈：队列无界（任务 ~100B、in-flight 去重后内存有界），周期对账扫描 palette 缺失项与宽高为 0 的项并派发补齐任务（缩略图不在对账中批量生成；宽高另有读取端自愈：`item/list`/`item/skeleton` 响应中发现 0 宽高即派发）
   - **缩略图为惰性缓存**：入库/启动对账只生成调色板（颜色搜索依赖全量）；缩略图由读取端触发——`/item/thumbnail` 未命中时直接回源原图（浏览器可渲染格式）并后台入队生成，命中后返回 webp。首次查看零等待，未查看的素材零成本
   - 启动注水经 TOML 全量回退时上报进度（每 1000 文件一帧，phase=sync），大库首次启动启动屏有实时反馈
 
@@ -33,8 +32,8 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 | 哈希 | blake3 | item id = BLAKE3 hex（存储契约） |
 | 图像解码/缩放 | image 0.25 + fast_image_resize | Lanczos3 |
 | WebP 编码 | webp（libwebp） | 有损 q80；纯 Rust 的 image-webp 仅支持无损 |
-| 元数据缓存 | rusqlite（bundled） | schema v1，现有缓存直接可读 |
-| TOML | toml（解析）+ 手写序列化 | 输出格式精确可控（palette_version 位于 [[paths]] 之前） |
+| 元数据缓存 | rusqlite（bundled） | schema v1，版本不符整库重建 |
+| TOML | toml（解析）+ 手写序列化 | 输出格式精确可控（标量在前、`[[paths]]`/`[[palette]]` 在后） |
 
 ## 构建与运行
 

@@ -16,17 +16,15 @@ pub struct LibraryPaths {
     pub root: String,
     pub hawk_dir: String,
     pub metadata_dir: String,
-    /// 该库派生缓存目录（thumbnails/index.db 的父级），库外系统缓存目录或测试覆盖
-    pub cache_dir: String,
-    pub index_db_file: String,
+    /// 缩略图派生缓存目录（库外系统缓存目录或测试覆盖）
     pub thumbnails_dir: String,
+    /// SQLite 元数据缓存文件（库外系统缓存目录或测试覆盖）
+    pub index_db_file: String,
     pub trash_dir: String,
     pub config_file: String,
     pub categories_file: String,
     pub tags_file: String,
     pub view_file: String,
-    /// cache_dir 覆盖（测试用）时缓存命名/迁移逻辑不生效
-    cache_dir_overridden: bool,
 }
 
 impl LibraryPaths {
@@ -40,7 +38,6 @@ impl LibraryPaths {
         let root = full_path(root);
         let hawk_dir = join_path(&root, HAWK_DIR_NAME);
         let metadata_dir = join_path(&hawk_dir, "metadata");
-        let cache_dir_overridden = cache_dir.is_some();
         let cache_dir = cache_dir.unwrap_or_else(|| default_cache_dir(&root));
         let thumbnails_dir = join_path(&cache_dir, "thumbnails");
         let trash_dir = join_path(&hawk_dir, TRASH_DIR_NAME);
@@ -53,7 +50,6 @@ impl LibraryPaths {
             root,
             hawk_dir,
             metadata_dir,
-            cache_dir,
             index_db_file,
             thumbnails_dir,
             trash_dir,
@@ -61,13 +57,11 @@ impl LibraryPaths {
             categories_file,
             tags_file,
             view_file,
-            cache_dir_overridden,
         }
     }
 
     /// 创建 .hawk/ 目录结构，并生成排除 trash 的 .gitignore（缺失的排除项会补上）
     pub fn ensure_layout(&self) {
-        self.migrate_legacy_cache_dir();
         let _ = std::fs::create_dir_all(&self.metadata_dir);
         let _ = std::fs::create_dir_all(&self.thumbnails_dir);
         let _ = std::fs::create_dir_all(&self.trash_dir);
@@ -80,17 +74,6 @@ impl LibraryPaths {
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&gitignore) {
                 let _ = writeln!(f, "trash/");
             }
-        }
-    }
-
-    /// 一次性迁移：旧版纯哈希缓存目录改名带上库名前缀（rename 保留全部派生缓存，免于缩略图重建）
-    fn migrate_legacy_cache_dir(&self) {
-        if self.cache_dir_overridden {
-            return;
-        }
-        let legacy = join_path(&default_cache_parent(), &library_key(&self.root));
-        if std::path::Path::new(&legacy).is_dir() && !std::path::Path::new(&self.cache_dir).exists() {
-            let _ = std::fs::rename(&legacy, &self.cache_dir);
         }
     }
 

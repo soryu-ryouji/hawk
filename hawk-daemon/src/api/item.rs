@@ -149,6 +149,7 @@ async fn item_list(
 ) -> Result<Json<Envelope<ItemListResponse>>, ApiError> {
     let query = build_query(req)?;
     let (items, total, total_size) = state.index.query(&query);
+    dispatch_dim_heal(&state, items.iter().map(|i| (i.id.as_str(), i.width)));
     Ok(Json(Envelope::ok(ItemListResponse {
         items,
         total,
@@ -164,7 +165,21 @@ async fn item_skeleton(
 ) -> Result<Json<Envelope<ItemSkeletonResponse>>, ApiError> {
     let query = build_query(req)?;
     let (items, total_size) = state.index.query_skeleton(&query);
+    dispatch_dim_heal(&state, items.iter().map(|i| (i.id.as_str(), i.width)));
     Ok(Json(Envelope::ok(ItemSkeletonResponse { items, total_size })))
+}
+
+/// 读取端宽高自愈：响应中发现 0 × 0 的 item → 派发后台补全任务（identify 补宽高 + 按需调色板）。
+/// 入库时解码暂时失败会把 width=0 落库且无事件再触及，用户拉列表即触发重试，
+/// 修复后经 item.updated 事件自动刷新骨架/卡片。in-flight 去重，幂等，高频调用零负担
+fn dispatch_dim_heal<'a>(state: &SharedState, items: impl Iterator<Item = (&'a str, i32)>) {
+    for (hash, width) in items {
+        if width == 0 {
+            if let Some(abs) = state.index.main_source_abs(hash, &state.paths) {
+                state.worker.enqueue_palette(hash, &abs);
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -781,8 +796,9 @@ async fn item_refresh_thumbnail(
         .index
         .main_source_abs(&req.id, &state.paths)
         .ok_or_else(|| ApiError::item_not_found(&req.id))?;
-    // 手动强制重建全部尺寸缓存
-    state.thumbs.generate(&req.id, &source, &state.config.current().thumbnail_sizes, true);
+    // 手动强制重建：走 worker 任务（强制重建全部尺寸 + 补宽高/调色板），
+    // 完成后经 item.updated 通知前端重建 <img>；直接调 generate 不回写宽高也不发事件
+    state.worker.enqueue_force_rebuild(&req.id, &source);
     Ok(Json(success()))
 }
 

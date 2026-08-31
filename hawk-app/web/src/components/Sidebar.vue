@@ -77,9 +77,19 @@ function submitRenameTag(newName: string) {
   void store.tagRename(renameTarget.value, newName);
 }
 
-/** 树空白处右键：新建根节点 */
+/** 树空白处右键：新建根节点 / 整库刷新缓存 */
 function onTreeContextMenu(e: MouseEvent) {
-  menu.open([{ label: '新建文件夹', action: () => (showCreateFolder.value = true) }], e);
+  menu.open(
+    [
+      { label: '新建文件夹', action: () => (showCreateFolder.value = true) },
+      {
+        label: '刷新缓存（整库）',
+        title: '修复全部素材缺失的宽高/缩略图/调色板',
+        action: () => void store.refreshCache('library', undefined, '整库'),
+      },
+    ],
+    e,
+  );
 }
 
 // ---- 素材拖入（网格 → 分类/标签行）：容器级委托 + 单高亮键，enter/leave 计数防子元素间闪烁 ----
@@ -152,7 +162,7 @@ function onCategoryContextMenu(e: MouseEvent) {
   menu.open([{ label: '新建分类', action: () => (showCreateCategory.value = true) }], e);
 }
 
-/** 分类右键：重命名/删除 */
+/** 分类右键：重命名/删除/刷新缓存 */
 function onCategoryRowContextMenu(name: string, e: MouseEvent) {
   if (store.viewerMode) {
     return;
@@ -166,6 +176,7 @@ function onCategoryRowContextMenu(name: string, e: MouseEvent) {
           showRenameCategory.value = true;
         },
       },
+      { label: '刷新缓存', title: '修复该分类下素材缺失的宽高/缩略图/调色板', action: () => void store.refreshCache('category', name) },
       {
         label: '删除分类',
         danger: true,
@@ -180,7 +191,7 @@ function onCategoryRowContextMenu(name: string, e: MouseEvent) {
   );
 }
 
-/** 标签右键：重命名/删除 */
+/** 标签右键：重命名/删除/刷新缓存 */
 function onTagContextMenu(name: string, e: MouseEvent) {
   if (store.viewerMode) {
     return;
@@ -194,6 +205,7 @@ function onTagContextMenu(name: string, e: MouseEvent) {
           showRenameTag.value = true;
         },
       },
+      { label: '刷新缓存', title: '修复该标签下素材缺失的宽高/缩略图/调色板', action: () => void store.refreshCache('tag', name) },
       {
         label: '删除标签',
         danger: true,

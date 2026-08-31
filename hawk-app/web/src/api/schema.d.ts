@@ -280,6 +280,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/refresh_cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LibraryRefreshCacheRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnvelopeOfLibraryRefreshCacheResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/folder/list": {
         parameters: {
             query?: never;
@@ -1454,6 +1493,23 @@ export interface components {
         EnvelopeOfObject: {
             status: string;
             data: unknown;
+        };
+        LibraryRefreshCacheRequest: {
+            /** @enum {string} */
+            type: "folder" | "category" | "tag" | "library";
+            /** @description folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略 */
+            value?: string;
+        };
+        LibraryRefreshCacheResponse: {
+            /**
+             * Format: int32
+             * @description 实际入队的修复任务数
+             */
+            dispatched: number;
+        };
+        EnvelopeOfLibraryRefreshCacheResponse: {
+            status: string;
+            data: components["schemas"]["LibraryRefreshCacheResponse"];
         };
         EnvelopeOfStartupInfo: {
             status: string;

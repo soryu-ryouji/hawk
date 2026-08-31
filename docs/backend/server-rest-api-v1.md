@@ -162,6 +162,8 @@ hawk-daemon 单实例对应单个素材库。
 | ---- | ------------------------- | ------------------ |
 | GET  | `/api/v1/library/info`    | 获取当前素材库信息 |
 | POST | `/api/v1/library/reindex` | 全量重建索引       |
+| POST | `/api/v1/library/rescan`  | 强制重新遍历文件系统 |
+| POST | `/api/v1/library/refresh_cache` | 按范围刷新派生缓存 |
 
 ### info
 
@@ -197,6 +199,44 @@ hawk-daemon 单实例对应单个素材库。
 ```json
 { "status": "success" }
 ```
+
+### rescan
+
+`POST /api/v1/library/rescan`
+
+刷新缓存（文件系统层）：忽略文件夹快照强制重新遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录。异步执行，立即返回。
+
+#### 响应
+
+```json
+{ "status": "success" }
+```
+
+### refresh_cache
+
+`POST /api/v1/library/refresh_cache`
+
+按范围刷新派生缓存（**补缺失模式**）：对范围内全部 item 派发后台修复任务——补缺失宽高（`0 × 0`）+ 生成缺失尺寸缩略图 + 提炼缺失调色板，**不重建已有文件**。异步执行立即返回，积压经 `task.progress`（`thumbnail` 任务）可见；修复项经 `item.updated` 事件自动刷新。
+
+用户遇到显示异常（卡片 `0 × 0`、缩略图 404 占位不恢复等）时的手动修复入口。范围选项对应前端侧栏的右键菜单：文件夹（含子目录）/ 分类 / 标签 / 整库。宽高与缩略图缺失平时也会被读取端与周期对账自动自愈，此端点用于立即触发。
+
+#### 请求
+
+| 参数  | 类型   | 必填 | 说明                                                                 |
+| ----- | ------ | ---- | -------------------------------------------------------------------- |
+| type  | string | 是   | `folder` \| `category` \| `tag` \| `library`                          |
+| value | string | 否   | folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略 |
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": { "dispatched": 42 }
+}
+```
+
+`dispatched` 为实际入队的修复任务数（in-flight 去重丢弃或源文件已不在的不计）。
 
 ## folder
 
@@ -611,6 +651,8 @@ Item 对象，并附带 `already_existed` 标志：
 ### refresh_thumbnail
 
 `POST /api/v1/item/refresh_thumbnail`
+
+手动强制重建缩略图：对指定 item 的全部尺寸强制重新生成（不走「已存在跳过」）。派发后台任务异步执行，立即返回；完成后经 `item.updated` 事件通知前端重建 `<img>`。任务同时补全缺失宽高与调色板（与 `library/refresh_cache` 的修复逻辑一致，区别在于强制重建已有文件）。
 
 #### 请求
 

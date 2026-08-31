@@ -32,8 +32,6 @@ pub struct ItemMetadata {
     pub height: i32,
     /// 调色板（按占比降序，最多 10 色）；None = 未提炼，Some(vec![]) = 已提炼但无有效像素（负缓存）
     pub palette: Option<Vec<PaletteEntry>>,
-    /// 调色板算法版本；与本机算法不一致的旧结果视为未提炼
-    pub palette_version: i32,
 }
 
 impl ItemMetadata {
@@ -56,7 +54,6 @@ struct RawMetadata {
     paths: Option<Vec<RawPath>>,
     width: Option<i64>,
     height: Option<i64>,
-    palette_version: Option<i64>,
     palette: Option<Vec<PaletteEntry>>,
 }
 
@@ -78,7 +75,6 @@ pub fn parse(toml_text: &str) -> Result<ItemMetadata, toml::de::Error> {
         categories: raw.categories.unwrap_or_default(),
         width: raw.width.unwrap_or(0) as i32,
         height: raw.height.unwrap_or(0) as i32,
-        palette_version: raw.palette_version.unwrap_or(0) as i32,
         palette: raw.palette,
         paths: Vec::new(),
     };
@@ -130,10 +126,6 @@ pub fn serialize(meta: &ItemMetadata) -> String {
     }
     if meta.height > 0 {
         sb.push_str(&format!("height = {}\n", meta.height));
-    }
-    // 调色板版本与标量同列于 [[paths]] 之前——TOML 中数组表之后的裸键会归属到该表内，读不回来
-    if meta.palette.is_some() {
-        sb.push_str(&format!("palette_version = {}\n", meta.palette_version));
     }
     for p in &meta.paths {
         sb.push('\n');
@@ -195,7 +187,6 @@ star = 4
 annotation = "Beautiful sunset"
 width = 1920
 height = 1080
-palette_version = 2
 
 [[paths]]
 path = "posters/2024/sunset-photo.jpg"
@@ -217,7 +208,6 @@ percentage = 3.1
         assert_eq!(meta.paths[0].size, 245760);
         assert_eq!(meta.palette.as_ref().unwrap()[0].color, "#344441");
         assert!((meta.palette.as_ref().unwrap()[0].percentage - 3.1).abs() < 1e-6);
-        assert_eq!(meta.palette_version, 2);
     }
 
     #[test]
@@ -244,20 +234,18 @@ percentage = 3.1
                 color: "#344441".to_string(),
                 percentage: 100.0,
             }]),
-            palette_version: 2,
             ..ItemMetadata::default()
         };
         let text = serialize(&meta);
         assert_eq!(
             text,
-            "tags = [\"nature\"]\nstar = 4\nwidth = 10\nheight = 8\npalette_version = 2\n\n[[paths]]\npath = \"a/b.png\"\nsize = 100\nmodification_time = 42\n\n[[palette]]\ncolor = \"#344441\"\npercentage = 100.0\n"
+            "tags = [\"nature\"]\nstar = 4\nwidth = 10\nheight = 8\n\n[[paths]]\npath = \"a/b.png\"\nsize = 100\nmodification_time = 42\n\n[[palette]]\ncolor = \"#344441\"\npercentage = 100.0\n"
         );
         // 往返
         let parsed = parse(&text).unwrap();
         assert_eq!(parsed.tags, meta.tags);
         assert_eq!(parsed.paths, meta.paths);
         assert_eq!(parsed.palette, meta.palette);
-        assert_eq!(parsed.palette_version, 2);
     }
 
     #[test]
