@@ -575,18 +575,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "schema": {
-              "pattern": "^-?(?:0|[1-9]\\d*)$",
-              "type": [
-                "integer",
-                "string"
-              ],
-              "format": "int32"
-            }
           }
         ],
         "responses": {
@@ -2096,8 +2084,7 @@
           "name",
           "path",
           "modification_time",
-          "application_version",
-          "thumbnail_sizes"
+          "application_version"
         ],
         "type": "object",
         "properties": {
@@ -2117,17 +2104,6 @@
           },
           "application_version": {
             "type": "string"
-          },
-          "thumbnail_sizes": {
-            "type": "array",
-            "items": {
-              "pattern": "^-?(?:0|[1-9]\\d*)$",
-              "type": [
-                "integer",
-                "string"
-              ],
-              "format": "int32"
-            }
           }
         }
       },

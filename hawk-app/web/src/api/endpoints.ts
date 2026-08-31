@@ -93,10 +93,10 @@ export const api = {
     request<void>('PUT', '/api/v1/view/preference', { body: { scope, order_by: orderBy, order } }),
   viewPreferenceReset: (scope: string) => request<void>('DELETE', '/api/v1/view/preference', { query: { scope } }),
 
-  /** 缩略图 URL：size 须命中服务端 thumbnail_sizes 白名单；<img> 无法带请求头，token 走查询参数（后端已放行该端点） */
-  thumbnailUrl(id: string, size: number = 256): string {
+  /** 缩略图 URL：<img> 无法带请求头，token 走查询参数（后端已放行该端点） */
+  thumbnailUrl(id: string): string {
     const { api: base, token } = apiConfig();
-    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&size=${size}&token=${encodeURIComponent(token)}`;
+    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`;
   },
 
   /** 原图 URL：预览浮层用；token 同样走查询参数 */

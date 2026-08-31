@@ -364,7 +364,7 @@ fn migrate_metadata(ctx: &PipelineCtx, old_hash: &str, lib_path: &str) -> Result
     let old_item_exists = ctx.index.contains(old_hash);
     if old_meta.paths.is_empty() && !old_item_exists {
         ctx.store.delete(old_hash);
-        ctx.thumbs.delete(old_hash, &ctx.config.current().thumbnail_sizes);
+        ctx.thumbs.delete(old_hash);
     } else {
         ctx.store.save(old_hash, &old_meta)?;
     }

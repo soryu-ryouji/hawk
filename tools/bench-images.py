@@ -12,9 +12,9 @@
 指标:
   - img_per_s        全管线吞吐（调色板 + 缩略图两阶段合计）
   - cpu_ms_per_img   每图 CPU 毫秒（换缩放算法/编码器/质量参数时的核心对比项）
-  - webp_ratio_*     各尺寸 webp 总字节 / 源图总字节（压缩效率）
+  - webp_ratio       webp 总字节 / 源图总字节（压缩效率）
   - palette_done_pct 调色板覆盖率（丢失/失败检测；应恒 100%）
-  - thumbs_missing   素材总数 - 256 缩略图数（worker 丢失回归检测）
+  - thumbs_missing   素材总数 - 缩略图数（worker 丢失回归检测）
 """
 import argparse
 import os
@@ -39,7 +39,6 @@ def main():
     ap.add_argument("--count", type=int, default=500)
     ap.add_argument("--from", dest="src", default=r"D:\Materials", help="真实采样源库")
     ap.add_argument("--synthetic", action="store_true", help="用合成 PNG 代替真实采样")
-    ap.add_argument("--sizes", default="256,512,1024", help="config.toml 的 thumbnail_sizes")
     args = ap.parse_args()
 
     shutil.rmtree(WORK_ROOT, ignore_errors=True)
@@ -50,10 +49,6 @@ def main():
     else:
         n, src_bytes = sample_copy(args.src, LIB, args.count)
         print(f"采样 {n} 张真实图片，共 {src_bytes / 1e6:.1f} MB")
-    # 缩略图尺寸配置（LibraryConfig 对已存在的 config.toml 不覆盖，先写后启）
-    os.makedirs(os.path.join(LIB, ".hawk"), exist_ok=True)
-    with open(os.path.join(LIB, ".hawk", "config.toml"), "w") as f:
-        f.write(f'thumbnail_sizes = [{args.sizes}]\n')
 
     lib_abs = os.path.abspath(LIB).replace("\\", "/")
     cache_dir = cache_dir_for(lib_abs, LABEL)
@@ -75,7 +70,7 @@ def main():
         t1 = time.perf_counter()
         for item_id in expected:
             req = Request(
-                f"{srv.base}/api/v1/item/thumbnail?id={item_id}&size=256",
+                f"{srv.base}/api/v1/item/thumbnail?id={item_id}",
                 headers={"Authorization": f"Bearer {srv.token}"},
             )
             try:
@@ -103,14 +98,12 @@ def main():
 
     # 直读派生缓存统计（索引镜像行数 / 已提炼调色板数 / 缩略图数）
     stats = index_db_stats(cache_dir)
-    thumbs_256 = len(os.listdir(os.path.join(cache_dir, "thumbnails", "256"))) if os.path.isdir(
-        os.path.join(cache_dir, "thumbnails", "256")) else 0
+    thumbs_dir = os.path.join(cache_dir, "thumbnails", "1024")
+    thumbs_n = len(os.listdir(thumbs_dir)) if os.path.isdir(thumbs_dir) else 0
 
     ratios = {}
-    for size in args.sizes.split(","):
-        d = os.path.join(cache_dir, "thumbnails", size)
-        if os.path.isdir(d):
-            ratios[f"webp_ratio_{size}"] = round(dir_bytes(d) / max(src_bytes, 1), 3)
+    if os.path.isdir(thumbs_dir):
+        ratios["webp_ratio"] = round(dir_bytes(thumbs_dir) / max(src_bytes, 1), 3)
 
     shutil.rmtree(WORK_ROOT, ignore_errors=True)
     shutil.rmtree(cache_dir, ignore_errors=True)
@@ -126,7 +119,7 @@ def main():
         "palette_done_pct": round(stats["palette_done"] * 100 / max(stats["items"], 1), 1),
         "thumb_expected": len(expected),
         "thumb_http_404": http_404,
-        "thumbs_missing": len(expected) - thumbs_256,
+        "thumbs_missing": len(expected) - thumbs_n,
         "decode_failures": decode_failures,
         "batch_write_failures": batch_failures,
     })

@@ -48,7 +48,7 @@ watch([name, annotation], async () => {
 });
 
 const item = computed(() => store.primarySelected);
-const previewUrl = computed(() => (item.value ? api.thumbnailUrl(item.value.id, 1024) : ''));
+const previewUrl = computed(() => (item.value ? api.thumbnailUrl(item.value.id) : ''));
 
 watch(
   () => item.value?.id,

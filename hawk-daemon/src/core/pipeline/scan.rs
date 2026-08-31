@@ -251,7 +251,7 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
 
 /// 并行阶段单文件处理：内容哈希 → 写入复验 → 单次解码产出 调色板/缩略图/宽高。
 /// 只读源文件 + 写内容寻址的缩略图缓存（幂等）；索引/元数据由消费循环经回流结果改写。
-/// 派生齐备（调色板版本一致 + 尺寸齐全）时不解码,哈希后即走。
+/// 派生齐备（调色板版本一致 + 缩略图已存在）时不解码，哈希后即走。
 /// 解码失败不阻断入库：调色板保持未提炼（对账/worker 重试），缩略图走读取端惰性兜底
 fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
     let Some(hash) = try_compute_hash(&p.abs_path) else {
@@ -266,15 +266,9 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
     }
     p.hash = Some(hash.clone());
 
-    let sizes: Vec<i32> = ctx
-        .config
-        .current()
-        .thumbnail_sizes
-        .into_iter()
-        .filter(|s| !ctx.thumbs.exists(&hash, *s))
-        .collect();
+    let need_thumb = !ctx.thumbs.exists(&hash);
     let need_palette = needs_palette_work(ctx, &hash);
-    if sizes.is_empty() && !need_palette {
+    if !need_thumb && !need_palette {
         return;
     }
 
@@ -286,8 +280,8 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
                     p.palette = Some(color::extract_from_rgba(rgba));
                 }
             }
-            if !sizes.is_empty() {
-                ctx.thumbs.generate_from_image(&hash, &image, &sizes);
+            if need_thumb {
+                ctx.thumbs.generate_from_image(&hash, &image);
             }
         }
         None => {

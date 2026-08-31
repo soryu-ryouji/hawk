@@ -282,7 +282,7 @@ export const api = {
   tagCreate(name: string): Promise<void>;
   tagUpdate(name: string, newName: string): Promise<void>;        // 重命名，全部 item 跟随
   tagDelete(name: string): Promise<void>;
-  thumbnailUrl(id: string, size?: number): string;  // 拼 ?token= 的 <img> URL；size 须命中服务端 thumbnail_sizes 白名单
+  thumbnailUrl(id: string): string;  // 拼 ?token= 的 <img> URL（单一尺寸 1024）
   fileUrl(id: string): string;  // 原图 URL（预览浮层用），同样拼 ?token=
 };
 ```
@@ -333,7 +333,6 @@ currentFolderPath: string | null;
 selectedItems: Item[];
 primarySelected: Item | null;    // selection 末位对应的 item
 previewItem / previewPrevId / previewNextId: 浮层与左右切换
-thumbSizes: number[];             // library/info 的 thumbnail_sizes 升序（网格 img srcset 候选；缺字段兜底 [256, 1024]）
 
 // ---- actions ----
 init(): Promise<void>;           // libraryInfo + folders + resetList；失败进启动失败态

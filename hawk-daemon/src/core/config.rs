@@ -15,11 +15,8 @@ pub struct WebSettings {
 pub struct Snapshot {
     pub name: Option<String>,
     pub ignore: Vec<String>,
-    pub thumbnail_sizes: Vec<i32>,
     pub web: WebSettings,
 }
-
-pub const DEFAULT_THUMBNAIL_SIZES: [i32; 3] = [256, 512, 1024];
 
 pub struct LibraryConfig {
     paths: LibraryPaths,
@@ -78,7 +75,7 @@ fn ensure_default(paths: &LibraryPaths) {
 }
 
 const DEFAULT_CONFIG_TEXT: &str = r#"# hawk 项目配置（.hawk/config.toml，按素材库隔离、随库同步）
-# name / ignore / thumbnail_sizes 保存即热更（文件监听 Reload）
+# name / ignore 保存即热更（文件监听 Reload）
 # [web] 段的端口/绑定/token 保存后由桌面端重启服务生效
 
 # 素材库显示名（缺省为库目录名）
@@ -86,9 +83,6 @@ const DEFAULT_CONFIG_TEXT: &str = r#"# hawk 项目配置（.hawk/config.toml，�
 
 # 索引时忽略的路径（不含 "/" 的模式匹配任意深度同名项）
 ignore = []
-
-# 生成的缩略图尺寸
-thumbnail_sizes = [256, 512, 1024]
 
 # 局域网 web 查看（只读；桌面端设置面板读写）
 [web]
@@ -98,10 +92,7 @@ token = ""
 "#;
 
 fn load(paths: &LibraryPaths) -> Snapshot {
-    let mut snapshot = Snapshot {
-        thumbnail_sizes: DEFAULT_THUMBNAIL_SIZES.to_vec(),
-        ..Snapshot::default()
-    };
+    let mut snapshot = Snapshot::default();
     if !std::path::Path::new(&paths.config_file).is_file() {
         return snapshot;
     }
@@ -118,12 +109,6 @@ fn load(paths: &LibraryPaths) -> Snapshot {
     }
     if let Some(ignore) = table.get("ignore").and_then(|v| v.as_array()) {
         snapshot.ignore = ignore.iter().filter_map(|v| v.as_str().map(String::from)).collect();
-    }
-    if let Some(sizes) = table.get("thumbnail_sizes").and_then(|v| v.as_array()) {
-        let sizes: Vec<i32> = sizes.iter().filter_map(|v| v.as_integer().map(|i| i as i32)).filter(|s| *s > 0).collect();
-        if !sizes.is_empty() {
-            snapshot.thumbnail_sizes = sizes;
-        }
     }
     snapshot.web = table.get("web").map(parse_web_value).unwrap_or_default();
     snapshot

@@ -1,15 +1,17 @@
 //! 缩略图服务：解码（image crate）+ 缩放（fast_image_resize）+ 有损 WebP 编码
 //! （webp/libwebp，quality 80）。
-//! 存储于库外缓存目录（<系统缓存>/hawk/cache/<库标识>/thumbnails/<size>/<hash>.webp），本地缓存可重建。
+//! 存储于库外缓存目录（<系统缓存>/hawk/cache/<库标识>/thumbnails/1024/<hash>.webp），
+//! 本地缓存可重建。单一尺寸 1024（等比缩入边长内，不放大），小图由浏览器缩小显示；
+//! 目录名沿用历史多尺寸布局，旧库已生成的 1024 缓存直接复用。
 //!
 //! 生成策略：
 //! - 首扫/全量重扫的导入通道（pipeline 扫描并行阶段）在哈希后单次解码，
-//!   同出 调色板 + 全部缺失尺寸缩略图 + 宽高，item 入库即完整可显示
+//!   同出 调色板 + 缩略图 + 宽高，item 入库即完整可显示
 //! - 增量入库（监听事件/API）不生成缩略图，仅按需补调色板；缩略图由读取端惰性派发
 //! - 读取端 /item/thumbnail 未命中时回源原图并派发后台生成（thumbnail_worker）兜底
 //! - 不可渲染格式（tiff 等）必须生成缩略图转换，否则 <img> 无法显示
 //!
-//! 共享读打开、不放大小图、按尺寸跳过。
+//! 共享读打开、不放大小图。
 
 use fast_image_resize as fr;
 use std::sync::Arc;
@@ -19,6 +21,9 @@ pub struct ThumbnailService {
     paths: Arc<crate::core::paths::LibraryPaths>,
 }
 
+/// 唯一缩略图边长（等比缩入上限，不放大）
+pub const THUMBNAIL_SIZE: i32 = 1024;
+
 /// 浏览器 <img> 可直接渲染的扩展名。之外的可解码格式（tiff 等）必须走缩略图转换
 const DIRECT_ORIGINAL_EXTS: [&str; 6] = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
 
@@ -27,12 +32,11 @@ impl ThumbnailService {
         ThumbnailService { paths }
     }
 
-    pub fn get_path(&self, hash: &str, size: i32) -> String {
-        format!("{}/{}/{}.webp", self.paths.thumbnails_dir, size, hash)
+    pub fn get_path(&self, hash: &str) -> String {
+        format!("{}/{}/{}.webp", self.paths.thumbnails_dir, THUMBNAIL_SIZE, hash)
     }
-
-    pub fn exists(&self, hash: &str, size: i32) -> bool {
-        std::path::Path::new(&self.get_path(hash, size)).is_file()
+    pub fn exists(&self, hash: &str) -> bool {
+        std::path::Path::new(&self.get_path(hash)).is_file()
     }
 
     /// 读取图像尺寸(只解头部)。非图像或解码失败返回 None。
@@ -72,18 +76,13 @@ impl ThumbnailService {
         Some(image::DynamicImage::ImageRgba8(image.to_rgba8()))
     }
 
-    /// 为指定内容生成全部配置尺寸的缩略图；已存在的跳过（force 时强制重建）。
+    /// 为指定内容生成缩略图；已存在且非 force 时跳过。
     /// 源文件不是图像或已消失时静默跳过——缩略图是尽力而为的缓存。返回是否实际生成了文件
-    pub fn generate(&self, hash: &str, source_abs: &str, sizes: &[i32], force: bool) -> bool {
+    pub fn generate(&self, hash: &str, source_abs: &str, force: bool) -> bool {
         if !std::path::Path::new(source_abs).is_file() {
             return false;
         }
-        let pending: Vec<i32> = sizes
-            .iter()
-            .copied()
-            .filter(|s| force || !self.exists(hash, *s))
-            .collect();
-        if pending.is_empty() {
+        if !force && self.exists(hash) {
             return false;
         }
 
@@ -95,57 +94,51 @@ impl ThumbnailService {
                 return false;
             }
         };
-        self.generate_from_image(hash, &image, &pending)
+        self.generate_from_image(hash, &image)
     }
 
-    /// 从已解码图像生成指定尺寸（解码与生成拆分，扫描导入通道单解码共享同一份位图）。
-    /// sizes 由调用方按 exists 过滤；返回是否实际写出了文件
-    pub fn generate_from_image(&self, hash: &str, image: &image::DynamicImage, sizes: &[i32]) -> bool {
+    /// 从已解码图像生成缩略图（解码与生成拆分，扫描导入通道单解码共享同一份位图）。
+    /// 返回是否实际写出了文件
+    pub fn generate_from_image(&self, hash: &str, image: &image::DynamicImage) -> bool {
         let (src_w, src_h) = (image.width(), image.height());
         let mut resizer = fr::Resizer::new();
 
-        let mut generated = false;
-        for &size in sizes {
-            // Max：等比缩放到边长内，不放大小图
-            let scale = (size as f64 / src_w as f64)
-                .min(size as f64 / src_h as f64)
-                .min(1.0);
-            let dst_w = ((src_w as f64 * scale).round() as u32).max(1);
-            let dst_h = ((src_h as f64 * scale).round() as u32).max(1);
-            let mut dst = fr::images::Image::new(dst_w, dst_h, fr::PixelType::U8x4);
-            if let Err(e) = resizer.resize(
-                image,
-                &mut dst,
-                &fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)),
-            ) {
-                tracing::debug!("缩略图缩放失败 {hash}@{size}: {e}");
-                continue;
-            }
-            let rgba = image::RgbaImage::from_raw(dst_w, dst_h, dst.buffer().to_vec())
-                .expect("缩略图缓冲尺寸一致");
-            let encoder = webp::Encoder::from_rgba(&rgba, dst_w, dst_h);
-            let encoded = encoder.encode(80.0);
-            let target = self.get_path(hash, size);
-            if let Some(parent) = std::path::Path::new(&target).parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Err(e) = std::fs::write(&target, &*encoded) {
-                // 写失败可见（占用/杀毒拦截等瞬时错误）：读取端未命中会重试生成，但对账不会主动补缩略图
-                tracing::warn!("缩略图写入失败 {target}: {e}");
-                continue;
-            }
-            generated = true;
+        // Max：等比缩放到边长内，不放大小图
+        let scale = (THUMBNAIL_SIZE as f64 / src_w as f64)
+            .min(THUMBNAIL_SIZE as f64 / src_h as f64)
+            .min(1.0);
+        let dst_w = ((src_w as f64 * scale).round() as u32).max(1);
+        let dst_h = ((src_h as f64 * scale).round() as u32).max(1);
+        let mut dst = fr::images::Image::new(dst_w, dst_h, fr::PixelType::U8x4);
+        if let Err(e) = resizer.resize(
+            image,
+            &mut dst,
+            &fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)),
+        ) {
+            tracing::debug!("缩略图缩放失败 {hash}: {e}");
+            return false;
         }
-        generated
+        let rgba = image::RgbaImage::from_raw(dst_w, dst_h, dst.buffer().to_vec())
+            .expect("缩略图缓冲尺寸一致");
+        let encoder = webp::Encoder::from_rgba(&rgba, dst_w, dst_h);
+        let encoded = encoder.encode(80.0);
+        let target = self.get_path(hash);
+        if let Some(parent) = std::path::Path::new(&target).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&target, &*encoded) {
+            // 写失败可见（占用/杀毒拦截等瞬时错误）：读取端未命中会重试生成，但对账不会主动补缩略图
+            tracing::warn!("缩略图写入失败 {target}: {e}");
+            return false;
+        }
+        true
     }
 
-    /// 删除某内容的全部缩略图
-    pub fn delete(&self, hash: &str, sizes: &[i32]) {
-        for size in sizes {
-            let file = self.get_path(hash, *size);
-            if std::path::Path::new(&file).is_file() {
-                let _ = std::fs::remove_file(&file);
-            }
+    /// 删除某内容的缩略图
+    pub fn delete(&self, hash: &str) {
+        let file = self.get_path(hash);
+        if std::path::Path::new(&file).is_file() {
+            let _ = std::fs::remove_file(&file);
         }
     }
 }

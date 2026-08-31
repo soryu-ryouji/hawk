@@ -52,7 +52,7 @@ async fn main() {
     let tags = Arc::new(TagRegistry::new(&paths));
     let prefs = Arc::new(ViewPreferences::new(&paths));
     let thumbs = ThumbnailService::new(Arc::new(paths.clone()));
-    let worker = ThumbnailWorker::new(thumbs.clone(), config.clone(), bus.clone());
+    let worker = ThumbnailWorker::new(thumbs.clone(), bus.clone());
     let migrator = Arc::new(TaxonomyMigrator::new(
         store.clone(),
         index.clone(),

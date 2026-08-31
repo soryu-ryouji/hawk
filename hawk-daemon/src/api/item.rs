@@ -725,21 +725,16 @@ async fn item_restore(
 #[derive(Deserialize)]
 struct ThumbnailQuery {
     id: String,
-    size: Option<i32>,
 }
 
 async fn item_thumbnail(
     State(state): State<SharedState>,
     Query(q): Query<ThumbnailQuery>,
 ) -> Result<Response, ApiError> {
-    let actual_size = q.size.unwrap_or(256);
-    if !state.config.current().thumbnail_sizes.contains(&actual_size) {
-        return Err(ApiError::invalid_param(format!("不支持的缩略图尺寸: {actual_size}")));
-    }
     if !state.index.contains(&q.id) {
         return Err(ApiError::item_not_found(&q.id));
     }
-    let file = state.thumbs.get_path(&q.id, actual_size);
+    let file = state.thumbs.get_path(&q.id);
     if std::path::Path::new(&file).is_file() {
         return serve_file(file, "image/webp".to_string(), true).await;
     }
@@ -752,7 +747,7 @@ async fn item_thumbnail(
         .index
         .main_source_abs(&q.id, &state.paths)
         .filter(|p| std::path::Path::new(p).is_file())
-        .ok_or_else(|| ApiError::item_not_found(format!("thumbnail {} ({})", q.id, actual_size)))?;
+        .ok_or_else(|| ApiError::item_not_found(format!("thumbnail {}", q.id)))?;
     let decodable = ThumbnailService::identify(&source).is_some();
     if ThumbnailService::is_browser_renderable(&source) && decodable {
         state.worker.enqueue_thumbs(&q.id, &source);
@@ -762,7 +757,7 @@ async fn item_thumbnail(
     if decodable {
         state.worker.enqueue_thumbs(&q.id, &source);
     }
-    Err(ApiError::item_not_found(format!("thumbnail {} ({})", q.id, actual_size)))
+    Err(ApiError::item_not_found(format!("thumbnail {}", q.id)))
 }
 
 async fn item_file(State(state): State<SharedState>, Query(q): Query<IdQuery>) -> Result<Response, ApiError> {

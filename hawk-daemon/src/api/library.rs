@@ -25,7 +25,6 @@ struct LibraryInfo {
     path: String,
     modification_time: i64,
     application_version: &'static str,
-    thumbnail_sizes: Vec<i32>,
 }
 
 async fn library_info(State(state): State<SharedState>) -> Json<Envelope<LibraryInfo>> {
@@ -45,7 +44,6 @@ async fn library_info(State(state): State<SharedState>) -> Json<Envelope<Library
         path: root.clone(),
         modification_time,
         application_version: env!("CARGO_PKG_VERSION"),
-        thumbnail_sizes: state.config.current().thumbnail_sizes,
     }))
 }
 

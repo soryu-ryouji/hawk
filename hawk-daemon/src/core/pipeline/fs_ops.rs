@@ -154,7 +154,7 @@ pub(crate) fn do_clear_trash(ctx: &PipelineCtx) -> Result<(), String> {
             meta.paths.retain(|p| p.path != lib_path);
             if meta.paths.is_empty() && item_gone {
                 ctx.store.delete(&hash);
-                ctx.thumbs.delete(&hash, &ctx.config.current().thumbnail_sizes);
+                ctx.thumbs.delete(&hash);
             } else {
                 ctx.store.save(&hash, &meta)?;
             }

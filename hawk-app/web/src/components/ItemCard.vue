@@ -36,14 +36,8 @@ const thumbStyle = computed(() =>
 /** 卡片宽度锁定为缩略图宽度：长名称不得撑开卡片（名称走 ellipsis 截断） */
 const cardStyle = computed(() => (props.width ? { width: props.width + 'px' } : {}));
 
-// 缩略图 srcset：候选尺寸来自服务端 thumbnail_sizes（内容寻址、immutable，浏览器按 渲染宽 × DPR 选档）
-const thumbSrcSet = computed(() => store.thumbSizes.map((s) => `${api.thumbnailUrl(props.item.id, s)} ${s}w`).join(', '));
-// src 兜底取 ≥512 的最近档（无则最大档）：srcset 生效时浏览器忽略 src
-const thumbSrc = computed(
-  () => api.thumbnailUrl(props.item.id, store.thumbSizes.find((s) => s >= 512) ?? store.thumbSizes.at(-1) ?? 256),
-);
-/** sizes 声明 img 的 CSS 渲染宽（齐行网格传入的单元格宽），浏览器据此 × DPR 从 srcset 选档 */
-const thumbSizesAttr = computed(() => (props.width > 0 ? `${Math.ceil(props.width)}px` : '100vw'));
+// 缩略图单尺寸 1024（内容寻址、immutable），小图由浏览器缩小显示
+const thumbSrc = computed(() => api.thumbnailUrl(props.item.id));
 
 /**
  * 拖到侧栏（文件夹/分类/标签）的拖拽源。Eagle 语义：拖未选中的项 → 改为单选它；
@@ -72,8 +66,6 @@ function onDragStart(e: DragEvent) {
       <img
         v-if="!thumbFailed"
         :src="thumbSrc"
-        :srcset="thumbSrcSet"
-        :sizes="thumbSizesAttr"
         :alt="item.name"
         loading="lazy"
         draggable="false"

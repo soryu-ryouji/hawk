@@ -180,13 +180,10 @@ hawk-daemon 单实例对应单个素材库。
     "name": "设计素材库",
     "path": "D:/Assets/Design",
     "modification_time": 1592461625783,
-    "application_version": "1.0.0",
-    "thumbnail_sizes": [256, 512, 1024]
+    "application_version": "1.0.0"
   }
 }
 ```
-
-`thumbnail_sizes` 为缩略图尺寸白名单（来自项目配置，见 storage.md），前端网格据此构建 `srcset` 候选。
 
 ### reindex
 
@@ -632,7 +629,7 @@ Item 对象，并附带 `already_existed` 标志：
 
 ### thumbnail
 
-`GET /api/v1/item/thumbnail?id=<hash>&size=256|512|1024`
+`GET /api/v1/item/thumbnail?id=<hash>`
 
 缩略图为缓存（**扫描导入即时生成**：首扫并行阶段单次解码同出缩略图+调色板+宽高，item 入库即可完整显示；增量/对账不生成，由读取端兜底），响应分三种：
 
@@ -640,7 +637,7 @@ Item 对象，并附带 `already_existed` 标志：
 2. **未命中且原图浏览器可渲染**（jpg/png/gif/webp/bmp）→ **直接回源原图**（200，Content-Type 为原图类型），同时后台入队生成缩略图缓存，下次请求即命中 webp
 3. **未命中且不可渲染**（tiff 等）→ 404（后台生成中，生成完成后经 `item.updated` 事件重建，前端已有占位重试闭环）
 
-`size` 缺省为 256，可取值来自项目配置的 `thumbnail_sizes`。响应带 `Cache-Control: immutable`——item id 是内容哈希，内容永不变，客户端可永久缓存。注意：情形 2 的原图响应同样带 immutable，客户端可能长期持有原图字节而不升级到 webp（视觉无损）。
+缩略图为单一尺寸 1024（等比缩入边长内，不放大）。响应带 `Cache-Control: immutable`——item id 是内容哈希，内容永不变，客户端可永久缓存。注意：情形 2 的原图响应同样带 immutable，客户端可能长期持有原图字节而不升级到 webp（视觉无损）。
 
 ### file
 

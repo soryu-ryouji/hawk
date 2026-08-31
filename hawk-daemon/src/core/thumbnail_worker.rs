@@ -8,14 +8,13 @@
 //!   扫描导入已在并行哈希阶段单次解码产出调色板+缩略图（见 pipeline/scan.rs），
 //!   此任务兜底增量路径与解码失败自愈；颜色搜索依赖全量 palette，必须即时
 //! - Repair：读取端 /item/thumbnail 未命中与范围刷新缓存（library/refresh_cache）派发，
-//!   补缺失宽高 + 生成缺失尺寸缩略图 + 按需提炼调色板（不重建已有文件）
-//! - ForceRebuild：单 item 手动刷新（item/refresh_thumbnail）派发，强制重建全部尺寸
+//!   补缺失宽高 + 生成缺失缩略图 + 按需提炼调色板（不重建已有文件）
+//! - ForceRebuild：单 item 手动刷新（item/refresh_thumbnail）派发，强制重建缩略图
 //!
 //! 补宽高（ensure_dim）是三类任务共有的前置步骤：入库时 decode/identify 暂时失败
 //! （文件占用等）会把 width=0 落库且无自愈路径，此处用 identify（只解头部）兜底回写。
 
 use crate::core::color;
-use crate::core::config::LibraryConfig;
 use crate::core::events::{EventBus, TaskProgress};
 use crate::core::index::ItemIndex;
 use crate::core::metadata_store::MetadataStore;
@@ -59,17 +58,12 @@ pub struct ThumbnailWorker {
     active: Arc<AtomicI32>,
     deps: Mutex<Option<WorkerDeps>>,
     thumbs: ThumbnailService,
-    config: Arc<LibraryConfig>,
     bus: EventBus,
     started: AtomicBool,
 }
 
 impl ThumbnailWorker {
-    pub fn new(
-        thumbs: ThumbnailService,
-        config: Arc<LibraryConfig>,
-        bus: EventBus,
-    ) -> Arc<ThumbnailWorker> {
+    pub fn new(thumbs: ThumbnailService, bus: EventBus) -> Arc<ThumbnailWorker> {
         // 无界队列：任务是尽力而为的缓存，但「队列满静默丢弃」曾导致大批量入库时 20%+ 素材
         // 永久丢失缩略图（24k 库丢 5.6k）。任务仅 ~100B 且 in-flight 有去重，无界是安全的；
         // 积压经 task.progress 可见，周期对账会自愈真正缺失的派生缓存
@@ -82,7 +76,6 @@ impl ThumbnailWorker {
             active: Arc::new(AtomicI32::new(0)),
             deps: Mutex::new(None),
             thumbs,
-            config,
             bus,
             started: AtomicBool::new(false),
         })
@@ -128,7 +121,6 @@ impl ThumbnailWorker {
             let active = self.active.clone();
             let deps = deps.clone();
             let thumbs = self.thumbs.clone();
-            let config = self.config.clone();
             let bus = self.bus.clone();
             let progress_last = Arc::new(AtomicI64::new(0));
             let progress_idle = Arc::new(AtomicBool::new(true));
@@ -142,7 +134,7 @@ impl ThumbnailWorker {
                 };
                 queued.fetch_sub(1, Ordering::SeqCst);
                 active.fetch_add(1, Ordering::SeqCst);
-                process_job(&job, &deps, &thumbs, &config, &bus);
+                process_job(&job, &deps, &thumbs, &bus);
                 inflight.lock().unwrap().remove(&job.dedup_key());
                 active.fetch_sub(1, Ordering::SeqCst);
                 report_progress(&bus, &queued, &active, &progress_last, &progress_idle);
@@ -201,7 +193,6 @@ fn process_job(
     job: &ThumbJob,
     deps: &WorkerDeps,
     thumbs: &ThumbnailService,
-    config: &Arc<LibraryConfig>,
     bus: &EventBus,
 ) {
     // 补缺失宽高：identify 只解头部，代价小。回写经队列走流水线（单写者），
@@ -234,31 +225,22 @@ fn process_job(
     let generated = match &job.kind {
         ThumbJobKind::PaletteOnly => false,
         ThumbJobKind::Repair => {
-            let sizes: Vec<i32> = config
-                .current()
-                .thumbnail_sizes
-                .into_iter()
-                .filter(|s| !thumbs.exists(&job.hash, *s))
-                .collect();
-            !sizes.is_empty() && thumbs.generate(&job.hash, &job.source_abs, &sizes, false)
+            !thumbs.exists(&job.hash) && thumbs.generate(&job.hash, &job.source_abs, false)
         }
-        ThumbJobKind::ForceRebuild => {
-            thumbs.generate(&job.hash, &job.source_abs, &config.current().thumbnail_sizes, true)
-        }
+        ThumbJobKind::ForceRebuild => thumbs.generate(&job.hash, &job.source_abs, true),
     };
 
-    // 调色板优先从最小尺寸的已有缩略图提炼（解码代价小）；缩略图尚未生成
+    // 调色板优先从已有缩略图提炼（解码代价小）；缩略图尚未生成
     // （惰性首访前、仅调色板任务）时直接解码原图——内容寻址保证同一内容，提炼结果一致。
     // 提炼结果(含空数组负缓存)经 PaletteJob 写入元数据 TOML——内容的纯函数，全平台复用。
-    // 缩略图生成失败但已有任一尺寸缩略图时也照常提炼（取最小已有尺寸）
+    // 缩略图生成失败但已有缩略图时也照常提炼
     if need_palette {
-        let mut all_sizes = config.current().thumbnail_sizes;
-        all_sizes.sort();
-        let source = all_sizes
-            .into_iter()
-            .map(|s| thumbs.get_path(&job.hash, s))
-            .find(|p| std::path::Path::new(p).is_file())
-            .unwrap_or_else(|| job.source_abs.clone());
+        let thumb = thumbs.get_path(&job.hash);
+        let source = if std::path::Path::new(&thumb).is_file() {
+            thumb
+        } else {
+            job.source_abs.clone()
+        };
         if let Some(palette) = color::extract(&source) {
             // 队列满时丢弃:PaletteJob 幂等,下轮对账/刷新会再触发提炼
             let _ = deps.jobs.try_fire(Job::Palette {

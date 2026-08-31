@@ -119,10 +119,6 @@ export const useLibraryStore = defineStore('library', () => {
   /** 当前视图条目数（= 骨架长度；骨架未加载时为 0） */
   const total = computed(() => skeleton.value.length);
   const previewIndex = computed(() => skeleton.value.findIndex((i) => i.id === previewId.value));
-  /** 缩略图尺寸候选（library/info 的 thumbnail_sizes 升序；缺字段兜底默认档），网格 img srcset 用 */
-  const thumbSizes = computed<number[]>(() =>
-    (library.value?.thumbnail_sizes ?? [256, 1024]).map((s) => Number(s)).sort((a, b) => a - b),
-  );
   const previewNavId = (step: 1 | -1) => {
     const next = previewIndex.value >= 0 ? skeleton.value[previewIndex.value + step] : undefined;
     return next?.id ?? null;
@@ -1009,7 +1005,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   return {
     view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, searchText, previewId, toast, importProgress, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
-    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, thumbSizes, hasActiveFilters,
+    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, importBegin, importPaths,
