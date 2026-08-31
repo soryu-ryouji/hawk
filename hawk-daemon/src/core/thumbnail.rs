@@ -35,9 +35,17 @@ impl ThumbnailService {
         std::path::Path::new(&self.get_path(hash, size)).is_file()
     }
 
-    /// 读取图像尺寸(只解码头信息)。非图像或解码失败返回 None
+    /// 读取图像尺寸(只解头部)。非图像或解码失败返回 None。
+    /// with_guessed_format：按内容魔数喷探格式——扩展名与内容不符的文件
+    /// （如 .png 实为 JPEG）也能识别，否则这类素材永久滞留 0×0
     pub fn identify(abs_path: &str) -> Option<(i32, i32)> {
-        image::image_dimensions(abs_path).ok().map(|(w, h)| (w as i32, h as i32))
+        image::ImageReader::open(abs_path)
+            .ok()? 
+            .with_guessed_format()
+            .ok()? 
+            .into_dimensions()
+            .ok()
+            .map(|(w, h)| (w as i32, h as i32))
     }
 
     /// 检测字节流的图像格式扩展名。无法识别返回 None
@@ -52,9 +60,15 @@ impl ThumbnailService {
     }
 
     /// 解码原图为 RGBA8 动态图。供惰性生成与扫描导入通道共用——导入通道一次解码后
-    /// 共享给 调色板/缩略图/宽高。解码失败返回 None（调用方走对账重试/惰性兜底）
+    /// 共享给 调色板/缩略图/宽高。解码失败返回 None（调用方走对账重试/惰性兜底）。
+    /// with_guessed_format：按内容喷探格式，扩展名错位文件同样可解码
     pub fn decode(source_abs: &str) -> Option<image::DynamicImage> {
-        let image = image::open(source_abs).ok()?;
+        let image = image::ImageReader::open(source_abs)
+            .ok()? 
+            .with_guessed_format()
+            .ok()? 
+            .decode()
+            .ok()?;
         Some(image::DynamicImage::ImageRgba8(image.to_rgba8()))
     }
 
@@ -115,9 +129,12 @@ impl ThumbnailService {
             if let Some(parent) = std::path::Path::new(&target).parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if std::fs::write(&target, &*encoded).is_ok() {
-                generated = true;
+            if let Err(e) = std::fs::write(&target, &*encoded) {
+                // 写失败可见（占用/杀毒拦截等瞬时错误）：读取端未命中会重试生成，但对账不会主动补缩略图
+                tracing::warn!("缩略图写入失败 {target}: {e}");
+                continue;
             }
+            generated = true;
         }
         generated
     }

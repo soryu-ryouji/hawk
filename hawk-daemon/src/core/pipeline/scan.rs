@@ -5,7 +5,8 @@
 //!   读索引/元数据快照、写内容寻址缩略图缓存（幂等），不写任何索引状态。
 //! - **回流**：结果以 `Job::ScanFile` 入队，消费循环与其他任务穿插应用——
 //!   消费线程不再被长扫描独占，交互写延迟有界。runner 单线程入队保证 FIFO
-//!   （ScanEnd 必然最后到达）；ScanFile 满队丢弃由溢出兜底扫描收敛。
+//!   （ScanEnd 必然最后到达）；ScanFile/Delete 采用阻塞入队——哈希快于应用时形成背压，
+//!   队列满不丢弃（丢弃会让丢失项随快照替换永久漏扫），消费循环从不等待 runner，无死锁。
 //! - **收尾**（`Job::ScanEnd`）：消失对账（seen ∪ touched 豁免）、目录快照整体替换、
 //!   items.added 尾批冲刷、folder.changed 广播、回复完成。
 //!
@@ -171,7 +172,9 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
                     if let Some(hash) = p.reused_hash.clone() {
                         // 复用项免哈希,直接回流应用
                         p.hash = Some(hash);
-                        ctx.sender.fire(Job::ScanFile { pending: p });
+                        // 阻塞入队（背压）：try_send 满队即丢会导致大库首扫丢应用——
+                        // 快照已替换为 clean，丢失项不会被重扫收敛。消费循环从不等待 runner，无死锁
+                        ctx.sender.send_blocking(Job::ScanFile { pending: p });
                     } else {
                         pending.push(p);
                     }
@@ -179,7 +182,7 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
                 PrepareOutcome::Remove(rel) => {
                     // ignore 规则命中/文件已消失：经队列按删除处理（单写者纪律）
                     if let Some(abs) = ctx.paths.to_absolute(&rel) {
-                        ctx.sender.fire(Job::Delete { abs });
+                        ctx.sender.send_blocking(Job::Delete { abs });
                     }
                 }
                 PrepareOutcome::Skip => {}
@@ -187,16 +190,16 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
         }
     }
 
-    // 阶段三:并行哈希。哈希+解码是导入吞吐瓶颈：留 1 核给 API，其余吃满
+    // 阶段三:并行哈希。解码/编码是 SIMD 密集型：SMT 几乎无增益，超物理核的线程
+    // 只产生争用（挤占消费循环与 API）——按物理核估计（逻辑核/2）取并行度，SMT 兄弟线程留给消费循环
     walk.hashed = pending.len() as i32;
     if !pending.is_empty() {
         let pending_total = walk.hashed;
         reporter.report(ctx, "hash", 0, pending_total, true);
         let parallelism = std::thread::available_parallelism()
-            .map(|n| n.get())
+            .map(|n| n.get().div_ceil(2))
             .unwrap_or(4)
-            .saturating_sub(1)
-            .clamp(2, 24)
+            .clamp(2, 16)
             .min(pending.len());
         let hashed = AtomicUsize::new(0);
         // 多个 move 闭包共享：引用可 Copy，闭包各自捕获一份（与旧实现同法）
@@ -237,7 +240,7 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
             // 工作线程结果统一回流队列（由消费循环穿插应用）
             drop(tx);
             while let Ok(p) = rx.recv() {
-                ctx.sender.fire(Job::ScanFile { pending: p });
+                ctx.sender.send_blocking(Job::ScanFile { pending: p });
             }
         });
     }
@@ -365,6 +368,8 @@ pub(crate) fn finish(
     }
 
     ctx.scanning.store(false, Ordering::SeqCst);
+    // 扫描结束强制冲刷缓存写缓冲：收敛本轮全部落盘，限制缓存滞后窗口
+    ctx.store.flush_cache();
     // 扫描结束强制发一帧,客户端据此撤掉进度指示
     publish_index_progress(ctx, true);
 

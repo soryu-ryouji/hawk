@@ -49,7 +49,10 @@ def main():
         t_ready = srv.start()
         rss_ready = srv.rss_mb()
 
-        # 洪峰期轮询读延迟（缩略图/调色板后台生成中）
+        # 洪峰期轮询读延迟（缩略图/调色板后台生成中）。
+        # 先等积压出现再进入「等积压归零」循环：服务刚就绪时初始扫描可能尚未入队，
+        # 积压短暂全零会让循环提前退出（杀服务截断构建）
+        time.sleep(1.0)
         flood = []
         t0 = time.perf_counter()
         while True:

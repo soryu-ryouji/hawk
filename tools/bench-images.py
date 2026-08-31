@@ -21,6 +21,7 @@ import os
 import shutil
 import sys
 import time
+import urllib.error
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -66,17 +67,24 @@ def main():
         # 调色板批量回写按 2s 时限冲刷：积压归零后再等一拍，确保暂存的回写落盘后再统计
         time.sleep(2.5)
 
-        # 阶段2：缩略图惰性生成——逐个请求端点触发（未命中回源原图并入队，in-flight 去重）
+        # 阶段2：缩略图惰性生成——逐个请求端点触发（未命中回源原图并入队，in-flight 去重）。
+        # 404 是合法占位（不可渲染且不可解码的素材），计入不中断
         listed = srv.api("/api/v1/item/list", {"limit": args.count + 1000, "in_trash": False})["data"]
         expected = [it["id"] for it in listed["items"]]
+        http_404 = 0
         t1 = time.perf_counter()
         for item_id in expected:
             req = Request(
                 f"{srv.base}/api/v1/item/thumbnail?id={item_id}&size=256",
                 headers={"Authorization": f"Bearer {srv.token}"},
             )
-            with urlopen(req, timeout=60) as r:
-                r.read()  # 响应为原图（未命中回源）或已生成 webp，丢弃即可
+            try:
+                with urlopen(req, timeout=60) as r:
+                    r.read()  # 响应为原图（未命中回源）或已生成 webp，丢弃即可
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                http_404 += 1
         srv.wait_idle()  # 缩略图生成完毕
         t_thumb = time.perf_counter() - t1
         wall = time.perf_counter() - t0
@@ -117,6 +125,7 @@ def main():
         **ratios,
         "palette_done_pct": round(stats["palette_done"] * 100 / max(stats["items"], 1), 1),
         "thumb_expected": len(expected),
+        "thumb_http_404": http_404,
         "thumbs_missing": len(expected) - thumbs_256,
         "decode_failures": decode_failures,
         "batch_write_failures": batch_failures,

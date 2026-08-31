@@ -1,6 +1,11 @@
 //! 元数据存储：.hawk/metadata/<hash>.toml 的读写 + 内存权威副本（含 path → hash 反查表）。
 //! 写入采用「临时文件 + rename」的原子写；写入顺序铁律：先 TOML 成功后再写缓存与内存副本，
 //! 中途崩溃自然朝 TOML 收敛。副本注水来源：IndexDb 快路径 → TOML 全量解析回退（顺带建缓存）。
+//!
+//! SQLite 缓存写采用**待冲刷缓冲**：内存副本即时更新，缓存写累积后按批单事务落盘
+//! （≥CACHE_BATCH 条或滞留 CACHE_FLUSH_AFTER）。安全性：缓存是可重建的派生层，
+//! 权威 TOML 已逐条原子落盘——崩溃/退出后启动期元数据对账按 mtime 差异从 TOML 补齐，
+//! 无需重算哈希。所有直写缓存的路径先冲刷缓冲，避免旧值覆盖新值。
 
 use crate::core::index_db::IndexDb;
 use crate::core::metadata::{self, ItemMetadata};
@@ -8,6 +13,12 @@ use crate::core::paths::{file_mtime_ms, LibraryPaths};
 use crate::core::startup::StartupState;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// 缓存写冲刷的批量阈值（单事务摊薄 fsync）
+const CACHE_BATCH: usize = 256;
+/// 缓存写冲刷的时间阈值：滞留超时即使未达批量也冲刷（限制缓存滞后窗口）
+const CACHE_FLUSH_AFTER: Duration = Duration::from_millis(200);
 
 pub struct MetadataStore {
     paths: LibraryPaths,
@@ -19,6 +30,9 @@ pub struct MetadataStore {
 struct MetadataInner {
     by_hash: HashMap<String, ItemMetadata>,
     hash_by_path: HashMap<String, String>,
+    /// 待冲刷的 SQLite 缓存写（内存副本已即时更新）
+    pending_db: Vec<(String, ItemMetadata, i64)>,
+    pending_since: Option<Instant>,
 }
 
 impl MetadataStore {
@@ -106,8 +120,10 @@ impl MetadataStore {
         self.db.load_folder_snapshots()
     }
 
-    /// 整体替换文件夹快照（每轮扫描一次；遍历不完整时不调用）
+    /// 整体替换文件夹快照（每轮扫描一次；遍历不完整时不调用）。
+    /// 先冲刷缓冲：快照替换标记「本轮已收敛」，缓存滞后于快照会在下次启动时多对账一轮
     pub fn replace_folder_snapshots(&self, snapshots: &HashMap<String, (i64, i64)>) {
+        self.flush_cache();
         self.db.replace_folder_snapshots(snapshots);
     }
 
@@ -116,13 +132,62 @@ impl MetadataStore {
         self.db.load_source_mtimes()
     }
 
-    /// 保存元数据：先 TOML 原子写（权威层），成功后更新内存副本与 SQLite 缓存。
+    /// 保存元数据：先 TOML 原子写（权威层），成功后即时更新内存副本，
+    /// SQLite 缓存写进入待冲刷缓冲（达批量/时限由消费循环或 flush_cache 冲刷）。
     /// TOML 写失败返回 Err（调用方决定回传 API 或仅记录）
     pub fn save(&self, hash: &str, meta: &ItemMetadata) -> Result<(), String> {
         let source_mtime = self.save_toml(hash, meta)?;
-        self.apply_in_memory(hash, meta);
-        self.db.save(hash, meta, source_mtime);
+        let mut inner = self.inner.lock().unwrap();
+        inner.by_hash.insert(hash.to_string(), meta.clone());
+        rebuild_path_index(&mut inner, hash, meta);
+        if inner.pending_db.is_empty() {
+            inner.pending_since = Some(Instant::now());
+        }
+        let entry = (hash.to_string(), meta.clone(), source_mtime);
+        match inner.pending_db.iter_mut().find(|(h, _, _)| h == hash) {
+            Some(slot) => *slot = entry,
+            None => inner.pending_db.push(entry),
+        }
+        let due = inner.pending_db.len() >= CACHE_BATCH
+            || inner
+                .pending_since
+                .is_some_and(|t| t.elapsed() >= CACHE_FLUSH_AFTER);
+        let batch = if due { std::mem::take(&mut inner.pending_db) } else { Vec::new() };
+        inner.pending_since = if due { None } else { inner.pending_since };
+        drop(inner);
+        if !batch.is_empty() {
+            self.db.save_batch(&batch);
+        }
         Ok(())
+    }
+
+    /// 取出待冲刷缓冲（锁内取值，锁外落盘）
+    fn take_pending(&self) -> Vec<(String, ItemMetadata, i64)> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.pending_since = None;
+        std::mem::take(&mut inner.pending_db)
+    }
+
+    /// 立即冲刷待冲刷的缓存写（单事务）
+    pub fn flush_cache(&self) {
+        let batch = self.take_pending();
+        if !batch.is_empty() {
+            self.db.save_batch(&batch);
+        }
+    }
+
+    /// 时间阈值检查冲刷（消费循环每任务后调用，限制安静期的缓存滞后）
+    pub fn maybe_flush_cache(&self) {
+        let due = {
+            let inner = self.inner.lock().unwrap();
+            !inner.pending_db.is_empty()
+                && inner
+                    .pending_since
+                    .is_some_and(|t| t.elapsed() >= CACHE_FLUSH_AFTER)
+        };
+        if due {
+            self.flush_cache();
+        }
     }
 
     /// 仅写 TOML（原子写，权威层），返回源文件 mtime。批量回写路径用：
@@ -138,11 +203,13 @@ impl MetadataStore {
         Ok(file_mtime_ms(&file))
     }
 
-    /// 批量应用（内存副本 + SQLite 单事务）。TOML 须已由 save_toml 逐条落盘
+    /// 批量应用（内存副本 + SQLite 单事务）。TOML 须已由 save_toml 逐条落盘。
+    /// 先冲刷待冲刷缓冲，避免旧值覆盖本批新值
     pub fn apply_batch(&self, entries: &[(String, ItemMetadata, i64)]) {
         if entries.is_empty() {
             return;
         }
+        self.flush_cache();
         {
             let mut inner = self.inner.lock().unwrap();
             for (hash, meta, _) in entries {
@@ -153,13 +220,9 @@ impl MetadataStore {
         self.db.save_batch(entries);
     }
 
-    fn apply_in_memory(&self, hash: &str, meta: &ItemMetadata) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.by_hash.insert(hash.to_string(), meta.clone());
-        rebuild_path_index(&mut inner, hash, meta);
-    }
-
     pub fn delete(&self, hash: &str) {
+        // 先冲刷缓冲：缓冲中该 hash 的待写项会在 db.delete 后复活行，先落盘再删
+        self.flush_cache();
         let file = self.file_path(hash);
         if std::path::Path::new(&file).is_file() {
             let _ = std::fs::remove_file(&file);
@@ -198,6 +261,8 @@ impl MetadataStore {
             let mut inner = self.inner.lock().unwrap();
             inner.by_hash.insert(hash.to_string(), meta.clone());
             rebuild_path_index(&mut inner, hash, &meta);
+            // 待冲刷缓冲里的旧值不得覆盖对账载入的新值：移除同 hash 待写项
+            inner.pending_db.retain(|(h, _, _)| h != hash);
         }
         self.db.save(hash, &meta, source_mtime);
         true
@@ -220,6 +285,11 @@ impl MetadataStore {
                 None => return,
             }
         };
+        // 待冲刷缓冲里的旧值不得覆盖清空结果：移除同 hash 待写项
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.pending_db.retain(|(h, _, _)| h != hash);
+        }
         self.db.save(hash, &meta, 0);
     }
 

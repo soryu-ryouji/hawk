@@ -555,6 +555,8 @@ fn consumer_loop(ctx: Arc<PipelineCtx>, rx: std::sync::mpsc::Receiver<Job>) {
 
         derived::maybe_flush_palette(&ctx);
         publish_index_progress(&ctx, false);
+        // 缓存写缓冲的时间阈值冲刷（批量阈值已在 save 内即时触发）
+        ctx.store.maybe_flush_cache();
     }
 }
 
