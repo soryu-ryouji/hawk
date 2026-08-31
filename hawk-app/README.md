@@ -25,7 +25,8 @@ node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断
 ## 打包
 
 ```bash
-npm run pack   # 一条命令：build 前端 + cargo build --release 产出当前平台 hawk-server 单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
+npm run pack      # 一条命令：build 前端 + cargo build --release 产出当前平台 hawk-server 单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
+npm run pack:dir  # 同上但 --dir：只出未打包目录（win-unpacked / hawk.app），跳过 zip 压缩（install 脚本与本地快速验证用）
 ```
 
 交叉编译其他平台的 server：`node scripts/build-server.mjs <RID>`（win-x64 / osx-arm64 / osx-x64 / linux-x64，别名映射 rust target），再单独执行 `node scripts/pack.mjs`。

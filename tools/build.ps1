@@ -8,6 +8,11 @@ param([switch]$Extensions)
 
 $ErrorActionPreference = 'Stop'
 
+# 兼容 --extensions / -e 写法：双横线不会被绑定为开关名，落在 $args
+if (-not $Extensions -and @($args | Where-Object { $_ -match '^(-e|--extensions)$' }).Count -gt 0) {
+    $Extensions = $true
+}
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $AppDir = Join-Path $RepoRoot 'hawk-app'
 $ExtDir = Join-Path $RepoRoot 'hawk-browser-extension'
