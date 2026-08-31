@@ -307,17 +307,24 @@ async fn item_add(
     };
     let existed_before_write = state.index.contains(&hash);
 
-    // 文件落库。path 导入保留原文件的创建时间与修改时间
-    match (&source_abs, &bytes) {
-        (Some(src), _) => {
-            std::fs::copy(src, &target_abs).map_err(|e| ApiError::internal(format!("复制文件失败: {e}")))?;
-            preserve_times(src, &target_abs);
+    // 文件落库（阻塞 IO 移出运行时线程）。path 导入保留原文件的创建时间与修改时间
+    tokio::task::spawn_blocking({
+        let src = source_abs.clone();
+        let data = bytes.clone();
+        let target = target_abs.clone();
+        move || match (src.as_deref(), data.as_ref()) {
+            (Some(src), _) => {
+                std::fs::copy(src, &target).map_err(|e| format!("复制文件失败: {e}"))?;
+                preserve_times(src, &target);
+                Ok::<(), String>(())
+            }
+            (None, Some(data)) => std::fs::write(&target, data).map_err(|e| format!("写入文件失败: {e}")),
+            _ => unreachable!(),
         }
-        (None, Some(data)) => {
-            std::fs::write(&target_abs, data).map_err(|e| ApiError::internal(format!("写入文件失败: {e}")))?;
-        }
-        _ => unreachable!(),
-    }
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("写入任务失败: {e}")))?
+    .map_err(ApiError::internal)?;
 
     // 哈希已算好,流水线跳过重算,避免大文件导入时二次读盘
     let _result = state
@@ -734,7 +741,7 @@ async fn item_thumbnail(
     }
     let file = state.thumbs.get_path(&q.id, actual_size);
     if std::path::Path::new(&file).is_file() {
-        return serve_file(&file, "image/webp", true).await;
+        return serve_file(file, "image/webp".to_string(), true).await;
     }
 
     // 未命中（缩略图为惰性缓存，入库/对账不生成）：
@@ -750,7 +757,7 @@ async fn item_thumbnail(
     if ThumbnailService::is_browser_renderable(&source) && decodable {
         state.worker.enqueue_thumbs(&q.id, &source);
         let content_type = mime_guess::from_path(&source).first_or_octet_stream().to_string();
-        return serve_file(&source, &content_type, true).await;
+        return serve_file(source, content_type, true).await;
     }
     if decodable {
         state.worker.enqueue_thumbs(&q.id, &source);
@@ -767,11 +774,30 @@ async fn item_file(State(state): State<SharedState>, Query(q): Query<IdQuery>) -
         return Err(ApiError::item_not_found(format!("file {}", q.id)));
     }
     let content_type = mime_guess::from_path(&file).first_or_octet_stream().to_string();
-    serve_file(&file, &content_type, true).await
+    serve_file(file, content_type, true).await
 }
 
-async fn serve_file(file: &str, content_type: &str, immutable: bool) -> Result<Response, ApiError> {
-    let bytes = std::fs::read(file).map_err(|e| ApiError::internal(format!("读取文件失败: {e}")))?;
+async fn serve_file(file: String, content_type: String, immutable: bool) -> Result<Response, ApiError> {
+    use tokio::io::AsyncReadExt;
+    let f = tokio::fs::File::open(&file)
+        .await
+        .map_err(|e| ApiError::internal(format!("读取文件失败: {e}")))?;
+    // 流式返回（128KB 块）：大文件不整读进内存，也不阻塞运行时线程；
+    // 读取中途出错以流错误终止响应（客户端感知截断），与整读失败的可见性一致
+    let stream = async_stream::stream! {
+        let mut reader = f;
+        let mut buf = vec![0u8; 128 * 1024];
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => yield Ok::<axum::body::Bytes, std::io::Error>(axum::body::Bytes::copy_from_slice(&buf[..n])),
+                Err(e) => {
+                    yield Err(e);
+                    break;
+                }
+            }
+        }
+    };
     let mut builder = Response::builder()
         .status(axum::http::StatusCode::OK)
         .header("content-type", content_type);
@@ -779,7 +805,7 @@ async fn serve_file(file: &str, content_type: &str, immutable: bool) -> Result<R
         // item id 是内容哈希，内容永不变，客户端可永久缓存
         builder = builder.header("cache-control", "public, max-age=31536000, immutable");
     }
-    Ok(builder.body(axum::body::Body::from(bytes)).unwrap())
+    Ok(builder.body(axum::body::Body::from_stream(stream)).unwrap())
 }
 
 #[derive(Deserialize)]
@@ -844,11 +870,22 @@ async fn item_replace(
     }
 
     let target_abs = state.paths.to_absolute(&loc.path).unwrap();
-    let mtime = std::fs::metadata(&target_abs).ok().and_then(|m| m.modified().ok());
-    std::fs::write(&target_abs, &bytes).map_err(|e| ApiError::internal(format!("写回文件失败: {e}")))?;
-    if let Some(mtime) = mtime {
-        let _ = filetime::set_file_mtime(&target_abs, filetime::FileTime::from_system_time(mtime));
-    }
+    // 写回（阻塞 IO 移出运行时线程）保留原文件的修改时间（修正性编辑不改变素材的时序位置）
+    tokio::task::spawn_blocking({
+        let target = target_abs.clone();
+        let data = bytes.clone();
+        move || {
+            let mtime = std::fs::metadata(&target).ok().and_then(|m| m.modified().ok());
+            std::fs::write(&target, &data).map_err(|e| format!("写回文件失败: {e}"))?;
+            if let Some(mtime) = mtime {
+                let _ = filetime::set_file_mtime(&target, filetime::FileTime::from_system_time(mtime));
+            }
+            Ok::<(), String>(())
+        }
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("写回任务失败: {e}")))?
+    .map_err(ApiError::internal)?;
 
     let result = state
         .pipeline

@@ -48,10 +48,21 @@ impl ItemIndex {
         self.inner.lock().unwrap().by_hash.contains_key(hash)
     }
 
-    /// 锁内投影为 DTO(trashView 按「是否只剩回收站位置」自动判定),HTTP 层的读取出口
+    /// 锁内投影为 DTO(trashView 按「是否只剩回收站位置」自动判定),HTTP 层的读取出口。
+    /// 零位置 item 不投影（不应存在；防御性返回 None）
     pub fn get_dto(&self, hash: &str) -> Option<ItemDto> {
         let inner = self.inner.lock().unwrap();
-        inner.by_hash.get(hash).map(|i| i.to_dto(!i.has_library_locations()))
+        inner
+            .by_hash
+            .get(hash)
+            .filter(|i| !i.locations.is_empty())
+            .map(|i| i.to_dto(!i.has_library_locations()))
+    }
+
+    /// 宽高是否尚未解析（0 × 0）。只读访问，缩略图 worker 的补宽高闸门用
+    pub fn dim_is_zero(&self, hash: &str) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner.by_hash.get(hash).map(|i| i.width == 0).unwrap_or(false)
     }
 
     /// 取得或创建 item（不存在时创建并登记）。返回是否新建。仅限流水线(单写者)与测试
@@ -68,6 +79,44 @@ impl ItemIndex {
             },
         );
         true
+    }
+
+    /// 取得或创建 item，并在同一锁内携带位置登记——创建即有位置，
+    /// 避免零位置 item 短暂对并发查询可见（to_dto 取 locations[0] 会越界）。
+    /// 返回 (是否新建 item, 是否新增位置)。仅限流水线(单写者)
+    pub fn get_or_add_with_location(
+        &self,
+        hash: &str,
+        location_path: &str,
+        size: i64,
+        mtime: i64,
+    ) -> (bool, bool) {
+        let mut inner = self.inner.lock().unwrap();
+        let created = !inner.by_hash.contains_key(hash);
+        if created {
+            inner.by_hash.insert(
+                hash.to_string(),
+                Item {
+                    id: hash.to_string(),
+                    ..Item::default()
+                },
+            );
+        }
+        let item = inner.by_hash.get_mut(hash).expect("get_or_add_with_location: item must exist");
+        let added_location = if let Some(loc) = item.locations.iter_mut().find(|l| l.path == location_path) {
+            loc.size = size;
+            loc.modification_time = mtime;
+            false
+        } else {
+            item.locations.push(ItemLocation {
+                path: location_path.to_string(),
+                size,
+                modification_time: mtime,
+            });
+            inner.hash_by_location.insert(location_path.to_string(), hash.to_string());
+            true
+        };
+        (created, added_location)
     }
 
     /// 可变 item 访问（单写者纪律由调用方保证）

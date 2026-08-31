@@ -11,13 +11,17 @@ hawk-daemon 分两层，依赖单向：`api/` → `core/`。HTTP 请求不直接
 
 ```text
 HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读：ItemIndex 锁内投影（DTO / 骨架）
-                                        └► 写：真实文件操作 → IndexPipeline 提交任务并等待
+                                        └► 写：真实文件操作 → IndexPipeline 提交任务并等待（60s 超时）
 文件系统变化 ──► LibraryWatcher ──► IndexPipeline（Job 入队，有界 channel 4096）
                                         │（专用消费线程，单写者）
                                         ▼
                               IndexPipeline（消费循环）
                                 哈希 → 元数据迁移 → 更新 ItemIndex
                                 → 写 MetadataStore → 派发缩略图 → EventBus 发 SSE
+                                        ▲
+                              扫描 runner 线程（walk/并行哈希）
+                                与 worker 的结果均以 Job 回流队列，
+                                消费循环穿插应用（长扫描不独占消费线程）
                                         │
                     ┌───────────────────┼────────────────────┐
                     ▼                   ▼                    ▼
@@ -38,7 +42,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 
 | 文件 | 职责 |
 | ---- | ---- |
-| `src/main.rs` | 组装与启动（按执行顺序）：`Settings::from_args` 解析参数 → `resolve_port` 试绑 27371（占用回退动态分配）→ `resolve_lan_binding`（[web] 启用且配 token 时追加 0.0.0.0 绑定，端口占用直接启动失败）→ 构建全部单例 → `build_router` → **先监听**（环回 + 可选 LAN，`axum::serve` 优雅退出）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher → `startup.mark_ready()` → 后台全库对账扫描 |
+| `src/main.rs` | 组装与启动（按执行顺序）：`Settings::from_args` 解析参数 → `resolve_port` 试绑 27371（占用回退动态分配）→ `resolve_lan_binding`（[web] 启用且配 token 时追加 0.0.0.0 绑定，端口占用直接启动失败）→ 构建全部单例 → `build_router` → **先监听**（环回 + 可选 LAN，`axum::serve` 优雅退出）→ `worker.attach(index, store, pipeline.sender())`（worker 回流接线，须在 start 前）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher → `startup.mark_ready()` → 后台全库对账扫描 |
 | `src/settings.rs` | 启动设置：`--library` / `--port` / `--web-dist` 与 `HAWK_*` 环境变量解析；库目录不存在 exit(2)；token 未传入时生成随机值并打印 stdout（开发场景）；`HAWK_RESCAN_INTERVAL` 周期对账间隔（默认 60s，0 关闭） |
 
 ### api/ —— HTTP 层
@@ -69,14 +73,14 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/core/metadata_store.rs` | 元数据存取：内存权威副本 + path→hash 反查表。构造即注水：缓存已注水走 `IndexDb.load_all` 快路径，失败或未注水回退 **TOML 全量解析**（顺带 `db.hydrate` 建缓存，每 1000 文件经 StartupState 报一帧进度）；写入铁律：**先 TOML 原子写（tmp+rename）成功，再刷内存副本与 SQLite**（`save`），中途崩溃朝 TOML 收敛；批量路径 `save_toml` 逐条落盘 + `apply_batch` 内存/SQLite 单事务统一应用（调色板批量回写用）；对账入口 `apply_external_toml`（只进不出，解析失败跳过不清空）与 `clear_external`（TOML 消失清空素材参数）；`hashes_with_missing_palette` 是派生缓存自愈的判定依据 |
 | `src/core/item.rs` | 索引中的 item：`ItemLocation`（一个文件位置，回收站位置以 `.hawk/trash/` 开头）+ `Item`（位置列表 + 元数据查询副本 + 宽高 + 调色板，每项同时保存 RGB 与**预算 Lab** 检索坐标）；`sync_from` 为元数据 → 索引的单向同步（只允许流水线调用，palette 为 None 时保持索引现状）；`to_dto(trash_view)` 锁内投影——回收站视图的 paths 展示原库内路径（恢复目标）、folders 派生去重；`ItemQuery`/`ItemDto`/`ItemSkeletonDto` |
 | `src/core/index.rs` | 内存索引：hash→item 与位置路径→hash 双字典，一把 `Mutex`。读取纪律见总览规则 3。`query` 实现 item/list 全部过滤（AND 语义）+ 排序 + 分页：**排序在轻量键上进行**（name 预计算小写键，避免比较器内反复分配）、主键同值按 id 字典序打破平局、desc 反转整个比较结果、`total_size` 为过滤后全量字节合计，**DTO 只投影分页窗口**（大库下不为全部命中项克隆完整 DTO）；`query_skeleton` 同过滤同排序投影 id/width/height/star（两次独立查询次序逐位一致，前端按 offset 取窗口依赖这一点）；颜色检索：查询色一次转 Lab，逐 item 检查预算 Lab 的 ΔE² ≤ 25²（免开方）；`folder_counts`（含祖先目录，同 item 同目录只计一次）/`category_counts`/`tags_with_counts` 供侧栏与 folder/list |
-| `src/core/pipeline.rs` | **核心**：索引流水线，详见下节 |
+| `src/core/pipeline/` | **核心**：索引流水线模块（单写者 actor），按职责拆分，详见下节：`mod.rs`（Job 枚举/提交表面/消费循环/超时）、`ctx.rs`（上下文 + JobSender 外部回流通道 + 进度快照）、`upsert.rs`（入库生命周期）、`fs_ops.rs`（删除/移动/回收站）、`scan.rs`（扫描 runner + 会话簿记）、`reconcile.rs`（元数据对账）、`derived.rs`（调色板/宽高回写） |
 | `src/core/content_hash.rs` | BLAKE3 流式哈希（1MB 缓冲），即 item id，元数据/缩略图命名依据 |
 | `src/core/events.rs` | SSE 事件总线：tokio broadcast（容量 1024），订阅者消费跟不上（lagged）即由端点断开其订阅；`TaskProgress` 快照结构（task.progress 事件与 app/status 共用）；`folder.changed` 负载构造 |
 | `src/core/fs_util.rs` | 文件操作辅助：建父目录、回收站冲突追加 ` (n)` 后缀（恢复按实际名称放回）、名称合法性校验（禁分隔符/`.`/`..`/`.hawk`） |
 | `src/core/thumbnail.rs` | 图像服务：`identify`（只解码头取尺寸）、`detect_extension_bytes`（guess_format → 扩展名映射，item/add 类型推断用）、`generate`（Max 等比缩小**不放大**、Lanczos3、有损 WebP q80、缺失尺寸才生成/force 强制重建、按内容寻址存库外缓存目录）、`delete`。解码失败记 warn 并返回 false（读取端重试自愈）。`is_browser_renderable`：原图扩展名是否可被浏览器直接渲染（jpg/png/gif/webp/bmp），决定读取端未命中时能否回源原图（tiff 等必须走缩略图转换） |
 | `src/core/color.rs` | 调色板提炼：降采样 64px（Triangle 滤波）→ **median-cut** 量化 ≤10 色 → 像素占比（alpha<128 不参与，0–100 保留 1 位小数）；按占比降序、并列按 RGB 升序保证确定性 |
 | `src/core/color_math.rs` | 颜色纯函数：hex 解析/格式化、sRGB→CIELAB（D65）、CIE76 ΔE 的**平方**（与阈值平方比较免开方） |
-| `src/core/thumbnail_worker.rs` | 缩略图/调色板后台 worker：**无界** mpsc 队列（任务 ~100B，不丢弃）+ `CPU/2`（封顶 12）个专用 OS 线程（纯 CPU 任务靠 OS 调度让出 API）。任务三种（in-flight 去重 key 分命名空间，PaletteOnly 与其余互不挤占）：`enqueue_palette`（**入库/对账/读取端宽高自愈派发**，提炼调色板 + 补缺失宽高——缩略图是惰性缓存，不在入库时批量生成；颜色搜索依赖全量 palette，必须即时）、`enqueue_thumbs`（**读取端未命中与 `library/refresh_cache` 范围刷新派发**，补缺失宽高 + 生成缺失尺寸 + 按需调色板，不重建已有文件）、`enqueue_force_rebuild`（**单 item 手动刷新派发**，强制重建全部尺寸）。`process_job` 共有前置 `ensure_dim`：宽高为 0 时 `identify`（只解头部）经回调回流水线回写（FixDim，单写者）；需调色板时优先**从最小尺寸的已有缩略图提炼**（解码代价小），无已有缩略图时直接解码原图 → 经回调回流水线（PaletteJob）；生成或宽高修复完成后取最新 DTO 补发 `item.updated`（前端 404 占位与 0 × 0 卡片据此重建）；积压经 task.progress 500ms 节流可见 |
+| `src/core/thumbnail_worker.rs` | 缩略图/调色板后台 worker：**无界** mpsc 队列（任务 ~100B，不丢弃）+ `CPU/2`（封顶 12）个专用 OS 线程（纯 CPU 任务靠 OS 调度让出 API）。任务三种（in-flight 去重 key 分命名空间，PaletteOnly 与其余互不挤占）：`enqueue_palette`（**入库/对账/读取端宽高自愈派发**，提炼调色板 + 补缺失宽高——缩略图是惰性缓存，不在入库时批量生成；颜色搜索依赖全量 palette，必须即时）、`enqueue_thumbs`（**读取端未命中与 `library/refresh_cache` 范围刷新派发**，补缺失宽高 + 生成缺失尺寸 + 按需调色板，不重建已有文件）、`enqueue_force_rebuild`（**单 item 手动刷新派发**，强制重建全部尺寸）。`process_job` 共有前置 `ensure_dim`：宽高为 0 时 `identify`（只解头部）经 JobSender 回流队列回写（FixDim，单写者）；需调色板时优先**从最小尺寸的已有缩略图提炼**（解码代价小），无已有缩略图时直接解码原图 → 经 JobSender 回流队列（Palette）；对索引/元数据只做只读访问（`get_dto`/`dim_is_zero`/`try_get`），生成或宽高修复完成后取最新 DTO 补发 `item.updated`（前端 404 占位与 0 × 0 卡片据此重建）；积压经 task.progress 500ms 节流可见 |
 | `src/core/taxonomy.rs` | 分类/标签维度：`normalize_category_name`（扁平，无层级）；注册表骨架（固定 schema `key = [字符串数组]`，原子写、排序去重、重命名合并语义）→ `CategoryRegistry`/`TagRegistry`；`ItemEvents`：SSE 事件名常量与发布辅助（`publish_changed`/`publish_location_loss`/`publish_transition`，位置归零 → removed、只剩回收站 → trashed、首个库内位置回归 → restored）；`TaxonomyMigrator`：元数据写应用与全库级联迁移，**只被消费循环调用** |
 | `src/core/view_prefs.rs` | 视图偏好注册表（`.hawk/view.toml`，参与同步）：扁平 map（scope 键 `folder:<路径>`/`category:<名>`/`tag:<名>`），不理解继承语义（前端沿父链解析）；scope/排序值白名单校验；`rename_prefix`/`delete_prefix` 跟随目录移动/删除；外部修改（含网盘同步落地）经 watcher 触发 `reload` |
 | `src/core/scanner.rs` | 目录遍历（只读目录项，不读文件内容）：`walk_directory`（跳过 `.hawk` 内部、只深入 trash 子树、库内应用 ignore）；`walk_directory_stats`（产出 目录 → (mtime, 直接子项数) 供增量扫描快照对比，枚举失败置 `walk_incomplete`——调用方据此跳过消失对账防误删）；`walk_files_in_directory`（增量深入时只枚举直接文件） |
@@ -87,25 +91,26 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 
 所有索引变更收敛为单消费者循环（专用线程 `hawk-index-pipeline`），Job 经有界 channel（4096）串行处理：
 
-- **Job 类型**：`Upsert` / `Delete` / `Move` / `DirMove` / `Scan` / `ClearTrash` / `Metadata` / `BatchMetadata` / `MetadataSync` / `Palette` + `PaletteFlush`（调色板批量回写）/ `FolderHint` / `CategoryCreate|Update|Delete` / `TagCreate|Update|Delete` / `RegistryReload`
-- **两类入口**：watcher 走 fire-and-forget，channel 满置 overflow 标记（消费者检查后入队**去重的 ScanJob** 兜底，不内联扫描，避免事件风暴期反复全库遍历）；API 与启动走携带 `oneshot` 回复通道的提交，等待处理完成后返回。消费循环对每个 Job 做 `catch_unwind`，panic 的任务被跳过且等待中的调用方收到错误（不会挂起）
-- **入库（do_upsert）拆两步**：`prepare_upsert`（路径过滤 `.hawk`/ignore、stat、**哈希复用判定**——路径与 size/mtime 同元数据一致即复用不读内容、写入中文件防抖——mtime 距今不足 1s 延迟重试，同路径去重上限 120 次）→ 哈希（`known_hash` 直接采用 / 复用 / 计算）→ **复验 size/mtime**（哈希期间仍在写入则延迟重试，不以半截内容入库，慢速拷贝的哈希漂移由此根治）→ `apply_upsert`（串行应用）
+- **Job 类型**：`Upsert` / `Delete` / `Move` / `DirMove` / `ScanStart`+`ScanFile`+`ScanEnd`（扫描三段，见下）/ `ClearTrash` / `Metadata` / `BatchMetadata` / `MetadataSync` / `Palette` + `PaletteFlush`（调色板批量回写）/ `FixDim`（宽高补全）/ `FolderHint` / `CategoryCreate|Update|Delete` / `TagCreate|Update|Delete` / `RegistryReload`
+- **两类入口**：watcher/worker 走 fire-and-forget（经 `JobSender`），channel 满置 overflow 标记（消费者检查后入队**去重的扫描**兜底，不内联扫描，避免事件风暴期反复全库遍历）；API 与启动走携带 `oneshot` 回复通道的提交，统一 60s 超时等待（`run_scan` 例外——等整轮扫描完成，不设超时），消费循环停止/任务 panic 时调用方立即收到错误而非挂起。消费循环对每个 Job 做 `catch_unwind`，panic 的任务被跳过
+- **入库（do_upsert）拆两步**：`prepare_upsert`（纯判定、无副作用——路径过滤 `.hawk`/ignore、stat、**哈希复用判定**（路径与 size/mtime 同元数据一致即复用不读内容）、写入中文件防抖（mtime 距今不足 1s 延迟重试，同路径去重上限 120 次）；需要删除路径时返回 Remove 由调用方执行，消费循环内联、扫描 runner 经队列回流）→ 哈希（`known_hash` 直接采用 / 复用 / 计算）→ **复验 size/mtime**（哈希期间仍在写入则延迟重试，不以半截内容入库，慢速拷贝的哈希漂移由此根治）→ `apply_upsert`（串行应用；创建 item 与登记位置在同一锁内完成，零位置 item 不对并发查询可见）
 - **`apply_upsert`**：哈希漂移时先取旧元数据用于继承，再按路径迁移（新 item 继承 tags 等素材参数，旧元数据无引用则删除元数据与缩略图）并发布位置丢失事件；元数据登记路径并回写最新 size/mtime；扫描路径携带的调色板（并行阶段单次解码提炼）随首版 TOML 一并持久化；**宽高在入库时即持久化入 TOML**；索引同步后发事件——扫描路径合并进 `items.added` 批量事件（300ms 窗口/2000 条上限/扫描结束兜底冲刷），单条路径发即时 `item.added`/`item.updated`；`needs_palette_work`（调色板缺失/版本旧）才派发 worker（仅调色板任务）兜底增量与解码失败自愈——扫描导入的缩略图已在并行阶段生成，读取端惰性兜底仍在
-- **全库扫描（do_scan，三阶段 + 目录快照）**：阶段一 `walk_directory_stats` 与上轮 `folders` 快照（mtime + 直接子项数）对比，**只有 dirty 目录才深入文件级访问**（clean 目录不碰文件系统）；阶段二 dirty 目录枚举文件做复用判定/入库（复用项立即应用）；阶段三需要哈希的文件进**并行导入通道**（`CPU-1` 封顶 24，留 1 核给 API）：哈希（后复验，仍在写入的延迟重试）→ 单次解码同出 调色板/全部缺失尺寸缩略图/宽高（文件刚读过页缓存热；派生齐备则不解码）→ 结果经 channel **流式回本线程边收边入库**（item 随算随现，单写者不变）；**消失对账**——所在目录已不存在、或 dirty 目录深入后未见的位置判为消失（clean 目录快照一致则位置必然还在，不访问）；遍历不完整时本轮跳过消失对账与快照替换（防误删），最终一致由下轮对账保证；快照整体替换为本轮统计；完成后广播一次 `folder.changed`
-- **元数据对账（do_metadata_sync，只进不出）**：`.hawk/metadata/` 的 TOML 是唯一权威源（参与网盘同步），本机缓存与内存副本经此跟随外部变更。按文件 mtime 与 `IndexDb.source_mtime` 比对，只有变化的文件才重解析；新增/变更 → `apply_external_toml` 载入后刷新索引副本、登记注册表、发 `item.updated`；TOML 消失 → `clear_external` 清空素材参数（item 与位置由扫描决定存续）；解析失败跳过且不清空状态，下轮重试。每 100 文件经 StartupState 报一帧进度（对账可能持续很久，启动屏靠它续命）。**派生缓存自愈**：`hashes_with_missing_palette`（调色板缺失/版本旧）与 `hashes_with_zero_dim`（宽高为 0，入库时解码暂时失败的遗留）纯内存扫描出的缺失项派发 worker 补齐（宽高另有读取端自愈：`item/list`/`item/skeleton` 响应中发现 0 宽高即派发；手动入口 `library/refresh_cache` 按文件夹/分类/标签/整库范围补缺失；源文件已不在的由 worker 静默跳过，删除对账收敛位置）
-- **调色板批量回写**：worker 提炼结果经 PaletteJob 进入暂存（同 hash 以最新为准），≥500 条立即冲刷、滞留 2s 由一次性定时任务入队 PaletteFlush 唤醒（队列安静期也能落盘）；冲刷 = 逐条 `save_toml`（铁律：TOML 先行）→ `apply_batch` 内存 + SQLite 单事务 → 同步索引后**合并发一条 `items.updated`**——全库重提炼（版本迁移、缓存重建）时无 N 次单条事务、无事件洪峰
-- **移动（do_move / do_dir_move）**：目标路径不可用（`.hawk` 内部/被 ignore）时整体转删除；`move_one` 只做索引 rekey 与元数据路径跟随（lib↔trash 去前缀后库内路径不变，元数据保持原路径 = 恢复目标），**不重算哈希**；目录移动批量 rekey 后 `prefs.rename_prefix` 让排序偏好跟随、`publish_transition` 广播事件、补扫新位置吸收监听遗漏的子文件事件
+- **全库扫描（三段任务 + 目录快照，消费线程不被长扫描独占）**：`ScanStart` 只建会话并 spawn **runner 线程**（`hawk-scan`）——阶段一 `walk_directory_stats` 与上轮 `folders` 快照（mtime + 直接子项数）对比，**只有 dirty 目录才深入文件级访问**（clean 目录不碰文件系统）；阶段二 dirty 目录枚举**直接文件**（目录项跳过；同名「文件→目录」替换由消失对账收敛）做复用判定，复用项直接回流；阶段三需哈希文件进**并行导入通道**（`CPU-1` 封顶 24，留 1 核给 API）：哈希（后复验，仍在写入的延迟重试）→ 单次解码同出 调色板/全部缺失尺寸缩略图/宽高（派生齐备则不解码）。结果以 `ScanFile` 回流队列，**消费循环与其他任务穿插应用**——交互写延迟有界（不再等整轮扫描）；`ScanEnd` 阻塞入队保证收尾必然到达：**消失对账**（所在目录已不存在、或 dirty 目录深入后未见的位置判为消失；clean 目录快照一致则位置必然还在）、快照整体替换、`items.added` 尾批冲刷、广播 `folder.changed`。**扫描窗口会话簿记**：窗口内消费侧 upsert/移动新增的位置记 `touched`（消失对账豁免——目录可能已被枚举过，后到的文件不在 seen 集）；删除/移走的位置记 `invalidated`（迟到的 ScanFile 丢弃，不复活已删位置）；ScanFile 应用前 stat 复验（哈希后文件被改写则以穿插到达的实时事件为准）。扫描中再请求扫描 → 合并参数自动补扫；遍历不完整时跳过消失对账与快照替换（防误删），最终一致由下轮对账保证
+- **元数据对账（reconcile，只进不出）**：`.hawk/metadata/` 的 TOML 是唯一权威源（参与网盘同步），本机缓存与内存副本经此跟随外部变更。按文件 mtime 与 `IndexDb.source_mtime` 比对，只有变化的文件才重解析；新增/变更 → `apply_external_toml` 载入后刷新索引副本、登记注册表、发 `item.updated`；TOML 消失 → `clear_external` 清空素材参数（item 与位置由扫描决定存续）；解析失败跳过且不清空状态，下轮重试。每 100 文件经 StartupState 报一帧进度（对账可能持续很久，启动屏靠它续命）。**派生缓存自愈**：`hashes_with_missing_palette`（调色板缺失）与 `hashes_with_zero_dim`（宽高为 0，入库时解码暂时失败的遗留）纯内存扫描出的缺失项派发 worker 补齐（宽高另有读取端自愈：`item/list`/`item/skeleton` 响应中发现 0 宽高即派发；手动入口 `library/refresh_cache` 按文件夹/分类/标签/整库范围补缺失；源文件已不在的由 worker 静默跳过，删除对账收敛位置）
+- **调色板批量回写（derived）**：worker 提炼结果经 PaletteJob 进入暂存（同 hash 以最新为准），≥500 条立即冲刷、滞留 2s 由一次性定时任务入队 PaletteFlush 唤醒（队列安静期也能落盘）；冲刷 = 逐条 `save_toml`（铁律：TOML 先行）→ `apply_batch` 内存 + SQLite 单事务 → 同步索引后**合并发一条 `items.updated`**——全库重提炼（版本迁移、缓存重建）时无 N 次单条事务、无事件洪峰
+- **移动（fs_ops，do_move / do_dir_move）**：目标路径不可用（`.hawk` 内部/被 ignore）时整体转删除；`move_one` 只做索引 rekey 与元数据路径跟随（lib↔trash 去前缀后库内路径不变，元数据保持原路径 = 恢复目标），**不重算哈希**；目录移动批量 rekey 后 `prefs.rename_prefix` 让排序偏好跟随、`publish_transition` 广播事件、补扫新位置吸收监听遗漏的子文件事件
 - **清空回收站（do_clear_trash）**：摘除全部回收站位置并清理元数据 paths；内容在库内无其他引用时删除元数据与缩略图；物理删除由 API 层在其后完成
 - **进度上报**：`ScanReporter` 150ms 节流（阶段切换/总数变化强制发帧）写 StartupState（→ `/app/startup`）；`task.progress(index)` 500ms 节流 + 空闲转变化时补发清零帧
 
 ### api/item.rs 详解
 
 - **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影
-- **add**：`path`/`url`/`img_base64` 三选一取内容（url 经 ureq 30s 超时下载到内存，扩展名从 URL 推断、推断不出按内容嗅探；base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
+- **add**：`path`/`url`/`img_base64` 三选一取内容（url 经 ureq 30s 超时下载到内存，扩展名从 URL 推断、推断不出按内容嗅探；base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（`spawn_blocking`，不阻塞运行时线程；path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
 - **update**：经 `find_location` 取位置快照 → 回收站中的文件禁止改名/移动 → `name` 分支做真实 rename 并 `submit_move`；`folder_path` 分支**按移动后的最新位置再移动**（改名+移动同请求时基于新文件名计算目标）→ tags/star(0–5 校验)/categories/annotation/url 走 `submit_metadata` → 响应 `get_dto` 投影
 - **batch_update**：校验后先逐个移动主位置（同名冲突不整体失败，跳过该项记入 missing），再 `submit_batch_metadata` 一次提交（标签/分类并集追加、评分设置）；不存在的 id 由流水线记入 `missing_ids`；无任何更新字段返回 400
 - **delete / restore**：delete 把文件移入 `.hawk/trash/`（保留目录结构，冲突加 ` (n)` 后缀）；restore 按回收站实际名称去掉前缀后的路径放回，被占用报 `FILE_EXISTS`；位置定位均走 `find_location` 快照
 - **thumbnail**：尺寸必须在 `thumbnail_sizes` 白名单内。缩略图为缓存（扫描导入即时生成，增量/对账不生成，读取端兜底）：命中返回 webp；未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ **直接回源原图**（200，同时后台入队生成缓存）；不可渲染格式（tiff 等）后台生成、生成中 404（经 `item.updated` 重建）。响应 `Cache-Control: immutable`（id 是内容哈希，内容永不变）——注意未命中回源的原图响应同样 immutable，客户端可能长期持有原图字节而非升级 webp（视觉无损，接受）
+- **file / thumbnail 均流式返回**（tokio 异步读 128KB 块，`Body::from_stream`）：大文件不整读进内存、不阻塞运行时线程；读中途出错以流错误终止响应（客户端感知截断）
 - **file**：主位置（优先库内）原图二进制，Content-Type 按扩展名 `mime_guess`；同样 immutable、放行 `?token=`
 - **refresh_thumbnail**：取可读主位置强制重建全部尺寸
 - **replace**（`item/replace`）：客户端编辑（旋转/裁切）后的新内容提交存储层。内容必须可识别且**格式与文件扩展名一致**（扩展名与内容错位会破坏类型推断与预览）；哈希相同则幂等直接返回当前投影；写回保留原 mtime（修正性编辑不改变素材的时序位置）；`submit_upsert` 触发 id 漂移闭环（元数据继承迁移/事件/缩略图重建）
@@ -121,8 +126,8 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
     └► pipeline.start()：消费线程 + ThumbnailWorker + 周期对账定时 + 首轮 MetadataSync（先于扫描）
     └► watcher 接线（事件先入队，与对账扫描天然去重）
     └► startup.mark_ready() → /health 200、API 网关放行
-    └► 后台 run_scan(false)：目录快照对比 → dirty 目录深入 → 并行哈希 → 串行应用
-         停机期间的增删改由此收敛（就绪到扫描完成之间有秒级~分钟级窗口，运行期变更由 watcher 实时覆盖）
+    └► 后台 run_scan(false)：ScanStart 建 会话+runner 线程 → 目录快照对比 → dirty 目录深入 → 并行哈希 → ScanFile 回流穿插应用 → ScanEnd 收尾对账
+         停机期间的增删改由此收敛（就绪到扫描完成之间有秒级~分钟级窗口，运行期变更由 watcher 实时覆盖；扫描期间 API 写照常受理）
 ```
 
 握手无 stdout 私有协议：端口由 Electron 预选传入，进度/就绪经 `/api/v1/app/startup` 轮询；

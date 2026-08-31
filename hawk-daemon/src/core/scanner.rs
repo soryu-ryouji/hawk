@@ -93,7 +93,8 @@ impl LibraryScanner {
         out
     }
 
-    /// 只枚举目录的直接文件（不深入子目录）——增量扫描按目录深入时用
+    /// 只枚举目录的直接文件（不深入子目录，目录项本身跳过——目录由 walk_directory_stats 负责）
+    /// ——增量扫描按目录深入时用
     pub fn walk_files_in_directory(&self, abs_dir: &str) -> Vec<String> {
         let entries = match std::fs::read_dir(abs_dir) {
             Ok(e) => e,
@@ -102,6 +103,11 @@ impl LibraryScanner {
         let is_trash_subtree = self.is_trash_path(abs_dir);
         let mut out = Vec::new();
         for entry in entries.flatten() {
+            // 目录不是文件：枚举到的目录项不能当文件入库，更不能触发删除
+            // （同名「文件→目录」替换的位置满失由扫描收尾的消失对账收敛）
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
             let full = entry.path().to_string_lossy().replace('\\', "/");
             let rel = match self.paths.to_relative(&full) {
                 Some(r) => r,

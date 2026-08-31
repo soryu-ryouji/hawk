@@ -1,10 +1,11 @@
 //! 缩略图/调色板后台 worker：独立队列与专用线程池(CPU 密集)，不阻塞索引消费循环。
-//! 完成结果经回调回流水线（PaletteJob/FixDim 回写索引，保持单写者）。
+//! 完成结果经 JobSender 回流消费循环（FixDim/Palette），保持单写者。
+//! worker 对索引/元数据只做只读访问（get_dto / dim_is_zero / try_get），
 //! 队列是尽力而为的缓存：in-flight 去重，重复派发只产生 no-op 任务。
 //!
 //! 任务三种（ThumbJobKind，in-flight 去重 key 分命名空间）：
 //! - PaletteOnly：入库/对账派发，提炼调色板 + 补缺失宽高——
-//!   扫描导入已在并行哈希阶段单次解码产出调色板+缩略图（见 pipeline.rs），
+//!   扫描导入已在并行哈希阶段单次解码产出调色板+缩略图（见 pipeline/scan.rs），
 //!   此任务兜底增量路径与解码失败自愈；颜色搜索依赖全量 palette，必须即时
 //! - Repair：读取端 /item/thumbnail 未命中与范围刷新缓存（library/refresh_cache）派发，
 //!   补缺失宽高 + 生成缺失尺寸缩略图 + 按需提炼调色板（不重建已有文件）
@@ -16,11 +17,13 @@
 use crate::core::color;
 use crate::core::config::LibraryConfig;
 use crate::core::events::{EventBus, TaskProgress};
-use crate::core::item::{ItemDto, PaletteColor};
+use crate::core::index::ItemIndex;
+use crate::core::metadata_store::MetadataStore;
+use crate::core::pipeline::{Job, JobSender};
 use crate::core::taxonomy::ItemEvents;
 use crate::core::thumbnail::ThumbnailService;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// 任务模式
@@ -39,19 +42,13 @@ struct ThumbJob {
     kind: ThumbJobKind,
 }
 
-type GetItemDto = Arc<dyn Fn(&str) -> Option<ItemDto> + Send + Sync>;
-type ItemDimZero = Arc<dyn Fn(&str) -> bool + Send + Sync>;
-type FixDim = Arc<dyn Fn(String, i32, i32) + Send + Sync>;
-type HasPalette = Arc<dyn Fn(&str) -> bool + Send + Sync>;
-type EnqueuePalette = Arc<dyn Fn(String, Vec<PaletteColor>) + Send + Sync>;
-
+/// worker 的协作者：索引/元数据只读访问 + 队列回流通道。
+/// 由 main 在 pipeline 构造后、start 前装配（attach）
 #[derive(Clone)]
-struct WorkerCallbacks {
-    get_item_dto: GetItemDto,
-    item_dim_zero: ItemDimZero,
-    fix_dim: FixDim,
-    has_palette: HasPalette,
-    enqueue_palette: EnqueuePalette,
+struct WorkerDeps {
+    index: Arc<ItemIndex>,
+    store: Arc<MetadataStore>,
+    jobs: JobSender,
 }
 
 pub struct ThumbnailWorker {
@@ -60,7 +57,7 @@ pub struct ThumbnailWorker {
     inflight: Arc<Mutex<HashSet<String>>>,
     queued: Arc<AtomicI32>,
     active: Arc<AtomicI32>,
-    callbacks: Mutex<WorkerCallbacks>,
+    deps: Mutex<Option<WorkerDeps>>,
     thumbs: ThumbnailService,
     config: Arc<LibraryConfig>,
     bus: EventBus,
@@ -83,13 +80,7 @@ impl ThumbnailWorker {
             inflight: Arc::new(Mutex::new(HashSet::new())),
             queued: Arc::new(AtomicI32::new(0)),
             active: Arc::new(AtomicI32::new(0)),
-            callbacks: Mutex::new(WorkerCallbacks {
-                get_item_dto: Arc::new(|_| None),
-                item_dim_zero: Arc::new(|_| false),
-                fix_dim: Arc::new(|_, _, _| {}),
-                has_palette: Arc::new(|_| true),
-                enqueue_palette: Arc::new(|_, _| {}),
-            }),
+            deps: Mutex::new(None),
             thumbs,
             config,
             bus,
@@ -97,22 +88,14 @@ impl ThumbnailWorker {
         })
     }
 
-    /// 由 IndexPipeline 装配：索引访问与回写的闭环在流水线侧（单写者）
+    /// 装配协作者：索引只读访问 + 回流通道。必须在 start 之前调用（main 装配流水线后接线）
     pub fn attach(
         &self,
-        get_item_dto: GetItemDto,
-        item_dim_zero: ItemDimZero,
-        fix_dim: FixDim,
-        has_palette: HasPalette,
-        enqueue_palette: EnqueuePalette,
+        index: Arc<ItemIndex>,
+        store: Arc<MetadataStore>,
+        jobs: JobSender,
     ) {
-        *self.callbacks.lock().unwrap() = WorkerCallbacks {
-            get_item_dto,
-            item_dim_zero,
-            fix_dim,
-            has_palette,
-            enqueue_palette,
-        };
+        *self.deps.lock().unwrap() = Some(WorkerDeps { index, store, jobs });
     }
 
     /// 积压快照(排队 + 生成中)；task.progress 事件与 app/status 端点共用
@@ -124,6 +107,13 @@ impl ThumbnailWorker {
         if self.started.swap(true, Ordering::SeqCst) {
             return;
         }
+        let deps = match self.deps.lock().unwrap().clone() {
+            Some(deps) => deps,
+            None => {
+                tracing::error!("ThumbnailWorker 未装配（attach）即启动，任务将被丢弃");
+                return;
+            }
+        };
         // 纯 CPU 后台任务(解码/缩放/WebP 编码)：专用后台线程，与 API 线程争用 CPU 时靠 OS 调度；
         // 并发 CPU/2（封顶 12）——缩略图是尽力而为的缓存，但桌面端大批量导入时吞吐优先，磁盘未饱和前吃满 CPU
         let parallelism = (std::thread::available_parallelism()
@@ -136,7 +126,7 @@ impl ThumbnailWorker {
             let inflight = self.inflight.clone();
             let queued = self.queued.clone();
             let active = self.active.clone();
-            let callbacks = self.callbacks.lock().unwrap().clone();
+            let deps = deps.clone();
             let thumbs = self.thumbs.clone();
             let config = self.config.clone();
             let bus = self.bus.clone();
@@ -152,13 +142,7 @@ impl ThumbnailWorker {
                 };
                 queued.fetch_sub(1, Ordering::SeqCst);
                 active.fetch_add(1, Ordering::SeqCst);
-                process_job(
-                    &job,
-                    &callbacks,
-                    &thumbs,
-                    &config,
-                    &bus,
-                );
+                process_job(&job, &deps, &thumbs, &config, &bus);
                 inflight.lock().unwrap().remove(&job.dedup_key());
                 active.fetch_sub(1, Ordering::SeqCst);
                 report_progress(&bus, &queued, &active, &progress_last, &progress_idle);
@@ -215,19 +199,24 @@ impl ThumbJob {
 
 fn process_job(
     job: &ThumbJob,
-    callbacks: &WorkerCallbacks,
+    deps: &WorkerDeps,
     thumbs: &ThumbnailService,
     config: &Arc<LibraryConfig>,
     bus: &EventBus,
 ) {
-    // 补缺失宽高：identify 只解头部，代价小。回写经回调走流水线（单写者），
+    // 补缺失宽高：identify 只解头部，代价小。回写经队列走流水线（单写者），
     // item.updated 由回写侧发出；此处只需记住发生了修复，与缩略图生成合并发事件。
     // 识别失败（非图像/损坏文件）记 debug：非图像文件的宽高合法为 0，对账会周期性重派，warn 会刷屏
     let mut dim_fixed = false;
-    if (callbacks.item_dim_zero)(&job.hash) {
+    if deps.index.dim_is_zero(&job.hash) {
         match ThumbnailService::identify(&job.source_abs) {
             Some((w, h)) => {
-                (callbacks.fix_dim)(job.hash.clone(), w, h);
+                // 队列满时丢弃:幂等(仅补 0 值),下轮对账/读取会再触发
+                let _ = deps.jobs.try_fire(Job::FixDim {
+                    hash: job.hash.clone(),
+                    w,
+                    h,
+                });
                 dim_fixed = true;
             }
             None => {
@@ -236,7 +225,11 @@ fn process_job(
         }
     }
 
-    let need_palette = !(callbacks.has_palette)(&job.hash);
+    let need_palette = deps
+        .store
+        .try_get(&job.hash)
+        .map(|meta| meta.palette.is_none())
+        .unwrap_or(true);
     // PaletteOnly 不生成缩略图（缩略图是惰性缓存，由读取端派发）
     let generated = match &job.kind {
         ThumbJobKind::PaletteOnly => false,
@@ -267,14 +260,18 @@ fn process_job(
             .find(|p| std::path::Path::new(p).is_file())
             .unwrap_or_else(|| job.source_abs.clone());
         if let Some(palette) = color::extract(&source) {
-            (callbacks.enqueue_palette)(job.hash.clone(), palette);
+            // 队列满时丢弃:PaletteJob 幂等,下轮对账/刷新会再触发提炼
+            let _ = deps.jobs.try_fire(Job::Palette {
+                hash: job.hash.clone(),
+                palette,
+            });
         }
     }
 
     // 完成后补发 item.updated:前端缩略图此前的 404 占位据此重建 <img>；
     // 宽高修复同样需要前端刷新骨架/卡片（0 × 0 → 实际尺寸）
     if generated || dim_fixed {
-        if let Some(dto) = (callbacks.get_item_dto)(&job.hash) {
+        if let Some(dto) = deps.index.get_dto(&job.hash) {
             bus.publish(ItemEvents::UPDATED, serde_json::to_value(&dto).unwrap());
         }
     }

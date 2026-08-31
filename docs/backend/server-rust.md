@@ -10,7 +10,7 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
   CI（`release.yml`）全部使用本实现
-- **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描导入通道：并行哈希+单次解码产出派生+流式 apply/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
+- **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描 runner 线程：并行哈希+单次解码产出派生+结果回流消费循环穿插应用/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
   调色板（median-cut）、SQLite 派生缓存（schema v1）
 - **设计与实现要点**：
   - 宽高在入库时即持久化入 TOML（与 storage.md 设计意图一致，重启无需靠扫描重新识别）
@@ -27,7 +27,7 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 | 职责 | 选型 | 备注 |
 | ---- | ---- | ---- |
 | HTTP 框架 | axum 0.8 | tower 中间件链 |
-| 异步运行时 | tokio | pipeline 消费循环为专用 OS 线程（阻塞扫描不占运行时线程） |
+| 异步运行时 | tokio | pipeline 消费循环与扫描 runner 均为专用 OS 线程（阻塞扫描不占运行时线程，也不阻塞消费循环） |
 | 文件监听 | notify 8 | From/To rename 配对 + 300ms 超时兜底 |
 | 哈希 | blake3 | item id = BLAKE3 hex（存储契约） |
 | 图像解码/缩放 | image 0.25 + fast_image_resize | Lanczos3 |

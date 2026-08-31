@@ -75,6 +75,9 @@ async fn main() {
         startup.clone(),
         settings.clone(),
     );
+    // worker 回流接线：worker 对索引/元数据只读访问，计算结果经队列回流水线（单写者）。
+    // 必须在 pipeline.start()（worker.start）之前完成
+    worker.attach(index.clone(), store.clone(), pipeline.sender());
 
     let state: SharedState = Arc::new(api::AppState {
         settings: settings.clone(),
