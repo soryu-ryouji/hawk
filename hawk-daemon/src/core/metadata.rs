@@ -1,6 +1,6 @@
 //! 素材参数元数据（.hawk/metadata/<hash>.toml，唯一权威数据源，参与网盘同步）。
 //! 宽高与调色板是「内容的纯函数」直接入 TOML；解析用 toml crate（宽容缺省），
-//! 序列化手写以精确控制输出格式（标量在前、[[paths]] 在后，缺省字段省略），与 C# 逐字对齐。
+//! 序列化手写以精确控制输出格式（标量在前、[[paths]] 在后，缺省字段省略）。
 
 use serde::{Deserialize, Serialize};
 
@@ -131,8 +131,7 @@ pub fn serialize(meta: &ItemMetadata) -> String {
     if meta.height > 0 {
         sb.push_str(&format!("height = {}\n", meta.height));
     }
-    // 调色板版本与标量同列于 [[paths]] 之前——TOML 中数组表之后的裸键会归属到该表内，
-    // C# 版把 palette_version 放在 [[paths]] 之后，实际无法被解析读回（依赖 SQLite 镜像绕开）
+    // 调色板版本与标量同列于 [[paths]] 之前——TOML 中数组表之后的裸键会归属到该表内，读不回来
     if meta.palette.is_some() {
         sb.push_str(&format!("palette_version = {}\n", meta.palette_version));
     }
@@ -275,7 +274,7 @@ percentage = 3.1
         assert!(!is_valid_hash_file_name(
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd.sync-conflict-20250101"
         ));
-        // 大写 hex 不识别（与 C# IsAsciiHexDigitLower 一致）
+        // 大写 hex 不识别
         assert!(!is_valid_hash_file_name(
             "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
         ));

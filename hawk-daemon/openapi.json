@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.1",
   "info": {
-    "title": "hawk-server | v1",
+    "title": "hawk-daemon | v1",
     "version": "1.0.0"
   },
   "servers": [

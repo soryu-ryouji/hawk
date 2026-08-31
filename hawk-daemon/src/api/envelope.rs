@@ -1,5 +1,5 @@
 //! 统一信封（`{status, data}` / 错误信封）、API 错误码、ApiError → 响应的转换。
-//! 与 C# Envelope.cs / ErrorCodes 语义一致（错误码集合即 REST 契约）。
+//! REST 信封与错误码（错误码集合即 REST 契约）。
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -99,7 +99,7 @@ impl ApiError {
     }
 }
 
-/// 统一成功信封；data 为空时省略该字段（与 C# WhenWritingNull 行为一致）
+/// 统一成功信封；data 为空时省略该字段
 #[derive(Serialize)]
 pub struct Envelope<T: Serialize> {
     pub status: &'static str,
@@ -131,7 +131,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// JSON 请求体抽取：解析失败统一 INVALID_PARAM（与 C# BadHttpRequestException → INVALID_PARAM 对齐）
+/// JSON 请求体抽取：解析失败统一 INVALID_PARAM
 pub struct JsonBody<T>(pub T);
 
 impl<T, S> axum::extract::FromRequest<S> for JsonBody<T>

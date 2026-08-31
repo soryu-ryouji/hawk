@@ -17,7 +17,7 @@ hawk 前后端完全解耦，通过 HTTP API 通信。桌面版中 Electron 只�
                        │ 文件系统监听 / 读写
                        ▼
 ┌──────────────────────────────────────────────────────┐
-│                 hawk-server (Rust)                          │
+│                 hawk-daemon (Rust)                          │
 │  ┌───────────┐  ┌───────────┐  ┌───────────────────┐  │
 │  │ Watcher   │  │ Hash      │  │ Thumbnail         │  │
 │  │(notify)   │  │(blake3)    │  │ (image+libwebp)   │  │
@@ -67,21 +67,21 @@ Electron 壳与后端二进制一起打包发行（electron-builder 的 `extraRe
 ```text
 Electron 启动
   → 预选空闲环回端口 + 生成随机 token
-  → spawn hawk-server 子进程
+  → spawn hawk-daemon 子进程
       - 参数 --library <path> --port <预选端口>，token 经环境变量传入
       - **先监听端口，初始索引后台构建**（先监听、后索引的启动模型）
   → 轮询 GET /api/v1/app/startup（200ms 间隔）：
       starting → 进度帧驱动启动进度页；ready → 加载主界面；error → 弹错误框
   → 初始索引完成前 /api/* 返回 503 NOT_READY（app/startup 除外），/health 503
 Electron 退出
-  → 回收 hawk-server 子进程（防止孤儿进程残留）
+  → 回收 hawk-daemon 子进程（防止孤儿进程残留）
 ```
 
 **本地 API 安全**：localhost 端口任何本机进程都能访问，因此所有请求必须携带启动时生成的随机 token。token 只存在于进程环境变量中，不落盘。防护对象是浏览器里的恶意网页（CSRF 直写素材库）——本机同权限进程可直接读写素材目录，等价绕过，不在防护范围。生态客户端（浏览器插件等）通过默认端口 27371 连接。为免配置，提供免鉴权的 token 发现端点 `GET /api/v1/app/token`：响应不带 CORS 头（跨源网页 JS 读不到，持 host_permissions 的扩展可读）且 Host 限定环回地址（防 DNS rebinding 同源绕过），插件零配置即可接入，等价 Eagle 的无鉴权体验但不牺牲防护。
 
 ### 服务器版（未来）
 
-同一个 hawk-server 直接部署在服务器上，为多个用户服务。与桌面版的差异：
+同一个 hawk-daemon 直接部署在服务器上，为多个用户服务。与桌面版的差异：
 
 | 差异点   | 桌面版             | 服务器版                      |
 | -------- | ------------------ | ----------------------------- |
@@ -93,13 +93,13 @@ Electron 退出
 
 ### 远程访问（规划中）
 
-远程访问不走服务器版路线：hawk-server 本体保持桌面版定位不变，远程查看经 QUIC 隧道接回本机环回端口，复用现有 API 与只读鉴权。账户、信令、中继为独立云端服务（闭源、独立仓库），与 hawk 仓库只共享协议契约、零代码共享。社区构建默认不含任何云端代码与 UI。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)。
+远程访问不走服务器版路线：hawk-daemon 本体保持桌面版定位不变，远程查看经 QUIC 隧道接回本机环回端口，复用现有 API 与只读鉴权。账户、信令、中继为独立云端服务（闭源、独立仓库），与 hawk 仓库只共享协议契约、零代码共享。社区构建默认不含任何云端代码与 UI。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)。
 
 ## 仓库结构
 
 ```text
 hawk/
-├── hawk-server-rs/  ← Rust 后端（桌面版与服务器版共用）
+├── hawk-daemon/  ← Rust 后端（桌面版与服务器版共用）
 ├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 └── docs/            ← 设计文档
 ```

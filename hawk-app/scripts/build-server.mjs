@@ -1,4 +1,4 @@
-// 发布当前平台的 hawk-server（Rust，cargo build --release）到 resources/hawk-server/（electron-builder 的 extraResources 来源）。
+// 发布当前平台的 hawk-daemon（Rust，cargo build --release）到 resources/hawk-daemon/（electron-builder 的 extraResources 来源）。
 // 用法：node scripts/build-server.mjs [RID]   例：node scripts/build-server.mjs osx-arm64（mac 同机交叉到 arm64）
 // RID 为沿用名：win-x64 / osx-arm64 / osx-x64 / linux-x64，内部映射到 rust target triple。
 // 交叉 target 自动 rustup target add；本机已有 target 时 incremental 构建很快。
@@ -38,7 +38,7 @@ if (target !== native) {
   if (add.status !== 0) process.exit(add.status ?? 1);
 }
 
-const rsDir = path.join(root, '..', 'hawk-server-rs');
+const rsDir = path.join(root, '..', 'hawk-daemon');
 const result = spawnSync(
   'cargo',
   ['build', '--release', '--manifest-path', path.join(rsDir, 'Cargo.toml'), '--target', target],
@@ -48,10 +48,10 @@ if (result.error || result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-const exe = target.includes('windows') ? 'hawk-server.exe' : 'hawk-server';
+const exe = target.includes('windows') ? 'hawk-daemon.exe' : 'hawk-daemon';
 const built = path.join(rsDir, 'target', target, 'release', exe);
-const out = path.join(root, 'resources', 'hawk-server');
+const out = path.join(root, 'resources', 'hawk-daemon');
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 fs.copyFileSync(built, path.join(out, exe));
-console.log(`已发布 ${target} → resources/hawk-server`);
+console.log(`已发布 ${target} → resources/hawk-daemon`);

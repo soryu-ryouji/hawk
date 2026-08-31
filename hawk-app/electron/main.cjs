@@ -1,4 +1,4 @@
-// hawk-app Electron 主进程：窗口管理（关窗隐藏到托盘）、系统托盘、单实例、拉起/回收 hawk-server、token 注入、库选择、白名单 IPC。
+// hawk-app Electron 主进程：窗口管理（关窗隐藏到托盘）、系统托盘、单实例、拉起/回收 hawk-daemon、token 注入、库选择、白名单 IPC。
 // 业务数据一律走 REST，不经 IPC（见 docs/architecture.md、docs/frontend/hawk-app.md）。
 const { app, BrowserWindow, dialog, ipcMain, shell, Menu, Tray, nativeImage, clipboard } = require('electron');
 const { spawn } = require('node:child_process');
@@ -26,7 +26,7 @@ let libraryRoot = null;
 const APP_ICON = path.join(__dirname, '..', 'build', 'icon.png');
 
 // 单实例：托盘驻留期间再次启动（双击图标/快捷方式）应唤起已有窗口，而不是拉起第二个实例
-// （第二个实例会拉起第二套 hawk-server 进程争用同一素材库，引发索引与文件监听竞争）
+// （第二个实例会拉起第二套 hawk-daemon 进程争用同一素材库，引发索引与文件监听竞争）
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -47,17 +47,17 @@ function writeConfig(patch) {
   fs.writeFileSync(CONFIG_FILE(), JSON.stringify({ ...readConfig(), ...patch }, null, 2));
 }
 
-// ---------- hawk-server 进程管理 ----------
+// ---------- hawk-daemon 进程管理 ----------
 
 function resolveServerCommand() {
-  if (process.env.HAWK_SERVER_EXE) {
-    return { command: process.env.HAWK_SERVER_EXE, args: [] };
+  if (process.env.HAWK_DAEMON_EXE) {
+    return { command: process.env.HAWK_DAEMON_EXE, args: [] };
   }
   if (isDev) {
     // 开发态：直接运行 Rust 后端二进制（release 优先；后端开发迭代的 debug 构建亦可）
-    const exe = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
+    const exe = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
     const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
-    const targetDir = path.join(__dirname, '..', '..', 'hawk-server-rs', 'target');
+    const targetDir = path.join(__dirname, '..', '..', 'hawk-daemon', 'target');
     // 兼容两种 cargo 产物位置：本机直建 target/release 与 --target 交叉建 target/<triple>/release
     const candidates = [
       ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release')] : []),
@@ -70,11 +70,11 @@ function resolveServerCommand() {
         return { command: bin, args: [] };
       }
     }
-    throw new Error('未找到 hawk-server-rs 构建产物，请先 cargo build --release（hawk-server-rs/）');
+    throw new Error('未找到 hawk-daemon 构建产物，请先 cargo build --release（hawk-daemon/）');
   }
   // 打包态：extraResources 携带的 Rust 二进制（cargo build --release，见 scripts/build-server.mjs）
-  const bin = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
-  return { command: path.join(process.resourcesPath, 'hawk-server', bin), args: [] };
+  const bin = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
+  return { command: path.join(process.resourcesPath, 'hawk-daemon', bin), args: [] };
 }
 
 /** 预选一个空闲环回端口：server 绑定它，token 由本进程生成——端口与 token 都不再需要子进程回传 */
@@ -90,7 +90,7 @@ function probeFreePort() {
 }
 
 /** LAN web 查看托管的前端产物：与 loadMainPage 同一目录（dev 与打包形态路径一致）。
- *  打包态 web/dist 经 asarUnpack 落在 app.asar.unpacked 物理路径——Kestrel 读不到 asar 内部 */
+ *  打包态 web/dist 经 asarUnpack 落在 app.asar.unpacked 物理路径——后端读不到 asar 内部 */
 function webDistDir() {
   const dist = path.join(__dirname, '..', 'web', 'dist');
   if (!isDev) {
@@ -103,7 +103,7 @@ function webDistDir() {
 }
 
 /**
- * 拉起 hawk-server：监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
+ * 拉起 hawk-daemon：监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
  * 页面已先行加载并显示应用内启动屏，此处不再等待就绪——进度/就绪/错误经 IPC 事件推送：
  *   hawk:server-progress（starting 阶段进度）→ hawk:server-started（就绪，含地址与 token）→ hawk:server-error（失败原因）。
  * spawn 失败、异常退出（stopServer 除外）、60s 超时就 hawk:server-error；返回句柄含 ready Promise（save-lan-settings 回滚要用）。
@@ -147,10 +147,10 @@ function startServer(libPath, address, token) {
       process.stderr.write(chunk);
     }
   });
-  child.on('error', (error) => fail(`hawk-server 启动失败: ${error.message}`));
+  child.on('error', (error) => fail(`hawk-daemon 启动失败: ${error.message}`));
   child.on('exit', (code) => {
     if (!intentionalExit) {
-      fail(`hawk-server 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}`);
+      fail(`hawk-daemon 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}`);
     }
   });
 
@@ -180,17 +180,17 @@ function startServer(libPath, address, token) {
         mainWindow?.webContents.send('hawk:server-started', { address, token });
         settleReady.resolve();
       } else {
-        fail(state.message || 'hawk-server 初始索引构建失败');
+        fail(state.message || 'hawk-daemon 初始索引构建失败');
       }
     } catch {
       // 连接拒绝：server 尚未监听，继续轮询
     }
   }, 200);
-  // 停滞看门狗：只防「HTTP 都无响应」的真卡死（Kestrel 线程池耗尽/进程 hang）；
+  // 停滞看门狗：只防「HTTP 都无响应」的真卡死（线程池耗尽/进程 hang）；
   // 能应答 startup 就算慢也不超时。进程崩溃由 exit 事件单独上报
   watchdog = setInterval(() => {
     if (Date.now() - lastProgressAt >= 120_000) {
-      fail('hawk-server 启动无响应，疑似卡死');
+      fail('hawk-daemon 启动无响应，疑似卡死');
     }
   }, 1000);
 
@@ -279,7 +279,7 @@ function createWindow() {
   }
 }
 
-// ---------- 系统托盘（Eagle 式：关窗不退出，驻留后台，hawk-server 继续服务浏览器扩展采集） ----------
+// ---------- 系统托盘（Eagle 式：关窗不退出，驻留后台，hawk-daemon 继续服务浏览器扩展采集） ----------
 
 function createTray() {
   const image = nativeImage.createFromPath(APP_ICON);
@@ -443,7 +443,7 @@ ipcMain.handle('hawk:select-library', async () => {
     return true;
   } catch (error) {
     // 失败时留在引导页并给出可见错误，而不是让 IPC 静默 reject
-    dialog.showErrorBox('hawk-server 启动失败', String(error && error.message ? error.message : error));
+    dialog.showErrorBox('hawk-daemon 启动失败', String(error && error.message ? error.message : error));
     return false;
   }
 });
@@ -459,7 +459,7 @@ ipcMain.handle('hawk:open-library', async (_event, libPath) => {
     server = await openLibraryAt(libPath);
     return true;
   } catch (error) {
-    dialog.showErrorBox('hawk-server 启动失败', String(error && error.message ? error.message : error));
+    dialog.showErrorBox('hawk-daemon 启动失败', String(error && error.message ? error.message : error));
     return false;
   }
 });
@@ -562,7 +562,7 @@ app.whenReady().then(async () => {
     server = await openLibraryAt(libPath);
     loadMainPage({ address: server.address, token: server.token });
   } catch (error) {
-    dialog.showErrorBox('hawk-server 启动失败', String(error));
+    dialog.showErrorBox('hawk-daemon 启动失败', String(error));
     app.quit();
     return;
   }

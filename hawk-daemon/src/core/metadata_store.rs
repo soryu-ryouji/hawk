@@ -1,7 +1,6 @@
 //! 元数据存储：.hawk/metadata/<hash>.toml 的读写 + 内存权威副本（含 path → hash 反查表）。
 //! 写入采用「临时文件 + rename」的原子写；写入顺序铁律：先 TOML 成功后再写缓存与内存副本，
 //! 中途崩溃自然朝 TOML 收敛。副本注水来源：IndexDb 快路径 → TOML 全量解析回退（顺带建缓存）。
-//! 与 C# MetadataStore 语义一致。
 
 use crate::core::index_db::IndexDb;
 use crate::core::metadata::{self, ItemMetadata};
@@ -105,7 +104,7 @@ impl MetadataStore {
     }
 
     /// 保存元数据：先 TOML 原子写（权威层），成功后更新内存副本与 SQLite 缓存。
-    /// TOML 写失败返回 Err（调用方决定回传 API 或仅记录，与 C# 异常传播语义一致）
+    /// TOML 写失败返回 Err（调用方决定回传 API 或仅记录）
     pub fn save(&self, hash: &str, meta: &ItemMetadata) -> Result<(), String> {
         let source_mtime = self.save_toml(hash, meta)?;
         self.apply_in_memory(hash, meta);

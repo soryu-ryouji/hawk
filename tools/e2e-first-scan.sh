@@ -7,7 +7,7 @@ TMP="$ROOT/tools/tmp-e2e"
 LIB="$TMP/library"
 PORT=39771
 TOKEN=e2e-token
-BIN="$ROOT/hawk-server-rs/target/debug/hawk-server.exe"
+BIN="$ROOT/hawk-daemon/target/debug/hawk-daemon.exe"
 
 rm -rf "$TMP"
 mkdir -p "$LIB"

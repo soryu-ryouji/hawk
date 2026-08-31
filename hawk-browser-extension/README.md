@@ -10,13 +10,13 @@ hawk 浏览器图片收集插件：右键保存网页图片到 hawk 素材库。
 
 ## 工作原理
 
-- 直连本机 hawk-server（默认 `http://127.0.0.1:27371`），`Authorization: Bearer <token>` 鉴权，接口见 [server-rest-api-v1.md](../docs/backend/server-rest-api-v1.md)
+- 直连本机 hawk-daemon（默认 `http://127.0.0.1:27371`），`Authorization: Bearer <token>` 鉴权，接口见 [server-rest-api-v1.md](../docs/backend/server-rest-api-v1.md)
 - 请求一律从 background 发起（`host_permissions` 覆盖本机地址，不受页面 CORS 限制）
 - 来源网页随保存请求经 `website` 传入，入库为素材的 `url` 字段（与 Eagle 的 `website` 参数同义；`url` 参数只是下载来源）
 
 ## 鉴权与零配置
 
-hawk-server 的 token 每次启动随机生成，防护对象是浏览器里的恶意网页（CSRF 直写素材库）。同时提供免鉴权的发现端点 `GET /api/v1/app/token`：响应不携带 CORS 头（跨源网页 JS 读不到），且 Host 限定环回地址（防 DNS rebinding）——只有持 host_permissions 的扩展能读取。
+hawk-daemon 的 token 每次启动随机生成，防护对象是浏览器里的恶意网页（CSRF 直写素材库）。同时提供免鉴权的发现端点 `GET /api/v1/app/token`：响应不携带 CORS 头（跨源网页 JS 读不到），且 Host 限定环回地址（防 DNS rebinding）——只有持 host_permissions 的扩展能读取。
 
 **因此插件无需填写 Token**：hawk 桌面应用启动后插件即可直接使用（Token 缓存 60 秒，服务重启后自动重新发现，401 自动重试一次）。设置里的 Token 输入框仅作手动覆盖（如连接非本机服务），日常留空即可。
 
@@ -64,11 +64,11 @@ npm run zip:safari
 
 ```text
 entrypoints/
-  background.ts    # 后台：右键菜单 + 拖拽保存消息入口，与 hawk-server 通信，通知反馈
+  background.ts    # 后台：右键菜单 + 拖拽保存消息入口，与 hawk-daemon 通信，通知反馈
   content.ts       # 拖拽保存：阈值触发 + 浮于指针旁的保存面板（文件夹列表 + 新建文件夹投放区，iframe 内图片同样支持）
   popup/           # 工具栏弹窗（设置界面）
 lib/
-  api.ts           # hawk-server REST 客户端（Envelope 解包 + Bearer 鉴权）
+  api.ts           # hawk-daemon REST 客户端（Envelope 解包 + Bearer 鉴权）
   settings.ts      # 插件设置（browser.storage.local）
   notify.ts        # 系统通知
 public/icons/      # 扩展图标（由 hawk-app/build/icon.png 生成，PowerShell 一次性产出）

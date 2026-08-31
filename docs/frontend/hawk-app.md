@@ -49,7 +49,7 @@ Electron 主进程启动
     端口/token 先生成、页面先行，server 后台拉起；窗口内容单页生命周期，无二次导航，杜绝切换白屏
   → 首帧渲染完成后 ready-to-show 才 show 窗口（GPU 驱动不认可 backgroundColor、合成器首帧延迟时
     提前 show 会把空白/白窗暴露给用户）
-  → spawn hawk-server（开发：hawk-server-rs/target 下的 Rust 构建产物；打包：process.resourcesPath 内二进制）
+  → spawn hawk-daemon（开发：hawk-daemon/target 下的 Rust 构建产物；打包：process.resourcesPath 内二进制）
       环境变量传入 HAWK_TOKEN，参数 --library <path> --port <预选端口> --web-dist <web/dist>
       （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录；
        缓存头：/assets/ 内容哈希资源 immutable 长缓存，index.html no-cache——防手机浏览器
@@ -68,10 +68,10 @@ Electron 主进程启动
 握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。
 
 关窗不退出（Eagle 式托盘驻留）：主进程拦截窗口 `close` 事件改为 `hide()`，
-应用驻留系统托盘、`hawk-server` 保持运行（浏览器扩展采集不间断）。托盘左键单击
+应用驻留系统托盘、`hawk-daemon` 保持运行（浏览器扩展采集不间断）。托盘左键单击
 或菜单「打开 hawk」唤起主窗口，菜单「退出」才是真正退出（`before-quit` 置
 `isQuitting` 放行 close 拦截，经 `will-quit` 回收 server）。再次启动应用由单实例锁
-（`requestSingleInstanceLock`）转到已有实例——否则第二个实例的 hawk-server
+（`requestSingleInstanceLock`）转到已有实例——否则第二个实例的 hawk-daemon
 会因 27371 端口占用直接启动失败。macOS 关窗后点 Dock 图标经 `activate` 唤起。
 托盘为纯主进程行为，不新增 preload IPC 通道；自绘标题栏的关闭按钮与系统关窗
 行为一致（同样落入托盘）。托盘图标复用 `build/icon.png`（512px 源图运行时按平台
@@ -102,7 +102,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 ## 契约与类型生成
 
 - 前端 TS 类型从 OpenAPI schema 生成（openapi-typescript），**不手写对接口**
-- `npm run gen:types`：脚本启动 hawk-server（临时目录建库）→ 拉 `/openapi/v1.json` → 生成 `web/src/api/schema.d.ts` → 杀掉 server。生成文件入库，schema 变更时重新生成
+- `npm run gen:types`：脚本启动 hawk-daemon（临时目录建库）→ 拉 `/openapi/v1.json` → 生成 `web/src/api/schema.d.ts` → 杀掉 server。生成文件入库，schema 变更时重新生成
 - API client 统一处理：Bearer 头、信封解包（`status`/`data`/`error`）、错误码异常、SSE 用 `?token=`（EventSource 无法设请求头）
 
 ## 前端信息架构
@@ -237,7 +237,7 @@ export class ApiError extends Error {
 }
 export function initApi(): ApiConfig | null
 // api 解析优先级：location.hash(#api=…) > VITE_HAWK_API(纯前端调试) > 同源 location.origin(仅纯浏览器:
-// 页面由 hawk-server 托管的局域网 web 查看场景;Electron 内无 hash 视为未配置)
+// 页面由 hawk-daemon 托管的局域网 web 查看场景;Electron 内无 hash 视为未配置)
 // token 解析优先级：hash > ?token= 查询参数 > localStorage(键 hawk:token:<host>,ConnectScreen 验证通过后写入,
 // 同一服务端再访问免输入直连)
 export function storeToken(api, token) / clearStoredToken(api): void  // localStorage 按 api host 隔离
@@ -389,7 +389,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close` | 设置面板（TitleBar 齿轮打开；Electron 与触屏设备可开）：缩略图尺寸滑杆（−/滑杆/＋，v-model store.thumbSize 实时生效，所有端可用）；局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表——远程设置依赖 Electron preload 通道，`v-if="hasShell"` 渲染，移动端（浏览器触屏）不可见；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-server（await ready 以支持失败自动回滚并弹错）；成功不重启页面——server-started 事件驱动 App 原地换地址重载数据，本对话框 emit close；无 shell 时底部仅「关闭」（滑杆实时生效无需保存）；宽度 `min(420px, 100vw-32px)` 适配手机竖屏 |
+| `SettingsDialog.vue` | — | `close` | 设置面板（TitleBar 齿轮打开；Electron 与触屏设备可开）：缩略图尺寸滑杆（−/滑杆/＋，v-model store.thumbSize 实时生效，所有端可用）；局域网查看开关/端口/访问 token（重新生成随机串）/本机局域网地址列表——远程设置依赖 Electron preload 通道，`v-if="hasShell"` 渲染，移动端（浏览器触屏）不可见；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置并重启 hawk-daemon（await ready 以支持失败自动回滚并弹错）；成功不重启页面——server-started 事件驱动 App 原地换地址重载数据，本对话框 emit close；无 shell 时底部仅「关闭」（滑杆实时生效无需保存）；宽度 `min(420px, 100vw-32px)` 适配手机竖屏 |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
@@ -459,7 +459,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 8. 回收站：查看、单项或批量恢复、清空（二次确认）
 9. 实时性：另一进程改动库目录（或第二窗口操作）经 SSE 反映到界面
 10. 快捷键：`Delete` 回收/恢复、`Esc` 关浮层、`Cmd/Ctrl+A` 全选
-11. 托盘运行：关闭窗口最小化到系统托盘（hawk-server 驻留后台，扩展采集不间断）；托盘左键/菜单唤出主窗口；托盘「退出」才真正退出；驻留期间再次启动应用唤起已有实例
+11. 托盘运行：关闭窗口最小化到系统托盘（hawk-daemon 驻留后台，扩展采集不间断）；托盘左键/菜单唤出主窗口；托盘「退出」才真正退出；驻留期间再次启动应用唤起已有实例
 
 ## 非目标（v1 明确不做）
 
@@ -470,7 +470,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 ## 打包与分发
 
-- `electron-builder.yml`：`extraResources` 按平台携带 hawk-server 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`）
+- `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
 - 产物：macOS `hawk.app` 目录（CI 交叉打包 arm64 + x64 后 zip 发布；不做 dmg）/ Windows `hawk.zip`（解压即用）/ Linux AppImage
 - CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
@@ -487,7 +487,7 @@ hawk-app/
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
-│   ├── build-server.mjs    # cargo build --release 产出指定 target 的 hawk-server 单文件
+│   ├── build-server.mjs    # cargo build --release 产出指定 target 的 hawk-daemon 单文件
 │   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）
 │   ├── test-mobile-web.mjs # 移动端网页冒烟测试编排（临时库 + server + 断言）
 │   └── mobile-web-probe.cjs# 测试探针：无 preload 的 sandbox Electron 窗口模拟手机浏览器，输出 JSONL 探针与截图
@@ -498,13 +498,13 @@ hawk-app/
 
 ```bash
 npm install
-npm run gen:types   # 生成/更新 API 类型（需先 cargo build hawk-server-rs）
+npm run gen:types   # 生成/更新 API 类型（需先 cargo build hawk-daemon）
 npm run dev         # vite(5173) + electron；server 由 electron 拉起（Rust 二进制，release 优先）
 npm run build       # vue-tsc --noEmit && vite build
 npm run test:mobile # 移动端网页冒烟测试（见下）
 ```
 
-**移动端网页冒烟测试**（`scripts/test-mobile-web.mjs` + `scripts/mobile-web-probe.cjs`，`npm run test:mobile`）：覆盖桌面 IPC 路径之外的另一半——局域网手机浏览器链路（无 `hawkShell` 的轮询启动）。免第三方依赖：程序化生成含全景/竖图的临时素材库（纯色 PNG，免依赖手写编码器）→ 拉起 hawk-server 托管 web/dist → 以 **无 preload 的 sandbox Electron 窗口（390×844）** 模拟手机浏览器 → JSONL 探针断言：启动屏渲染 → **轮询就绪进入主界面（卡在启动屏即失败——2026-08 轮询未触发的回归即由此检出）** → 网格卡片渲染且无横向溢出（顺带校验齐行布局行宽硬顶；`.app` 就绪后轮询等网格首帧再断言，避免撞上骨架→行布局的异步窗口）→ 双击卡片开预览且中央图在视口内（探针为精细指针，走鼠标双击路径；触屏点按开预览按 pointerdown 实际指针分流，无法在本探针模拟，真机验证）。产物在 `.tmp/mobile-smoke/`（已 gitignore），成功即清理，失败保留截图供排查。
+**移动端网页冒烟测试**（`scripts/test-mobile-web.mjs` + `scripts/mobile-web-probe.cjs`，`npm run test:mobile`）：覆盖桌面 IPC 路径之外的另一半——局域网手机浏览器链路（无 `hawkShell` 的轮询启动）。免第三方依赖：程序化生成含全景/竖图的临时素材库（纯色 PNG，免依赖手写编码器）→ 拉起 hawk-daemon 托管 web/dist → 以 **无 preload 的 sandbox Electron 窗口（390×844）** 模拟手机浏览器 → JSONL 探针断言：启动屏渲染 → **轮询就绪进入主界面（卡在启动屏即失败——2026-08 轮询未触发的回归即由此检出）** → 网格卡片渲染且无横向溢出（顺带校验齐行布局行宽硬顶；`.app` 就绪后轮询等网格首帧再断言，避免撞上骨架→行布局的异步窗口）→ 双击卡片开预览且中央图在视口内（探针为精细指针，走鼠标双击路径；触屏点按开预览按 pointerdown 实际指针分流，无法在本探针模拟，真机验证）。产物在 `.tmp/mobile-smoke/`（已 gitignore），成功即清理，失败保留截图供排查。
 
 关键依赖：`vue@3`、`pinia`、`@vueuse/core`、`vite`、`@vitejs/plugin-vue`、`vue-tsc`、`electron`、`electron-builder`、`openapi-typescript`。
 

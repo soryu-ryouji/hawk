@@ -50,7 +50,7 @@ pub struct AppState {
 
 pub type SharedState = Arc<AppState>;
 
-/// 构建路由：中间件链等价 C# 的 CORS → Auth → ReadyGate → Endpoints
+/// 构建路由：中间件链 CORS → Auth → ReadyGate → Endpoints
 pub fn build_router(state: SharedState) -> axum::Router {
     axum::Router::new()
         .route("/health", axum::routing::get(app::health))

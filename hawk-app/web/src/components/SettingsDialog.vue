@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 设置面板：缩略图尺寸（实时生效，所有端可用）；局域网 web 查看开关/端口/token（仅 Electron，
-// 按库隔离存于 .hawk/config.toml 的 [web] 段；保存 = 主进程写配置并重启 hawk-server，失败自动回滚并弹错）。
+// 按库隔离存于 .hawk/config.toml 的 [web] 段；保存 = 主进程写配置并重启 hawk-daemon，失败自动回滚并弹错）。
 // 移动端（浏览器触屏）可打开本面板调整缩略图尺寸，但无 hawkShell，局域网设置段不渲染。
 import { onMounted, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';

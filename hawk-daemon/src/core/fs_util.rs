@@ -1,4 +1,4 @@
-//! 库内文件系统操作辅助。与 C# LibraryFs 语义一致。
+//! 库内文件系统操作辅助。
 
 use crate::core::paths::LibraryPaths;
 

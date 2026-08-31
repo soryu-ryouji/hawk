@@ -68,7 +68,7 @@ declare global {
       openLibrary(path: string): Promise<boolean>;
       /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
       getLanSettings(): Promise<LanSettings>;
-      /** 保存 [web] 配置并重启 hawk-server（失败自动回滚），返回 { ok, error? } */
+      /** 保存 [web] 配置并重启 hawk-daemon（失败自动回滚），返回 { ok, error? } */
       saveLanSettings(web: { enabled: boolean; port: number; token: string }): Promise<{ ok: boolean; error?: string }>;
       showInFinder(relPath: string): Promise<void>;
       /** 复制库内文件的绝对路径到剪贴板 */

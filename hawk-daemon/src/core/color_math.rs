@@ -1,5 +1,4 @@
 //! 颜色工具：hex 解析/格式化、sRGB→CIELAB 转换、CIE76 ΔE 距离。纯函数。
-//! 与 C# ColorMath 公式逐系数对齐。
 
 /// CIELAB 色彩空间中的一个颜色（感知均匀，用于颜色相似度比较）
 #[derive(Clone, Copy, Debug)]
@@ -87,7 +86,7 @@ mod tests {
 
     #[test]
     fn lab_known_values() {
-        // D65 sRGB 基准值（系数本身的浮点噪声与 C# 同量级，容差放宽到 1e-4）
+        // D65 sRGB 基准值（系数浮点噪声，容差放宽到 1e-4）
         let white = rgb_to_lab(255, 255, 255);
         assert!((white.l - 100.0).abs() < 1e-4);
         assert!(white.a.abs() < 1e-4);

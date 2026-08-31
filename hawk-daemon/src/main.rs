@@ -1,5 +1,5 @@
 //! 组装与启动：参数解析、服务构建、中间件、启动顺序（先监听、索引后台构建）、就绪信号。
-//! 与 C# Program.cs 的启动模型一致：Kestrel 先监听（此处为 axum serve 先拉起），
+//! 启动模型：axum serve 先拉起监听，
 //! 随后装配索引流水线——内存索引由元数据缓存（SQLite 快路径/TOML 回退）注水，
 //! 就绪不再等待全库扫描；停机期间的文件增删改由监听实时事件 + 后台对账扫描收敛。
 
@@ -132,11 +132,11 @@ async fn main() {
         None
     };
 
-    // ---------- 随后装配索引流水线（Kestrel 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
+    // ---------- 随后装配索引流水线（HTTP 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
     pipeline.start();
     let watcher = start_watcher(&paths, pipeline.clone(), prefs);
     startup.mark_ready();
-    tracing::info!("hawk-server 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
+    tracing::info!("hawk-daemon 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
 
     // 全库对账扫描转后台：完成前停机期间的删除/新增短暂残留（watcher 实时事件已覆盖运行期变更），
     // 失败不置启动错误——周期对账（默认 60s）兜底重试
@@ -149,7 +149,7 @@ async fn main() {
         });
     }
 
-    tracing::info!("hawk-server 监听 http://127.0.0.1:{local_addr_port}，素材库: {library}", local_addr_port = local_addr.port(), library = settings.library_root);
+    tracing::info!("hawk-daemon 监听 http://127.0.0.1:{local_addr_port}，素材库: {library}", local_addr_port = local_addr.port(), library = settings.library_root);
 
     // 保持进程存活直至退出信号
     shutdown_signal().await;
@@ -191,7 +191,7 @@ fn resolve_lan_binding(settings: &Settings) -> Option<u16> {
             Some(web.port)
         }
         Err(_) => {
-            eprintln!("局域网查看端口 {} 被占用，hawk-server 启动失败：请更换端口或关闭占用进程", web.port);
+            eprintln!("局域网查看端口 {} 被占用，hawk-daemon 启动失败：请更换端口或关闭占用进程", web.port);
             std::process::exit(3);
         }
     }

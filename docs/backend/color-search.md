@@ -17,7 +17,7 @@
 「代表颜色」不是平均色，而是对像素做**聚类/量化**：把成千上万种像素颜色归并到 K 个簇，每个簇取一个代表色，簇的像素数即占比。步骤：
 
 1. 解码图像，降采样到小尺寸（64×64）——提速并抹掉噪点，对结果无可见影响
-2. 量化聚类到 K=10 个颜色。当前 Rust 实现为手写 **median-cut**（palette_version=2）；C# 过渡版曾用 ImageSharp 的 Wu 量化器（v1，其结果被视作旧版本由后台自动重提炼）
+2. 量化聚类到 K=10 个颜色。实现为手写 **median-cut**（palette_version=2；旧版本结果被视作过期，由后台自动重提炼）
 3. 统计每个量化色的像素数，得出占比；按占比降序取前 10
 
 纯色图会得到 1 个颜色，渐变图得到一组渐变色——均属正常输出。
@@ -70,7 +70,7 @@ index.db 的 items.palette 列 ← 库外系统缓存目录，本地专用、可
 }
 ```
 
-- `v` 为算法版本号：提取算法或参数变更时 bump，旧版本缓存视为缺失、自动重建（C# 版 Wu=v1 → Rust 版 median-cut=v2 即由此迁移）
+- `v` 为算法版本号：提取算法或参数变更时 bump，旧版本缓存视为缺失、自动重建
 - 按占比降序，最多 10 个；percentage 为 0–100、保留 1 位小数，与 Eagle 展示口径一致
 - 清理与缩略图同步：清空回收站、内容无其他引用时，随缩略图一并删除
 
@@ -116,7 +116,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | 调色板大小 | 10 | 量化器 MaxColors |
 | 分析尺寸 | 64×64 | 提炼前降采样 |
 | 匹配阈值 | ΔE 25 | CIE76，调色板任一色命中即中 |
-| 缓存版本 | 2 | 算法变更时 bump（v1=C# 版 Wu，v2=Rust 版 median-cut） |
+| 缓存版本 | 2 | 算法变更时 bump（当前为 median-cut） |
 
 ### 边界情况
 
@@ -130,8 +130,8 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 ### 后端
 
-调色板功能现由 Rust 实现承载：`hawk-server-rs/src/core/color.rs`（median-cut 提炼）、
-`hawk-server-rs/src/core/color_math.rs`（hex/Lab/ΔE 纯函数）。C# 版的逐文件改动清单随 `hawk-server/` 移除，不再列出。
+调色板功能现由 Rust 实现承载：`hawk-daemon/src/core/color.rs`（median-cut 提炼）、
+`hawk-daemon/src/core/color_math.rs`（hex/Lab/ΔE 纯函数）。
 
 ### 前端（hawk-app）
 
@@ -149,7 +149,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | `docs/backend/storage.md` | 库外缓存目录布局与 index.db 中的调色板存储 |
 | `docs/backend/server-rest-api-v1.md` | palette 字段与 color 参数 |
 | `docs/backend/server-code-structure.md` | 新文件职责与流水线变化 |
-| `hawk-server-rs` | `cargo test`：颜色纯函数（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色~100%、双色各半、全透明→空） |
+| `hawk-daemon` | `cargo test`：颜色纯函数（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色~100%、双色各半、全透明→空） |
 | `tools/smoke.sh` | 新增断言：add 纯色 PNG → detail 返回 palette → `color` 检索命中 / 相近色命中 / 无关色不命中 |
 
 ## 备选方案与取舍
@@ -160,7 +160,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | 调色板写入 metadata TOML | 违反「派生信息不入元数据」原则；参与同步会因算法版本差异制造冲突 |
 | RGB/HSV 距离 | RGB 感知不均匀；HSV 色相在低饱和度下不稳定（灰色会匹配到任意色相） |
 | 固定色相分桶 + 倒排索引 | 内存线性扫描已是毫秒级，无需索引结构；分桶还会把桶边界上的相近色错配 |
-| 手写 k-means/中位切分 | C# 版曾用 ImageSharp 自带 Wu 量化器（不重复造轮子）；Rust 生态无等质量化器，现手写 median-cut（v2），质量与 Wu 相当 |
+| 手写 k-means/中位切分 | Rust 生态无成熟 Wu 量化器实现，手写 median-cut（v2），质量与 Wu 相当 |
 
 ## 实施状态
 

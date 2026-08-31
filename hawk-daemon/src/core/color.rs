@@ -1,9 +1,8 @@
 //! 调色板提炼：降采样到 64px → 中位切分量化到 ≤10 色 → 像素占比统计。
 //! 提炼结果作为「内容的纯函数」写入素材元数据 TOML（参与同步，一台计算全平台复用）。
 //!
-//! 算法注记：C# 过渡版用 ImageSharp WuQuantizer（palette_version=1）；Wu 在 Rust 生态
-//! 没有成熟实现，按 color-search.md 的预设机制改用中位切分并 bump 到 v2，
-//! 旧结果视为未提炼，由后台 worker 一次性重提炼补齐。原理见 docs/backend/color-search.md。
+//! 算法注记：Wu 量化器在 Rust 生态没有成熟实现，按 color-search.md 的预设机制
+//! 采用中位切分（v2）。原理见 docs/backend/color-search.md。
 
 use crate::core::item::PaletteColor;
 
@@ -17,7 +16,6 @@ pub const ANALYSIS_SIZE: u32 = 64;
 const ALPHA_THRESHOLD: u8 = 128;
 
 /// 调色板算法版本：算法或参数变更时 +1，TOML 中的旧版本结果视为未提炼（触发重新提炼）。
-/// C# 版为 1（Wu），Rust 版为中位切分，bump 到 2
 pub const PALETTE_VERSION: i32 = 2;
 
 /// 从图像文件提炼调色板。源文件一般是已有的小尺寸缩略图，解码代价极低。
@@ -101,7 +99,7 @@ fn median_cut(pixels: &[[u8; 3]]) -> Vec<PaletteColor> {
                 bs += pixels[idx][2] as u64;
             }
             let n = bx.len() as u64;
-            // 占比：与 C# 同口径（0–100，保留 1 位小数，四舍五入）
+            // 占比：0–100，保留 1 位小数，四舍五入
             let percentage = (bx.len() as f64 * 1000.0 / total as f64).round() / 10.0;
             PaletteColor::from_rgb(
                 (rs / n) as u8,

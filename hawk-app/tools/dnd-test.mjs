@@ -56,15 +56,15 @@ writeFileSync(path.join(lib, 'red.png'), png([255, 0, 0]));
 writeFileSync(path.join(lib, 'green.png'), png([0, 255, 0]));
 writeFileSync(path.join(lib, 'blue.png'), png([0, 0, 255]));
 
-const exeName = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
+const exeName = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
 const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
-const targetDir = path.join(root, '..', 'hawk-server-rs', 'target');
+const targetDir = path.join(root, '..', 'hawk-daemon', 'target');
 const serverBin = [
   ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release', exeName)] : []),
   path.join(targetDir, 'release', exeName),
   path.join(targetDir, 'debug', exeName),
 ].find((p) => existsSync(p));
-if (!serverBin) throw new Error('未找到 hawk-server-rs 构建产物，请先 cargo build --release');
+if (!serverBin) throw new Error('未找到 hawk-daemon 构建产物，请先 cargo build --release');
 const server = spawn(serverBin, ['--library', lib, '--port', String(port)], {
   env: { ...process.env, HAWK_TOKEN: token },
   stdio: 'ignore',

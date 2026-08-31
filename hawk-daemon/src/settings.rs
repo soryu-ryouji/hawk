@@ -1,6 +1,5 @@
 //! 启动设置：素材库路径、监听端口、访问 token。
 //! 桌面版由 Electron 通过命令行 / 环境变量传入（见 docs/architecture.md）。
-//! 与 C# ServerSettings 语义一致。
 
 pub const DEFAULT_PORT: u16 = 27371;
 
@@ -46,7 +45,7 @@ impl Settings {
         let library = match library.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
             Some(l) => l,
             None => {
-                eprintln!("用法: hawk-server --library <素材库路径> [--port <端口>]");
+                eprintln!("用法: hawk-daemon --library <素材库路径> [--port <端口>]");
                 eprintln!("环境变量: HAWK_LIBRARY / HAWK_PORT / HAWK_TOKEN / HAWK_RESCAN_INTERVAL(对账扫描间隔秒,0 关闭,默认 60)");
                 std::process::exit(2);
             }

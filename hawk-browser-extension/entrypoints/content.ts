@@ -3,7 +3,7 @@
 //   1. 文件夹列表：投到某行存入对应文件夹；
 //   2. 「＋ 新建文件夹」投放区：把图片拖到上面 → 命名 → 创建文件夹并把图片存入；平时点击也可只建文件夹。
 // 投到左侧面板存入根目录；Esc 取消。
-// content script 只负责交互与转发，实际保存/查询/新建经消息交给 background（content script 直连 hawk-server 会受 CORS 限制）。
+// content script 只负责交互与转发，实际保存/查询/新建经消息交给 background（content script 直连 hawk-daemon 会受 CORS 限制）。
 import { browser } from 'wxt/browser';
 
 const SAVE_MESSAGE = 'hawk:save-image';

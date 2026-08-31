@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 局域网 web 查看的连接门页：浏览器直连 hawk-server 时无 Electron 注入的 token，
+// 局域网 web 查看的连接门页：浏览器直连 hawk-daemon 时无 Electron 注入的 token，
 // 先输入访问 token，验证通过后经 client.storeToken 记住（localStorage 按 api host 隔离），
 // 之后访问同一地址自动免输入直连。
 import { ref } from 'vue';

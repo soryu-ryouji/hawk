@@ -1,26 +1,26 @@
-# hawk-server-rs（Rust 实现）
+# hawk-daemon（Rust 实现）
 
 > 逐文件的代码职责见 [代码导读](server-code-structure.md)。
 > API 契约见 [REST API V1](server-rest-api-v1.md)，存储格式见 [storage.md](storage.md)。
 
-hawk-server 的 Rust 实现（`hawk-server-rs/`），已整体替换 C# 过渡版（后者已完成使命并从仓库移除）。
+hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 行为对齐基准 = OpenAPI schema + `.hawk/` 存储格式 + SSE 事件契约。
 
 ## 状态
 
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
-  CI（`release.yml`）全部使用本实现；C# 过渡版已完成使命并从仓库移除
+  CI（`release.yml`）全部使用本实现
 - **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描导入通道：并行哈希+单次解码产出派生+流式 apply/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
-  调色板（median-cut，palette_version=2）、SQLite 派生缓存（与 C# v1 schema 兼容）
-- **相对 C# 版的有意差异**（对项目更好，不逐字复刻；C# 版已移除，此处留档）：
-  - 宽高在入库时即持久化入 TOML（C# 只在内存更新，重启后靠扫描重新识别——与 storage.md 设计意图不符）
-  - `palette_version` 与标量同列于 `[[paths]]` 之前（C# 放在其后，TOML 语义上会被解析进 paths 表内，实际读不回来）
-  - 调色板算法为 median-cut（v2）；C# 的 Wu（v1）结果会被视为旧版本，由后台 worker 一次性重提炼
-  - 并发度高于 C# 版：哈希并行 `CPU-1`（封顶 24，C# 为 `CPU/2` 封顶 16），缩略图 worker `CPU/2` 封顶 12（C# 为 `CPU/4` 封顶 8 且 BelowNormal 优先级）——桌面端大批量导入/重建索引时吞吐优先，API 让出 1 核
+  调色板（median-cut，palette_version=2）、SQLite 派生缓存（schema v1）
+- **设计与实现要点**：
+  - 宽高在入库时即持久化入 TOML（与 storage.md 设计意图一致，重启无需靠扫描重新识别）
+  - `palette_version` 与标量同列于 `[[paths]]` 之前（置于其后会被解析进 paths 表内，读不回来）
+  - 调色板算法为 median-cut（v2）；旧版本结果由后台 worker 一次性重提炼
+  - 并发度：哈希并行 `CPU-1`（封顶 24），缩略图 worker `CPU/2` 封顶 12——桌面端大批量导入/重建索引时吞吐优先，API 让出 1 核
   - 查询路径不克隆完整 DTO：排序在轻量键上进行，`item/list` 只投影分页窗口、`item/skeleton` 只投影轻量骨架（大库下 skeleton 持锁时间降低一个量级，UI 重连重同步不再卡死读路径）
-  - 调色板回写按批冲刷（≥500 条或滞留 2s）：TOML 逐条落盘、SQLite 单事务、事件按批平滑补发——全库重提炼（v1→v2 迁移、缓存重建）时无 `item.updated` 洪峰
-  - 缩略图 worker 无界队列 + 周期对账自愈：C# 版「队列满静默丢弃」在批量入库时曾永久丢失 20%+ 素材的派生缓存（24k 库实测丢 5.6k）；Rust 版队列无界（任务 ~100B、in-flight 去重后内存有界），周期对账扫描 palette 缺失项并派发仅调色板任务补齐（缩略图不在对账中批量生成）
-  - **缩略图为惰性缓存**（对 C# 全量生成的有意差异）：入库/启动对账只生成调色板（颜色搜索依赖全量）；缩略图由读取端触发——`/item/thumbnail` 未命中时直接回源原图（浏览器可渲染格式）并后台入队生成，命中后返回 webp。首次查看零等待，未查看的素材零成本
+  - 调色板回写按批冲刷（≥500 条或滞留 2s）：TOML 逐条落盘、SQLite 单事务、事件按批平滑补发——全库重提炼（算法版本迁移、缓存重建）时无 `item.updated` 洪峰
+  - 缩略图 worker 无界队列 + 周期对账自愈：队列无界（任务 ~100B、in-flight 去重后内存有界），周期对账扫描 palette 缺失项并派发仅调色板任务补齐（缩略图不在对账中批量生成）
+  - **缩略图为惰性缓存**：入库/启动对账只生成调色板（颜色搜索依赖全量）；缩略图由读取端触发——`/item/thumbnail` 未命中时直接回源原图（浏览器可渲染格式）并后台入队生成，命中后返回 webp。首次查看零等待，未查看的素材零成本
   - 启动注水经 TOML 全量回退时上报进度（每 1000 文件一帧，phase=sync），大库首次启动启动屏有实时反馈
 
 ## 技术选型
@@ -33,21 +33,21 @@ hawk-server 的 Rust 实现（`hawk-server-rs/`），已整体替换 C# 过渡�
 | 哈希 | blake3 | item id = BLAKE3 hex（存储契约） |
 | 图像解码/缩放 | image 0.25 + fast_image_resize | Lanczos3 |
 | WebP 编码 | webp（libwebp） | 有损 q80；纯 Rust 的 image-webp 仅支持无损 |
-| 元数据缓存 | rusqlite（bundled） | DDL 沿袭 v1 schema，现有缓存直接可读 |
-| TOML | toml（解析）+ 手写序列化 | 输出格式与 v1 逐字对齐（含修正后的 palette_version 位置） |
+| 元数据缓存 | rusqlite（bundled） | schema v1，现有缓存直接可读 |
+| TOML | toml（解析）+ 手写序列化 | 输出格式精确可控（palette_version 位于 [[paths]] 之前） |
 
 ## 构建与运行
 
 ```bash
-cd hawk-server-rs
-cargo build --release          # 产物 target/release/hawk-server(.exe)
+cd hawk-daemon
+cargo build --release          # 产物 target/release/hawk-daemon(.exe)
 cargo test                     # 单元测试（纯函数：路径/颜色/TOML/ignore 匹配/BLAKE3 向量/调色板）
 ```
 
 运行协议：
 
 ```bash
-HAWK_TOKEN=<token> hawk-server --library <素材库路径> --port 27371 [--web-dist <dir>]
+HAWK_TOKEN=<token> hawk-daemon --library <素材库路径> --port 27371 [--web-dist <dir>]
 ```
 
 ## 测试
@@ -82,17 +82,17 @@ python3 tools/bench-scale.py --items 30000      # 大库全链路：启动→索
 
 ## 在 app 中使用
 
-Electron 主进程的开发态直接运行 `hawk-server-rs/target/release/hawk-server(.exe)`
-（release 缺失时回退 debug 构建）；`HAWK_SERVER_EXE` 环境变量可指向任意二进制覆盖。
+Electron 主进程的开发态直接运行 `hawk-daemon/target/release/hawk-daemon(.exe)`
+（release 缺失时回退 debug 构建）；`HAWK_DAEMON_EXE` 环境变量可指向任意二进制覆盖。
 打包与 CI 经 `scripts/build-server.mjs`（`cargo build --release`，RID 别名映射 rust target）。
 
 ## OpenAPI schema
 
-`/openapi/v1.json` 由 `hawk-server-rs/openapi.json` 静态文件服务（`include_str!` 固化）。
+`/openapi/v1.json` 由 `hawk-daemon/openapi.json` 静态文件服务（`include_str!` 固化）。
 schema 即契约（前端类型从它生成），不随后端实现漂移。
 若 API 变更：直接编辑 schema 文件，或改完后经运行中的服务回写：
 
 ```bash
 # 从运行中的服务抽取（servers 段归一到默认端口）
-curl -s http://127.0.0.1:<port>/openapi/v1.json | python -c "import json,sys; d=json.load(sys.stdin); d['servers']=[{'url':'http://127.0.0.1:27371/'}]; print(json.dumps(d, indent=2, ensure_ascii=False))" > hawk-server-rs/openapi.json
+curl -s http://127.0.0.1:<port>/openapi/v1.json | python -c "import json,sys; d=json.load(sys.stdin); d['servers']=[{'url':'http://127.0.0.1:27371/'}]; print(json.dumps(d, indent=2, ensure_ascii=False))" > hawk-daemon/openapi.json
 ```

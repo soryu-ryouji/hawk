@@ -11,8 +11,8 @@
 
 ## 后端
 
-Rust，见 [hawk-server-rs](backend/server-rust.md)（`hawk-server-rs/`，axum、notify、blake3、image + fast_image_resize、rusqlite）。
-已实现全部 API/存储/事件契约，为 app 唯一后端。首版 C# 过渡实现已验证 API 设计并完成使命，已从仓库移除。
+Rust，见 [hawk-daemon](backend/server-rust.md)（`hawk-daemon/`，axum、notify、blake3、image + fast_image_resize、rusqlite）。
+已实现全部 API/存储/事件契约，为 app 唯一后端。
 
 ## 前端与桌面壳：hawk-app/
 
@@ -24,6 +24,6 @@ Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），�
 
 ## 契约：OpenAPI
 
-- OpenAPI schema 固化于 `hawk-server-rs/openapi.json`，由后端静态服务（`/openapi/v1.json`）
+- OpenAPI schema 固化于 `hawk-daemon/openapi.json`，由后端静态服务（`/openapi/v1.json`）
 - TypeScript 类型从 schema 生成（如 openapi-typescript）
 - CI 校验 schema 与代码一致，防止前后端漂移

@@ -2,7 +2,7 @@
 //! 写入只发生在索引流水线(单写者),读取可来自任意 HTTP 线程。
 //! 读取纪律:HTTP 层一律走 get_dto / query / query_skeleton / find_location / main_source_abs /
 //! contains / count 等不可变快照与锁内投影;可变引用仅限流水线(经 with_item_mut)。
-//! 与 C# ItemIndex 语义一致(含排序稳定性:主键同值按 id 字典序打破平局)。
+//! 排序稳定:主键同值按 id 字典序打破平局。
 
 use crate::core::color_math::delta_e_squared;
 use crate::core::item::{Item, ItemDto, ItemLocation, ItemQuery, ItemSkeletonDto};
@@ -299,7 +299,7 @@ impl ItemIndex {
     }
 }
 
-/// 过滤（AND 语义，与 C# ItemIndex.FilterAndSort 的条件逐一对应）。返回引用，零克隆
+/// 过滤（AND 语义）。返回引用，零克隆
 fn filter_items<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<&'a Item> {
     let mut items: Vec<&Item> = inner
         .by_hash
@@ -398,7 +398,7 @@ fn main_size(item: &Item, trash_view: bool) -> i64 {
 
 /// 排序。主键同值时按 id 字典序打破平局：排序不稳定 + 两次独立查询（骨架/视口窗口）
 /// 的次序必须逐位一致，否则按 offset 取窗口会错位。
-/// desc 反转整个比较结果（含 id 平局），与 C# 版语义一致
+/// desc 反转整个比较结果（含 id 平局）
 fn sort_items<'a>(mut items: Vec<&'a Item>, q: &ItemQuery) -> Vec<&'a Item> {
     let desc = !q.order.as_deref().map(|o| o.eq_ignore_ascii_case("asc")).unwrap_or(false);
     match q.order_by.as_deref().unwrap_or("modification_time") {

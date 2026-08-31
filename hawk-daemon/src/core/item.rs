@@ -1,6 +1,6 @@
 //! 内存索引中的 item：位置列表 + 元数据副本 + 宽高派生信息。
 //! tags/star/annotation/url 以元数据为准，此处为查询用副本，由流水线单向同步。
-//! 与 C# Item.cs 语义一致（含回收站视图投影规则）。
+//! 含回收站视图投影规则。
 
 use crate::core::color_math::{rgb_to_lab, LabColor};
 use crate::core::metadata::ItemMetadata;

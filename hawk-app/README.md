@@ -6,15 +6,15 @@
 
 ```bash
 npm install            # 首次（electron 二进制镜像已配在 .npmrc）
-cargo build --release --manifest-path ../hawk-server-rs/Cargo.toml   # 后端二进制（Electron 开发态直接运行它）
-npm run gen:types      # 从 hawk-server 的 OpenAPI schema 生成 TS 类型（web/src/api/schema.d.ts）
+cargo build --release --manifest-path ../hawk-daemon/Cargo.toml   # 后端二进制（Electron 开发态直接运行它）
+npm run gen:types      # 从 hawk-daemon 的 OpenAPI schema 生成 TS 类型（web/src/api/schema.d.ts）
 npm run dev            # vite + electron 一键起（server 由 electron 拉起）
 npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_TOKEN 可纯浏览器调试
 npm run build          # vue-tsc --noEmit && vite build
 ```
 
-开发态后端二进制取 `hawk-server-rs/target/` 下的构建产物（本机 `release` 优先，其次 `--target` 交叉产物与 `debug`）；
-`HAWK_SERVER_EXE` 环境变量可指向任意二进制覆盖。
+开发态后端二进制取 `hawk-daemon/target/` 下的构建产物（本机 `release` 优先，其次 `--target` 交叉产物与 `debug`）；
+`HAWK_DAEMON_EXE` 环境变量可指向任意二进制覆盖。
 
 ## 测试
 
@@ -25,7 +25,7 @@ node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断
 ## 打包
 
 ```bash
-npm run pack      # 一条命令：build 前端 + cargo build --release 产出当前平台 hawk-server 单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
+npm run pack      # 一条命令：build 前端 + cargo build --release 产出当前平台 hawk-daemon 单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
 npm run pack:dir  # 同上但 --dir：只出未打包目录（win-unpacked / hawk.app），跳过 zip 压缩（install 脚本与本地快速验证用）
 ```
 

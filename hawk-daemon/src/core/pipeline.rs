@@ -2,7 +2,7 @@
 //! 哈希与元数据迁移在消费者内完成;扫描导入的派生数据(调色板/缩略图/宽高)由并行哈希阶段
 //! 单次解码产出、随入库持久化;增量路径的派生补全在 ThumbnailWorker 后台线程,不阻塞索引。
 //! 索引与元数据的所有变更只发生在这里,处理逻辑保证幂等(重复事件无害)。
-//! 与 C# IndexPipeline 语义一致；改进:宽高在入库即持久化入 TOML（C# 仅在内存更新），
+//! 宽高在入库即持久化入 TOML，
 //! 且首扫边哈希边入库(流式 apply + items.added 批量事件),不再「全库哈希完才出图」。
 
 use crate::core::color::{self, PALETTE_VERSION};
@@ -31,7 +31,7 @@ use tokio::sync::oneshot;
 /// item/add 的处理结果:索引后的 item 投影与「内容是否已存在」标志
 pub struct UpsertResult {
     pub item: ItemDto,
-    /// 内容是否已存在；item/add 以「写入前」预计算为准（与 C# 同语义），此字段供其他调用方使用
+    /// 内容是否已存在；item/add 以「写入前」预计算为准，此字段供其他调用方使用
     #[allow(dead_code)]
     pub already_existed: bool,
 }
@@ -1264,7 +1264,7 @@ fn apply_upsert(
     let created = ctx.index.get_or_add(hash);
     ctx.index.with_item_mut(hash, |item| item.sync_from(&meta));
 
-    // 宽高持久化入 TOML（C# 仅在内存更新；此处按 storage.md 的设计意图落盘）
+    // 宽高持久化入 TOML（按 storage.md 的设计意图落盘）
     let mut dim_persisted = false;
     let needs_dim = ctx.index.with_item_mut(hash, |item| item.width == 0).unwrap_or(false);
     if needs_dim {

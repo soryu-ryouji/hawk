@@ -140,7 +140,7 @@ port = 27372
 token = ""           # 查看者 token;浏览器打开 http://<电脑IP>:<port> 后输入,仅可浏览
 ```
 
-`[web]` 的读取热更（文件监听 Reload），但**端口/绑定/token 的生效需重启监听**——保存后由桌面端重启 hawk-server。viewer token 通过时写端点一律 `403 READ_ONLY`（放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）。
+`[web]` 的读取热更（文件监听 Reload），但**端口/绑定/token 的生效需重启监听**——保存后由桌面端重启 hawk-daemon。viewer token 通过时写端点一律 `403 READ_ONLY`（放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）。
 
 全局配置文件位于 `~/.config/hawk/config.toml`，只存放跨项目的全局设置（目前没有全局配置项）。
 

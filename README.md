@@ -20,7 +20,7 @@
 ## 路线图
 
 - 1.0 版本
-  - 使用 Rust 重写服务器代码，减小程序体积，提高资源吞吐效率和内存安全性（已完成并替换 C# 版，见 [hawk-server-rs](docs/backend/server-rust.md)）
+  - 后端使用 Rust 实现，减小程序体积，提高资源吞吐效率和内存安全性（见 [hawk-daemon](docs/backend/server-rust.md)）
   - 完成 Windows, MacOS 桌面客户端
   - 完成 Chrome, Firefox, Safari 浏览器插件
   - 完成 web 资源查看器：局域网内通过浏览器访问素材库（设置面板按库配置开关/端口/token，只读查看）；后续拓展 ios, android 查看器
@@ -95,10 +95,10 @@ cd hawk
 
 - [hawk-app 设计](docs/frontend/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
 
-**后端（hawk-server-rs/）**
+**后端（hawk-daemon/）**
 
-- [hawk-server-rs（Rust 实现）](docs/backend/server-rust.md)：Rust 版实现细节、调试与压测方法
-- [hawk-server 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
+- [hawk-daemon（Rust 实现）](docs/backend/server-rust.md)：Rust 版实现细节、调试与压测方法
+- [hawk-daemon 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
 - [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配

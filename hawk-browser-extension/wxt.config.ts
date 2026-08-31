@@ -9,7 +9,7 @@ export default defineConfig({
     name: 'hawk 图片收集',
     description: '保存网页图片到 hawk 素材库',
     permissions: ['contextMenus', 'storage', 'notifications'],
-    // 只直连本机 hawk-server；扩展后台请求不受 CORS 限制
+    // 只直连本机 hawk-daemon；扩展后台请求不受 CORS 限制
     host_permissions: ['http://127.0.0.1:27371/*', 'http://localhost:27371/*'],
     icons: {
       16: '/icons/16.png',

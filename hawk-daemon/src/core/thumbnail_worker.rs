@@ -7,7 +7,6 @@
 //! - 调色板任务：增量入库/启动对账派发（needs_palette_work），只提炼调色板——
 //!   扫描导入已在并行哈希阶段单次解码产出调色板+缩略图（见 pipeline.rs），
 //!   此任务兜底增量路径与解码失败自愈；颜色搜索依赖全量 palette，必须即时
-//! 与 C# ThumbnailWorker 语义不同（C# 为全量生成）。
 
 use crate::core::color;
 use crate::core::config::LibraryConfig;
@@ -208,7 +207,7 @@ fn process_job(
     // 调色板优先从最小尺寸的已有缩略图提炼（解码代价小）；缩略图尚未生成
     // （惰性首访前、仅调色板任务）时直接解码原图——内容寻址保证同一内容，提炼结果一致。
     // 提炼结果(含空数组负缓存)经 PaletteJob 写入元数据 TOML——内容的纯函数，全平台复用。
-    // 缩略图生成失败但已有任一尺寸缩略图时也照常提炼（与 C# 行为一致：取最小已有）
+    // 缩略图生成失败但已有任一尺寸缩略图时也照常提炼（取最小已有尺寸）
     if need_palette {
         let mut all_sizes = config.current().thumbnail_sizes;
         all_sizes.sort();

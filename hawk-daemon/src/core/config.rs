@@ -1,5 +1,5 @@
 //! 项目配置（.hawk/config.toml）。由文件监听触发 Reload，索引流水线在配置变更后全量比对。
-//! 与 C# LibraryConfig 语义一致：ignore 模式无 "/" 时匹配任意深度同名项；Matcher 默认序数忽略大小写。
+//! 库配置：ignore 模式无 "/" 时匹配任意深度同名项；Matcher 默认序数忽略大小写。
 
 use crate::core::paths::LibraryPaths;
 use std::sync::RwLock;

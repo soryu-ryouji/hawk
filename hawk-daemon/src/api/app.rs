@@ -1,5 +1,5 @@
 //! app 端点：health / startup / status / info / token。
-//! 与 C# AppEndpoints 语义一致（启动握手、积压快照、token 发现的 Host 环回约束）。
+//! App 端点：启动握手、积压快照、token 发现的 Host 环回约束。
 
 use crate::api::envelope::{ApiError, Envelope};
 use crate::api::{AccessLevel, SharedState};

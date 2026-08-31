@@ -1,5 +1,5 @@
 //! 缩略图服务：解码（image crate）+ 缩放（fast_image_resize）+ 有损 WebP 编码
-//! （webp/libwebp，quality 80，与 C# ImageSharp WebpEncoder 对齐）。
+//! （webp/libwebp，quality 80）。
 //! 存储于库外缓存目录（<系统缓存>/hawk/cache/<库标识>/thumbnails/<size>/<hash>.webp），本地缓存可重建。
 //!
 //! 生成策略：
@@ -9,7 +9,7 @@
 //! - 读取端 /item/thumbnail 未命中时回源原图并派发后台生成（thumbnail_worker）兜底
 //! - 不可渲染格式（tiff 等）必须生成缩略图转换，否则 <img> 无法显示
 //!
-//! 共享读打开、不放大小图、按尺寸跳过等语义与 C# ThumbnailService 一致。
+//! 共享读打开、不放大小图、按尺寸跳过。
 
 use fast_image_resize as fr;
 use std::sync::Arc;

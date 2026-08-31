@@ -1,4 +1,4 @@
-// 后台：右键菜单「保存图片到 hawk」入口，负责与 hawk-server 通信并反馈结果。
+// 后台：右键菜单「保存图片到 hawk」入口，负责与 hawk-daemon 通信并反馈结果。
 // MV3 下 contextMenus 须在 onInstalled 里创建，避免 service worker 重启后重复注册。
 import { browser } from 'wxt/browser';
 import { addItemByBase64, addItemByUrl, createFolder, fetchFolderList } from '../lib/api';

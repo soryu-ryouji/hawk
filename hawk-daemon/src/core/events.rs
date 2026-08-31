@@ -1,6 +1,6 @@
 //! SSE 事件总线。订阅者各自持有有界广播通道；订阅者消费跟不上时断开其订阅
 //! （前端重连后通过 item/skeleton + folder/list 全量对齐）。
-//! 与 C# EventBus 语义一致（积压 1024 条断开）。
+//! 事件总线（订阅者积压 1024 条时断开）。
 
 use serde_json::Value;
 use tokio::sync::broadcast;

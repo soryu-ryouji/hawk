@@ -1,7 +1,7 @@
-// hawk-server REST 客户端：Bearer 鉴权 + Envelope 解包。
+// hawk-daemon REST 客户端：Bearer 鉴权 + Envelope 解包。
 // 请求一律从 background 发起（配合 host_permissions，不受页面 CORS 限制）。
 //
-// Token 自动发现：hawk-server 提供免鉴权端点 GET /api/v1/app/token，但响应不带 CORS 头
+// Token 自动发现：hawk-daemon 提供免鉴权端点 GET /api/v1/app/token，但响应不带 CORS 头
 // 且 Host 限定环回地址，跨源网页 JS 读不到，只有持 host_permissions 的扩展能读——
 // 因此插件无需手动填写 Token；设置里的 Token 仅作手动覆盖（如连接非本机服务）。
 import { getSettings } from './settings';
@@ -18,11 +18,11 @@ const DISCOVERY_TTL = 60_000;
 async function fetchEnvelope<T>(serverUrl: string, path: string): Promise<T> {
   const res = await fetch(`${serverUrl}${path}`);
   if (!res.ok) {
-    throw new Error(`hawk-server 响应 ${res.status}`);
+    throw new Error(`hawk-daemon 响应 ${res.status}`);
   }
   const envelope = (await res.json()) as Envelope<T>;
   if (envelope.status !== 'success') {
-    throw new Error('hawk-server 返回错误');
+    throw new Error('hawk-daemon 返回错误');
   }
   return envelope.data;
 }
@@ -60,11 +60,11 @@ async function request<T>(method: string, path: string, body?: unknown, retried 
     return request<T>(method, path, body, true);
   }
   if (!res.ok) {
-    throw new Error(`hawk-server 响应 ${res.status}`);
+    throw new Error(`hawk-daemon 响应 ${res.status}`);
   }
   const envelope = (await res.json()) as Envelope<T>;
   if (envelope.status !== 'success') {
-    throw new Error('hawk-server 返回错误');
+    throw new Error('hawk-daemon 返回错误');
   }
   return envelope.data;
 }

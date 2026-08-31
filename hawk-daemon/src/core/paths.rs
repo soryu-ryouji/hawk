@@ -2,7 +2,7 @@
 //! 索引与 API 层统一使用正斜杠相对路径（相对素材库根目录），如 "posters/2024/cat.jpg"。
 //! 缩略图/元数据缓存是内容寻址的派生缓存，位于库外系统缓存目录，避免库在 iCloud/Dropbox
 //! 等同步盘时 .hawk/ 膨胀拖累同步。
-//! 与 C# LibraryPaths 语义一致（含缓存目录命名：库文件夹名_<根路径 SHA-256 前16位>）。
+//! 库内路径布局（含缓存目录命名：库文件夹名_<根路径 SHA-256 前16位>）。
 
 use sha2::{Digest, Sha256};
 
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn library_key_is_sha256_prefix() {
-        // 与 C# 行为对齐：对根路径字符串做 SHA-256，取前 16 位小写 hex
+        // 对根路径字符串做 SHA-256，取前 16 位小写 hex
         assert_eq!(library_key("/data/library").len(), 16);
     }
 }

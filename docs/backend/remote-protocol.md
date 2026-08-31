@@ -290,7 +290,7 @@ UDP 被网络封锁时使用。双方以 TCP 连接中继，数据以 2 字节�
 ## 数据面（QUIC 隧道）
 
 - 双方 QUIC 连接（quinn），自签名证书，对端身份 = 信令交换的指纹钉扎（TOFU）。证书轮换走 `PATCH /devices/{id}` 更新指纹：新指纹立即生效，旧证书会话失效
-- A 侧隧道端：将隧道内收到的 HTTP 请求转发到 `127.0.0.1:27371`，注入 `Authorization: Bearer <远端只读 token>`（hawk-server 启动时经 env 注入的第三种 token，只读级别）
+- A 侧隧道端：将隧道内收到的 HTTP 请求转发到 `127.0.0.1:27371`，注入 `Authorization: Bearer <远端只读 token>`（hawk-daemon 启动时经 env 注入的第三种 token，只读级别）
 - B 侧本地代理：监听 `127.0.0.1:27374`，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口与 token 由 B 侧 remote 模块本地生成，web 查看器 URL 由客户端拼装，不经过信令服务
 - 隧道默认端口：A 侧 QUIC UDP 27373（UPnP 映射目标）；均可配置
 

@@ -1,14 +1,9 @@
 [package]
-name = "hawk-server-rs"
+name = "hawk-daemon"
 version = "1.0.0"
 edition = "2021"
-description = "hawk 素材管理后端（Rust 实现，替换 C# 过渡版）"
+description = "hawk 素材管理后端"
 license = "AGPL-3.0-only"
-
-# 二进制名保持 hawk-server（与 C# 版及 app 集成路径一致）
-[[bin]]
-name = "hawk-server"
-path = "src/main.rs"
 
 [dependencies]
 axum = "0.8"

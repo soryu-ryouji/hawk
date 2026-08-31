@@ -19,11 +19,11 @@ export class ApiError extends Error {
   }
 }
 
-/** 解析连接参数；都缺时返回 null（启动失败态）。浏览器直连 hawk-server（局域网 web 查看）时无显式参数，回退同源 */
+/** 解析连接参数；都缺时返回 null（启动失败态）。浏览器直连 hawk-daemon（局域网 web 查看）时无显式参数，回退同源 */
 export function initApi(): ApiConfig | null {
   const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
   const search = new URLSearchParams(location.search);
-  // Electron 壳必须经 hash 注入（dev 也可用 VITE_HAWK_API）；纯浏览器则假定页面由 hawk-server 托管（同源）
+  // Electron 壳必须经 hash 注入（dev 也可用 VITE_HAWK_API）；纯浏览器则假定页面由 hawk-daemon 托管（同源）
   const api =
     hash.get('api') ||
     (import.meta.env.VITE_HAWK_API as string | undefined) ||
@@ -93,7 +93,7 @@ export async function request<T>(
       body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
   } catch {
-    throw new ApiError('NETWORK', '无法连接 hawk-server', 0);
+    throw new ApiError('NETWORK', '无法连接 hawk-daemon', 0);
   }
 
   const envelope = (await res.json().catch(() => null)) as {

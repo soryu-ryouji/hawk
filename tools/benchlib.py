@@ -1,4 +1,4 @@
-"""压测公共库：hawk-server 生命周期、素材生成/采样、指标采集。
+"""压测公共库：hawk-daemon 生命周期、素材生成/采样、指标采集。
 
 被 bench-startup / bench-ingest / bench-images / bench-scale 共用。
 所有脚本输出 JSON（带 git SHA 与时间戳），改代码前后各跑一次即可对比。
@@ -23,18 +23,18 @@ RUST_TARGET = {"win32": "x86_64-pc-windows-msvc", "darwin": "aarch64-apple-darwi
 
 
 def find_server_bin():
-    exe = "hawk-server.exe" if sys.platform == "win32" else "hawk-server"
+    exe = "hawk-daemon.exe" if sys.platform == "win32" else "hawk-daemon"
     triple = RUST_TARGET.get(sys.platform)
     candidates = []
     if triple:
-        candidates.append(os.path.join(REPO, "hawk-server-rs", "target", triple, "release", exe))
+        candidates.append(os.path.join(REPO, "hawk-daemon", "target", triple, "release", exe))
     candidates += [
-        os.path.join(REPO, "hawk-server-rs", "target", "release", exe),
-        os.path.join(REPO, "hawk-server-rs", "target", "debug", exe),
+        os.path.join(REPO, "hawk-daemon", "target", "release", exe),
+        os.path.join(REPO, "hawk-daemon", "target", "debug", exe),
     ]
     existing = [c for c in candidates if os.path.exists(c)]
     if not existing:
-        raise SystemExit("未找到 hawk-server 构建产物，请先 cargo build --release")
+        raise SystemExit("未找到 hawk-daemon 构建产物，请先 cargo build --release")
     # 同名产物可能同时存在（cargo build 与 build-server.mjs 输出位置不同），取最新修改的
     return max(existing, key=os.path.getmtime)
 
@@ -77,7 +77,7 @@ def report(name, metrics):
 
 
 class Server:
-    """hawk-server 子进程生命周期 + API 客户端 + 资源采样"""
+    """hawk-daemon 子进程生命周期 + API 客户端 + 资源采样"""
 
     def __init__(self, lib_dir, port=None, token="bench-token", stdout=subprocess.DEVNULL):
         self.lib_dir = os.path.abspath(lib_dir)
@@ -110,7 +110,7 @@ class Server:
             except Exception:
                 pass
             if self.proc.poll() is not None:
-                raise SystemExit(f"hawk-server 过早退出（code {self.proc.returncode}）")
+                raise SystemExit(f"hawk-daemon 过早退出（code {self.proc.returncode}）")
             if time.perf_counter() - t0 > timeout_s:
                 raise SystemExit(f"启动超时（{timeout_s}s）")
             time.sleep(0.2)

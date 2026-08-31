@@ -1,6 +1,6 @@
 //! 视图偏好注册表（.hawk/view.toml，参与同步）：记住文件夹/分类/标签视图各自的排序方式。
 //! 扁平 map（scope 键 folder:<路径>/category:<名>/tag:<名>），不理解继承语义（前端沿父链解析）。
-//! 与 C# ViewPreferences 语义一致（含 RenamePrefix/DeletePrefix 跟随目录移动/删除）。
+//! 视图偏好（含 RenamePrefix/DeletePrefix 跟随目录移动/删除）。
 
 use crate::core::metadata::toml_string;
 use crate::core::paths::LibraryPaths;

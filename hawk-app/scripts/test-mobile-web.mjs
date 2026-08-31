@@ -1,6 +1,6 @@
 // 移动端网页冒烟测试：npm run test:mobile
 // 覆盖局域网手机浏览器全链路（无 hawkShell 的轮询启动路径，桌面 IPC 路径之外的另一半）：
-//   生成临时素材库（含全景/竖图，顺便校验齐行布局不横向溢出）→ 拉起 hawk-server 托管 web/dist
+//   生成临时素材库（含全景/竖图，顺便校验齐行布局不横向溢出）→ 拉起 hawk-daemon 托管 web/dist
 //   → 以无 preload 的 Electron 窗口模拟手机浏览器（390×844）→ 断言：
 //   启动屏出现 → 轮询就绪进入主界面（卡在启动屏即失败，正是 2026-08 回归的故障模式）
 //   → 网格渲染且无横向溢出 → 窄屏顶栏：排序/筛选收进溢出菜单、搜索退化为按钮并可点开浮层
@@ -86,13 +86,13 @@ function seedLibrary(dir) {
 }
 
 function resolveServer() {
-  if (process.env.HAWK_SERVER_EXE) {
-    return { command: process.env.HAWK_SERVER_EXE, args: [] };
+  if (process.env.HAWK_DAEMON_EXE) {
+    return { command: process.env.HAWK_DAEMON_EXE, args: [] };
   }
   // 与 electron/main.cjs resolveServerCommand 同优先级：本机 target/release → target/<triple>/release → debug
-  const exe = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
+  const exe = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
   const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
-  const targetDir = path.resolve(root, '..', 'hawk-server-rs', 'target');
+  const targetDir = path.resolve(root, '..', 'hawk-daemon', 'target');
   const candidates = [
     ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release', exe)] : []),
     path.join(targetDir, 'release', exe),
@@ -124,7 +124,7 @@ async function waitForHealth(port, deadlineMs) {
     } catch {
       // 未监听，继续等
     }
-    if (Date.now() - t0 > deadlineMs) throw new Error('hawk-server /health 等待超时');
+    if (Date.now() - t0 > deadlineMs) throw new Error('hawk-daemon /health 等待超时');
     await wait(200);
   }
 }
@@ -153,7 +153,7 @@ try {
   seedLibrary(libDir);
   const serverCmd = resolveServer();
   if (!serverCmd) {
-    throw new Error('未找到 hawk-server-rs 构建产物（先 cargo build --release，或设置 HAWK_SERVER_EXE）');
+    throw new Error('未找到 hawk-daemon 构建产物（先 cargo build --release，或设置 HAWK_DAEMON_EXE）');
   }
   const token = crypto.randomBytes(32).toString('hex');
   const port = await probeFreePort();

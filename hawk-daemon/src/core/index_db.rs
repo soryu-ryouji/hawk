@@ -1,7 +1,7 @@
 //! 元数据的本地 SQLite 派生缓存（库外缓存目录 index.db）。
 //! .hawk/metadata/*.toml 是唯一权威数据源；本库只是本机加速器，对账只进不出。
 //! 任何故障（打不开/写失败/读失败）只退化性能：回到纯 TOML 行为，绝不影响权威数据。
-//! schema v1 与 C# 版逐字一致（现有缓存直接可读）；journal_mode=DELETE 不产生 -wal/-shm。
+//! schema v1（现有缓存直接可读）；journal_mode=DELETE 不产生 -wal/-shm。
 
 use crate::core::metadata::{ItemMetadata, PaletteEntry};
 use rusqlite::{Connection, OptionalExtension};

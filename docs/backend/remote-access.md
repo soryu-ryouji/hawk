@@ -31,7 +31,7 @@
 ┌────────────────┴───────────┐    ┌─────────────┴──────────────────┐
 │ 设备 A（素材库所在机）        │    │ 设备 B（查看方）                  │
 │ hawk-app                    │    │ hawk-app                        │
-│  ├ hawk-server（环回）       │    │  ├ hawk-server（环回）           │
+│  ├ hawk-daemon（环回）       │    │  ├ hawk-daemon（环回）           │
 │  └ remote 模块              │◄──►│  └ remote 模块                  │
 │     · 心跳 / UPnP 端口映射   │    │     · 设备列表 / 发起会话          │
 │     · QUIC 隧道端 → 127.0.0.1│    │     · 本地代理 127.0.0.1:27374  │
@@ -47,9 +47,9 @@
 - v1 一个仓库两个二进制：`account-server`（账户+信令）与 `relay-server`（中继）；中继以后按节点扩展部署，不需要拆仓库
 - 账户服务与中继节点之间通过内网 + 共享密钥通信（用量上报、票据密钥分发）
 
-### hawk-server remote 模块（feature 门控，随 AGPL 开源）
+### hawk-daemon remote 模块（feature 门控，随 AGPL 开源）
 
-客户端侧全部能力，编译进 hawk-server 二进制，由 `remote` Cargo feature 门控（默认关闭）：
+客户端侧全部能力，编译进 hawk-daemon 二进制，由 `remote` Cargo feature 门控（默认关闭）：
 
 - 信令客户端：设备注册、周期心跳、WSS 控制通道
 - 可达性：UPnP/NAT-PMP 端口映射（igd），公网 IP 探测
@@ -68,7 +68,7 @@
 
 避免"先 TCP 直连、后为中继/打洞重写隧道"的返工。QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定。中继只逐包转发加密数据报，看不到素材内容；中继被攻破也无数据泄露。
 
-**2. 远程访问对 hawk-server 本体零侵入**
+**2. 远程访问对 hawk-daemon 本体零侵入**
 
 A 侧隧道端接 127.0.0.1:27371，复用现有 REST API 与 web 查看器，OpenAPI 契约、SSE、缩略图端点全部原样可用。鉴权上 A 侧隧道端向环回请求注入"远端只读 token"（启动时经 env 传入的第三种 token，只读级别）——查看方 B 全程不接触任何 token，云端也接触不到。远程访问不要求启用 `[web]` 局域网配置，两者相互独立。
 
@@ -133,10 +133,10 @@ B 发起会话（mode=relay）
 
 | 位置                            | 改动                                                                                |
 | ------------------------------- | ----------------------------------------------------------------------------------- |
-| `hawk-server-rs/Cargo.toml`     | `remote` feature（默认 off）；依赖 quinn、igd 等仅在 feature 下引入                 |
-| `hawk-server-rs/src/remote/`    | 新模块：信令客户端 / WSS 通道 / UPnP / QUIC 隧道端 / 中继客户端 / 本地代理          |
-| `hawk-server-rs/src/api/mod.rs` | 鉴权中间件增加第三种 token 源（env 传入的远端只读 token，viewer 级别）              |
-| `hawk-server-rs/src/api/app.rs` | `app/info` 增加 `remote_supported`                                                  |
+| `hawk-daemon/Cargo.toml`     | `remote` feature（默认 off）；依赖 quinn、igd 等仅在 feature 下引入                 |
+| `hawk-daemon/src/remote/`    | 新模块：信令客户端 / WSS 通道 / UPnP / QUIC 隧道端 / 中继客户端 / 本地代理          |
+| `hawk-daemon/src/api/mod.rs` | 鉴权中间件增加第三种 token 源（env 传入的远端只读 token，viewer 级别）              |
+| `hawk-daemon/src/api/app.rs` | `app/info` 增加 `remote_supported`                                                  |
 | `hawk-app/src/remote/`          | 接入配置（URL + KEY）/ 设备列表 / 连接流程 / 错误提示 UI，构建期 `HAWK_REMOTE` 门控 |
 | `hawk-app` 主进程               | 传信令地址与访问密钥；打开查看器时拼会话 token URL                                  |
 | `.hawk/remote/`                 | 本地专用凭据目录（访问密钥、device_id、自签名证书、远端只读 token），不参与同步     |

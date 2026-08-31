@@ -106,7 +106,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `GET /api/v1/app/info`
 
-获取当前 hawk-server 的运行信息，可用于判断客户端环境能力。
+获取当前 hawk-daemon 的运行信息，可用于判断客户端环境能力。
 
 #### 响应
 
@@ -116,7 +116,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
   "data": {
     "version": "1.0.0",
     "platform": "windows",
-    "exec_path": "C:/Tools/hawk/hawk-server.exe",
+    "exec_path": "C:/Tools/hawk/hawk-daemon.exe",
     "access": "admin"
   }
 }
@@ -156,7 +156,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 ## library
 
-hawk-server 单实例对应单个素材库。
+hawk-daemon 单实例对应单个素材库。
 
 | 方法 | 端点                      | 说明               |
 | ---- | ------------------------- | ------------------ |

@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld('hawkShell', {
   copyImage: (relPath) => ipcRenderer.invoke('hawk:copy-image', relPath),
   /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
   getLanSettings: () => ipcRenderer.invoke('hawk:get-lan-settings'),
-  /** 保存 [web] 配置并重启 hawk-server（失败自动回滚），返回 { ok, error? }；重启后 onServerStarted 带新地址到达 */
+  /** 保存 [web] 配置并重启 hawk-daemon（失败自动回滚），返回 { ok, error? }；重启后 onServerStarted 带新地址到达 */
   saveLanSettings: (web) => ipcRenderer.invoke('hawk:save-lan-settings', web),
   /** 真正退出应用（启动错误屏用；区别于 closeWindow 的隐藏到托盘） */
   quitApp: () => ipcRenderer.invoke('hawk:quit-app'),

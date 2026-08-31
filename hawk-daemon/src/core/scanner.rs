@@ -1,6 +1,5 @@
 //! 素材目录遍历。只读目录项信息，不读文件内容。
 //! 跳过 .hawk/ 内部（回收站 .hawk/trash/ 除外），库内子树应用 config.toml 的 ignore 规则。
-//! 与 C# LibraryScanner 语义一致。
 
 use crate::core::config::LibraryConfig;
 use crate::core::paths::{unix_ms, LibraryPaths};

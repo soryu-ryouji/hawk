@@ -8,5 +8,5 @@
 /out/
 
 # Rust 后端构建产物
-hawk-server-rs/target/
+hawk-daemon/target/
 /tools/.tmp/

@@ -1,6 +1,5 @@
 //! 分类/标签维度：名称校验、注册表（.hawk/categories.toml、.hawk/tags.toml，原子写）、
 //! 级联迁移器（全库批迁移，只被索引流水线消费循环调用）。
-//! 与 C# Taxonomy.cs / TaxonomyMigrator.cs 语义一致。
 
 use crate::core::events::EventBus;
 use crate::core::index::ItemIndex;
@@ -19,7 +18,7 @@ pub fn normalize_category_name(raw: Option<&str>) -> Option<String> {
     Some(name.to_string())
 }
 
-/// 注册表文件读写：固定 schema（key = [字符串数组]），原子写。与 C# TaxonomyFile 输出逐字一致
+/// 注册表文件读写：固定 schema（key = [字符串数组]），原子写
 fn load_registry(file: &str, key: &str) -> Vec<String> {
     let text = match std::fs::read_to_string(file) {
         Ok(t) => t,

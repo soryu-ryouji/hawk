@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hawk-server 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程（契约测试）。
+# hawk-daemon 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程（契约测试）。
 # 用法: tools/smoke.sh（需先 cargo build --release）
 #
 # Windows Git Bash 注意：curl 是原生 Windows 程序，argv 中的中文会被 MSYS2
@@ -14,7 +14,7 @@ PORT=27399
 TOKEN="smoke-test-token"
 BASE="http://127.0.0.1:$PORT"
 AUTH="Authorization: Bearer $TOKEN"
-SERVER=("$PWD/hawk-server-rs/target/release/hawk-server.exe")
+SERVER=("$PWD/hawk-daemon/target/release/hawk-daemon.exe")
 if [[ ! -x "${SERVER[0]}" ]]; then
   echo "server 二进制不存在，请先 cargo build --release: ${SERVER[0]}"; exit 2
 fi

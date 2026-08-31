@@ -1,5 +1,5 @@
 # electron-builder 配置。npm run pack 会先执行 build:server（scripts/build-server.mjs，cargo build --release）
-# 产出当前平台的 hawk-server 二进制（Rust）。
+# 产出当前平台的 hawk-daemon 二进制（Rust）。
 appId: com.hawk.app
 productName: hawk
 # 产物固定为 hawk.exe / hawk.app（目录）/ hawk.AppImage，不带版本号
@@ -17,10 +17,10 @@ files:
   # 窗口/托盘图标（512px 源图，运行时按平台重采样）
   - build/icon.png
 extraResources:
-  # 各平台 hawk-server 二进制（cargo build --release，见 scripts/build-server.mjs）
-  - from: resources/hawk-server
-    to: hawk-server
-# LAN web 查看：hawk-server 以物理路径托管该目录（asar 内 Kestrel 读不到）
+  # 各平台 hawk-daemon 二进制（cargo build --release，见 scripts/build-server.mjs）
+  - from: resources/hawk-daemon
+    to: hawk-daemon
+# LAN web 查看：hawk-daemon 以物理路径托管该目录（asar 归档内不可读取）
 asarUnpack:
   - web/dist/**/*
 mac:
