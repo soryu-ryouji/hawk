@@ -149,7 +149,9 @@ async fn info(
 
 /// Token 发现：浏览器插件零配置接入。
 /// 安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；
-/// Host 限定环回地址（防 DNS rebinding 伪装同源读取）
+/// Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
+/// 注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
+/// remote 模块的隧道端必须拒绝转发本端点并改写 Host（见 docs/backend/remote-protocol.md 数据面）
 async fn token(
     State(state): State<SharedState>,
     req: axum::extract::Request,
