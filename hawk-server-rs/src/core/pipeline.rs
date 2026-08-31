@@ -1,8 +1,9 @@
 //! 索引流水线:监听事件 / 扫描 / API 写操作全部经有界队列串行处理(单写者)，
-//! 哈希与元数据迁移在消费者内完成;缩略图生成在 ThumbnailWorker 后台线程,不阻塞索引。
+//! 哈希与元数据迁移在消费者内完成;扫描导入的派生数据(调色板/缩略图/宽高)由并行哈希阶段
+//! 单次解码产出、随入库持久化;增量路径的派生补全在 ThumbnailWorker 后台线程,不阻塞索引。
 //! 索引与元数据的所有变更只发生在这里,处理逻辑保证幂等(重复事件无害)。
-//! 与 C# IndexPipeline 语义一致；一处改进:宽高在入库即持久化入 TOML
-//! （C# 仅在内存更新，重启后依赖扫描重新识别）。
+//! 与 C# IndexPipeline 语义一致；改进:宽高在入库即持久化入 TOML（C# 仅在内存更新），
+//! 且首扫边哈希边入库(流式 apply + items.added 批量事件),不再「全库哈希完才出图」。
 
 use crate::core::color::{self, PALETTE_VERSION};
 use crate::core::color_math;
@@ -56,6 +57,11 @@ const STABILITY_WINDOW_MS: i64 = 1000;
 const PALETTE_BATCH: usize = 500;
 /// 调色板批量回写的时间冲刷阈值：滞留超时时即使未达批大小也冲刷
 const PALETTE_FLUSH_AFTER: Duration = Duration::from_millis(2000);
+/// items.added 批量事件合并窗口：距首条暂存超该值即冲刷
+/// （apply 是单线程连续循环，逐条查时钟即可，无需定时器）
+const ADDED_BATCH_AFTER: Duration = Duration::from_millis(300);
+/// items.added 批量事件条数上限：达到立即冲刷，约束单条 SSE 负载
+const ADDED_BATCH_MAX: usize = 2000;
 
 type Reply<T> = Option<oneshot::Sender<T>>;
 
@@ -184,6 +190,8 @@ struct PendingUpsert {
     reused_hash: Option<String>,
     hash: Option<String>,
     dim: Option<(i32, i32)>,
+    /// 扫描并行阶段单次解码提炼的调色板（含空数组负缓存）；增量路径为 None
+    palette: Option<Vec<PaletteColor>>,
 }
 
 impl IndexPipeline {
@@ -868,13 +876,19 @@ fn flush_palette_batch(ctx: &PipelineCtx) {
     ctx.store.apply_batch(&applied);
     tracing::info!("调色板批量冲刷 {} 条（暂存 {} 条）", applied.len(), batch_len);
 
+    // 合并为一条 items.updated 发出：一批最多 500 条，逐条 item.updated 会冲爆 SSE 订阅者
+    let mut dtos: Vec<ItemDto> = Vec::with_capacity(applied.len());
     for (hash, meta, _) in &applied {
         if ctx.index.contains(hash) {
             ctx.index.with_item_mut(hash, |item| item.sync_from(meta));
             if let Some(dto) = ctx.index.get_dto(hash) {
-                ItemEvents::publish_changed(&ctx.bus, &dto);
+                dtos.push(dto);
             }
         }
+    }
+    if !dtos.is_empty() {
+        ctx.bus
+            .publish(ItemEvents::ITEMS_UPDATED, serde_json::json!({ "items": dtos }));
     }
 }
 
@@ -920,6 +934,47 @@ fn publish_index_progress(ctx: &PipelineCtx, force: bool) {
         .publish(ItemEvents::TASK_PROGRESS, serde_json::to_value(progress).unwrap());
 }
 
+// ---------- 批量事件合并 ----------
+
+/// 扫描路径 item.added 的批量合并暂存：300ms 窗口 / 2000 条上限合成一条 items.added，
+/// 全量导入时避免逐条事件风暴（SSE 订阅者积压 1024 条即被断开）。仅扫描路径使用；
+/// 监听/API 单条入库维持即时 item.added
+#[derive(Default)]
+struct AddedBatcher {
+    ids: Vec<String>,
+    oldest: Option<std::time::Instant>,
+}
+
+impl AddedBatcher {
+    /// 暂存一条；到窗口/上限即冲刷
+    fn stage(&mut self, bus: &EventBus, hash: &str) {
+        if self.ids.is_empty() {
+            self.oldest = Some(std::time::Instant::now());
+        }
+        self.ids.push(hash.to_string());
+        if self.due() {
+            self.flush(bus);
+        }
+    }
+
+    fn due(&self) -> bool {
+        self.ids.len() >= ADDED_BATCH_MAX
+            || self.oldest.is_some_and(|t| t.elapsed() >= ADDED_BATCH_AFTER)
+    }
+
+    /// 冲刷为一条 items.added；扫描结束/出错前兜底调用，避免尾批滞留
+    fn flush(&mut self, bus: &EventBus) {
+        if self.ids.is_empty() {
+            return;
+        }
+        self.oldest = None;
+        bus.publish(
+            ItemEvents::ITEMS_ADDED,
+            serde_json::json!({ "ids": std::mem::take(&mut self.ids) }),
+        );
+    }
+}
+
 // ---------- 单文件入库 ----------
 
 fn do_upsert(
@@ -955,7 +1010,7 @@ fn do_upsert(
         tracing::warn!("文件哈希后仍在变化,按现状入库(后续事件自愈): {abs}");
     }
 
-    Ok(Some(apply_upsert(ctx, pending, &hash)?))
+    Ok(Some(apply_upsert(ctx, pending, &hash, None)?))
 }
 
 /// 哈希前 stat(size/mtime)与现状是否一致。不一致(含文件消失、stat 失败)视为仍在写入;
@@ -1029,6 +1084,7 @@ fn prepare_upsert(
             reused_hash: old_hash,
             hash: None,
             dim: None,
+            palette: None,
         });
     }
 
@@ -1049,6 +1105,7 @@ fn prepare_upsert(
         reused_hash: None,
         hash: None,
         dim: None,
+        palette: None,
     })
 }
 
@@ -1092,8 +1149,63 @@ fn try_compute_hash(_ctx: &PipelineCtx, abs: &str) -> Option<String> {
     }
 }
 
-/// 应用入库结果:元数据迁移与回写、索引更新、事件、缩略图派发。只允许串行调用
-fn apply_upsert(ctx: &Arc<PipelineCtx>, pending: PendingUpsert, hash: &str) -> Result<UpsertResult, String> {
+/// 扫描并行阶段单文件处理：内容哈希 → 写入复验 → 单次解码产出 调色板/缩略图/宽高。
+/// 只读源文件 + 写内容寻址的缩略图缓存（幂等）；索引/元数据仍只由消费线程改写（单写者）。
+/// 派生齐备（调色板版本一致 + 尺寸齐全）时不解码,哈希后即走。
+/// 解码失败不阻断入库：调色板保持未提炼（对账/worker 重试），缩略图走读取端惰性兜底
+fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
+    let Some(hash) = try_compute_hash(ctx, &p.abs_path) else {
+        return;
+    };
+    // 复验:哈希期间仍在写入的文件不半截入库,延迟重试(与 do_upsert 同一纪律)
+    if file_changed_since_prepare(p) {
+        if std::path::Path::new(&p.abs_path).exists() {
+            defer_upsert(ctx, p.abs_path.clone(), 0);
+        }
+        return;
+    }
+    p.hash = Some(hash.clone());
+
+    let sizes: Vec<i32> = ctx
+        .config
+        .current()
+        .thumbnail_sizes
+        .into_iter()
+        .filter(|s| !ctx.thumbs.exists(&hash, *s))
+        .collect();
+    let need_palette = needs_palette_work(ctx, &hash);
+    if sizes.is_empty() && !need_palette {
+        return;
+    }
+
+    match ThumbnailService::decode(&p.abs_path) {
+        Some(image) => {
+            p.dim = Some((image.width() as i32, image.height() as i32));
+            if need_palette {
+                if let Some(rgba) = image.as_rgba8() {
+                    p.palette = Some(color::extract_from_rgba(rgba));
+                }
+            }
+            if !sizes.is_empty() {
+                ctx.thumbs.generate_from_image(&hash, &image, &sizes);
+            }
+        }
+        None => {
+            // 解码失败（截断/非图像）：宽高退头部解析，派生由周期对账自愈
+            p.dim = ThumbnailService::identify(&p.abs_path);
+        }
+    }
+}
+
+/// 应用入库结果:元数据迁移与回写、索引更新、事件、派生补全派发。只允许串行调用。
+/// added_batch 为 Some 时（扫描路径）created 事件合并进 items.added；
+/// 增量路径传 None，维持即时单条 item.added
+fn apply_upsert(
+    ctx: &Arc<PipelineCtx>,
+    pending: PendingUpsert,
+    hash: &str,
+    mut added_batch: Option<&mut AddedBatcher>,
+) -> Result<UpsertResult, String> {
     // 内容变动导致哈希漂移 → 按路径迁移元数据,旧 item 摘掉该位置。
     // 注意先取旧元数据用于继承:迁移可能将旧元数据删除(无剩余位置时)
     let inherit_from = if pending.old_hash.as_deref().is_some_and(|h| h != hash) {
@@ -1111,6 +1223,21 @@ fn apply_upsert(ctx: &Arc<PipelineCtx>, pending: PendingUpsert, hash: &str) -> R
     // 元数据登记路径并回写最新 size/mtime,保持哈希校验依据新鲜
     let mut meta = get_or_create_metadata(ctx, hash, inherit_from.as_ref());
     let mut meta_changed = false;
+    // 扫描导入通道单次解码已提炼调色板（内容的纯函数,含空数组负缓存）：随首版 TOML 一并
+    // 持久化,颜色索引随 item 就绪即全量可用;None（解码失败/未提炼）保持现状,由对账/worker 重试
+    if let Some(palette) = pending.palette.as_ref() {
+        meta.palette = Some(
+            palette
+                .iter()
+                .map(|p| PaletteEntry {
+                    color: color_math::to_hex(p.r, p.g, p.b),
+                    percentage: p.percentage,
+                })
+                .collect(),
+        );
+        meta.palette_version = PALETTE_VERSION;
+        meta_changed = true;
+    }
     match meta.find_path_mut(&pending.lib_path) {
         None => {
             meta.paths.push(PathEntry {
@@ -1159,8 +1286,14 @@ fn apply_upsert(ctx: &Arc<PipelineCtx>, pending: PendingUpsert, hash: &str) -> R
         .add_or_update_location(hash, &pending.rel, pending.size, pending.mtime);
 
     if created {
-        if let Some(dto) = ctx.index.get_dto(hash) {
-            ctx.bus.publish(ItemEvents::ADDED, serde_json::to_value(&dto).unwrap());
+        match added_batch.as_mut() {
+            // 扫描批量路径：合并进 items.added（窗口/上限到期冲刷,扫描结束兜底）
+            Some(batch) => batch.stage(&ctx.bus, hash),
+            None => {
+                if let Some(dto) = ctx.index.get_dto(hash) {
+                    ctx.bus.publish(ItemEvents::ADDED, serde_json::to_value(&dto).unwrap());
+                }
+            }
         }
     } else if added_location || meta_changed || dim_persisted {
         if let Some(dto) = ctx.index.get_dto(hash) {
@@ -1402,20 +1535,33 @@ impl ScanReporter {
     }
 }
 
-/// 全量扫描分两阶段:串行遍历做复用判定(不读文件内容),需要哈希的文件并行计算,
-/// 最后串行应用索引/元数据变更——并行仅限纯计算阶段,单写者模型不变。
+/// 扫描导入主流程：
+/// 1. 串行遍历做目录级增量判定(不读文件内容)
+/// 2. 只深入脏目录枚举文件做哈希复用判定
+/// 3. 需哈希的文件进并行阶段——哈希后单次解码产出 调色板/缩略图/宽高，结果经 channel
+///    流式回本线程边收边入库（item 随算随现）；并行仅限只读源文件 + 写内容寻址缩略图缓存，
+///    索引/元数据应用仍串行，单写者模型不变。
+///
 /// full=true 时对所有文件重算哈希(library/reindex)。
 /// force_walk=用户手动刷新:忽略快照强制遍历全部文件(仍按 size/mtime 复用哈希,不读内容)
 fn do_scan(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool) -> Result<(), String> {
     ctx.scanning.store(true, Ordering::SeqCst);
-    let result = do_scan_core(ctx, full, force_walk);
+    let mut batcher = AddedBatcher::default();
+    let result = do_scan_core(ctx, full, force_walk, &mut batcher);
+    // 扫描结束兜底冲刷尾批（含 apply 中途出错路径）：滞存的 item.added 不能丢
+    batcher.flush(&ctx.bus);
     ctx.scanning.store(false, Ordering::SeqCst);
     // 扫描结束强制发一帧(扫描期间的进度由 reporter 节流推送),客户端据此撤掉进度指示
     publish_index_progress(ctx, true);
     result
 }
 
-fn do_scan_core(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool) -> Result<(), String> {
+fn do_scan_core(
+    ctx: &Arc<PipelineCtx>,
+    full: bool,
+    force_walk: bool,
+    batcher: &mut AddedBatcher,
+) -> Result<(), String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut pending: Vec<PendingUpsert> = Vec::new();
     let mut count = 0i32;
@@ -1463,19 +1609,17 @@ fn do_scan_core(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool) -> Result<
             count += 1;
             if prepared.reused_hash.is_some() {
                 let hash = prepared.reused_hash.clone().unwrap();
-                apply_upsert(ctx, prepared, &hash)?;
+                apply_upsert(ctx, prepared, &hash, Some(&mut *batcher))?;
             } else {
                 pending.push(prepared);
             }
         }
     }
 
+    let pending_total = pending.len() as i32;
     if !pending.is_empty() {
-        reporter.report("hash", 0, pending.len() as i32, true);
-        // 阶段三:并行哈希(纯计算阶段,索引/元数据应用仍串行);
-        // 图像头部解析与哈希同属只读阶段,一并并行
-        let pending_total = pending.len() as i32;
-        // 哈希是纯计算阶段：留 1 核给 API，其余吃满（桌面端大批量入库/重建索引时吞吐优先）
+        reporter.report("hash", 0, pending_total, true);
+        // 哈希+解码是导入吞吐瓶颈：留 1 核给 API，其余吃满（桌面端大批量入库/重建索引时吞吐优先）
         let parallelism = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
@@ -1483,20 +1627,31 @@ fn do_scan_core(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool) -> Result<
             .clamp(2, 24)
             .min(pending.len());
         let hashed = AtomicUsize::new(0);
+        // 分成 owned 块散给工作线程（结果经 channel 按值传回，借用块无法移出元素）
         let chunk_size = pending.len().div_ceil(parallelism);
-        let chunks: Vec<&mut [PendingUpsert]> = pending.chunks_mut(chunk_size).collect();
+        let mut chunks: Vec<Vec<PendingUpsert>> = Vec::new();
+        let mut it = pending.into_iter();
+        for _ in 0..parallelism {
+            let chunk: Vec<PendingUpsert> = it.by_ref().take(chunk_size).collect();
+            if chunk.is_empty() {
+                break;
+            }
+            chunks.push(chunk);
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<PendingUpsert>();
+        let mut apply_failed: Option<String> = None;
+        // 多个 move 闭包共享：引用可 Copy，闭包各自捕获一份
+        let hashed = &hashed;
+        let reporter = &reporter;
         std::thread::scope(|s| {
             for chunk in chunks {
-                s.spawn(|| {
-                    for p in chunk {
-                        if let Some(hash) = try_compute_hash(ctx, &p.abs_path) {
-                            p.dim = ThumbnailService::identify(&p.abs_path);
-                            // 复验:哈希期间仍在写入的文件不半截入库,延迟重试(与 do_upsert 同一纪律)
-                            if !file_changed_since_prepare(p) {
-                                p.hash = Some(hash);
-                            } else if std::path::Path::new(&p.abs_path).exists() {
-                                defer_upsert(ctx, p.abs_path.clone(), 0);
-                            }
+                let tx = tx.clone();
+                s.spawn(move || {
+                    for mut p in chunk {
+                        process_scan_hash(ctx, &mut p);
+                        // 哈希成功（含派生产出）才下发；失败/写入中已由 process_scan_hash 自愈
+                        if p.hash.is_some() {
+                            let _ = tx.send(p);
                         }
                         reporter.report(
                             "hash",
@@ -1507,16 +1662,23 @@ fn do_scan_core(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool) -> Result<
                     }
                 });
             }
-        });
-
-        reporter.report("apply", 0, pending.len() as i32, true);
-        let mut applied = 0i32;
-        for p in &pending {
-            if let Some(hash) = p.hash.clone() {
-                apply_upsert(ctx, clone_pending(p), &hash)?;
+            // 本线程同时是消费线程：channel 断连（工作线程全部完成）即收尾。
+            // apply 边收边做,item 从扫描早期即可见,不再等全库哈希完
+            drop(tx);
+            let mut applied = 0i32;
+            while let Ok(p) = rx.recv() {
+                if let Some(hash) = p.hash.clone() {
+                    if let Err(e) = apply_upsert(ctx, p, &hash, Some(&mut *batcher)) {
+                        apply_failed = Some(e);
+                        break;
+                    }
+                    applied += 1;
+                    reporter.report("apply", applied, pending_total, false);
+                }
             }
-            applied += 1;
-            reporter.report("apply", applied, pending.len() as i32, false);
+        });
+        if let Some(e) = apply_failed {
+            return Err(e);
         }
     }
 
@@ -1553,27 +1715,12 @@ fn do_scan_core(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool) -> Result<
     tracing::info!(
         "扫描完成:{} 个文件({} 个计算哈希,{} 个目录中 {} 个深入),{} 个索引位置",
         count,
-        pending.len(),
+        pending_total,
         seen_dirs.len(),
         dirty_dirs.len(),
         ctx.index.all_location_paths().len()
     );
     Ok(())
-}
-
-// apply 阶段的辅助：克隆 PendingUpsert（apply 需要所有权，扫描循环里用引用）
-fn clone_pending(p: &PendingUpsert) -> PendingUpsert {
-    PendingUpsert {
-        abs_path: p.abs_path.clone(),
-        rel: p.rel.clone(),
-        lib_path: p.lib_path.clone(),
-        size: p.size,
-        mtime: p.mtime,
-        old_hash: p.old_hash.clone(),
-        reused_hash: p.reused_hash.clone(),
-        hash: p.hash.clone(),
-        dim: p.dim,
-    }
 }
 
 // ---------- 元数据对账（只进不出：TOML → 缓存/索引） ----------

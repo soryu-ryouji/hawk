@@ -125,7 +125,9 @@ async function runBoot() {
     disconnectEvents?.();
     disconnectEvents = connectEvents({
       onAdded: (item) => store.applyEvent('item.added', item),
+      onItemsAdded: () => store.applyEvent('items.added', null),
       onUpdated: (item) => store.applyEvent('item.updated', item),
+      onItemsUpdated: (items) => store.applyEvent('items.updated', items),
       onTrashed: (id) => store.applyEvent('item.trashed', { id }),
       onRestored: (item) => store.applyEvent('item.restored', item),
       onRemoved: (id) => store.applyEvent('item.removed', { id }),

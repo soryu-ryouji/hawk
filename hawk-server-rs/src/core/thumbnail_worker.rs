@@ -4,8 +4,9 @@
 //!
 //! 任务两种（generate_thumbs 区分，in-flight 去重 key 分命名空间）：
 //! - 缩略图任务：读取端 /item/thumbnail 未命中时派发，生成缺失尺寸并按需提炼调色板
-//! - 调色板任务：入库/启动对账派发（needs_palette_work），只提炼调色板——
-//!   缩略图是惰性缓存，不在入库时批量生成；颜色搜索依赖全量 palette，必须即时
+//! - 调色板任务：增量入库/启动对账派发（needs_palette_work），只提炼调色板——
+//!   扫描导入已在并行哈希阶段单次解码产出调色板+缩略图（见 pipeline.rs），
+//!   此任务兜底增量路径与解码失败自愈；颜色搜索依赖全量 palette，必须即时
 //! 与 C# ThumbnailWorker 语义不同（C# 为全量生成）。
 
 use crate::core::color;

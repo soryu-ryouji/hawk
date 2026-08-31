@@ -437,7 +437,9 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 | 事件 | 处理 |
 | ---- | ---- |
 | `item.updated` | 负载是完整 Item。详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。过滤视图/激活查询条件时防抖 200ms 重载骨架（成员判定以服务端查询为准，如摘掉当前分类后 item 即时消失）。updateItem 响应走同一入口 |
+| `items.updated` | `item.updated` 的批量变体（调色板批量回写），逐个就地替换详情缓存 |
 | `item.added` / `item.restored` | 新 item 落点（成员/次序）以服务端为准，防抖 200ms 重载骨架 |
+| `items.added` | 扫描导入批量事件（300ms 窗口合并），与 `item.added` 同处理 |
 | `item.trashed` / `item.removed` | 就地移除（详情 + 骨架 + 选择），回收站视图同事件意味着「进来」，统一防抖重载兜底 |
 | `task.progress` | 更新 `taskBacklog`（缩略图积压计数；归零置 null 隐藏指示条），不触发文件夹/分类刷新 |
 | `folder.changed` | 防抖重拉文件夹树（reason 恒为 external，忽略取值）；骨架成员与分类/标签计数无关，不触发 |

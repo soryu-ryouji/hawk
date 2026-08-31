@@ -10,7 +10,7 @@ hawk-server 的 Rust 实现（`hawk-server-rs/`），已整体替换 C# 过渡�
 
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
   CI（`release.yml`）全部使用本实现；C# 过渡版已完成使命并从仓库移除
-- **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/并行哈希/对账扫描）、缩略图（libwebp q80，惰性生成）、
+- **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描导入通道：并行哈希+单次解码产出派生+流式 apply/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
   调色板（median-cut，palette_version=2）、SQLite 派生缓存（与 C# v1 schema 兼容）
 - **相对 C# 版的有意差异**（对项目更好，不逐字复刻；C# 版已移除，此处留档）：
   - 宽高在入库时即持久化入 TOML（C# 只在内存更新，重启后靠扫描重新识别——与 storage.md 设计意图不符）

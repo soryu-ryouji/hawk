@@ -2,9 +2,11 @@
 //! （webp/libwebp，quality 80，与 C# ImageSharp WebpEncoder 对齐）。
 //! 存储于库外缓存目录（<系统缓存>/hawk/cache/<库标识>/thumbnails/<size>/<hash>.webp），本地缓存可重建。
 //!
-//! 生成策略（与 C# 全量生成不同，Rust 版为惰性）：
-//! - 入库/启动对账不生成缩略图，仅提炼调色板（pipeline 派发仅调色板任务）
-//! - 读取端 /item/thumbnail 未命中时回源原图并由读取端派发后台生成（thumbnail_worker）
+//! 生成策略：
+//! - 首扫/全量重扫的导入通道（pipeline 扫描并行阶段）在哈希后单次解码，
+//!   同出 调色板 + 全部缺失尺寸缩略图 + 宽高，item 入库即完整可显示
+//! - 增量入库（监听事件/API）不生成缩略图，仅按需补调色板；缩略图由读取端惰性派发
+//! - 读取端 /item/thumbnail 未命中时回源原图并派发后台生成（thumbnail_worker）兜底
 //! - 不可渲染格式（tiff 等）必须生成缩略图转换，否则 <img> 无法显示
 //!
 //! 共享读打开、不放大小图、按尺寸跳过等语义与 C# ThumbnailService 一致。
@@ -49,6 +51,13 @@ impl ThumbnailService {
         DIRECT_ORIGINAL_EXTS.contains(&crate::core::paths::LibraryPaths::ext_of(abs_path).as_str())
     }
 
+    /// 解码原图为 RGBA8 动态图。供惰性生成与扫描导入通道共用——导入通道一次解码后
+    /// 共享给 调色板/缩略图/宽高。解码失败返回 None（调用方走对账重试/惰性兜底）
+    pub fn decode(source_abs: &str) -> Option<image::DynamicImage> {
+        let image = image::open(source_abs).ok()?;
+        Some(image::DynamicImage::ImageRgba8(image.to_rgba8()))
+    }
+
     /// 为指定内容生成全部配置尺寸的缩略图；已存在的跳过（force 时强制重建）。
     /// 源文件不是图像或已消失时静默跳过——缩略图是尽力而为的缓存。返回是否实际生成了文件
     pub fn generate(&self, hash: &str, source_abs: &str, sizes: &[i32], force: bool) -> bool {
@@ -64,19 +73,25 @@ impl ThumbnailService {
             return false;
         }
 
-        let image = match image::open(source_abs) {
-            Ok(i) => image::DynamicImage::ImageRgba8(i.to_rgba8()),
-            Err(e) => {
+        let image = match Self::decode(source_abs) {
+            Some(i) => i,
+            None => {
                 // 解码失败需要可见：此类素材的缩略图/调色板会永久缺失，靠周期对账自愈重试（手动换图后自动恢复）
-                tracing::warn!("缩略图解码失败 {source_abs}: {e}");
+                tracing::warn!("缩略图解码失败 {source_abs}");
                 return false;
             }
         };
+        self.generate_from_image(hash, &image, &pending)
+    }
+
+    /// 从已解码图像生成指定尺寸（解码与生成拆分，扫描导入通道单解码共享同一份位图）。
+    /// sizes 由调用方按 exists 过滤；返回是否实际写出了文件
+    pub fn generate_from_image(&self, hash: &str, image: &image::DynamicImage, sizes: &[i32]) -> bool {
         let (src_w, src_h) = (image.width(), image.height());
         let mut resizer = fr::Resizer::new();
 
         let mut generated = false;
-        for size in pending {
+        for &size in sizes {
             // Max：等比缩放到边长内，不放大小图
             let scale = (size as f64 / src_w as f64)
                 .min(size as f64 / src_h as f64)
@@ -85,11 +100,11 @@ impl ThumbnailService {
             let dst_h = ((src_h as f64 * scale).round() as u32).max(1);
             let mut dst = fr::images::Image::new(dst_w, dst_h, fr::PixelType::U8x4);
             if let Err(e) = resizer.resize(
-                &image,
+                image,
                 &mut dst,
                 &fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)),
             ) {
-                tracing::debug!("缩略图缩放失败 {source_abs}@{size}: {e}");
+                tracing::debug!("缩略图缩放失败 {hash}@{size}: {e}");
                 continue;
             }
             let rgba = image::RgbaImage::from_raw(dst_w, dst_h, dst.buffer().to_vec())

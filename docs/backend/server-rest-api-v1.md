@@ -594,7 +594,7 @@ Item 对象，并附带 `already_existed` 标志：
 
 `GET /api/v1/item/thumbnail?id=<hash>&size=256|512|1024`
 
-缩略图为**惰性缓存**（入库/启动对账不生成），响应分三种：
+缩略图为缓存（**扫描导入即时生成**：首扫并行阶段单次解码同出缩略图+调色板+宽高，item 入库即可完整显示；增量/对账不生成，由读取端兜底），响应分三种：
 
 1. **命中缓存** → 缩略图二进制（`image/webp`）
 2. **未命中且原图浏览器可渲染**（jpg/png/gif/webp/bmp）→ **直接回源原图**（200，Content-Type 为原图类型），同时后台入队生成缩略图缓存，下次请求即命中 webp
@@ -721,8 +721,10 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 
 | 事件              | data | 说明 |
 | ----------------- | ---- | ---- |
-| `item.added`      | Item 对象 | 新文件入库 |
+| `item.added`      | Item 对象 | 新文件入库（单条路径：监听/API 增量） |
+| `items.added`     | `{ "ids": ["..."] }` | 扫描导入的批量合并事件（300ms 窗口/2000 条上限合成一条）；客户端按「有新增」信号重载列表即可 |
 | `item.updated`    | Item 对象 | 元数据、文件位置或调色板变更(缩略图生成完成也补发一次,前端据此重建 404 占位) |
+| `items.updated`   | `{ "items": [Item...] }` | `item.updated` 的批量变体（调色板批量回写等），客户端逐个就地替换缓存 |
 | `item.trashed`    | `{ "id": "..." }` | 最后一个库内位置移入回收站 |
 | `item.restored`   | Item 对象 | 首个回收站位置回归库内 |
 | `item.removed`    | `{ "id": "..." }` | 彻底删除(无剩余位置) |
@@ -733,7 +735,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 
 ### 负载契约
 
-**Item 对象**:与 `item/list` 响应中的 Item 结构完全相同(见「Item 对象」节)。`item.updated` / `item.added` / `item.restored` 带完整对象,客户端可就地替换缓存;`trashView` 由服务端按「是否只剩回收站位置」投影(回收站视图的 `paths` 为原库内路径)。
+**Item 对象**:与 `item/list` 响应中的 Item 结构完全相同(见「Item 对象」节)。`item.updated` / `item.added` / `item.restored` / `items.updated` 带完整对象,客户端可就地替换缓存;`trashView` 由服务端按「是否只剩回收站位置」投影(回收站视图的 `paths` 为原库内路径)。
 
 **id 负载**(`item.trashed` / `item.removed`):
 

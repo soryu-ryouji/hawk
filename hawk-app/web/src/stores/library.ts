@@ -933,8 +933,9 @@ export const useLibraryStore = defineStore('library', () => {
 
   // ---- SSE ----
   // 事件与副作用的对应关系（不无条件全刷，后台事件爆发期不制造请求风暴）：
-  // - item.updated：详情/骨架就地更新；标签/分类集合变化才刷分类计数
-  // - item.added/restored/trashed/removed：成员与计数以服务端查询为准 → 防抖重载骨架 + 刷分类计数
+  // - item.updated / items.updated：详情/骨架就地更新；标签/分类集合变化才刷分类计数
+  // - item.added / items.added / restored / trashed / removed：成员与计数以服务端查询为准 → 防抖重载骨架 + 刷分类计数
+  //   （items.added 为扫描导入的批量合并事件，避免逐条事件风暴）
   // - folder.changed：只刷文件夹树（目录结构变化的唯一信号）
   // - task.progress：只更新对应的后台任务指示
   function applyEvent(type: string, payload: unknown) {
@@ -943,6 +944,13 @@ export const useLibraryStore = defineStore('library', () => {
         applyUpdatedItem(payload as Item);
         break;
       }
+      case 'items.updated': {
+        for (const item of payload as Item[]) {
+          applyUpdatedItem(item);
+        }
+        break;
+      }
+      case 'items.added':
       case 'item.added':
       case 'item.restored':
         // 新 item 的落点（成员/次序）只能以服务端查询为准：防抖重载骨架，视口窗口随后按需补齐

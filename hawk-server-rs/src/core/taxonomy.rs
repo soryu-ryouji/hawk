@@ -200,6 +200,11 @@ impl ItemEvents {
     pub const REMOVED: &'static str = "item.removed";
     pub const FOLDER_CHANGED: &'static str = "folder.changed";
     pub const TASK_PROGRESS: &'static str = "task.progress";
+    /// 批量入库（扫描导入）合并事件，负载 `{ ids: [...] }`；客户端按「有新增」信号重载骨架即可。
+    /// 与单条 item.added 互斥：同一入库只会走其一
+    pub const ITEMS_ADDED: &'static str = "items.added";
+    /// item.updated 的批量变体（调色板批量回写等），负载 `{ items: [...] }`
+    pub const ITEMS_UPDATED: &'static str = "items.updated";
 
     /// item 内容/元数据变更事件,负载为完整 Item 对象(回收站视图按需投影)
     pub fn publish_changed(bus: &EventBus, item_dto: &ItemDto) {
