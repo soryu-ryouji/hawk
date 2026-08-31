@@ -1,6 +1,6 @@
 // 拖拽功能端到端复现：真实浏览器（系统 Edge）+ 真实鼠标事件。
 // 场景：多选两张素材 → 拖到侧栏文件夹 → 断言移动生效；过程中断言行高亮出现（证明 dragover MIME 检查通过）。
-// 用法：node tools/dnd-test.mjs（需先 dotnet build + npm run build；临时库与进程自动清理）
+// 用法：node tools/dnd-test.mjs（需先 cargo build --release + npm run build；临时库与进程自动清理）
 import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -56,7 +56,16 @@ writeFileSync(path.join(lib, 'red.png'), png([255, 0, 0]));
 writeFileSync(path.join(lib, 'green.png'), png([0, 255, 0]));
 writeFileSync(path.join(lib, 'blue.png'), png([0, 0, 255]));
 
-const server = spawn('dotnet', [path.join(root, '..', 'hawk-server', 'bin', 'Debug', 'net10.0', 'hawk-server.dll'), '--library', lib, '--port', String(port)], {
+const exeName = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
+const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
+const targetDir = path.join(root, '..', 'hawk-server-rs', 'target');
+const serverBin = [
+  ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release', exeName)] : []),
+  path.join(targetDir, 'release', exeName),
+  path.join(targetDir, 'debug', exeName),
+].find((p) => existsSync(p));
+if (!serverBin) throw new Error('未找到 hawk-server-rs 构建产物，请先 cargo build --release');
+const server = spawn(serverBin, ['--library', lib, '--port', String(port)], {
   env: { ...process.env, HAWK_TOKEN: token },
   stdio: 'ignore',
 });

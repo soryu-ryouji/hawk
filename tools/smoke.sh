@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# hawk-server 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程（语言无关的契约测试）。
-# 用法: tools/smoke.sh [csharp]（需先 cargo build --release / dotnet build）
-#
-# 默认测 Rust 版（hawk-server-rs/target/release/hawk-server.exe）；
-# `tools/smoke.sh csharp` 测 C# 版（dotnet 运行 Debug 产物，保留期内回归用）。
+# hawk-server 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程（契约测试）。
+# 用法: tools/smoke.sh（需先 cargo build --release）
 #
 # Windows Git Bash 注意：curl 是原生 Windows 程序，argv 中的中文会被 MSYS2
 # 转成 ANSI 编码（GBK）导致 JSON 体非法。因此所有 JSON POST 体一律经 stdin
@@ -17,15 +14,9 @@ PORT=27399
 TOKEN="smoke-test-token"
 BASE="http://127.0.0.1:$PORT"
 AUTH="Authorization: Bearer $TOKEN"
-IMPL="${1:-rust}"
-
-case "$IMPL" in
-  rust)   SERVER=("$PWD/hawk-server-rs/target/release/hawk-server.exe") ;;
-  csharp) SERVER=(dotnet hawk-server/bin/Debug/net10.0/hawk-server.dll) ;;
-  *) echo "未知实现: $IMPL（可用: csharp / rust）"; exit 2 ;;
-esac
-if [[ "$IMPL" == rust && ! -x "${SERVER[0]}" ]]; then
-  echo "Rust 二进制不存在，请先 cargo build --release: ${SERVER[0]}"; exit 2
+SERVER=("$PWD/hawk-server-rs/target/release/hawk-server.exe")
+if [[ ! -x "${SERVER[0]}" ]]; then
+  echo "server 二进制不存在，请先 cargo build --release: ${SERVER[0]}"; exit 2
 fi
 
 rm -rf "$WORK"

@@ -49,7 +49,7 @@ Electron 主进程启动
     端口/token 先生成、页面先行，server 后台拉起；窗口内容单页生命周期，无二次导航，杜绝切换白屏
   → 首帧渲染完成后 ready-to-show 才 show 窗口（GPU 驱动不认可 backgroundColor、合成器首帧延迟时
     提前 show 会把空白/白窗暴露给用户）
-  → spawn hawk-server（开发：dotnet 运行 dll；打包：process.resourcesPath 内二进制）
+  → spawn hawk-server（开发：hawk-server-rs/target 下的 Rust 构建产物；打包：process.resourcesPath 内二进制）
       环境变量传入 HAWK_TOKEN，参数 --library <path> --port <预选端口> --web-dist <web/dist>
       （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录；
        缓存头：/assets/ 内容哈希资源 immutable 长缓存，index.html no-cache——防手机浏览器
@@ -468,7 +468,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 ## 打包与分发
 
-- `electron-builder.yml`：`extraResources` 按平台携带 hawk-server 自包含单文件（`dotnet publish -r win-x64 / osx-arm64 / linux-x64` 产物）
+- `electron-builder.yml`：`extraResources` 按平台携带 hawk-server 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
 - 产物：macOS `hawk.app` 目录（CI 交叉打包 arm64 + x64 后 zip 发布；不做 dmg）/ Windows `hawk.zip`（解压即用）/ Linux AppImage
 - CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
@@ -485,7 +485,7 @@ hawk-app/
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
-│   ├── build-server.mjs    # dotnet publish 产出指定 RID 的 hawk-server 自包含单文件
+│   ├── build-server.mjs    # cargo build --release 产出指定 target 的 hawk-server 单文件
 │   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）
 │   ├── test-mobile-web.mjs # 移动端网页冒烟测试编排（临时库 + server + 断言）
 │   └── mobile-web-probe.cjs# 测试探针：无 preload 的 sandbox Electron 窗口模拟手机浏览器，输出 JSONL 探针与截图
@@ -496,8 +496,8 @@ hawk-app/
 
 ```bash
 npm install
-npm run gen:types   # 生成/更新 API 类型（需 hawk-server 已 dotnet build）
-npm run dev         # vite(5173) + electron；server 由 electron 拉起（dotnet dll）
+npm run gen:types   # 生成/更新 API 类型（需先 cargo build hawk-server-rs）
+npm run dev         # vite(5173) + electron；server 由 electron 拉起（Rust 二进制，release 优先）
 npm run build       # vue-tsc --noEmit && vite build
 npm run test:mobile # 移动端网页冒烟测试（见下）
 ```

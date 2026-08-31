@@ -20,7 +20,7 @@
 ## 路线图
 
 - 1.0 版本
-  - 使用 Rust 重写服务器代码，减小程序体积，提高资源吞吐效率和内存安全性（已完成并替换 C# 版，见 [hawk-server-rs](docs/backend/server-rust.md)；C# 代码保留至 Rust 版充分验证后移除）
+  - 使用 Rust 重写服务器代码，减小程序体积，提高资源吞吐效率和内存安全性（已完成并替换 C# 版，见 [hawk-server-rs](docs/backend/server-rust.md)）
   - 完成 Windows, MacOS 桌面客户端
   - 完成 Chrome, Firefox, Safari 浏览器插件
   - 完成 web 资源查看器：局域网内通过浏览器访问素材库（设置面板按库配置开关/端口/token，只读查看）；后续拓展 ios, android 查看器
@@ -45,7 +45,7 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 
 ### 前后端解耦
 
-后端是独立的 C# 服务，前端只通过 REST API 通信。桌面版用 Electron 壳拉起后端进程；同一套后端未来可直接部署为多人使用的服务器版本。
+后端是独立的 Rust 服务，前端只通过 REST API 通信。桌面版用 Electron 壳拉起后端进程；同一套后端未来可直接部署为多人使用的服务器版本。
 
 ### 开放 REST API
 
@@ -66,7 +66,7 @@ POST http://localhost:27371/api/v1/item/update
 
 ### 环境准备
 
-- [Node.js](https://nodejs.org/) 与 [Rust 工具链](https://rustup.rs/)（后端为 Rust 实现 `hawk-server-rs/`；C# 过渡版保留在仓库内，仅供回归对比，需 .NET 10 SDK）
+- [Node.js](https://nodejs.org/) 与 [Rust 工具链](https://rustup.rs/)（后端为 Rust 实现 `hawk-server-rs/`）
 - 克隆仓库后安装依赖（Electron 二进制镜像已配置在 `hawk-app/.npmrc`，国内网络无需额外设置）：
 
 ```bash
@@ -135,10 +135,9 @@ ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体�
 
 - [hawk-app 设计](docs/frontend/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
 
-**后端（hawk-server/）**
+**后端（hawk-server-rs/）**
 
-- [hawk-server（C# 过渡实现）](docs/backend/server-csharp.md)：第一版后端实现细节
-- [hawk-server-rs（Rust 实现）](docs/backend/server-rust.md)：Rust 版实现细节、双实现调试方法
+- [hawk-server-rs（Rust 实现）](docs/backend/server-rust.md)：Rust 版实现细节、调试与压测方法
 - [hawk-server 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移

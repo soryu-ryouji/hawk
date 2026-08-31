@@ -17,7 +17,7 @@
 「代表颜色」不是平均色，而是对像素做**聚类/量化**：把成千上万种像素颜色归并到 K 个簇，每个簇取一个代表色，簇的像素数即占比。步骤：
 
 1. 解码图像，降采样到小尺寸（64×64）——提速并抹掉噪点，对结果无可见影响
-2. 量化聚类到 K=10 个颜色。直接用 ImageSharp 自带的 **Wu 量化器**（`SixLabors.ImageSharp.Processing.Processors.Quantization.WuQuantizer`），质量优于八叉树量化，不新增依赖、不手写聚类算法
+2. 量化聚类到 K=10 个颜色。当前 Rust 实现为手写 **median-cut**（palette_version=2）；C# 过渡版曾用 ImageSharp 的 Wu 量化器（v1，其结果被视作旧版本由后台自动重提炼）
 3. 统计每个量化色的像素数，得出占比；按占比降序取前 10
 
 纯色图会得到 1 个颜色，渐变图得到一组渐变色——均属正常输出。
@@ -70,7 +70,7 @@ index.db 的 items.palette 列 ← 库外系统缓存目录，本地专用、可
 }
 ```
 
-- `v` 为算法版本号：提取算法或参数变更时 bump，旧版本缓存视为缺失、自动重建。未来 Rust 重写若换算法，bump 到 2 即可
+- `v` 为算法版本号：提取算法或参数变更时 bump，旧版本缓存视为缺失、自动重建（C# 版 Wu=v1 → Rust 版 median-cut=v2 即由此迁移）
 - 按占比降序，最多 10 个；percentage 为 0–100、保留 1 位小数，与 Eagle 展示口径一致
 - 清理与缩略图同步：清空回收站、内容无其他引用时，随缩略图一并删除
 
@@ -116,7 +116,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | 调色板大小 | 10 | 量化器 MaxColors |
 | 分析尺寸 | 64×64 | 提炼前降采样 |
 | 匹配阈值 | ΔE 25 | CIE76，调色板任一色命中即中 |
-| 缓存版本 | 1 | 算法变更时 bump |
+| 缓存版本 | 2 | 算法变更时 bump（v1=C# 版 Wu，v2=Rust 版 median-cut） |
 
 ### 边界情况
 
@@ -124,21 +124,14 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 - 动图（GIF/APNG）：取首帧
 - 透明像素：alpha < 128 的像素不参与统计；全透明图 palette 为空
 - id 漂移：内容变化 → 新 hash → 重新提炼，旧缓存在内容无引用时清理
-- 灰度/CMYK：ImageSharp 解码统一转 RGB，无特殊处理
+- 灰度/CMYK：解码统一转 RGB，无特殊处理
 
 ## 代码改动清单
 
-### 后端（hawk-server）
+### 后端
 
-| 文件 | 改动 |
-| ---- | ---- |
-| `src/Core/ColorMath.cs`（新增） | 纯函数：hex 解析/格式化、sRGB→Lab、ΔE。便于单测 |
-| `src/Core/ColorService.cs`（新增） | 调色板提炼（降采样 + Wu 量化 + 占比统计）与缓存文件读写，仿 ThumbnailService 单例 |
-| `src/Core/LibraryPaths.cs` | 缓存目录布局（缩略图在 thumbnails/，调色板并入 index.db） |
-| `src/Core/Item.cs` | `Palette` 字段（含预算 Lab）；`ItemDto` 增加 `palette` |
-| `src/Core/ItemIndex.cs` | `ItemQuery.Color`；`Query` 增加颜色过滤；`SetPalette` 加锁写方法 |
-| `src/Core/IndexPipeline.cs` | `ApplyUpsert` 加载调色板缓存；worker 顺带提炼；`PaletteJob` 回写索引并发 `item.updated`；清回收站时清理颜色缓存 |
-| `src/Api/ItemEndpoints.cs` | list 接收 `color` 参数并校验 |
+调色板功能现由 Rust 实现承载：`hawk-server-rs/src/core/color.rs`（median-cut 提炼）、
+`hawk-server-rs/src/core/color_math.rs`（hex/Lab/ΔE 纯函数）。C# 版的逐文件改动清单随 `hawk-server/` 移除，不再列出。
 
 ### 前端（hawk-app）
 
@@ -153,10 +146,10 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 | 文件 | 改动 |
 | ---- | ---- |
-| `docs/storage.md` | 库外缓存目录布局与 index.db 中的调色板存储 |
-| `docs/server-rest-api-v1.md` | palette 字段与 color 参数 |
-| `docs/server-code-structure.md` | 新文件职责与流水线变化 |
-| `hawk-server.Tests/` | ColorMath（hex/Lab/ΔE 已知向量）、提炼（纯色→1 色~100%、双色各半、全透明→空）、ItemIndex 颜色过滤、流水线集成（缓存写入/加载、PaletteJob、漂移丢弃） |
+| `docs/backend/storage.md` | 库外缓存目录布局与 index.db 中的调色板存储 |
+| `docs/backend/server-rest-api-v1.md` | palette 字段与 color 参数 |
+| `docs/backend/server-code-structure.md` | 新文件职责与流水线变化 |
+| `hawk-server-rs` | `cargo test`：颜色纯函数（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色~100%、双色各半、全透明→空） |
 | `tools/smoke.sh` | 新增断言：add 纯色 PNG → detail 返回 palette → `color` 检索命中 / 相近色命中 / 无关色不命中 |
 
 ## 备选方案与取舍
@@ -167,14 +160,14 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | 调色板写入 metadata TOML | 违反「派生信息不入元数据」原则；参与同步会因算法版本差异制造冲突 |
 | RGB/HSV 距离 | RGB 感知不均匀；HSV 色相在低饱和度下不稳定（灰色会匹配到任意色相） |
 | 固定色相分桶 + 倒排索引 | 内存线性扫描已是毫秒级，无需索引结构；分桶还会把桶边界上的相近色错配 |
-| 手写 k-means/中位切分 | ImageSharp 自带 Wu 量化器质量足够，不重复造轮子 |
+| 手写 k-means/中位切分 | C# 版曾用 ImageSharp 自带 Wu 量化器（不重复造轮子）；Rust 生态无等质量化器，现手写 median-cut（v2），质量与 Wu 相当 |
 
 ## 实施状态
 
 已实现（2026-08）。审批确认的结论：
 
 1. 调色板落库外缓存目录的 `colors/` 缓存文件（与缩略图同模型）
-2. 调色板 10 色、ΔE 阈值 25（`ItemIndex.ColorMatchThreshold`，可按真实图库调参）
+2. 调色板 10 色、ΔE 阈值 25（可按真实图库调参）
 3. v1 只做单色检索（点击色块，在当前视图范围内过滤）；多色组合与全局色条选色器留待后续
 
 实现与本文档的一处偏差：PaletteJob 写队列失败时不置溢出标记，直接丢弃——缓存文件已落盘，周期对账扫描会由 ApplyUpsert 载入，代价相同且逻辑更简单。

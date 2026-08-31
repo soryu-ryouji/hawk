@@ -1,6 +1,6 @@
 // hawk-app UI 端到端自检：真实启动 vite + electron + hawk-server（临时素材库），
 // 通过 Chrome DevTools Protocol 断言 DOM、模拟交互、验证 SSE 实时性，并截图。
-// 用法：node tools/ui-check.mjs（需先 dotnet build hawk-server）
+// 用法：node tools/ui-check.mjs（需先 cargo build --release hawk-server-rs）
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';

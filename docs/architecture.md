@@ -27,7 +27,7 @@ hawk 前后端完全解耦，通过 HTTP API 通信。桌面版中 Electron 只�
 │  │ In-Memory Index/Search │                             │
 │  │ (启动时扫描比对)        │                             │
 │  └────────────────────────┘                             │
-│       REST API (ASP.NET Core, 生成 OpenAPI schema)       │
+│       REST API (axum, 静态 OpenAPI schema)               │
 └──────────────────────┬───────────────────────────────┘
                        │ HTTP
           ┌────────────┼────────────┐
@@ -48,7 +48,7 @@ Web 前端不依赖 Electron IPC，只通过 REST API 通信。
 
 **2. 后端不依赖 Electron**
 
-后端是独立的 C# 二进制，不依赖任何桌面端代码。
+后端是独立的 Rust 二进制，不依赖任何桌面端代码。
 
 **3. API 契约先行**
 
@@ -95,7 +95,7 @@ Electron 退出
 
 ```text
 hawk/
-├── hawk-server/     ← C# 后端（桌面版与服务器版共用）
+├── hawk-server-rs/  ← Rust 后端（桌面版与服务器版共用）
 ├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 └── docs/            ← 设计文档
 ```

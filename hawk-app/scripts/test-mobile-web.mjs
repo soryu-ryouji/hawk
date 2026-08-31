@@ -89,11 +89,17 @@ function resolveServer() {
   if (process.env.HAWK_SERVER_EXE) {
     return { command: process.env.HAWK_SERVER_EXE, args: [] };
   }
-  const dll = path.resolve(root, '..', 'hawk-server', 'bin', 'Debug', 'net10.0', 'hawk-server.dll');
-  if (fs.existsSync(dll)) {
-    return { command: 'dotnet', args: [dll] };
-  }
-  return null;
+  // 与 electron/main.cjs resolveServerCommand 同优先级：本机 target/release → target/<triple>/release → debug
+  const exe = process.platform === 'win32' ? 'hawk-server.exe' : 'hawk-server';
+  const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
+  const targetDir = path.resolve(root, '..', 'hawk-server-rs', 'target');
+  const candidates = [
+    ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release', exe)] : []),
+    path.join(targetDir, 'release', exe),
+    path.join(targetDir, 'debug', exe),
+  ];
+  const bin = candidates.find((p) => fs.existsSync(p));
+  return bin ? { command: bin, args: [] } : null;
 }
 
 function probeFreePort() {
@@ -147,7 +153,7 @@ try {
   seedLibrary(libDir);
   const serverCmd = resolveServer();
   if (!serverCmd) {
-    throw new Error('未找到 hawk-server（先 dotnet build hawk-server，或设置 HAWK_SERVER_EXE）');
+    throw new Error('未找到 hawk-server-rs 构建产物（先 cargo build --release，或设置 HAWK_SERVER_EXE）');
   }
   const token = crypto.randomBytes(32).toString('hex');
   const port = await probeFreePort();

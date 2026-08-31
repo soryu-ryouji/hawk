@@ -1,19 +1,18 @@
 # hawk-server-rs（Rust 实现）
 
-> 逐文件的代码职责见 [代码导读](server-code-structure.md)（C# 版结构同理，Rust 版模块一一对应）。
+> 逐文件的代码职责见 [代码导读](server-code-structure.md)（Rust 版模块一一对应，逐文件导读随 C# 版移除后待补充）。
 > API 契约见 [REST API V1](server-rest-api-v1.md)，存储格式见 [storage.md](storage.md)。
 
-hawk-server 的 Rust 实现（`hawk-server-rs/`），替换目标为 C# 过渡版（`hawk-server/`，验证期并行保留）。
-行为对齐基准 = OpenAPI schema + `.hawk/` 存储格式 + SSE 事件契约，不逐行翻译 C# 代码。
+hawk-server 的 Rust 实现（`hawk-server-rs/`），已整体替换 C# 过渡版（后者已完成使命并从仓库移除）。
+行为对齐基准 = OpenAPI schema + `.hawk/` 存储格式 + SSE 事件契约。
 
 ## 状态
 
-- **app 默认后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
-  CI（`release.yml`）全部使用本实现；C# 版保留在仓库内仅供回归对比（`tools/smoke.sh csharp`），
-  充分验证后移除
+- **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
+  CI（`release.yml`）全部使用本实现；C# 过渡版已完成使命并从仓库移除
 - **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/并行哈希/对账扫描）、缩略图（libwebp q80）、
   调色板（median-cut，palette_version=2）、SQLite 派生缓存（与 C# v1 schema 兼容）
-- **已知有意差异**（对项目更好，不逐字复刻 C#）：
+- **相对 C# 版的有意差异**（对项目更好，不逐字复刻；C# 版已移除，此处留档）：
   - 宽高在入库时即持久化入 TOML（C# 只在内存更新，重启后靠扫描重新识别——与 storage.md 设计意图不符）
   - `palette_version` 与标量同列于 `[[paths]]` 之前（C# 放在其后，TOML 语义上会被解析进 paths 表内，实际读不回来）
   - 调色板算法为 median-cut（v2）；C# 的 Wu（v1）结果会被视为旧版本，由后台 worker 一次性重提炼
@@ -27,14 +26,14 @@ hawk-server 的 Rust 实现（`hawk-server-rs/`），替换目标为 C# 过渡�
 
 | 职责 | 选型 | 备注 |
 | ---- | ---- | ---- |
-| HTTP 框架 | axum 0.8 | tower 中间件链等价 C# 中间件顺序 |
+| HTTP 框架 | axum 0.8 | tower 中间件链 |
 | 异步运行时 | tokio | pipeline 消费循环为专用 OS 线程（阻塞扫描不占运行时线程） |
 | 文件监听 | notify 8 | From/To rename 配对 + 300ms 超时兜底 |
 | 哈希 | blake3 | item id = BLAKE3 hex（存储契约） |
 | 图像解码/缩放 | image 0.25 + fast_image_resize | Lanczos3 |
-| WebP 编码 | webp（libwebp） | 有损 q80，对齐 C# ImageSharp 行为；纯 Rust 的 image-webp 仅支持无损 |
-| 元数据缓存 | rusqlite（bundled） | DDL 与 C# v1 逐字一致，现有缓存直接可读 |
-| TOML | toml（解析）+ 手写序列化 | 输出格式与 C# 逐字对齐（含修正后的 palette_version 位置） |
+| WebP 编码 | webp（libwebp） | 有损 q80；纯 Rust 的 image-webp 仅支持无损 |
+| 元数据缓存 | rusqlite（bundled） | DDL 沿袭 v1 schema，现有缓存直接可读 |
+| TOML | toml（解析）+ 手写序列化 | 输出格式与 v1 逐字对齐（含修正后的 palette_version 位置） |
 
 ## 构建与运行
 
@@ -44,7 +43,7 @@ cargo build --release          # 产物 target/release/hawk-server(.exe)
 cargo test                     # 单元测试（纯函数：路径/颜色/TOML/ignore 匹配/BLAKE3 向量/调色板）
 ```
 
-运行协议与 C# 版完全一致：
+运行协议：
 
 ```bash
 HAWK_TOKEN=<token> hawk-server --library <素材库路径> --port 27371 [--web-dist <dir>]
@@ -53,9 +52,8 @@ HAWK_TOKEN=<token> hawk-server --library <素材库路径> --port 27371 [--web-d
 ## 测试
 
 ```bash
-# 端到端冒烟（仓库根 tools/smoke.sh，语言无关的契约测试；默认测 Rust 版）
-bash tools/smoke.sh           # 测 Rust 版（需先 cargo build --release）
-bash tools/smoke.sh csharp    # 测 C# 版（dotnet 运行 Debug 产物，保留期内回归用）
+# 端到端冒烟（仓库根 tools/smoke.sh，契约测试；需先 cargo build --release）
+bash tools/smoke.sh
 ```
 
 ### 性能压测（tools/bench-*.py，改代码前后各跑一次对比 RESULT 行）
@@ -90,10 +88,10 @@ Electron 主进程的开发态直接运行 `hawk-server-rs/target/release/hawk-s
 ## OpenAPI schema
 
 `/openapi/v1.json` 由 `hawk-server-rs/openapi.json` 静态文件服务（`include_str!` 固化）。
-schema 即契约（前端类型从它生成），内容固化自 C# 版输出、不随后端实现漂移。
-若 API 变更：先改 C# 版（或在 schema 上直接编辑），重新生成该文件：
+schema 即契约（前端类型从它生成），不随后端实现漂移。
+若 API 变更：直接编辑 schema 文件，或改完后经运行中的服务回写：
 
 ```bash
-# 从运行中的 C# 版抽取（Rust 版挂载了同一路径，运行中的任一边均可）
+# 从运行中的服务抽取（servers 段归一到默认端口）
 curl -s http://127.0.0.1:<port>/openapi/v1.json | python -c "import json,sys; d=json.load(sys.stdin); d['servers']=[{'url':'http://127.0.0.1:27371/'}]; print(json.dumps(d, indent=2, ensure_ascii=False))" > hawk-server-rs/openapi.json
 ```
