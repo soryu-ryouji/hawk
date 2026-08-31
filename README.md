@@ -62,67 +62,27 @@ POST http://localhost:27371/api/v1/item/update
 { "id": "abc123", "tags": ["待审核"] }
 ```
 
-## 本地构建与发布
+## 构建与安装
 
-### 环境准备
-
-- [Node.js](https://nodejs.org/) 与 [Rust 工具链](https://rustup.rs/)（后端为 Rust 实现 `hawk-server-rs/`）
-- 克隆仓库后安装依赖（Electron 二进制镜像已配置在 `hawk-app/.npmrc`，国内网络无需额外设置）：
+工具链：安装最新的 [Node.js](https://nodejs.org/) 与 [Rust](https://rustup.rs/) 即可。
 
 ```bash
 git clone https://github.com/soryu-ryouji/hawk.git
-cd hawk/hawk-app
-npm install
-cargo build --release --manifest-path ../hawk-server-rs/Cargo.toml
+cd hawk
+
+# 本机安装：构建应用并安装到本机
+./tools/install.ps1              # Windows → out/（免安装目录，hawk.exe 就地可运行）
+./tools/install.ps1 -Path D:/Tools/hawk   # Windows → 指定目录
+./tools/install.sh               # macOS → /Applications/hawk.app；Linux → out/hawk.AppImage
+
+# 发包：产出分发包到 out/
+./tools/build.ps1      # Windows → out/hawk.zip
+./tools/build.sh       # macOS → out/hawk-mac-<arch>.zip；Linux → out/hawk.AppImage
+./tools/build.ps1 -Extensions    # 附带浏览器插件（out/hawk-extension-chrome|firefox/，加载已解压扩展即用）
 ```
 
-### 开发调试
-
-```bash
-npm run dev   # vite + electron 一键起（后端由 electron 拉起）
-```
-
-更多开发命令见 [hawk-app/README.md](hawk-app/README.md)。
-
-### 发布（打包）
-
-```bash
-cd hawk-app
-npm run pack
-```
-
-一条命令完成：前端构建 → `cargo build --release` 产出当前平台的 hawk-server 单文件（约 9MB，对比 dotnet 自包含的 70MB+）→ electron-builder 打包。产物在 `hawk-app/dist/`：
-
-- **Windows**：`hawk.zip`（绿色软件，解压到任意目录双击 `hawk.exe` 即用；全 64 位，无安装器）
-- **macOS**：`dist/mac-arm64/hawk.app`（Intel 机器为 `dist/mac/hawk.app`）——不发 dmg，直接构建 .app 目录；对外分发由 CI zip 成 `hawk-mac-<arch>.zip`
-- **Linux**：`hawk.AppImage`
-
-打包默认使用快速压缩（约 1 分钟）。追求最小体积（发正式版）或最快速度（冒烟验证）可用环境变量调整：
-
-```bash
-ELECTRON_BUILDER_COMPRESSION_LEVEL=9 npm run pack   # 最小体积，约 2 分钟
-ELECTRON_BUILDER_COMPRESSION_LEVEL=3 npm run pack   # 最快，约 20 秒（体积 +27MB）
-```
-
-交叉编译其他平台的后端：`node scripts/build-server.mjs <RID>`（如 `osx-arm64`，内部映射 rust target 并自动 `rustup target add`），再单独执行 `node scripts/pack.mjs`。
-
-把应用与浏览器插件构建并拷贝到指定目录（本地安装用）：
-
-```powershell
-./tools/build.ps1 --platform app,ext-chrome,ext-firefox --path D:/Tools/hawk
-```
-
-- `--platform` 可选 `app` / `ext-chrome` / `ext-firefox`，逗号分隔，默认全部；浏览器插件见 [hawk-browser-extension](hawk-browser-extension/README.md)（Safari 需 macOS 另行转换，不参与此脚本）
-- `--path` 产物输出目录，默认 `<仓库>/out/`；应用直接输出到该目录根下——Windows 跳过 zip 压缩，直接同步 `win-unpacked` 目录内容（仅拷贝变化的文件，`hawk.exe` 就地可运行）、macOS 为 `hawk.app` 目录、Linux 为 `hawk.AppImage`；插件输出为 `hawk-extension-chrome|firefox/` 目录（浏览器「加载已解压扩展程序」直接用）
-- 有请求的内容未构建成功（失败或跳过）时退出码为 1
-
-### CI 发版
-
-发版一般在 CI 上完成（见 [.github/workflows/release.yml](.github/workflows/release.yml)），无需本地打包：
-
-- 推 `v*` tag（如 `git tag v1.0.0 && git push origin v1.0.0`）：自动构建并创建正式 Release
-- main 分支上 `feat`/`fix` 开头的提交：自动滚动更新 nightly 预发布
-- 每次发版产物：Windows `hawk.zip` + macOS `hawk-mac-arm64.zip` / `hawk-mac-x64.zip`（.app 目录打 zip；同一 arm64 runner 交叉打包，x64 无需额外机器）
+首次运行自动安装 npm 依赖并完成全量构建（前端 + Rust 后端 + electron-builder，约几分钟）。
+开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；CI 发版见 [release.yml](.github/workflows/release.yml)。
 
 ## 文档
 

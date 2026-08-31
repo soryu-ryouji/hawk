@@ -41,14 +41,6 @@ npm run build:safari   # Safari（MV2）→ .output/safari-mv2
 - **Chrome**：`chrome://extensions` → 开发者模式 →「加载已解压的扩展程序」→ 选择 `.output/chrome-mv3`
 - **Firefox**：`about:debugging` →「此 Firefox」→「临时加载附加组件」→ 选择 `.output/firefox-mv2/manifest.json`
 
-也可以用仓库根目录的构建脚本一并输出到指定目录：
-
-```powershell
-./tools/build.ps1 --platform ext-chrome,ext-firefox --path D:/Tools/hawk
-```
-
-输出 `hawk-extension-chrome/`、`hawk-extension-firefox/` 目录，直接加载即可。
-
 ## Safari
 
 Safari 扩展必须在 macOS 上经 Xcode 转换后才能安装分发：

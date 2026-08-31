@@ -4,7 +4,7 @@
 .vs/
 .vscode/
 
-# tools/build.ps1 默认输出目录
+# 构建/安装脚本（build.* / install.*）默认输出目录
 /out/
 
 # Rust 后端构建产物

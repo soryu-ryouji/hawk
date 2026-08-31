@@ -1,213 +1,65 @@
-﻿# 统一构建入口：把指定内容构建并拷贝到目标目录。
+# 发包：构建 hawk 桌面应用的分发包并归置到仓库根目录的 out/（Windows 为免安装 hawk.zip）。
+# -Extensions：附带构建浏览器插件（out/hawk-extension-chrome|firefox/，加载已解压扩展即用）。
 #
-# 用法（- / -- / 写法均可，--platform 的值用逗号分隔）：
-#   ./tools/build.ps1                                          # 构建全部 → <仓库>/out/
-#   ./tools/build.ps1 --platform app --path D:/Tools/hawk      # 只构建桌面应用
-#   ./tools/build.ps1 --platform ext-chrome,ext-firefox        # 浏览器插件（构建尚未实现，占位跳过）
-#   ./tools/build.ps1 --platform=app --path=D:/Tools/hawk      # = 写法等价
-#
-# 产物直接输出到 <path>/ 根目录，不再套子文件夹：
-#   应用（当前平台）：Windows 为 win-unpacked 目录内容（hawk.exe 就地可运行，跳过 zip 直接同步）/ macOS hawk.app 目录 / Linux hawk.AppImage
-#   浏览器插件：hawk-extension-chrome|firefox/ 目录（已解压的扩展，浏览器「加载已解压扩展程序」直接用）
-#   Safari 版需 macOS + Xcode 转换（见 hawk-browser-extension/README.md），不在本脚本构建
-#
-# 退出码：0 = 请求的内容全部构建成功；1 = 存在未构建成功（失败或跳过）的内容。
+# 用法: ./tools/build.ps1 [-Extensions]
+# 前置: 最新 Node.js 与 Rust 工具链（https://rustup.rs/）
+# 压缩级别（默认 5）: ELECTRON_BUILDER_COMPRESSION_LEVEL=9 ./tools/build.ps1   # 9=最小体积，3=最快
+param([switch]$Extensions)
 
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$RepoRoot = Split-Path -Parent $PSScriptRoot
 $AppDir = Join-Path $RepoRoot 'hawk-app'
-$ValidPlatforms = @('app', 'ext-chrome', 'ext-firefox')
+$ExtDir = Join-Path $RepoRoot 'hawk-browser-extension'
+$OutDir = Join-Path $RepoRoot 'out'
 
-# ---- 参数解析 ----
-# PowerShell 不会把双横线参数（--platform）绑定到任何变量，统一手工解析 $args。
-$Platform = $null
-$Path = $null
-
-for ($i = 0; $i -lt $args.Count; $i++) {
-    $token = $args[$i]
-    $name = $null
-    $value = $null
-    if ($token -is [string] -and ($token -match '^-{1,2}([A-Za-z]+)(?:=(.*))?$' -or $token -match '^/([A-Za-z]+)(?:=(.*))?$')) {
-        $name = $Matches[1].ToLowerInvariant()
-        $value = $Matches[2]
-    }
-    if ($null -eq $name) {
-        Write-Host "无法识别的参数：$token（用法见文件头注释）" -ForegroundColor Red
-        exit 1
-    }
-    if ($name -notin @('platform', 'path')) {
-        Write-Host "未知参数：-$name（可选：-platform / -path）" -ForegroundColor Red
-        exit 1
-    }
-    if ($null -eq $value) {
-        if ($i + 1 -ge $args.Count) {
-            Write-Host "参数 -$name 缺少值" -ForegroundColor Red
-            exit 1
-        }
-        $token = $args[++$i]
-        # pwsh 会把 a,b 先展开成数组再传入，还原为逗号分隔的单个字符串
-        if ($token -is [array]) { $value = ($token | ForEach-Object { [string]$_ }) -join ',' }
-        else { $value = [string]$token }
-    }
-    switch ($name) {
-        'platform' { $Platform = $value -split ',' | ForEach-Object { $_.Trim() } }
-        'path' { $Path = $value }
+foreach ($tool in @('node', 'npm', 'cargo')) {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "未找到 $tool，请先安装最新的 Node.js 与 Rust 工具链（https://rustup.rs/）"
     }
 }
 
-if (-not $Platform) { $Platform = @('app', 'ext-chrome', 'ext-firefox') }
-if (-not $Path) { $Path = Join-Path $PSScriptRoot '..\out' }
-
-# ---- 参数校验 ----
-foreach ($p in $Platform) {
-    if ($ValidPlatforms -notcontains $p) {
-        Write-Host "未知平台：$p（可选：$($ValidPlatforms -join ' / ')）" -ForegroundColor Red
-        exit 1
+Push-Location $AppDir
+try {
+    if (-not (Test-Path 'node_modules')) {
+        npm install
     }
+    npm run pack
+} finally {
+    Pop-Location
 }
 
-New-Item -ItemType Directory -Force -Path $Path | Out-Null
-$outRoot = (Resolve-Path $Path).Path
-
-$failed = @()
-
-# 删除目标路径下与产物同名的旧文件/目录，避免残留旧产物
-function Remove-StaleArtifact([string]$target) {
-    if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+$package = Join-Path $AppDir 'dist\hawk.zip'
+if (-not (Test-Path $package)) {
+    throw "打包产物不存在: $package（electron-builder 未产出 hawk.zip）"
 }
+New-Item -ItemType Directory -Force $OutDir | Out-Null
+Copy-Item $package (Join-Path $OutDir 'hawk.zip') -Force
+Write-Host "应用分发包: $OutDir\hawk.zip"
 
-# ---- 桌面应用（hawk-app）----
-function Build-App {
-    Write-Host "`n==> [app] 构建 hawk-app（前端 + hawk-server + electron 打包）" -ForegroundColor Cyan
-
-    if (-not (Test-Path (Join-Path $AppDir 'node_modules'))) {
-        throw 'hawk-app/node_modules 不存在，请先执行：cd hawk-app && npm install'
-    }
-
-    $isWin = ($IsWindows -eq $true) -or $env:OS -eq 'Windows_NT'
-
-    Push-Location $AppDir
+if ($Extensions) {
+    Push-Location $ExtDir
     try {
-        # Windows 本地测试走 --dir：跳过 zip 压缩/解压（mx=5 约 1 分钟），产物为 dist/win-unpacked 目录
-        if ($isWin) { & npm run pack -- --dir } else { & npm run pack }
-        if ($LASTEXITCODE -ne 0) { throw "npm run pack 失败（退出码 $LASTEXITCODE）" }
-    }
-    finally {
+        if (-not (Test-Path 'node_modules')) {
+            npm install
+        }
+        npm run build
+        npm run build:firefox
+    } finally {
         Pop-Location
     }
-
-    # electron-builder 产物在 hawk-app/dist：
-    #   Windows: win-unpacked/ 目录（--dir，zip 真身即其内容）；macOS: mac*/hawk.app 目录；Linux: hawk.AppImage
-    $dist = Join-Path $AppDir 'dist'
-    if ($isWin) {
-        # 直接同步 win-unpacked → 目标路径。先清同名旧条目防残留，robocopy 只拷贝有变化的文件。
-        $unpacked = Join-Path $dist 'win-unpacked'
-        if (-not (Test-Path $unpacked)) { throw "未找到 --dir 产物：$unpacked" }
-        Get-ChildItem $unpacked | ForEach-Object {
-            Remove-StaleArtifact (Join-Path $outRoot $_.Name)
-        }
-        # robocopy 退出码 0~7 均成功（1=有文件拷贝 3=拷贝+跳过），>7 才是失败
-        & robocopy $unpacked $outRoot /E /NFL /NDL /NJH /NJS
-        if ($LASTEXITCODE -gt 7) { throw "robocopy 同步失败（退出码 $LASTEXITCODE）" }
-        Write-Host "[app] 已同步 → $outRoot（hawk.exe 可直接运行）" -ForegroundColor Green
-        return
+    $chromeOut = Join-Path $ExtDir '.output\chrome-mv3'
+    $firefoxOut = Join-Path $ExtDir '.output\firefox-mv2'
+    if (-not (Test-Path $chromeOut) -or -not (Test-Path $firefoxOut)) {
+        throw "插件构建产物不存在: .output/chrome-mv3 或 .output/firefox-mv2"
     }
-
-    $artifact = $null
-    if ($IsMacOS -eq $true) {
-        $artifact = Get-ChildItem $dist -Recurse -Directory -Filter 'hawk.app' |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    }
-    else {
-        $artifact = Get-ChildItem $dist -Recurse -File -Filter 'hawk.AppImage' |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    }
-    if (-not $artifact) { throw "未在 $dist 找到当前平台的打包产物" }
-
-    # 其余平台：产物直接平铺到 <path>/ 根目录
-    $target = Join-Path $outRoot $artifact.Name
-    Remove-StaleArtifact $target
-    if ($artifact.PSIsContainer) {
-        Copy-Item $artifact.FullName $target -Recurse
-    }
-    else {
-        Copy-Item $artifact.FullName $target
-    }
-    Write-Host "[app] 已输出 → $target" -ForegroundColor Green
+    # 插件目录独立，镜像同步避免旧版本残留
+    robocopy $chromeOut (Join-Path $OutDir 'hawk-extension-chrome') /MIR /NFL /NDL /NJH /NJS | Out-Null
+    if ($LASTEXITCODE -gt 7) { throw "复制插件产物失败（robocopy exit $LASTEXITCODE）" }
+    robocopy $firefoxOut (Join-Path $OutDir 'hawk-extension-firefox') /MIR /NFL /NDL /NJH /NJS | Out-Null
+    if ($LASTEXITCODE -gt 7) { throw "复制插件产物失败（robocopy exit $LASTEXITCODE）" }
+    Write-Host "浏览器插件: $OutDir\hawk-extension-chrome、hawk-extension-firefox（浏览器「加载已解压的扩展程序」直接用）"
 }
 
-# ---- 浏览器插件（hawk-browser-extension，WXT 跨浏览器构建）----
-function Build-Extension([string]$Browser) {
-    Write-Host "`n==> [ext-$Browser] 构建浏览器插件" -ForegroundColor Cyan
-
-    $extDir = Join-Path $RepoRoot 'hawk-browser-extension'
-    if (-not (Test-Path (Join-Path $extDir 'node_modules'))) {
-        throw 'hawk-browser-extension/node_modules 不存在，请先执行：cd hawk-browser-extension && npm install'
-    }
-
-    # WXT 输出目录：Chrome 为 MV3，Firefox/Safari 为 MV2
-    $outDirName = switch ($Browser) {
-        'chrome' { 'chrome-mv3' }
-        'firefox' { 'firefox-mv2' }
-        default { throw "不支持的浏览器: $Browser" }
-    }
-    $scriptName = if ($Browser -eq 'chrome') { 'build' } else { "build:$Browser" }
-
-    Push-Location $extDir
-    try {
-        & npm run $scriptName
-        if ($LASTEXITCODE -ne 0) { throw "npm run $scriptName 失败（退出码 $LASTEXITCODE）" }
-    }
-    finally {
-        Pop-Location
-    }
-
-    $src = Join-Path $extDir ".output/$outDirName"
-    if (-not (Test-Path $src)) { throw "未找到插件构建产物: $src" }
-
-    $target = Join-Path $outRoot "hawk-extension-$Browser"
-    Remove-StaleArtifact $target
-    Copy-Item $src $target -Recurse
-    Write-Host "[ext-$Browser] 已输出 → $target（浏览器加载已解压扩展即可）" -ForegroundColor Green
-}
-
-# ---- 主流程 ----
-foreach ($p in $Platform) {
-    switch ($p) {
-        'app' {
-            try {
-                Build-App
-            }
-            catch {
-                Write-Host "`n[app] 构建失败：$($_.Exception.Message)" -ForegroundColor Red
-                $script:failed += 'app'
-            }
-        }
-        'ext-chrome' {
-            try {
-                Build-Extension 'chrome'
-            }
-            catch {
-                Write-Host "`n[ext-chrome] 构建失败：$($_.Exception.Message)" -ForegroundColor Red
-                $script:failed += 'ext-chrome'
-            }
-        }
-        'ext-firefox' {
-            try {
-                Build-Extension 'firefox'
-            }
-            catch {
-                Write-Host "`n[ext-firefox] 构建失败：$($_.Exception.Message)" -ForegroundColor Red
-                $script:failed += 'ext-firefox'
-            }
-        }
-    }
-}
-
-Write-Host "`n产物目录：$outRoot"
-if ($failed) {
-    Write-Host "未构建成功：$($failed -join '、')" -ForegroundColor Red
-    exit 1
-}
-Write-Host '全部构建完成' -ForegroundColor Green
+Write-Host ""
+Write-Host "完成：全部产物已归置到 $OutDir。" -ForegroundColor Green
