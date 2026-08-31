@@ -1,6 +1,6 @@
 # hawk-server-rs（Rust 实现）
 
-> 逐文件的代码职责见 [代码导读](server-code-structure.md)（Rust 版模块一一对应，逐文件导读随 C# 版移除后待补充）。
+> 逐文件的代码职责见 [代码导读](server-code-structure.md)。
 > API 契约见 [REST API V1](server-rest-api-v1.md)，存储格式见 [storage.md](storage.md)。
 
 hawk-server 的 Rust 实现（`hawk-server-rs/`），已整体替换 C# 过渡版（后者已完成使命并从仓库移除）。
