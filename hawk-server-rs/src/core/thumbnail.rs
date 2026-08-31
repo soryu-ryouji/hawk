@@ -53,7 +53,8 @@ impl ThumbnailService {
         let image = match image::open(source_abs) {
             Ok(i) => image::DynamicImage::ImageRgba8(i.to_rgba8()),
             Err(e) => {
-                tracing::debug!("缩略图解码失败 {source_abs}: {e}");
+                // 解码失败需要可见：此类素材的缩略图/调色板会永久缺失，靠周期对账自愈重试（手动换图后自动恢复）
+                tracing::warn!("缩略图解码失败 {source_abs}: {e}");
                 return false;
             }
         };

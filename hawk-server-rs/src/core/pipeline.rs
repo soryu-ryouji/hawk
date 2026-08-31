@@ -51,6 +51,11 @@ pub struct BatchMetadataResult {
 const MAX_DEBOUNCE_ATTEMPTS: u32 = 120;
 /// 写入防抖窗口：mtime 距今不足该值的文件视为仍在写入，延迟重试
 const STABILITY_WINDOW_MS: i64 = 1000;
+/// 调色板批量回写：达到该条数立即冲刷（SQLite 事务开销从 N 降到 1，
+/// 事件按批平滑补发，避免全库重提炼时的 item.updated 洪峰）
+const PALETTE_BATCH: usize = 500;
+/// 调色板批量回写的时间冲刷阈值：滞留超时时即使未达批大小也冲刷
+const PALETTE_FLUSH_AFTER: Duration = Duration::from_millis(2000);
 
 type Reply<T> = Option<oneshot::Sender<T>>;
 
@@ -96,6 +101,7 @@ enum Job {
     MetadataSync {
         reply: Reply<Result<(), String>>,
     },
+    PaletteFlush,
     Palette {
         hash: String,
         palette: Vec<PaletteColor>,
@@ -154,6 +160,11 @@ pub struct PipelineCtx {
     last_scan: Arc<Mutex<Option<ScanProgress>>>,
     progress_last_at: Arc<AtomicI64>,
     progress_idle: Arc<AtomicBool>,
+    /// 暂存的调色板回写（hash → 最新提炼结果）；同 hash 去重，按批冲刷
+    palette_pending: Arc<Mutex<Vec<(String, Vec<PaletteColor>)>>>,
+    palette_oldest: Arc<Mutex<Option<std::time::Instant>>>,
+    /// 冲刷定时任务是否已排队（避免重复 spawn）
+    palette_timer: Arc<AtomicBool>,
     runtime: tokio::runtime::Handle,
 }
 
@@ -214,6 +225,9 @@ impl IndexPipeline {
             last_scan: Arc::new(Mutex::new(None)),
             progress_last_at: Arc::new(AtomicI64::new(0)),
             progress_idle: Arc::new(AtomicBool::new(true)),
+            palette_pending: Arc::new(Mutex::new(Vec::new())),
+            palette_oldest: Arc::new(Mutex::new(None)),
+            palette_timer: Arc::new(AtomicBool::new(false)),
             runtime: tokio::runtime::Handle::current(),
         };
         IndexPipeline {
@@ -638,6 +652,7 @@ fn consumer_loop(ctx: Arc<PipelineCtx>, rx: std::sync::mpsc::Receiver<Job>) {
             });
         }
 
+        maybe_flush_palette(&ctx);
         publish_index_progress(&ctx, false);
     }
 }
@@ -713,26 +728,15 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             complete(reply, result);
         }
         Job::Palette { hash, palette } => {
-            // 调色板回写:提炼结果(内容的纯函数)入元数据 TOML 并同步索引;meta 已随漂移/删除消失时丢弃。
+            // 调色板回写聚合批量处理（flush 时统一落盘），全库重提炼时避免 N 次单条事务 + 事件洪峰。
+            // 语义不变：提炼结果(内容的纯函数)入元数据 TOML;meta 已随漂移/删除消失时丢弃;
             // 空数组是负缓存(已提炼无有效像素),同样持久化。幂等,重复应用无害
-            if let Some(mut meta) = ctx.store.try_get(&hash) {
-                meta.palette = Some(
-                    palette
-                        .iter()
-                        .map(|p| PaletteEntry {
-                            color: color_math::to_hex(p.r, p.g, p.b),
-                            percentage: p.percentage,
-                        })
-                        .collect(),
-                );
-                meta.palette_version = color::PALETTE_VERSION;
-                if ctx.store.save(&hash, &meta).is_ok() && ctx.index.contains(&hash) {
-                    ctx.index.with_item_mut(&hash, |item| item.sync_from(&meta));
-                    if let Some(dto) = ctx.index.get_dto(&hash) {
-                        ItemEvents::publish_changed(&ctx.bus, &dto);
-                    }
-                }
-            }
+            stage_palette(ctx, hash, palette);
+        }
+        Job::PaletteFlush => {
+            // 冲刷定时任务到期：队列安静期（无新 job）也能把暂存回写落盘，不依赖任务到达
+            ctx.palette_timer.store(false, Ordering::SeqCst);
+            flush_palette_batch(ctx);
         }
         Job::FolderHint { reason } => {
             ctx.bus
@@ -778,6 +782,98 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
         }
         Job::RegistryReload => {
             ctx.migrator.reload_registries();
+        }
+    }
+}
+
+// ---------- 调色板批量回写 ---------
+
+/// 暂存调色板提炼结果（同 hash 以最新为准），达批大小立即冲刷；
+/// 未达批大小时 spawn 一次性定时任务（PALETTE_FLUSH_AFTER 后入队 PaletteFlushJob 冲刷）——
+/// 安静期（无后续 job）也能落盘，不依赖消费循环的任务到达
+fn stage_palette(ctx: &Arc<PipelineCtx>, hash: String, palette: Vec<PaletteColor>) {
+    let mut pending = ctx.palette_pending.lock().unwrap();
+    if let Some(entry) = pending.iter_mut().find(|(h, _)| *h == hash) {
+        entry.1 = palette;
+        return;
+    }
+    if pending.is_empty() {
+        *ctx.palette_oldest.lock().unwrap() = Some(std::time::Instant::now());
+    }
+    pending.push((hash, palette));
+    let full = pending.len() >= PALETTE_BATCH;
+    drop(pending);
+    if full {
+        flush_palette_batch(ctx);
+        return;
+    }
+    if !ctx.palette_timer.swap(true, Ordering::SeqCst) {
+        let ctx2 = ctx.clone();
+        let runtime = ctx.runtime.clone();
+        runtime.spawn(async move {
+            tokio::time::sleep(PALETTE_FLUSH_AFTER).await;
+            // 到点仍由消费循环执行冲刷（单写者）；定时任务只负责唤醒
+            fire(&ctx2, Job::PaletteFlush);
+        });
+    }
+}
+
+/// 消费循环每处理完一个 job 检查一次：滞留超时即使未达批大小也冲刷（事件平滑发出）
+fn maybe_flush_palette(ctx: &PipelineCtx) {
+    let oldest = *ctx.palette_oldest.lock().unwrap();
+    if let Some(t) = oldest {
+        if t.elapsed() >= PALETTE_FLUSH_AFTER {
+            flush_palette_batch(ctx);
+        }
+    }
+}
+
+/// 冲刷暂存的调色板回写：逐条落 TOML（铁律：权威层先行），随后内存副本与 SQLite 单事务统一应用，
+/// 最后逐 item 同步索引并补发 item.updated。meta 已随漂移/删除消失时丢弃
+fn flush_palette_batch(ctx: &PipelineCtx) {
+    let batch: Vec<(String, Vec<PaletteColor>)> = {
+        let mut pending = ctx.palette_pending.lock().unwrap();
+        if pending.is_empty() {
+            return;
+        }
+        *ctx.palette_oldest.lock().unwrap() = None;
+        std::mem::take(&mut *pending)
+    };
+
+    let mut applied: Vec<(String, ItemMetadata, i64)> = Vec::with_capacity(batch.len());
+    let batch_len = batch.len();
+    for (hash, palette) in batch {
+        let Some(mut meta) = ctx.store.try_get(&hash) else {
+            continue;
+        };
+        meta.palette = Some(
+            palette
+                .iter()
+                .map(|p| PaletteEntry {
+                    color: color_math::to_hex(p.r, p.g, p.b),
+                    percentage: p.percentage,
+                })
+                .collect(),
+        );
+        meta.palette_version = color::PALETTE_VERSION;
+        let Ok(source_mtime) = ctx.store.save_toml(&hash, &meta) else {
+            continue;
+        };
+        applied.push((hash, meta, source_mtime));
+    }
+    if applied.is_empty() {
+        return;
+    }
+
+    ctx.store.apply_batch(&applied);
+    tracing::info!("调色板批量冲刷 {} 条（暂存 {} 条）", applied.len(), batch_len);
+
+    for (hash, meta, _) in &applied {
+        if ctx.index.contains(hash) {
+            ctx.index.with_item_mut(hash, |item| item.sync_from(meta));
+            if let Some(dto) = ctx.index.get_dto(hash) {
+                ItemEvents::publish_changed(&ctx.bus, &dto);
+            }
         }
     }
 }
@@ -1537,6 +1633,16 @@ fn do_metadata_sync(ctx: &PipelineCtx) -> Result<(), String> {
         if !seen.contains(hash) {
             ctx.store.clear_external(hash);
             sync_index_from_metadata(ctx, hash);
+        }
+    }
+
+    // 派生缓存自愈：palette 缺失（= 缩略图/调色板派生工作未完成，如 worker 队列高峰期的丢失项、
+    // 解码曾失败的素材）→ 派发 worker 任务补齐（生成缺失尺寸缩略图 + 提炼调色板，完成后补发
+    // item.updated，前端据此重建 404 占位）。纯内存扫描 + in-flight 去重，稳态零开销。
+    // 源文件已不在的项由 worker 静默跳过（删除对账会收敛位置）
+    for hash in ctx.store.hashes_with_missing_palette(color::PALETTE_VERSION) {
+        if let Some(abs) = ctx.index.main_source_abs(&hash, &ctx.paths) {
+            ctx.worker.enqueue(&hash, &abs);
         }
     }
     Ok(())

@@ -29,7 +29,7 @@ struct WorkerCallbacks {
 }
 
 pub struct ThumbnailWorker {
-    tx: Mutex<Option<std::sync::mpsc::SyncSender<ThumbJob>>>,
+    tx: Mutex<Option<std::sync::mpsc::Sender<ThumbJob>>>,
     rx: Arc<Mutex<std::sync::mpsc::Receiver<ThumbJob>>>,
     inflight: Arc<Mutex<HashSet<String>>>,
     queued: Arc<AtomicI32>,
@@ -47,7 +47,10 @@ impl ThumbnailWorker {
         config: Arc<LibraryConfig>,
         bus: EventBus,
     ) -> Arc<ThumbnailWorker> {
-        let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+        // 无界队列：任务是尽力而为的缓存，但「队列满静默丢弃」曾导致大批量入库时 20%+ 素材
+        // 永久丢失缩略图（24k 库丢 5.6k）。任务仅 ~100B 且 in-flight 有去重，无界是安全的；
+        // 积压经 task.progress 可见，周期对账会自愈真正缺失的派生缓存
+        let (tx, rx) = std::sync::mpsc::channel();
         Arc::new(ThumbnailWorker {
             tx: Mutex::new(Some(tx)),
             rx: Arc::new(Mutex::new(rx)),
@@ -126,7 +129,8 @@ impl ThumbnailWorker {
         }
     }
 
-    /// 派发缩略图任务(尽力而为:队列满时丢弃;in-flight 期间重复派发丢弃)
+    /// 派发缩略图任务。in-flight 去重（队列中/生成中的同 hash 重复派发直接丢弃）——
+    /// 幂等，重复派发只产生 no-op 任务（尺寸齐备 + 调色板已提炼时不做事）
     pub fn enqueue(&self, hash: &str, source_abs: &str) {
         if !self.inflight.lock().unwrap().insert(hash.to_string()) {
             return;
@@ -136,13 +140,9 @@ impl ThumbnailWorker {
             source_abs: source_abs.to_string(),
         };
         let tx = self.tx.lock().unwrap();
-        match tx.as_ref().map(|tx| tx.try_send(job)) {
-            Some(Ok(())) => {
+        if let Some(tx) = tx.as_ref() {
+            if tx.send(job).is_ok() {
                 self.queued.fetch_add(1, Ordering::SeqCst);
-            }
-            _ => {
-                // 队列满时丢弃（尽力而为的缓存）；释放 in-flight 允许下次派发
-                self.inflight.lock().unwrap().remove(hash);
             }
         }
     }

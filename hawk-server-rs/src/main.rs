@@ -44,7 +44,8 @@ async fn main() {
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
     let db = Arc::new(IndexDb::open(&paths.index_db_file));
-    let store = Arc::new(MetadataStore::new(paths.clone(), db.clone()));
+    let startup = Arc::new(StartupState::default());
+    let store = Arc::new(MetadataStore::new(paths.clone(), db.clone(), &startup));
     let index = Arc::new(ItemIndex::default());
     let bus = EventBus::new();
     let categories = Arc::new(CategoryRegistry::new(&paths));
@@ -60,7 +61,6 @@ async fn main() {
         bus.clone(),
     ));
     let scanner = LibraryScanner::new(paths.clone(), config.clone());
-    let startup = Arc::new(StartupState::default());
     let pipeline = IndexPipeline::new(
         paths.clone(),
         config.clone(),

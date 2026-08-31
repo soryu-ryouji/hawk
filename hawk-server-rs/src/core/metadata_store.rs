@@ -6,6 +6,7 @@
 use crate::core::index_db::IndexDb;
 use crate::core::metadata::{self, ItemMetadata};
 use crate::core::paths::{file_mtime_ms, LibraryPaths};
+use crate::core::startup::StartupState;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -22,8 +23,10 @@ struct MetadataInner {
 }
 
 impl MetadataStore {
-    /// 构造即注水：SQLite 缓存快路径 → TOML 全量解析回退（顺带建好缓存）
-    pub fn new(paths: LibraryPaths, db: std::sync::Arc<IndexDb>) -> MetadataStore {
+    /// 构造即注水：SQLite 缓存快路径 → TOML 全量解析回退（顺带建好缓存）。
+    /// TOML 回退解析期间经 StartupState 上报进度（每 1000 文件一帧，phase=sync），
+    /// 大库首次启动（缓存缺失）时启动屏有实时反馈
+    pub fn new(paths: LibraryPaths, db: std::sync::Arc<IndexDb>, startup: &StartupState) -> MetadataStore {
         let mut entries: Option<Vec<(String, ItemMetadata, i64)>> = None;
         if db.hydrated.load(std::sync::atomic::Ordering::SeqCst) {
             match db.load_all() {
@@ -38,7 +41,7 @@ impl MetadataStore {
         let entries = match entries {
             Some(e) => e,
             None => {
-                let from_toml = load_all_from_toml(&paths);
+                let from_toml = load_all_from_toml(&paths, startup);
                 db.hydrate(&from_toml);
                 from_toml
             }
@@ -72,6 +75,20 @@ impl MetadataStore {
         self.inner.lock().unwrap().hash_by_path.get(library_path).cloned()
     }
 
+    /// 调色板缺失（未提炼或版本过旧）的 hash 列表——派生缓存的自愈依据。
+    /// palette 缺失是「缩略图/调色板派生工作未完成」的可靠信号（两者由同一 worker 任务补齐），
+    /// 纯内存扫描，不碰文件系统
+    pub fn hashes_with_missing_palette(&self, current_version: i32) -> Vec<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .by_hash
+            .iter()
+            .filter(|(_, m)| m.palette.is_none() || m.palette_version != current_version)
+            .map(|(h, _)| h.clone())
+            .collect()
+    }
+
     /// 全量文件夹快照（增量扫描的对比基准；缓存不可用时返回空表 = 首轮全量深入）
     pub fn load_folder_snapshots(&self) -> HashMap<String, (i64, i64)> {
         self.db.load_folder_snapshots()
@@ -90,6 +107,15 @@ impl MetadataStore {
     /// 保存元数据：先 TOML 原子写（权威层），成功后更新内存副本与 SQLite 缓存。
     /// TOML 写失败返回 Err（调用方决定回传 API 或仅记录，与 C# 异常传播语义一致）
     pub fn save(&self, hash: &str, meta: &ItemMetadata) -> Result<(), String> {
+        let source_mtime = self.save_toml(hash, meta)?;
+        self.apply_in_memory(hash, meta);
+        self.db.save(hash, meta, source_mtime);
+        Ok(())
+    }
+
+    /// 仅写 TOML（原子写，权威层），返回源文件 mtime。批量回写路径用：
+    /// 先逐条落 TOML（铁律：TOML 先行），再统一刷内存与 SQLite 单事务
+    pub fn save_toml(&self, hash: &str, meta: &ItemMetadata) -> Result<i64, String> {
         let file = self.file_path(hash);
         let tmp = format!("{file}.tmp");
         std::fs::write(&tmp, metadata::serialize(meta)).map_err(|e| format!("元数据 TOML 写入失败 {tmp}: {e}"))?;
@@ -97,15 +123,28 @@ impl MetadataStore {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!("元数据 TOML 替换失败 {file}: {e}"));
         }
-        let source_mtime = file_mtime_ms(&file);
+        Ok(file_mtime_ms(&file))
+    }
 
+    /// 批量应用（内存副本 + SQLite 单事务）。TOML 须已由 save_toml 逐条落盘
+    pub fn apply_batch(&self, entries: &[(String, ItemMetadata, i64)]) {
+        if entries.is_empty() {
+            return;
+        }
         {
             let mut inner = self.inner.lock().unwrap();
-            inner.by_hash.insert(hash.to_string(), meta.clone());
-            rebuild_path_index(&mut inner, hash, meta);
+            for (hash, meta, _) in entries {
+                inner.by_hash.insert(hash.clone(), meta.clone());
+                rebuild_path_index(&mut inner, hash, meta);
+            }
         }
-        self.db.save(hash, meta, source_mtime);
-        Ok(())
+        self.db.save_batch(entries);
+    }
+
+    fn apply_in_memory(&self, hash: &str, meta: &ItemMetadata) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.by_hash.insert(hash.to_string(), meta.clone());
+        rebuild_path_index(&mut inner, hash, meta);
     }
 
     pub fn delete(&self, hash: &str) {
@@ -185,7 +224,7 @@ fn rebuild_path_index(inner: &mut MetadataInner, hash: &str, meta: &ItemMetadata
 }
 
 /// TOML 全量解析（缓存缺失时的权威回退路径）
-fn load_all_from_toml(paths: &LibraryPaths) -> Vec<(String, ItemMetadata, i64)> {
+fn load_all_from_toml(paths: &LibraryPaths, startup: &StartupState) -> Vec<(String, ItemMetadata, i64)> {
     let mut entries = Vec::new();
     let dir = &paths.metadata_dir;
     let read_dir = match std::fs::read_dir(dir) {
@@ -212,6 +251,10 @@ fn load_all_from_toml(paths: &LibraryPaths) -> Vec<(String, ItemMetadata, i64)> 
                 entries.push((hash.to_string(), meta, mtime));
             }
             Err(e) => tracing::warn!("元数据解析失败，已跳过: {file}: {e}"),
+        }
+        // 大库回退解析可达分钟级：每 1000 文件一帧进度，启动屏实时反馈
+        if entries.len() % 1000 == 0 {
+            startup.report("sync", entries.len() as i32, 0);
         }
     }
     tracing::info!("已从 TOML 全量解析 {} 条元数据", entries.len());

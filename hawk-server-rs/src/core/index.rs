@@ -7,7 +7,6 @@
 use crate::core::color_math::delta_e_squared;
 use crate::core::item::{Item, ItemDto, ItemLocation, ItemQuery, ItemSkeletonDto};
 use crate::core::paths::LibraryPaths;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -263,29 +262,36 @@ impl ItemIndex {
         counts
     }
 
-    /// 条件查询。锁内完成过滤、排序、分页与 DTO 投影；total_size 为过滤后全量（未分页）的字节数合计
+    /// 条件查询。锁内完成过滤、排序、分页与 DTO 投影；total_size 为过滤后全量（未分页）的字节数合计。
+    /// 排序在轻量键上进行，DTO 只投影分页窗口——大库下避免为全部命中项克隆完整 DTO（UI 卡死的根因之一）
     pub fn query(&self, q: &ItemQuery) -> (Vec<ItemDto>, usize, i64) {
         let inner = self.inner.lock().unwrap();
-        let dtos = filter_and_sort(&inner, q);
-        let total = dtos.len();
-        let total_size = dtos.iter().map(|d| d.size).sum();
+        let items = filter_items(&inner, q);
+        let total = items.len();
+        let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
+        let ordered = sort_items(items, q);
         let offset = q.offset.max(0) as usize;
         let limit = q.limit.max(1) as usize;
-        (dtos.into_iter().skip(offset).take(limit).collect(), total, total_size)
+        (
+            ordered.into_iter().skip(offset).take(limit).map(|i| i.to_dto(q.in_trash)).collect(),
+            total,
+            total_size,
+        )
     }
 
     /// 骨架查询：与 query 同过滤、同排序（含确定性次序），投影为 id/width/height/star，不分页
     pub fn query_skeleton(&self, q: &ItemQuery) -> (Vec<ItemSkeletonDto>, i64) {
         let inner = self.inner.lock().unwrap();
-        let dtos = filter_and_sort(&inner, q);
-        let total_size = dtos.iter().map(|d| d.size).sum();
+        let items = filter_items(&inner, q);
+        let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
         (
-            dtos.into_iter()
-                .map(|d| ItemSkeletonDto {
-                    id: d.id,
-                    width: d.width,
-                    height: d.height,
-                    star: d.star,
+            sort_items(items, q)
+                .into_iter()
+                .map(|i| ItemSkeletonDto {
+                    id: i.id.clone(),
+                    width: i.width,
+                    height: i.height,
+                    star: i.star,
                 })
                 .collect(),
             total_size,
@@ -293,9 +299,8 @@ impl ItemIndex {
     }
 }
 
-/// 过滤 + 排序。主键同值时按 id 字典序打破平局：List.Sort 不稳定，
-/// 前端骨架与视口窗口是两次独立查询，次序必须逐位一致，否则按 offset 取窗口会错位
-fn filter_and_sort(inner: &IndexInner, q: &ItemQuery) -> Vec<ItemDto> {
+/// 过滤（AND 语义，与 C# ItemIndex.FilterAndSort 的条件逐一对应）。返回引用，零克隆
+fn filter_items<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<&'a Item> {
     let mut items: Vec<&Item> = inner
         .by_hash
         .values()
@@ -378,25 +383,66 @@ fn filter_and_sort(inner: &IndexInner, q: &ItemQuery) -> Vec<ItemDto> {
     if let Some(color) = q.color {
         items.retain(|i| i.palette.iter().any(|p| delta_e_squared(p.lab, color) <= COLOR_MATCH_THRESHOLD_SQUARED));
     }
+    items
+}
 
-    let mut dtos: Vec<ItemDto> = items.into_iter().map(|i| i.to_dto(q.in_trash)).collect();
+/// 视图的主位置（与 Item::main_location 一致：普通视图取首个库内位置，回收站视图取首个回收站位置）
+fn view_main_location(item: &Item, trash_view: bool) -> Option<&ItemLocation> {
+    item.locations.iter().find(|l| l.in_trash() == trash_view)
+}
 
+/// 视图主位置的字节数（total_size 口径与 DTO 一致）
+fn main_size(item: &Item, trash_view: bool) -> i64 {
+    view_main_location(item, trash_view).map(|l| l.size).unwrap_or(0)
+}
+
+/// 排序。主键同值时按 id 字典序打破平局：排序不稳定 + 两次独立查询（骨架/视口窗口）
+/// 的次序必须逐位一致，否则按 offset 取窗口会错位。
+/// desc 反转整个比较结果（含 id 平局），与 C# 版语义一致
+fn sort_items<'a>(mut items: Vec<&'a Item>, q: &ItemQuery) -> Vec<&'a Item> {
     let desc = !q.order.as_deref().map(|o| o.eq_ignore_ascii_case("asc")).unwrap_or(false);
-    dtos.sort_by(|a, b| {
-        let c = match q.order_by.as_deref().unwrap_or("modification_time") {
-            "name" => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            "size" => a.size.cmp(&b.size),
-            "star" => a.star.cmp(&b.star),
-            _ => a.modification_time.cmp(&b.modification_time),
-        };
-        let c = if c == Ordering::Equal { a.id.cmp(&b.id) } else { c };
-        if desc {
-            c.reverse()
-        } else {
-            c
+    match q.order_by.as_deref().unwrap_or("modification_time") {
+        "name" => {
+            // 名称键忽略大小写；预计算小写键避免比较器内反复分配
+            let mut keyed: Vec<(String, &Item)> = items
+                .into_iter()
+                .map(|i| {
+                    let name = view_main_location(i, q.in_trash)
+                        .map(|l| LibraryPaths::name_of(l.library_path()).to_lowercase())
+                        .unwrap_or_default();
+                    (name, i)
+                })
+                .collect();
+            keyed.sort_by(|a, b| {
+                let c = a.0.cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id));
+                if desc { c.reverse() } else { c }
+            });
+            items = keyed.into_iter().map(|(_, i)| i).collect();
         }
-    });
-    dtos
+        "size" => {
+            items.sort_by(|a, b| {
+                let c = main_size(a, q.in_trash).cmp(&main_size(b, q.in_trash)).then_with(|| a.id.cmp(&b.id));
+                if desc { c.reverse() } else { c }
+            });
+        }
+        "star" => {
+            items.sort_by(|a, b| {
+                let c = a.star.cmp(&b.star).then_with(|| a.id.cmp(&b.id));
+                if desc { c.reverse() } else { c }
+            });
+        }
+        _ => {
+            items.sort_by(|a, b| {
+                let c = main_mtime(a, q.in_trash).cmp(&main_mtime(b, q.in_trash)).then_with(|| a.id.cmp(&b.id));
+                if desc { c.reverse() } else { c }
+            });
+        }
+    }
+    items
+}
+
+fn main_mtime(item: &Item, trash_view: bool) -> i64 {
+    view_main_location(item, trash_view).map(|l| l.modification_time).unwrap_or(0)
 }
 
 fn matches_keyword(item: &Item, keyword: &str, trash_view: bool) -> bool {

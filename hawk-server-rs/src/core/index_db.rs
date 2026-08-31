@@ -150,29 +150,30 @@ impl IndexDb {
         }
         let result = self.with_conn(|conn| {
             let tx = conn.transaction()?;
-            tx.execute(
-                "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, palette_version) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-                 ON CONFLICT(hash) DO UPDATE SET url=?2, star=?3, annotation=?4, source_mtime=?5, width=?6, height=?7, palette=?8, palette_version=?9",
-                rusqlite::params![
-                    hash,
-                    meta.url,
-                    meta.star,
-                    meta.annotation,
-                    source_mtime,
-                    meta.width,
-                    meta.height,
-                    meta.palette.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()),
-                    meta.palette_version,
-                ],
-            )?;
-            delete_child_rows(&tx, hash)?;
-            insert_child_rows(&tx, hash, meta)?;
+            upsert_item(&tx, hash, meta, source_mtime)?;
             tx.commit()?;
             Ok(())
         });
         if let Err(e) = result {
             self.poison(&format!("元数据缓存写入失败 {hash}: {e}"));
+        }
+    }
+
+    /// 批量写穿：单事务镜像多条（调色板批量回写等大流量路径用，事务/fsync 开销从 N 降到 1）
+    pub fn save_batch(&self, entries: &[(String, ItemMetadata, i64)]) {
+        if !self.enabled() || entries.is_empty() {
+            return;
+        }
+        let result = self.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            for (hash, meta, mtime) in entries {
+                upsert_item(&tx, hash, meta, *mtime)?;
+            }
+            tx.commit()?;
+            Ok(())
+        });
+        if let Err(e) = result {
+            self.poison(&format!("元数据缓存批量写入失败: {e}"));
         }
     }
 
@@ -382,6 +383,33 @@ impl IndexDb {
 /// 调色板的镜像存储格式（与 TOML 同款 entry；null/损坏 = 未提炼，worker 重新提炼补齐）
 fn parse_palette_json(json: &str) -> Option<Vec<PaletteEntry>> {
     serde_json::from_str(json).ok()
+}
+
+/// 单条镜像 UPSERT（save/save_batch 共用；调用方已持有事务）
+fn upsert_item(
+    tx: &rusqlite::Transaction,
+    hash: &str,
+    meta: &ItemMetadata,
+    source_mtime: i64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, palette_version) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+         ON CONFLICT(hash) DO UPDATE SET url=?2, star=?3, annotation=?4, source_mtime=?5, width=?6, height=?7, palette=?8, palette_version=?9",
+        rusqlite::params![
+            hash,
+            meta.url,
+            meta.star,
+            meta.annotation,
+            source_mtime,
+            meta.width,
+            meta.height,
+            meta.palette.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()),
+            meta.palette_version,
+        ],
+    )?;
+    delete_child_rows(tx, hash)?;
+    insert_child_rows(tx, hash, meta)
 }
 
 fn insert_item(tx: &rusqlite::Transaction, hash: &str, meta: &ItemMetadata, source_mtime: i64) -> rusqlite::Result<()> {
