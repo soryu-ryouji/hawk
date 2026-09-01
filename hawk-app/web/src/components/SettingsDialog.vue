@@ -1,10 +1,23 @@
 <script setup lang="ts">
-// 设置面板：缩略图尺寸（实时生效，所有端可用）；局域网 web 查看开关/端口/token（仅 Electron，
-// 按库隔离存于 .hawk/config.toml 的 [web] 段；保存 = 主进程写配置，daemon 热重绑监听（不重启进程），
-// 主进程轮询确认收敛，失败自动写回旧配置回滚并弹错）。
-// 移动端（浏览器触屏）可打开本面板调整缩略图尺寸，但无 hawkShell，局域网设置段不渲染。
-import { onMounted, ref } from 'vue';
+// 设置面板：左侧导航（外观/局域网）+ 右侧内容的两栏结构（窄屏折叠为顶部横向页签；无 shell 的
+// 移动端只有「外观」一个分区，导航不渲染）。
+// - 缩略图尺寸滑杆：实时生效，所有端可用（含局域网浏览器触屏端）。
+// - 局域网查看（仅 Electron）：开关/端口/token/本机地址，按库隔离存于 .hawk/config.toml 的 [web] 段；
+//   保存 = 主进程写配置，daemon 热重绑监听（不重启进程），主进程轮询确认收敛，
+//   失败自动写回旧配置回滚并弹错。
+// 交互要点：
+// - 遮罩「按下与抬起都落在遮罩上」才关闭：在端口输入框里拖动选择文本、拖动滑杆时滑出面板松开，
+//   click 事件落在 mousedown/mouseup 目标的共同祖先（遮罩）上，按 click.self 判定会误关面板丢失未保存
+//   的配置——改用 pointerdown/pointerup 配对判定，从面板内开始的拖拽不再触发关闭。
+// - Esc 关闭（捕获阶段拦截并阻断全局快捷键；IME 组合态已被 main.ts 更早的捕获监听拦下）。
+// - 打开期间挂 body.dialog-open 挂起窗口拖拽区（同 ContextMenu 的 body.menu-open）：Electron 的
+//   -webkit-app-region: drag 由 OS 命中测试优先消费，不禁用的话点遮罩盖住的标题栏会变成拖动窗口。
+// - 端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控），合法性就地为红色边框 +
+//   提示文案，保存时拦截。
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useClipboard, useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import Icon from './Icon.vue';
 import type { LanSettings } from '../types';
 
 const emit = defineEmits<{ close: [] }>();
@@ -15,11 +28,16 @@ const loading = ref(true);
 const saving = ref(false);
 const error = ref<string | null>(null);
 const enabled = ref(false);
-const port = ref(27372);
+const port = ref('27372');
 const token = ref('');
 const addresses = ref<string[]>([]);
+const { copy: copyText } = useClipboard({ legacy: true });
+
+/** 当前分区：外观 / 局域网（无 shell 时固定外观且导航不渲染） */
+const section = ref<'appearance' | 'lan'>('appearance');
 
 onMounted(async () => {
+  document.body.classList.add('dialog-open');
   if (!hasShell) {
     // 浏览器触屏端：无局域网设置可加载（滑杆段实时生效，无需加载态）
     loading.value = false;
@@ -32,7 +50,7 @@ onMounted(async () => {
     }
     const s: LanSettings = await shell.getLanSettings();
     enabled.value = s.enabled;
-    port.value = s.port;
+    port.value = String(s.port);
     token.value = s.token;
     addresses.value = s.addresses;
   } catch (e) {
@@ -43,11 +61,58 @@ onMounted(async () => {
   }
 });
 
+onUnmounted(() => {
+  document.body.classList.remove('dialog-open');
+});
+
+// ---- 遮罩关闭：按下与抬起都落在遮罩上才关（面板内开始的拖拽出面板松开不误关） ----
+let downOnMask = false;
+
+function onMaskDown(e: PointerEvent) {
+  downOnMask = e.target === e.currentTarget;
+}
+
+function onMaskUp(e: PointerEvent) {
+  if (downOnMask && e.target === e.currentTarget) {
+    emit('close');
+  }
+  downOnMask = false;
+}
+
+// Esc 关闭：捕获阶段处理并阻断冒泡，避免全局快捷键（关预览/菜单）跟着触发
+useEventListener(
+  window,
+  'keydown',
+  (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      emit('close');
+    }
+  },
+  { capture: true },
+);
+
+// ---- 端口校验：纯数字且 1–65535；不合法就地标红提示，保存拦截 ----
+const portValid = computed(() => /^\d+$/.test(port.value.trim()) && Number(port.value) >= 1 && Number(port.value) <= 65535);
+const PORT_ERROR = '端口须为 1–65535 之间的数字';
+
+/** 保存用的端口值：合法取解析值；未启用局域网时输入框不可见，静默回退默认端口 */
+function portValue() {
+  return portValid.value ? Number(port.value.trim()) : 27372;
+}
+
 /** 重新生成随机访问 token（32 字节 hex） */
 function regenerate() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   token.value = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** 复制文本并给全局 toast 反馈（token/访问地址，发给手机侧粘贴用） */
+function copy(value: string) {
+  void copyText(value);
+  store.showToast('已复制到剪贴板');
 }
 
 /** 缩略图尺寸步进（滑杆 ± 按钮） */
@@ -63,6 +128,11 @@ async function save() {
     error.value = '启用局域网查看需要填写访问 token';
     return;
   }
+  if (enabled.value && !portValid.value) {
+    error.value = PORT_ERROR;
+    section.value = 'lan';
+    return;
+  }
   saving.value = true;
   error.value = null;
   try {
@@ -72,7 +142,7 @@ async function save() {
     }
     const res = await shell.saveLanSettings({
       enabled: enabled.value,
-      port: Number(port.value) || 27372,
+      port: portValue(),
       token: token.value.trim(),
     });
     if (!res.ok) {
@@ -91,70 +161,118 @@ async function save() {
 
 <template>
   <Teleport to="body">
-    <div class="mask" @click.self="emit('close')">
-      <div class="dialog" role="dialog" aria-modal="true">
-        <div class="title">设置</div>
+    <div class="mask" @pointerdown="onMaskDown" @pointerup="onMaskUp">
+      <div class="dialog" :class="{ 'with-nav': hasShell }" role="dialog" aria-modal="true" aria-label="设置">
+        <header class="dialog-head">
+          <span class="dialog-title">设置</span>
+          <button class="icon-btn" title="关闭 (Esc)" @click="emit('close')">
+            <Icon name="close" :size="14" />
+          </button>
+        </header>
 
-        <section>
-          <div class="section-title">缩略图尺寸</div>
-          <div class="slider-row">
-            <button title="缩小" @click="stepThumb(-8)">−</button>
-            <input v-model.number="store.thumbSize" type="range" min="120" max="280" step="8" />
-            <button title="放大" @click="stepThumb(8)">＋</button>
-            <span class="slider-val">{{ store.thumbSize }}</span>
+        <div class="dialog-main">
+          <!-- 左侧导航：仅 Electron（两个分区）渲染；窄屏折叠为顶部横向页签 -->
+          <nav v-if="hasShell" class="nav">
+            <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">
+              外观
+            </button>
+            <button class="nav-item" :class="{ active: section === 'lan' }" @click="section = 'lan'">局域网</button>
+          </nav>
+
+          <!-- 外观：所有端可用 -->
+          <div v-if="section === 'appearance'" class="pane">
+            <div class="field">
+              <span class="field-label">缩略图尺寸</span>
+              <span class="slider-val">{{ store.thumbSize }}</span>
+            </div>
+            <div class="slider-row">
+              <button title="缩小" @click="stepThumb(-8)">−</button>
+              <input v-model.number="store.thumbSize" type="range" min="120" max="280" step="8" />
+              <button title="放大" @click="stepThumb(8)">＋</button>
+            </div>
           </div>
-        </section>
 
-        <!-- 远程设置：依赖 Electron preload 的局域网通道，移动端（浏览器触屏）不渲染 -->
-        <template v-if="hasShell">
-          <div v-if="loading" class="hint">加载中…</div>
-          <template v-else>
-            <section>
-              <div class="section-title">局域网查看</div>
-              <label class="row">
-                <input v-model="enabled" type="checkbox" />
-                <span>启用局域网 web 查看（只读）</span>
-              </label>
-              <p class="hint">其他设备通过浏览器访问本素材库；查看端仅可浏览，不能修改素材库。</p>
-            </section>
-
-            <section>
-              <div class="section-title">端口</div>
-              <input v-model.number="port" type="number" min="1" max="65535" :disabled="!enabled" />
-            </section>
-
-            <section>
-              <div class="section-title">访问 token</div>
-              <div class="token-row">
-                <input v-model="token" type="text" :disabled="!enabled" autocomplete="off" spellcheck="false" />
-                <button :disabled="!enabled" @click="regenerate">重新生成</button>
+          <!-- 局域网：依赖 Electron preload 通道，移动端（浏览器触屏）不可达（导航不渲染该项） -->
+          <div v-else class="pane">
+            <div class="switch-row">
+              <div>
+                <div class="switch-label">启用局域网 web 查看（只读）</div>
+                <p class="hint">同一局域网的设备可用浏览器只读浏览本素材库。</p>
               </div>
-              <p class="hint">局域网设备打开下方地址后输入该 token 即可查看。</p>
-            </section>
+              <label class="switch" title="启用局域网 web 查看（只读）">
+                <input v-model="enabled" type="checkbox" />
+                <span class="track" />
+              </label>
+            </div>
 
-            <section>
-              <div class="section-title">局域网访问地址（其他设备用浏览器打开）</div>
-              <ul class="addrs">
-                <li v-for="ip in addresses" :key="ip">
-                  <a :href="`http://${ip}:${port}`" target="_blank" rel="noreferrer">http://{{ ip }}:{{ port }}</a>
-                </li>
-                <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
-              </ul>
-              <p class="hint">地址随上方端口实时变化；打开后输入访问 token 即可查看素材库。</p>
-              <p v-if="!enabled" class="hint">启用「局域网查看」后以上地址生效。</p>
-              <p class="hint">首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。</p>
-            </section>
+            <div v-if="loading" class="hint">读取设置中…</div>
+            <template v-else>
+              <!-- 未启用时收起细节字段，减少噪音 -->
+              <div v-show="enabled" class="lan-detail">
+                <div class="field column">
+                  <span class="field-label">端口</span>
+                  <input
+                    v-model="port"
+                    class="port-input"
+                    :class="{ invalid: !portValid }"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="1 – 65535"
+                  />
+                  <p v-if="!portValid" class="field-error">{{ PORT_ERROR }}</p>
+                </div>
 
-            <div v-if="error" class="error">{{ error }}</div>
-          </template>
-        </template>
+                <div class="field column">
+                  <span class="field-label">访问 token</span>
+                  <div class="token-row">
+                    <input v-model="token" type="text" autocomplete="off" spellcheck="false" />
+                    <button class="icon-btn" title="复制 token" @click="copy(token)">
+                      <Icon name="copy" :size="13" />
+                    </button>
+                    <button title="重新生成随机 token" @click="regenerate">重新生成</button>
+                  </div>
+                </div>
 
-        <div class="actions">
+                <div class="field column">
+                  <span class="field-label">访问地址</span>
+                  <ul class="addrs">
+                    <li v-for="ip in addresses" :key="ip">
+                      <a
+                        :href="portValid ? `http://${ip}:${port.trim()}` : undefined"
+                      target="_blank"
+                      rel="noreferrer"
+                      >http://{{ ip }}:{{ port }}</a
+                      >
+                      <button
+                        class="icon-btn"
+                        :disabled="!portValid"
+                        title="复制地址"
+                        @click="copy(`http://${ip}:${port.trim()}`)"
+                      >
+                        <Icon name="copy" :size="13" />
+                      </button>
+                    </li>
+                    <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
+                  </ul>
+                  <p class="hint">
+                    在浏览器打开地址并输入访问 token 即可查看；首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。
+                  </p>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div v-if="error" class="dialog-error">{{ error }}</div>
+
+        <footer class="actions">
           <button :disabled="saving || loading" @click="emit('close')">{{ hasShell ? '取消' : '关闭' }}</button>
           <button v-if="hasShell" class="primary" :disabled="saving || loading" @click="save">
             {{ saving ? '保存中…' : '保存' }}
           </button>
-        </div>
+        </footer>
       </div>
     </div>
   </Teleport>
@@ -171,20 +289,242 @@ async function save() {
   background: rgba(0, 0, 0, 0.5);
 }
 
+/* 标题栏/底部按钮常驻，只有内容区滚动；带导航时加宽。
+   带导航时高度固定（钳制视口）：分区切换/开关展开细节/错误条出现只改变内容区滚动，
+   面板尺寸不变，避免界面跳跃；无导航的单分区（浏览器触屏端）无跳变源，维持内容自适应高 */
 .dialog {
-  /* 手机竖屏也放得下（移动端可打开本面板） */
-  width: min(420px, calc(100vw - 32px));
-  max-height: 84vh;
-  overflow-y: auto;
-  padding: 18px 20px;
-  border-radius: 8px;
-  background: var(--bg-2);
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(560px, 86vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  background: var(--bg-1);
   border: 1px solid var(--border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.dialog.with-nav {
+  width: min(560px, calc(100vw - 32px));
+  height: min(520px, 86vh);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-title {
+  font-weight: 600;
+}
+
+/* ---- 左导航 + 右内容；窄屏折叠为顶部横向页签 ---- */
+.dialog-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.nav {
+  flex: none;
+  width: 112px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  text-align: left;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-1);
+  padding: 6px 10px;
+}
+
+.nav-item:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+
+.nav-item.active {
+  background: var(--bg-3);
+  color: var(--fg-0);
+  font-weight: 600;
+}
+
+.pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ---- 局域网开关行 ---- */
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.switch-label {
+  color: var(--fg-0);
+}
+
+.hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--fg-1);
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  margin-top: 1px;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch .track {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  transition: background 0.15s, border-color 0.15s;
+  pointer-events: none;
+}
+
+.switch .track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg-1);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.switch input:checked + .track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch input:checked + .track::after {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- 字段：标签置顶的块状排布 ---- */
+.lan-detail {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
+.field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.field.column {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.field-label {
+  color: var(--fg-0);
+}
+
+.port-input.invalid {
+  border-color: var(--danger);
+}
+
+.field-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.token-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.addrs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.addrs li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.addrs a {
+  color: var(--accent);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  flex: none;
+  color: var(--fg-1);
+}
+
+/* ---- 缩略图滑杆 ---- */
 .slider-row {
   display: flex;
   align-items: center;
@@ -199,65 +539,14 @@ async function save() {
 }
 
 .slider-val {
-  min-width: 32px;
-  text-align: right;
+  margin-left: auto;
   color: var(--fg-1);
   font-variant-numeric: tabular-nums;
 }
 
-.title {
-  font-weight: 600;
-}
-
-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.section-title {
-  font-size: 12px;
-  color: var(--fg-1);
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.token-row {
-  display: flex;
-  gap: 8px;
-}
-
-.token-row input {
-  flex: 1;
-  padding: 6px 8px;
-  font-family: monospace;
-}
-
-.addrs {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.addrs a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--fg-1);
-}
-
-.error {
+.dialog-error {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
   color: var(--danger);
   font-size: 12px;
 }
@@ -266,11 +555,33 @@ section {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
 }
 
 .primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+/* 窄屏（手机竖屏）：导航折叠为顶部横向页签，内容占满剩余宽度 */
+@media (max-width: 520px) {
+  .dialog-main {
+    flex-direction: column;
+  }
+
+  .nav {
+    width: auto;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+  }
+
+  .nav-item {
+    flex: 1;
+    text-align: center;
+  }
 }
 </style>
