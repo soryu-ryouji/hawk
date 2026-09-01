@@ -3,6 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "description": "hawk",
+  "desktopName": "hawk",
   "author": "soryu-ryouji",
   "license": "AGPL-3.0-only",
   "repository": {

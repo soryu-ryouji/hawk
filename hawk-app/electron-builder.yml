@@ -2,6 +2,9 @@
 # 产出当前平台的 hawk-daemon 二进制（Rust）。
 appId: com.hawk.app
 productName: hawk
+# 显式禁用 electron-builder 自带发布：CI 环境下 v26 会隐式触发 publish 并索要 GH_TOKEN，
+# 而我们的发布统一走 release.yml 的 publish 汇流 job
+publish: never
 # 产物名统一「产品-平台-架构」后缀（与 mac 的 hawk-mac-<arch>.zip 对齐，不带版本号）：
 # Windows hawk-windows-x64.zip / Linux hawk-linux-x64.AppImage；mac 为 --dir 产物（.app 目录名取 productName），
 # zip 由 CI 打包命名 hawk-mac-<arch>.zip
@@ -35,7 +38,10 @@ win:
   artifactName: ${productName}-windows-${arch}.${ext}
 linux:
   target: AppImage
-  artifactName: ${productName}-linux-${arch}.${ext}
-  # 单 png 图标可用（linux 支持直接指定一个 png 文件）；分类写入 desktop entry（无则默认 Utility）
+  # AppImage 的 ${arch} 会被映射为 x86_64（AppImage 生态命名），与 win/mac 的 x64 不一致——
+  # 写死保持全平台统一为 hawk-linux-x64（当前仅 x64；若将来加 arm64 需改回带架构后缀）
+  artifactName: hawk-linux-x64.${ext}
   icon: build/icon.png
   category: Graphics
+  # WM_CLASS 与 .desktop 关联（配合 package.json 的 desktopName），否则桌面环境无法把运行中的窗口关联到启动器
+  syncDesktopName: true
