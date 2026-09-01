@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 
@@ -10,4 +11,10 @@ export default defineConfig({
   base: './',
   server: { port: 5173, strictPort: true },
   build: { outDir: 'dist', emptyOutDir: true },
+  test: {
+    // 与源码同目录的 *.spec.ts；默认 node 环境（只测纯函数），需要 DOM 的测试用文件头
+    // `// @vitest-environment jsdom` 单文件覆盖
+    include: ['src/**/*.spec.ts'],
+    environment: 'node',
+  },
 });

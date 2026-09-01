@@ -6,13 +6,11 @@ import { useMediaQuery } from '@vueuse/core';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
+import { isUnfilteredView, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, viewPathPrefix } from '../viewLogic';
 import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewPrefs, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
 const INITIAL_WINDOW = 150;
-
-/** 全局默认排序（无任何记忆时的回落） */
-const DEFAULT_SORT: Pick<QueryState, 'orderBy' | 'order'> = { orderBy: 'modification_time', order: 'desc' };
 
 const ERROR_TEXT: Record<string, string> = {
   FILE_EXISTS: '同名文件或文件夹已存在',
@@ -354,34 +352,9 @@ export const useLibraryStore = defineStore('library', () => {
     return null;
   }
 
-  /**
-   * 解析视图的有效排序：folder 自底向上沿父链继承（子文件夹自己的设置优先），
-   * category/tag 无层级直接回落默认；无记忆语义的视图用全局默认
-   */
-  function resolveSort(v: ViewState): Pick<QueryState, 'orderBy' | 'order'> {
-    const hit = (scope: string) => {
-      const e = viewPrefs.value[scope];
-      return e ? { orderBy: e.order_by, order: e.order } : undefined;
-    };
-
-    if (v.kind === 'category' || v.kind === 'tag') {
-      return hit(`${v.kind}:${v.name}`) ?? DEFAULT_SORT;
-    }
-
-    if (v.kind === 'folder') {
-      for (let dir = v.path; ; dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '') {
-        const h = hit(`folder:${dir}`);
-        if (h) return h;
-        if (dir === '') break;
-      }
-    }
-
-    return DEFAULT_SORT;
-  }
-
   /** 应用视图的有效排序（applyView/初始化/恢复默认用；只改排序字段，不动筛选条件；不触发持久化） */
   function applySortForView(v: ViewState) {
-    const sort = resolveSort(v);
+    const sort = resolveSort(v, viewPrefs.value);
     query.value.orderBy = sort.orderBy;
     query.value.order = sort.order;
   }
@@ -540,23 +513,8 @@ export const useLibraryStore = defineStore('library', () => {
 
   // ---- 选择 ----
   function select(id: string, mod?: 'range' | 'toggle') {
-    if (mod === 'range' && selection.value.length > 0) {
-      const anchor = selection.value.at(-1)!;
-      const a = skeleton.value.findIndex((i) => i.id === anchor);
-      const b = skeleton.value.findIndex((i) => i.id === id);
-      if (a >= 0 && b >= 0) {
-        const [from, to] = a < b ? [a, b] : [b, a];
-        selection.value = skeleton.value.slice(from, to + 1).map((i) => i.id);
-        return;
-      }
-    }
-    if (mod === 'toggle') {
-      selection.value = selection.value.includes(id)
-        ? selection.value.filter((s) => s !== id)
-        : [...selection.value, id];
-      return;
-    }
-    selection.value = [id];
+    // range/toggle 的区间计算在 viewLogic.nextSelection（纯函数，可单测）
+    selection.value = nextSelection(skeleton.value, selection.value, id, mod);
   }
 
   function selectAll() {
@@ -578,22 +536,13 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 无过滤的「全部素材」视图：item.updated 不可能改变成员资格（进出回收站有独立事件），可原地更新 */
-  function isUnfilteredView() {
-    return (
-      view.value.kind === 'all' &&
-      query.value.keywords.length === 0 &&
-      query.value.star === undefined &&
-      !query.value.color
-    );
-  }
-
   /**
    * item.updated 的统一入口（updateItem 响应与 SSE 共用）。
    * 详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。
    * 过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖重载骨架——
    * 成员资格可能已变化（移出当前文件夹、摘掉当前分类/标签等），成员判定以服务端查询为准。
    * 标签/分类集合真的变化时才刷分类计数：缩略图就绪等高频 updated 与计数无关，不再每事件刷 taxonomy。
+   * 纯判定（无过滤视图/名称集合/骨架合并）在 viewLogic.ts。
    */
   function applyUpdatedItem(updated: Item, single: boolean) {
     const prev = details.value.get(updated.id);
@@ -608,13 +557,13 @@ export const useLibraryStore = defineStore('library', () => {
     const skIdx = skeleton.value.findIndex((s) => s.id === updated.id);
     if (skIdx >= 0) {
       const prev = skeleton.value[skIdx];
-      // star 变化影响徽章，宽高变化（0 × 0 自愈修复）影响布局比例；任一变化才替换，避免高频 updated 触发无谓重渲染
-      if (prev.star !== updated.star || prev.width !== updated.width || prev.height !== updated.height) {
+      // 合并判定在 viewLogic.skeletonNeedsPatch
+      if (skeletonNeedsPatch(prev, updated)) {
         const next = skeleton.value.slice();
         next[skIdx] = { ...prev, star: updated.star, width: updated.width, height: updated.height };
         skeleton.value = next;
       }
-    } else if (!isUnfilteredView() || single) {
+    } else if (!isUnfilteredView(view.value, query.value) || single) {
       // 不在当前骨架：可能刚成为本视图成员（同内容 item 经上传获得库内路径时服务端发的是
       // item.updated 而非 added，未过滤视图原不重拉 → 卡片永远不出现，刷新才有）。
       // 仅单条事件重拉（用户操作规模）；批量（items.updated，调色板回写）不重拉，
@@ -624,13 +573,6 @@ export const useLibraryStore = defineStore('library', () => {
     if (taxonomyChanged) {
       debouncedRefreshTaxonomy(() => void refreshTaxonomy());
     }
-  }
-
-  /** 名称集合相等比较（标签/分类为无序去重列表） */
-  function sameNameSet(a: string[] | undefined, b: string[] | undefined): boolean {
-    const x = a ?? [];
-    const y = b ?? [];
-    return x.length === y.length && x.every((v) => y.includes(v));
   }
 
   // ---- 多位置删除策略：选中项含多个库内位置副本时询问（DeleteScopeDialog 呈现，
@@ -648,15 +590,7 @@ export const useLibraryStore = defineStore('library', () => {
     deleteScopePrompt.value = null;
   }
 
-  /** 视图位置范围：folder 视图 → "<path>/" 前缀，root 视图 → ""（顶层文件）；
- *  其余视图无位置语义（返回 null，「仅从此处移除」选项不适用） */
-  function viewPathPrefix(): string | null {
-    const v = view.value;
-    if (v.kind === 'folder') return `${v.path}/`;
-    if (v.kind === 'root') return '';
-    return null;
-  }
-
+  /** 选中项全部移入回收站；多位置副本先问删除范围（askDeleteScope）。位置前缀判定在 viewLogic.viewPathPrefix */
   async function trashSelected() {
     const ids = [...selection.value];
     // 多位置副本检测需要 paths（详情缓存，批量操作前统一补齐）
@@ -664,7 +598,7 @@ export const useLibraryStore = defineStore('library', () => {
     const multiIds = ids.filter((id) => (details.value.get(id)?.paths.length ?? 0) > 1);
     let scope: 'all' | 'folder' = 'all';
     if (multiIds.length > 0) {
-      const prefix = viewPathPrefix();
+      const prefix = viewPathPrefix(view.value);
       const folderLabel = prefix === null ? null : prefix === '' ? '库根目录' : currentFolderPath.value;
       const choice = await askDeleteScope(multiIds.length, folderLabel);
       if (choice === 'cancel') {
@@ -672,7 +606,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
       scope = choice;
     }
-    const prefix = scope === 'folder' ? viewPathPrefix() : null;
+    const prefix = scope === 'folder' ? viewPathPrefix(view.value) : null;
     for (const id of ids) {
       try {
         const paths = details.value.get(id)?.paths ?? [];
