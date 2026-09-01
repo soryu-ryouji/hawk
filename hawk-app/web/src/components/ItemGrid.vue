@@ -14,7 +14,7 @@ import FolderPickerDialog from './FolderPickerDialog.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import { isRotatableImage } from '../imageEdit';
 import { useLayout } from '../composables/useLayout';
-import { CARD_BORDER, CARD_META_H, GRID_GAP } from '../layout';
+import { CARD_META_H, GRID_GAP, layoutRows, type LayoutCell, type LayoutRow } from '../layout';
 
 const store = useLibraryStore();
 const preview = usePreviewStore();
@@ -28,23 +28,11 @@ const showCategoryDialog = ref(false);
 // ---------- 齐行布局（justified layout）+ 虚拟渲染 ----------
 // Eagle 式：骨架（全量 id/宽/高）一次性算出完整布局，滚动条总高即时确定、可自由拖动；
 // 只渲染视口 ± overscan 的行，行内详情未拉取的单元格只保留宽高的占位块（不渲染图片）。
+// 布局算法本体在 layout.layoutRows（纯函数，可单测），这里只做骨架类型适配。
 
-interface LayoutCell {
-  id: string;
-  width: number;
-  height: number;
-  star: number;
-}
-
-interface LayoutRow {
-  key: string;
-  cells: LayoutCell[];
-  y: number;
-  height: number;
-  /** 行内条目在骨架中的索引区间 [startIdx, endIdx)，视口窗口按它向 store 补数据 */
-  startIdx: number;
-  endIdx: number;
-}
+type RenderedCell = LayoutCell & {
+  item: Item | null;
+};
 
 /** 视口外行缓存：上下各多渲染的行数，吸收快速滚动的渲染延迟 */
 const OVERSCAN_ROWS = 4;
@@ -110,57 +98,17 @@ function onScroll() {
   });
 }
 
-/** 贪心装行：累计到超出容器即切行；非末行按容器宽精确反推行高（上下限避免极端行）
- * 只依赖骨架 + 卡片尺寸 + 容器宽：详情缓存变化不触发全量重排（大库上每次窗口拉取都重排太贵） */
+/** 齐行布局本体在 layout.layoutRows（纯函数）；这里只做 store 骨架的 Number 强转适配 */
 const layout = computed<LayoutRow[]>(() => {
   const width = containerWidth.value;
   if (width <= 0) {
     return [];
   }
-
-  const targetH = store.thumbSize;
-  const sk = store.skeleton;
-  const rows: LayoutRow[] = [];
-  let y = 0;
-  let row: { idx: number; id: string; ratio: number; star: number }[] = [];
-  let ratiosSum = 0;
-
-  const flush = (isLast: boolean) => {
-    if (row.length === 0) {
-      return;
-    }
-    // 行宽绝不超出容器。非末行：上限防行过高、下限防行过矮；末行保持目标高。
-    // 但移动端窄屏遇全景图等宽行时，0.5×下限/末行规则会把行推出视口——
-    // fitH（按容器宽反推）是硬顶，任何夹紧结果都不得宽于它（桌面容器宽，fitH 极少生效）
-    const fitH = (width - (row.length - 1) * GRID_GAP) / ratiosSum;
-    const ideal = isLast ? targetH : Math.min(Math.max(fitH, targetH * 0.5), targetH * 1.75);
-    const h = Math.max(1, Math.floor(Math.min(ideal, fitH)));
-    // 行高 = 卡片总高（缩略图 + meta + 边框），行槽位与真实卡片一致，杜绝行间重叠
-    const rowH = h + CARD_META_H + CARD_BORDER;
-    rows.push({
-      key: row[0].id,
-      cells: row.map((r) => ({ id: r.id, width: Math.round(h * r.ratio), height: h, star: r.star })),
-      y,
-      height: rowH,
-      startIdx: row[0].idx,
-      endIdx: row[row.length - 1].idx + 1,
-    });
-    y += rowH + GRID_GAP;
-    row = [];
-    ratiosSum = 0;
-  };
-
-  for (let idx = 0; idx < sk.length; idx++) {
-    const s = sk[idx];
-    const ratio = Number(s.width) > 0 && Number(s.height) > 0 ? Number(s.width) / Number(s.height) : 1;
-    if (row.length > 0 && (ratiosSum + ratio) * targetH + row.length * GRID_GAP > width) {
-      flush(false);
-    }
-    row.push({ idx, id: s.id, ratio, star: Number(s.star) });
-    ratiosSum += ratio;
-  }
-  flush(true);
-  return rows;
+  return layoutRows(
+    store.skeleton.map((s) => ({ id: s.id, width: Number(s.width), height: Number(s.height), star: Number(s.star) })),
+    width,
+    store.thumbSize,
+  );
 });
 
 /** 滚动条总高：布局完成即确定，不随滚动变化 */
@@ -193,10 +141,6 @@ const visibleRange = computed<[number, number]>(() => {
   }
   return [Math.max(0, lo - OVERSCAN_ROWS), Math.min(rows.length - 1, end + OVERSCAN_ROWS)];
 });
-
-interface RenderedCell extends LayoutCell {
-  item: Item | null;
-}
 
 /** 视口行 + 详情解析：只在这个切片上映射 details，详情到位后占位块换成真实卡片 */
 const renderedRows = computed(() => {
