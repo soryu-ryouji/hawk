@@ -10,9 +10,11 @@ import { useLayout } from '../composables/useLayout';
 import Icon from './Icon.vue';
 import SearchBox from './SearchBox.vue';
 import { hasShell, isMac, shell } from '../platform';
+import { useImporterStore } from '../stores/importer';
 import type { MenuItem, QueryState } from '../types';
 
 const store = useLibraryStore();
+const importer = useImporterStore();
 const { open: openMenu } = useContextMenu();
 const { narrow } = useLayout();
 
@@ -31,7 +33,7 @@ function onPicked(e: Event) {
   const files = [...(e.target as HTMLInputElement).files ?? []];
   (e.target as HTMLInputElement).value = '';
   if (files.length) {
-    void store.importFiles(files);
+    void importer.importFiles(files);
   }
 }
 watch(mobileSearchOpen, async (open) => {

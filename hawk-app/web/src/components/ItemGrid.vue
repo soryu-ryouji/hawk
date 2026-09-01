@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch, watchEffect } from 'vue';
 import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from '../composables/useContextMenu';
 import { gridNavRows } from '../composables/useGridNav';
 import { showInFileManagerLabel, hasShell, shell } from '../platform';
@@ -16,6 +17,7 @@ import { useLayout } from '../composables/useLayout';
 import { CARD_BORDER, CARD_META_H, GRID_GAP } from '../layout';
 
 const store = useLibraryStore();
+const preview = usePreviewStore();
 const menu = useContextMenu();
 const { narrow } = useLayout();
 
@@ -270,13 +272,13 @@ function onSelect(item: Item, e: MouseEvent) {
   if (lastPointerType !== 'mouse') {
     store.select(item.id);
     if (narrow.value) {
-      store.openPreview(item.id);
+      preview.openPreview(item.id);
       return;
     }
     const now = Date.now();
     if (lastTap.id === item.id && now - lastTap.time < DOUBLE_TAP_MS) {
       lastTap = { id: null, time: 0 };
-      store.openPreview(item.id);
+      preview.openPreview(item.id);
       return;
     }
     lastTap = { id: item.id, time: now };
@@ -312,7 +314,7 @@ function onMenu(item: Item, e: MouseEvent) {
         { label: '添加到分类…', action: () => (showCategoryDialog.value = true) },
         { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
         // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
-        ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => store.openEditor(item) }] : []),
+        ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => preview.openEditor(item) }] : []),
         // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现
         ...(hasShell ? [{ label: showInFileManagerLabel, action: () => void shell.showInFinder(item.paths[0]) }] : []),
         { separator: true, label: '' },
@@ -342,7 +344,7 @@ function onMenu(item: Item, e: MouseEvent) {
             :height="cell.height"
             @select="onSelect"
             @pointerdown="onCardPointerDown"
-            @open="store.openPreview"
+            @open="preview.openPreview"
             @menu="onMenu"
           />
           <!-- 详情未拉取：只保留宽高的占位块，不进视口渲染（ Eagle 式） -->

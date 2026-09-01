@@ -3,11 +3,13 @@
 // Delete 回收/恢复、Esc 关浮层、Cmd/Ctrl+A 全选。
 import { useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from './useContextMenu';
 import { gridNavRows, moveGridSelection } from './useGridNav';
 
 export function useShortcuts() {
   const store = useLibraryStore();
+  const preview = usePreviewStore();
   const menu = useContextMenu();
 
   useEventListener(window, 'keydown', (e: KeyboardEvent) => {
@@ -18,13 +20,13 @@ export function useShortcuts() {
 
     // 图片编辑窗口打开时接管全部按键(窗口自带 Esc/关闭逻辑),全局快捷键一律让行——
     // 否则 Esc 会关掉底层预览、Delete 会删掉正在编辑的素材
-    if (store.editorTarget) {
+    if (preview.editorTarget) {
       return;
     }
 
     if (e.key === 'Escape') {
-      if (store.previewId) {
-        store.closePreview();
+      if (preview.previewId) {
+        preview.closePreview();
       } else {
         menu.close();
       }
@@ -33,10 +35,10 @@ export function useShortcuts() {
 
     if (e.key === ' ') {
       e.preventDefault(); // 阻止页面滚动
-      if (store.previewId) {
-        store.closePreview();
+      if (preview.previewId) {
+        preview.closePreview();
       } else if (store.primarySelected) {
-        store.openPreview(store.primarySelected.id);
+        preview.openPreview(store.primarySelected.id);
       }
       return;
     }
@@ -58,11 +60,11 @@ export function useShortcuts() {
       return;
     }
 
-    if (store.previewId) {
+    if (preview.previewId) {
       // 预览中：←→ 切换图片，其余方向键不落到网格
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
-        store.navigatePreview(e.key === 'ArrowRight' ? 1 : -1);
+        preview.navigatePreview(e.key === 'ArrowRight' ? 1 : -1);
       }
       return;
     }

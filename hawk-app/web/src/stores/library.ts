@@ -5,9 +5,7 @@ import { defineStore } from 'pinia';
 import { useMediaQuery } from '@vueuse/core';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
-import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
 import { isUnfilteredView, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, viewPathPrefix } from '../viewLogic';
-import { runImportBatch } from '../importBatch';
 import { hasShell } from '../platform';
 import { loadJSON, loadText, saveJSON, saveText, STORAGE_KEYS } from '../persist';
 import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewPrefs, ViewState } from '../types';
@@ -27,7 +25,8 @@ const ERROR_TEXT: Record<string, string> = {
   NETWORK: '无法连接 hawk-daemon',
 };
 
-function errorText(e: unknown): string {
+/** ApiError 错误码翻译（store 与需要错误文案的模块共用） */
+export function errorText(e: unknown): string {
   return e instanceof ApiError ? (ERROR_TEXT[e.code] ?? e.message) : String(e);
 }
 
@@ -103,10 +102,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
   /** 搜索框草稿（顶栏与检查器顶搜索框共用一份，回车提交为 keywords） */
   const searchText = ref('');
-  const previewId = ref<string | null>(null);
   const toast = ref<string | null>(null);
-  /** 导入进度：null 无任务；total=0 表示收集文件阶段（不定态），done 为已处理数 */
-  const importProgress = ref<{ total: number; done: number } | null>(null);
   /** 缩略图后台积压（task.progress 事件驱动；null 表示无积压，进度条隐藏） */
   const taskBacklog = ref<{ pending: number; active: number } | null>(null);
   /** 索引管道进度（task.progress 事件驱动；扫描期间带阶段进度；null 表示空闲） */
@@ -142,23 +138,8 @@ export const useLibraryStore = defineStore('library', () => {
     if (v.kind === 'tag' || v.kind === 'category') return v.name;
     return v.path.split('/').pop() ?? '';
   });
-  /** 预览浮层 sticky item：详情未加载时不置空（浮层不卸载，滑动切换动画与状态不丢）；关闭时随 previewId 归零 */
-  let lastPreviewItem: Item | null = null;
-  const previewItem = computed(() => {
-    const current = previewId.value ? (details.value.get(previewId.value) ?? null) : null;
-    if (current) {
-      lastPreviewItem = current;
-    }
-    // sticky:详情未加载时不置空——避免浮层卸载重建导致滑动切换动画与状态丢失；关闭时随 previewId 归零
-    return current ?? (previewId.value ? lastPreviewItem : null);
-  });
   /** 当前视图条目数（= 骨架长度；骨架未加载时为 0） */
   const total = computed(() => skeleton.value.length);
-  const previewIndex = computed(() => skeleton.value.findIndex((i) => i.id === previewId.value));
-  const previewNavId = (step: 1 | -1) => {
-    const next = previewIndex.value >= 0 ? skeleton.value[previewIndex.value + step] : undefined;
-    return next?.id ?? null;
-  };
 
   /** 扁平化的文件夹树（移动到文件夹等选择控件用），含根目录 */
   const flatFolders = computed(() => {
@@ -223,8 +204,7 @@ export const useLibraryStore = defineStore('library', () => {
     query.value = { keywords: [], orderBy: 'modification_time', order: 'desc' };
     searchText.value = '';
     clearSelection();
-    closePreview();
-    closeEditor();
+    // 预览/编辑浮层的会话清理由组件层编排（App.vue runBoot 调 preview store）
     taskBacklog.value = null;
     indexProgress.value = null;
 
@@ -677,70 +657,6 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 导入开始：拖拽落下即调用，覆盖「收集文件」阶段；已有任务时拒绝并提示 */
-  function importBegin(): boolean {
-    if (importProgress.value) {
-      showToast('已有导入任务进行中');
-      return false;
-    }
-    importProgress.value = { total: 0, done: 0 };
-    return true;
-  }
-
-  // ---- 导入重复策略：首个「内容已在库内」时暂停并问一次（ImportDuplicateDialog 呈现，
-  // App.vue 挂载），选择对整批生效——逐文件弹窗在批量导入下不可用 ----
-  const dupPrompt = ref<null | ((choice: 'skip' | 'import') => void)>(null);
-
-  function askDuplicatePolicy(): Promise<'skip' | 'import'> {
-    return new Promise((resolve) => {
-      dupPrompt.value = resolve;
-    });
-  }
-
-  function resolveDuplicatePolicy(choice: 'skip' | 'import') {
-    dupPrompt.value?.(choice);
-    dupPrompt.value = null;
-  }
-
-  /** 拖拽导入：逐个 itemAddByPath（server 逐文件完成复制/哈希/索引/缩略图后才返回），done 逐项推进。
-   * 重复策略状态机在 importBatch.runImportBatch（与 importFiles 共用） */
-  async function importPaths(paths: string[]) {
-    await runImportBatch(paths, {
-      importOne: (path, skipExisting) =>
-        api.itemAddByPath(path, {
-          folder_path: currentFolderPath.value ?? undefined,
-          skip_existing: skipExisting,
-        }),
-      askPolicy: askDuplicatePolicy,
-      setProgress: (p) => (importProgress.value = p),
-      onEmpty: () => showToast('未找到可导入的文件'),
-      onSummary: (c) =>
-        showToast(
-          `导入完成：新增 ${c.added}${c.skipped ? `，忽略重复 ${c.skipped}` : ''}${c.existed ? `，重复导入 ${c.existed}` : ''}${c.failed ? `，失败 ${c.failed}` : ''}`,
-        ),
-    });
-    // SSE item.added 已触发防抖骨架重载，这里不重复拉取
-  }
-
-  /** 浏览器端导入（无 hawkShell，拖拽/文件选择器拿到的是 File 内容）：逐个 multipart 上传。
-   * 重复策略与 importPaths 一致（首问后整批生效） */
-  async function importFiles(files: File[]) {
-    await runImportBatch(files, {
-      importOne: (file, skipExisting) =>
-        api.itemUpload(file, {
-          folder_path: currentFolderPath.value ?? undefined,
-          skip_existing: skipExisting,
-        }),
-      askPolicy: askDuplicatePolicy,
-      setProgress: (p) => (importProgress.value = p),
-      onEmpty: () => showToast('未找到可导入的文件'),
-      onSummary: (c) =>
-        showToast(
-          `上传完成：新增 ${c.added}${c.skipped ? `，忽略重复 ${c.skipped}` : ''}${c.existed ? `，重复导入 ${c.existed}` : ''}${c.failed ? `，失败 ${c.failed}` : ''}`,
-        ),
-    });
-  }
-
   // ---- 文件夹写操作 ----
   async function folderCreate(parentPath: string, name: string) {
     try {
@@ -931,73 +847,6 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  // ---- 预览浮层 ----
-  function openPreview(id: string) {
-    previewId.value = id;
-    // 详情可能未加载（如键盘导航跳到视口外项）：按骨架索引补拉，到位后浮层即出现
-    const idx = skeleton.value.findIndex((s) => s.id === id);
-    if (idx >= 0) {
-      void ensureWindow(idx, idx + 1);
-    }
-  }
-
-  function closePreview() {
-    previewId.value = null;
-  }
-
-  function navigatePreview(step: 1 | -1) {
-    const next = previewNavId(step);
-    if (next) {
-      openPreview(next);
-    }
-  }
-
-  /** 图片编辑窗口的目标 item(全局单例):网格/预览浮层右键「编辑图片…」均可打开 */
-  const editorTarget = ref<Item | null>(null);
-
-  function openEditor(item: Item) {
-    editorTarget.value = item;
-  }
-
-  function closeEditor() {
-    editorTarget.value = null;
-  }
-
-  /**
-   * 编辑窗口保存:解码/旋转/重编码在客户端完成(编辑计算归客户端),经 item/replace 提交存储层。
-   * 内容哈希变化导致 id 漂移:新 item 就地替换详情;预览若正打开该 item 则跟随新 id;
-   * 骨架/选择的旧 id 由 SSE item.removed 清理。返回是否成功,调用方据此关闭编辑窗口。
-   */
-  async function saveImageEdit(id: string, angle: RotateAngle): Promise<boolean> {
-    const item = details.value.get(id);
-    if (!item) {
-      return false;
-    }
-    try {
-      // no-store:item/file 带 Cache-Control immutable,<img> 加载会把无 ACAO 的响应存进磁盘缓存,
-      // 默认 cache 模式的 fetch 复用该缓存条目会被 CORS 拒绝(浏览器对 <img> 请求不携 Origin,服务端不返回 ACAO)
-      const res = await fetch(api.fileUrl(item.id), { cache: 'no-store' });
-      if (!res.ok) {
-        throw new Error('原图获取失败');
-      }
-      const rotated = await rotateImage(await res.blob(), angle, item.ext);
-      const updated = await api.itemReplace(item.id, await blobToBase64(rotated));
-      const map = new Map(details.value);
-      map.delete(item.id);
-      map.set(updated.id, updated);
-      details.value = map;
-      if (previewId.value === item.id) {
-        previewId.value = updated.id;
-      }
-      showToast('已保存');
-      return true;
-    } catch (e) {
-      // ApiError 走错误码翻译(如 UNSUPPORTED_FORMAT),本地 Error 直接取 message
-      showToast(e instanceof ApiError ? errorText(e) : e instanceof Error ? e.message : String(e));
-      return false;
-    }
-  }
-
   // ---- SSE ----
   // 事件与副作用的对应关系（不无条件全刷，后台事件爆发期不制造请求风暴）：
   // - item.updated / items.updated：详情/骨架就地更新；标签/分类集合变化才刷分类计数
@@ -1061,13 +910,13 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, setUserThumbSize, searchText, previewId, toast, importProgress, dupPrompt, resolveDuplicatePolicy, deleteScopePrompt, resolveDeleteScope, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
-    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, hasActiveFilters,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, setUserThumbSize, searchText, toast, deleteScopePrompt, resolveDeleteScope, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
+    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, flatFolders, categoryOptions, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, importBegin, importPaths, importFiles,
+    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache,
     folderCreate, folderRename, folderDelete, refreshFolders,
     refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
-    openPreview, closePreview, navigatePreview, saveImageEdit, openEditor, closeEditor, showToast, applyEvent,
+    showToast, applyEvent,
   };
 });

@@ -1,14 +1,14 @@
 <script setup lang="ts">
-// 导入重复内容策略对话框：导入过程中首个「内容已在库内」的文件触发（store.dupPrompt 挂起
+// 导入重复内容策略对话框：导入过程中首个「内容已在库内」的文件触发（importer.dupPrompt 挂起
 // 的 resolve），选择对整批生效。Esc/点遮罩按「忽略重复」处理（导入不中断）。
 import { computed } from 'vue';
-import { useLibraryStore } from '../stores/library';
+import { useImporterStore } from '../stores/importer';
 
-const store = useLibraryStore();
-const visible = computed(() => store.dupPrompt !== null);
+const importer = useImporterStore();
+const visible = computed(() => importer.dupPrompt !== null);
 
 function choose(choice: 'skip' | 'import') {
-  store.resolveDuplicatePolicy(choice);
+  importer.resolveDuplicatePolicy(choice);
 }
 </script>
 

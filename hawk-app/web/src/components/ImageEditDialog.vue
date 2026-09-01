@@ -1,17 +1,17 @@
 <script setup lang="ts">
-// 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开(store.openEditor)。
+// 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开(preview.openEditor)。
 // 全屏 Eagle 式遮罩(观感同预览浮层),底部工具条提供旋转与保存。
 // 编辑在关闭前只作用于预览角(CSS 变换);「保存」或带修改退出(保存/不保存/取消三选确认)
-// 才经 store.saveImageEdit 做客户端重编码(canvas + JPEG EXIF 回填)并提交 item/replace。
+// 才经 preview.saveImageEdit 做客户端重编码(canvas + JPEG EXIF 回填)并提交 item/replace。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api/endpoints';
-import { useLibraryStore } from '../stores/library';
+import { usePreviewStore } from '../stores/preview';
 import type { Item } from '../types';
 
 const props = defineProps<{ item: Item }>();
 const emit = defineEmits<{ close: [] }>();
 
-const store = useLibraryStore();
+const preview = usePreviewStore();
 
 // 累计旋转角(顺时针),保存时才做像素重编码;编辑期间仅 CSS 变换预览
 const angle = ref(0);
@@ -41,7 +41,7 @@ async function save(): Promise<boolean> {
   }
   saving.value = true;
   try {
-    return await store.saveImageEdit(props.item.id, angle.value as 90 | 180 | 270);
+    return await preview.saveImageEdit(props.item.id, angle.value as 90 | 180 | 270);
   } finally {
     saving.value = false;
   }

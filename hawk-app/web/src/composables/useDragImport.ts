@@ -3,6 +3,7 @@
 // 浏览器（局域网 web 端）无路径可取，改为读 File 内容逐个 multipart 上传。
 import { useDropZone } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { useImporterStore } from '../stores/importer';
 import { hasShell, shell } from '../platform';
 import { ITEMS_MIME } from '../dnd';
 
@@ -28,6 +29,7 @@ async function* walkEntry(entry: FileSystemEntry): AsyncGenerator<File> {
 
 export function useDragImport() {
   const store = useLibraryStore();
+  const importer = useImporterStore();
 
   useDropZone(document, {
     onDrop: async (_files, event) => {
@@ -41,7 +43,7 @@ export function useDragImport() {
         return;
       }
       // 落下即占用导入态：文件夹递归收集可能耗时，期间进度条显示「正在收集文件」
-      if (!store.importBegin()) {
+      if (!importer.importBegin()) {
         return;
       }
       const entries = [...(event.dataTransfer?.items ?? [])]
@@ -59,7 +61,7 @@ export function useDragImport() {
               }
             }
           }
-          await store.importPaths(paths);
+          await importer.importPaths(paths);
         } else {
           const files: File[] = [];
           for (const entry of entries) {
@@ -71,7 +73,7 @@ export function useDragImport() {
           if (files.length === 0 && _files?.length) {
             files.push(..._files);
           }
-          await store.importFiles(files);
+          await importer.importFiles(files);
         }
       } catch {
         store.showToast('读取文件列表失败');

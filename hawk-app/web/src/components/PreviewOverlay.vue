@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
+import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from '../composables/useContextMenu';
 import { useLayout } from '../composables/useLayout';
 import { isRotatableImage } from '../imageEdit';
@@ -12,12 +13,13 @@ const props = defineProps<{ item: Item }>();
 const emit = defineEmits<{ close: []; navigate: [step: 1 | -1] }>();
 
 const store = useLibraryStore();
+const preview = usePreviewStore();
 const menu = useContextMenu();
 const { narrow, touch } = useLayout();
 
 // 底部中间序号：当前项在视图中的位置 / 视图总条目数（Eagle 式）
 const indexText = computed(() => {
-  const i = store.previewIndex;
+  const i = preview.previewIndex;
   return i >= 0 ? `${i + 1} / ${store.total}` : '';
 });
 
@@ -37,7 +39,7 @@ function onMenu(e: MouseEvent) {
       : []),
     // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口;viewer 下禁用
     ...(isRotatableImage(props.item.ext) && !store.viewerMode
-      ? [{ label: '编辑图片…', action: () => store.openEditor(props.item) }]
+      ? [{ label: '编辑图片…', action: () => preview.openEditor(props.item) }]
       : []),
     ...(!store.viewerMode ? [{ separator: true, label: '' }] : []),
     ...(!store.viewerMode ? [{ label: '删除图片', danger: true, action: () => void trashCurrent() }] : []),
@@ -50,11 +52,11 @@ function onMenu(e: MouseEvent) {
 
 // 删除当前预览项：跳到下一张（无下一张则上一张，都没有则关闭预览）
 async function trashCurrent() {
-  const fallback = store.previewNavId(1) ?? store.previewNavId(-1);
+  const fallback = preview.previewNavId(1) ?? preview.previewNavId(-1);
   store.select(props.item.id);
   await store.trashSelected();
   if (fallback && fallback !== props.item.id) {
-    store.openPreview(fallback);
+    preview.openPreview(fallback);
   } else {
     emit('close');
   }
@@ -104,7 +106,7 @@ let moved = false;
 // 预加载相邻原图：内容寻址 immutable，浏览器缓存命中——carousel 拖动时邻图已解码，切换零等待
 function preloadNeighbors() {
   for (const step of [1, -1] as const) {
-    const id = store.previewNavId(step);
+    const id = preview.previewNavId(step);
     if (id) {
       new Image().src = api.fileUrl(id);
     }
@@ -114,8 +116,8 @@ function preloadNeighbors() {
 onMounted(preloadNeighbors);
 
 // carousel 邻居：id 取自骨架（不依赖详情窗口），拖动时左右邻图已经可见（iOS 相册式）
-const prevId = computed(() => store.previewNavId(-1));
-const nextId = computed(() => store.previewNavId(1));
+const prevId = computed(() => preview.previewNavId(-1));
+const nextId = computed(() => preview.previewNavId(1));
 const prevUrl = computed(() => (prevId.value ? api.fileUrl(prevId.value) : null));
 const nextUrl = computed(() => (nextId.value ? api.fileUrl(nextId.value) : null));
 

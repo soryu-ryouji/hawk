@@ -4,6 +4,8 @@ import { initApi, apiConfig, clearStoredToken, ApiError } from './api/client';
 import { connectEvents } from './api/events';
 import { loadJSON, saveJSON, STORAGE_KEYS } from './persist';
 import { useLibraryStore } from './stores/library';
+import { useImporterStore } from './stores/importer';
+import { usePreviewStore } from './stores/preview';
 import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
 import { useLayout } from './composables/useLayout';
@@ -26,6 +28,8 @@ import ImportDuplicateDialog from './components/ImportDuplicateDialog.vue';
 import DeleteScopeDialog from './components/DeleteScopeDialog.vue';
 
 const store = useLibraryStore();
+const importer = useImporterStore();
+const preview = usePreviewStore();
 const { narrow, touch } = useLayout();
 // 启动阶段状态机：starting（应用内启动屏，等 server 就绪）→ ready（主界面）；
 // 旁路：setup（未配置素材库）/ connect（浏览器 token 门页）/ error（启动失败）。
@@ -115,6 +119,10 @@ function startResize(side: 'left' | 'right') {
 async function runBoot() {
   bootError.value = null;
   try {
+    // 换库/应用设置重启复用本入口：先清上一库的预览/编辑浮层会话状态（跨 store 会话清理由组件层编排，
+    // store 之间不互相调用初始化逻辑），再重启数据
+    preview.closePreview();
+    preview.closeEditor();
     await store.init();
     disconnectEvents?.();
     disconnectEvents = connectEvents({
@@ -303,13 +311,13 @@ useDragImport();
     </template>
 
     <PreviewOverlay
-      v-if="store.previewItem"
-      :item="store.previewItem"
-      @close="store.closePreview()"
-      @navigate="store.navigatePreview($event)"
+      v-if="preview.previewItem"
+      :item="preview.previewItem"
+      @close="preview.closePreview()"
+      @navigate="preview.navigatePreview($event)"
     />
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
-    <ImageEditDialog v-if="store.editorTarget" :item="store.editorTarget" @close="store.closeEditor()" />
+    <ImageEditDialog v-if="preview.editorTarget" :item="preview.editorTarget" @close="preview.closeEditor()" />
     <SettingsDialog v-if="showSettings" @close="showSettings = false" @logout="logoutToken" />
     <!-- 导入重复策略对话框（导入中首个重复内容触发，选择整批生效） -->
     <ImportDuplicateDialog />
@@ -319,27 +327,27 @@ useDragImport();
 
     <Teleport to="body">
       <!-- 导入进度：拖拽落下即显示（收集文件阶段为不定态），逐个处理完推进 -->
-      <div v-if="store.importProgress" class="import-progress">
+      <div v-if="importer.importProgress" class="import-progress">
         <span class="import-progress-text">
           {{
-            store.importProgress.total > 0
-              ? `正在导入 ${store.importProgress.done} / ${store.importProgress.total}`
+            importer.importProgress.total > 0
+              ? `正在导入 ${importer.importProgress.done} / ${importer.importProgress.total}`
               : '正在收集文件…'
           }}
         </span>
         <div class="import-progress-track">
           <div
             class="import-progress-bar"
-            :class="{ indeterminate: store.importProgress.total === 0 }"
+            :class="{ indeterminate: importer.importProgress.total === 0 }"
             :style="
-              store.importProgress.total > 0
-                ? { width: `${(store.importProgress.done / store.importProgress.total) * 100}%` }
+              importer.importProgress.total > 0
+                ? { width: `${(importer.importProgress.done / importer.importProgress.total) * 100}%` }
                 : undefined
             "
           />
         </div>
       </div>
-      <div v-if="store.toast" class="toast" :class="{ 'toast-raised': store.importProgress }">{{ store.toast }}</div>
+      <div v-if="store.toast" class="toast" :class="{ 'toast-raised': importer.importProgress }">{{ store.toast }}</div>
     </Teleport>
   </div>
 </template>
