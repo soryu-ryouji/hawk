@@ -1,6 +1,6 @@
 [package]
 name = "hawk-daemon"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["soryu-ryouji <helloryouji@outlook.com>"]
 description = "hawk 素材管理后端"

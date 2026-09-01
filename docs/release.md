@@ -6,43 +6,44 @@ hawk 的桌面端发布全部由 CI（[release.yml](../.github/workflows/release
 
 | 事件 | 动作 |
 | ---- | ---- |
-| push `v*` tag | 构建三平台产物 + sha256 边车，创建**正式 Release** |
+| push main 且提交信息以 `release` 开头 | 构建三平台产物 + sha256 边车，创建 tag + **正式 Release**（发布动作 = 一次 push，无需手动打 tag） |
 | push main 且提交信息以 `feat` / `fix` 开头 | 删除并重建 `nightly` Release（prerelease），滚动覆盖 |
 | `workflow_dispatch` 手动触发 | 只构建上传 Artifacts，**不**创建/修改任何 Release |
+
+手动推 `v*` tag **不再触发**任何构建（tag 触发已移除）——不要用 `git push origin v0.x.0` 或 `gh release create` 发版，会产生无资产的空 Release 并占住版本号（后续同名发版会被守卫拦下；处理见文末常见问题）
 
 ## 版本号规则
 
 - **唯一来源**：`hawk-app/package.json` 的 `version`（semver，首版 `0.1.0`）。electron-builder 打进 app，`app.getVersion()` 读取，设置面板「更新」分区显示
-- **正式版 tag 必须为 `v<version>`**，与 package.json 不一致时 CI 一致性守卫直接失败（防止版本号漂移的包流出）
+- **发版提交格式**：`release: v<version>`（首行版本号必须与 package.json 一致，CI 守卫校验；发布说明 = 提交信息去掉首行）。tag `v<version>` 由 CI 在发版提交上创建，同名 tag 已存在则失败（防重复发版）
 - **nightly 版本覆写**：CI 构建时经 `--config.extraMetadata.version` 覆写为 `0.0.0-nightly.<sha7>`——只改打进 asar 的 package.json，**不改仓库文件**。作用：元数据不冒充稳定版；nightly 用户切 stable 通道检查时 `0.0.0` 低于任何正式版，可随时切回
 - **开发态不追加 dev 后缀**：package.json 始终保持「下一个发布版本」（改后缀发版前要记得改回，易忘）；开发/无 git 构建由 `build-info.json` 的 `sha='dev'` 识别，设置面板显示「开发版」
 - **自动更新新旧判定与版本号的关系**：stable 通道比 semver（tag vs `app.getVersion()`）；nightly 通道**不走版本号**，比 Release body 末尾的 `<!-- hawk-nightly-sha: <sha> -->` 注释与本机构建 sha（Release 的 `target_commitish` 是分支名，不可用作比较）
 
 ## 发布正式版
 
+一次 push 即发版：
+
 ```bash
-# 1. bump 版本（若当前号已发布过）
+# 1. bump 版本
 cd hawk-app
 #    编辑 package.json: "version": "0.2.0"
 
-# 2. 提交。用非 feat/fix 前缀，避免顺带触发一轮 nightly 重建
-git commit -am "chore(release): v0.2.0"
-git push
+# 2. 提交。release 前缀 = 发版指令；首行版本号必须等于 package.json 的 version，
+#    提交信息去掉首行即发布说明正文
+git commit -am "release: v0.2.0
 
-# 3. 打附注 tag——tag 注释会成为 Release 的发布说明正文
-git tag -a v0.2.0 -m "0.2.0
+实现基础版功能
 
 - 新功能 A
 - 修复 B"
-git push origin v0.2.0
+git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台产物
 ```
 
-等价捷径：`gh release create v0.2.0 --title v0.2.0 --notes "..."`（在 main HEAD 建 tag + 说明，同样触发 CI）。
+**push 后 CI 自动接管**：
 
-**tag 推送后 CI 自动接管**：
-
-1. 一致性守卫：`v0.2.0` ≠ package.json `0.2.0` → 立即失败
-2. windows job：web 构建与 cargo 并行 → 打包 `hawk.zip` + `hawk.zip.sha256` 边车（正式版 mx=9 最小体积）→ 创建 Release 并附资产
+1. 守卫：提交首行解析版本号，与 package.json 不一致或 tag 已存在 → 立即失败
+2. windows job：web 构建与 cargo 并行 → 打包 `hawk.zip` + `hawk.zip.sha256` 边车（正式版 mx=9 最小体积）→ 以 `tag_name: v0.2.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）
 3. macos job（arm64/x64 双架构 matrix 并行）：各腿产出 `hawk-mac-<arch>.zip` + 边车 → 并行附到 Release
 
 **发布后验证**：
@@ -73,6 +74,7 @@ main 分支出现 `feat` / `fix` 开头的提交即触发（`concurrency` 串行
 
 ## 常见问题
 
-- **tag 打错/版本号写错**：CI 已失败或产物不对时，删 Release + 删 tag 后修正重推；守卫会重新校验
+- **发错了/想重发同一版本**：删除对应 Release 与 tag（网页或 `gh release delete vX --cleanup-tag`），bump 到新版本后重新提交 `release:`（同一 commit 重发不推荐，重推新提交更干净）
+- **误推了 `v*` tag / 用了 `gh release create`**：产生空 Release 且阻塞同名正式版发版，删除该 Release + tag 即可恢复；构建不受影响（tag 触发已移除）
 - **手动 dispatch 的 Artifacts 是什么**：各平台产物的未发布副本（含边车），用于调试打包配置，不会进入任何 Release
 - **客户端检查更新失败提示限速**：GitHub API 未认证限速 60 次/时/IP，仅影响极端频繁的手动检查；默认启动后静默检查一次 + 手动按钮的频率远低于限额

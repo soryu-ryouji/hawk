@@ -1,16 +1,16 @@
 # CI 发版：
-# - 推 v* tag：正式 Release
+# - main 分支提交信息以 release: 开头：正式 Release（版本号取自提交首行并与 package.json 校验，
+#   tag+Release 由 action-gh-release 的 tag_name 直接创建——GITHUB_TOKEN 创建的 tag 不会触发
+#   其他 workflow，不能用「先建 tag 再触发构建」的链式设计）
 # - main 分支提交信息以 feat/fix 开头（conventional commits）：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
 # - 手动触发：只构建上传 Artifacts，不创建 Release
-# 压缩级别按构建类型分流：正式版（v* tag）mx=9 最小体积；nightly/手动 mx=5 快速出包
+# 压缩级别按构建类型分流：正式版（release 提交）mx=9 最小体积；nightly/手动 mx=5 快速出包
 # （mx=9 压缩耗时翻倍只换 ~10-20MB 体积；下载走 GitHub CDN，仅正式版在意最小体积）
 # Windows 产物为 zip（解压即用，全 64 位，无 NSIS 启动壳）；mac 双架构 matrix 并行构建。
 name: release
 
 on:
   push:
-    tags:
-      - 'v*'
     branches:
       - main
   workflow_dispatch:
@@ -26,10 +26,12 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    # tag 推送 / 手动 / main 上 feat、fix 开头的提交
+    # 手动 / main 上 release、feat、fix 开头的提交
+    outputs:
+      release_tag: ${{ steps.release.outputs.tag }}
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      startsWith(github.ref, 'refs/tags/') ||
+      startsWith(github.event.head_commit.message, 'release') ||
       startsWith(github.event.head_commit.message, 'feat') ||
       startsWith(github.event.head_commit.message, 'fix')
     defaults:
@@ -61,22 +63,42 @@ jobs:
             ~\AppData\Local\electron-builder\Cache
           key: tools-win-x64-${{ hashFiles('hawk-app/package-lock.json') }}
 
-      # 正式版守卫：tag v<version> 必须与 package.json version 一致（版本唯一来源），不一致直接失败
-      - name: Verify tag matches version
-        if: startsWith(github.ref, 'refs/tags/')
+      # 正式版守卫：release 提交首行需含版本号且与 package.json 一致（版本唯一来源），
+      # 同名 tag 已存在则失败（防重复发版）；发布说明 = 提交信息去掉首行
+      - name: Resolve release
+        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release')
+        id: release
         shell: bash
+        env:
+          MSG: ${{ github.event.head_commit.message }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          FIRST=$(printf '%s\n' "$MSG" | head -n1)
+          VERSION=$(printf '%s\n' "$FIRST" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([-._+0-9A-Za-z]*)' | head -n1)
           PKG=$(node -p "require('./package.json').version")
-          if [ "$TAG" != "$PKG" ]; then
-            echo "tag v$TAG 与 package.json version $PKG 不一致（版本唯一来源为 package.json，先 bump 再打 tag）" >&2
+          if [ -z "$VERSION" ]; then
+            echo "release 提交首行需含版本号，如：release: v0.2.0" >&2
             exit 1
           fi
+          if [ "$VERSION" != "$PKG" ]; then
+            echo "提交信息版本 $VERSION 与 package.json $PKG 不一致（先 bump 再提交）" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null 2>&1; then
+            echo "tag v$VERSION 已存在，请 bump 到新版本后再发" >&2
+            exit 1
+          fi
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          BODY=$(printf '%s\n' "$MSG" | tail -n +2 | sed -e '/./,$!d')
+          {
+            echo "body<<REL_EOF"
+            printf '%s\n' "$BODY"
+            echo "REL_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # nightly 版本覆写：0.0.0-nightly.<sha7>（元数据不冒充稳定版；stable 通道检查时 0.0.0 低于任何正式版，
       # nightly 用户可随时切回稳定版）。更新判定不走版本号，走 Release body 的 hawk-nightly-sha 注释
       - name: Nightly version
-        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
         id: nightly_ver
         shell: bash
         run: echo "verflag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
@@ -98,8 +120,8 @@ jobs:
       - name: Pack
         run: node scripts/pack.mjs ${{ steps.nightly_ver.outputs.verflag }}
         env:
-          # 正式版 mx=9 最小体积；nightly/手动 mx=5 快速出包（高频构建在意时间不在意 +10-20MB）
-          ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ startsWith(github.ref, 'refs/tags/') && '9' || '5' }}
+          # 正式版（release 提交）mx=9 最小体积；nightly/手动 mx=5 快速出包（高频构建在意时间不在意 +10-20MB）
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ startsWith(github.event.head_commit.message, 'release') && '9' || '5' }}
 
       # 自动更新校验：产物 sha256 边车（<artifact>.sha256，内容为十六进制哈希），随 Release 上传
       - name: Generate checksum
@@ -116,12 +138,15 @@ jobs:
             hawk-app/dist/hawk.zip.sha256
           if-no-files-found: error
 
-      # ---- 正式版：v* tag ----
+      # ---- 正式版：release 提交（tag+Release 由 action-gh-release 的 tag_name 在当前 commit 创建）----
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.tag }}
+          body: ${{ steps.release.outputs.body }}
           files: |
             hawk-app/dist/hawk.zip
             hawk-app/dist/hawk.zip.sha256
@@ -130,7 +155,7 @@ jobs:
 
       - name: Rotate nightly release
         id: nightly
-        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
         shell: bash
         working-directory: .
         env:
@@ -141,7 +166,7 @@ jobs:
           git push origin --delete refs/tags/nightly || true
 
       - name: Create Nightly Release
-        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
@@ -172,7 +197,7 @@ jobs:
     runs-on: macos-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      startsWith(github.ref, 'refs/tags/') ||
+      startsWith(github.event.head_commit.message, 'release') ||
       startsWith(github.event.head_commit.message, 'feat') ||
       startsWith(github.event.head_commit.message, 'fix')
     defaults:
@@ -207,9 +232,9 @@ jobs:
 
       - run: npm ci
 
-      # nightly 版本覆写（同 windows job；tag 构建留空用 package.json version）
+      # nightly 版本覆写（同 windows job；release 提交留空用 package.json version）
       - name: Nightly version
-        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
         id: nightly_ver
         shell: bash
         run: echo "version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
@@ -250,12 +275,13 @@ jobs:
             hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip.sha256
           if-no-files-found: error
 
-      # ---- 正式版：v* tag（release 由 windows job 创建，这里补充 zip 资产）----
+      # ---- 正式版：release 提交（release/tag 已由 windows job 创建，两腿并行附资产）----
 
       - name: Attach to Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.windows.outputs.release_tag }}
           files: |
             hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip
             hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip.sha256
@@ -263,7 +289,7 @@ jobs:
       # ---- nightly：main 分支 feat/fix 提交（nightly release/tag 已由 windows job 重建）----
 
       - name: Attach to Nightly Release
-        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly

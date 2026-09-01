@@ -520,7 +520,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 版本号规则（唯一来源、nightly 覆写、开发态识别）与发版步骤、CI 行为、验证清单的完整说明见 **[docs/release.md](../release.md)**。要点：
 
 - **版本唯一来源**：`hawk-app/package.json` 的 `version`（electron-builder 打进 app，`app.getVersion()` 读取；设置面板「更新」分区显示）。首版 0.1.0，遵循 semver
-- **发正式版**：bump `version` → 附注 tag `v<version>` → push tag → CI 构建并创建 Release；**tag 与 version 不一致时 CI 直接失败**
+- **发正式版**：bump `version` → `release: v<version>` 提交 push（发布说明 = 提交信息正文）→ CI 校验后建 tag + Release + 全平台产物；完整流程见 **[docs/release.md](../release.md)**
 - **nightly**：CI 覆写构建版本为 `0.0.0-nightly.<sha7>`（仅 asar 内，不改仓库）；更新判定走 Release body 的 `hawk-nightly-sha` 注释
 - **开发态**：不追加 dev 后缀，`build-info.json` sha=`'dev'` 识别，设置面板显示「开发版」
 
