@@ -56,8 +56,11 @@ function submitMobileSearch() {
   closeMobileSearch();
 }
 const emit = defineEmits<{ 'open-settings': [] }>();
-// 窗口控制为 fixed 在窗口右上角的自绘按钮（仅 Windows/Linux 渲染）：侧栏隐藏时本栏通栏，右端需预留避让
+// 窗口控制避让仅在 Electron 无边框窗口下存在：Windows/Linux 为 fixed 右上角自绘按钮（侧栏隐藏时
+// 本栏通栏，右端需预留）；macOS 为原生红绿灯（左端预留）。纯浏览器（含 iPhone，其 UA 含
+// "like Mac OS X" 会被误判为 darwin）无任何窗口控件，不做避让
 const reserveControls = hasShell && !isMac;
+const reserveTraffic = hasShell && isMac;
 
 /** 文件夹视图显示可点击面包屑（根 = 全部素材），其余视图显示固定标题 */
 const breadcrumb = computed(() => {
@@ -158,7 +161,7 @@ function onDblClick(e: MouseEvent) {
   <!-- 侧栏隐藏时本栏通栏：macOS 左端避让原生红绿灯，Windows/Linux 右端避让自绘窗口控制 -->
   <header
     class="titlebar"
-    :class="{ 'reserve-traffic': isMac && !store.sidebarVisible, 'reserve-controls': reserveControls && !store.sidebarVisible }"
+    :class="{ 'reserve-traffic': reserveTraffic && !store.sidebarVisible, 'reserve-controls': reserveControls && !store.sidebarVisible }"
     @dblclick="onDblClick"
   >
     <div class="group left">
