@@ -61,7 +61,7 @@ async function trashCurrent() {
 }
 
 // ---------- 缩放与平移 + 滑动切换 ----------
-// scale=1 为适应窗口；滚轮以光标为不动点缩放，双击复位。
+// scale=1 为适应窗口；滚轮以光标为不动点缩放，双击未放大时退出预览、放大时复位（见 onDblClick）。
 // 拖拽语义分两级：缩放>1 时拖拽平移（查看大图细节）；缩放=1 时横向跟手滑动——
 // 过阈值滑出切换上一张/下一张（触屏与桌面的统一图库手势），不过阈值回弹。
 // 捏合（双指，触屏）：以两指中点为不动点缩放，中点本身的平移带动图片（捏合兼双指拖移）；
@@ -165,6 +165,16 @@ function resetView() {
   moved = false;
   // pager/键盘切换同样受益于相邻预加载
   preloadNeighbors();
+}
+
+/** 双击：未放大（scale≤1）时退出预览（与双击卡片开预览对称）；放大状态仍复位
+ * （放大看细节后先还原再退出，不因双击误退） */
+function onDblClick() {
+  if (scale.value <= 1) {
+    emit('close');
+    return;
+  }
+  resetView();
 }
 
 function onWheel(e: WheelEvent) {
@@ -379,7 +389,7 @@ function pointInImage(px: number, py: number): boolean {
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerCancel"
-        @dblclick="resetView"
+        @dblclick="onDblClick"
         @click="onGestureClick"
       ></div>
       <!-- 缩放>1：单图平移视觉层 -->

@@ -137,9 +137,14 @@ function copy(value: string) {
   store.showToast('已复制到剪贴板');
 }
 
-/** 缩略图尺寸步进（滑杆 ± 按钮） */
+/** 缩略图尺寸步进（滑杆 ± 按钮）：用户显式设置，写入偏好 */
 function stepThumb(delta: number) {
-  store.thumbSize = Math.min(280, Math.max(120, store.thumbSize + delta));
+  store.setUserThumbSize(store.thumbSize + delta);
+}
+
+/** 滑杆输入：用户显式设置（不复用动态默认的写入路径，避免被持久化逻辑混淆） */
+function onThumbInput(e: Event) {
+  store.setUserThumbSize(Number((e.target as HTMLInputElement).value));
 }
 
 async function save() {
@@ -231,7 +236,14 @@ async function save() {
             </div>
             <div class="slider-row">
               <button title="缩小" @click="stepThumb(-8)">−</button>
-              <input v-model.number="store.thumbSize" type="range" min="120" max="280" step="8" />
+              <input
+                :value="store.thumbSize"
+                type="range"
+                min="120"
+                max="280"
+                step="8"
+                @input="onThumbInput"
+              />
               <button title="放大" @click="stepThumb(8)">＋</button>
             </div>
           </div>

@@ -2,6 +2,7 @@
 // 组件不直接调 api，一切经 action；SSE 事件经 applyEvent 分发。
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
+import { useMediaQuery } from '@vueuse/core';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
@@ -64,28 +65,47 @@ export const useLibraryStore = defineStore('library', () => {
   const uncategorizedCount = ref(0);
   const untaggedCount = ref(0);
   const library = ref<LibraryInfo | null>(null);
-  // 网格卡片边长偏好（滑杆 120–280）：web 端（浏览器，含局域网查看）为设备级显示偏好——
-  // 记忆到 localStorage 且默认最小（手机小屏多看几张）；桌面端会话级、默认 160，不持久化
+  // 网格卡片边长偏好（滑杆 120–280，齐行布局的目标行高）：
+  // - 桌面端（Electron）：会话级、固定默认 160，不持久化；
+  // - web 端（浏览器，含局域网查看）：用户显式设置过则记忆到 localStorage（`hawk:thumbSize`）
+  //   且不再自动切换；未设置时跟随视口宽度的动态默认——宽度足够（≥700px，可并排 3 张
+  //   常规横图）用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转自动跟随
   const THUMB_SIZE_MIN = 120;
   const THUMB_SIZE_MAX = 280;
   const isBrowserClient = !window.hawkShell;
-  const thumbSize = ref(isBrowserClient ? loadThumbSize() : 160);
+  const thumbSize = ref(160);
+  let userThumbSize: number | null = null;
   if (isBrowserClient) {
-    watch(thumbSize, (size) => {
-      try {
-        localStorage.setItem('hawk:thumbSize', String(size));
-      } catch {
-        // 隐私模式等写入失败：仅本次会话生效
+    const wideEnough = useMediaQuery('(min-width: 700px)');
+    userThumbSize = loadUserThumbSize();
+    thumbSize.value = userThumbSize ?? (wideEnough.value ? 160 : THUMB_SIZE_MAX);
+    watch(wideEnough, () => {
+      if (userThumbSize === null) {
+        thumbSize.value = wideEnough.value ? 160 : THUMB_SIZE_MAX;
       }
     });
   }
 
-  function loadThumbSize(): number {
+  function loadUserThumbSize(): number | null {
     try {
       const saved = Number(localStorage.getItem('hawk:thumbSize'));
-      return Number.isFinite(saved) && saved >= THUMB_SIZE_MIN && saved <= THUMB_SIZE_MAX ? saved : THUMB_SIZE_MIN;
+      return Number.isFinite(saved) && saved >= THUMB_SIZE_MIN && saved <= THUMB_SIZE_MAX ? saved : null;
     } catch {
-      return THUMB_SIZE_MIN;
+      return null;
+    }
+  }
+
+  /** 用户显式设置缩略图尺寸（设置面板滑杆/± 按钮）：写入偏好并停止跟随动态默认 */
+  function setUserThumbSize(size: number) {
+    thumbSize.value = Math.min(THUMB_SIZE_MAX, Math.max(THUMB_SIZE_MIN, size));
+    if (!isBrowserClient) {
+      return;
+    }
+    userThumbSize = thumbSize.value;
+    try {
+      localStorage.setItem('hawk:thumbSize', String(thumbSize.value));
+    } catch {
+      // 隐私模式等写入失败：仅本次会话生效
     }
   }
   /** 搜索框草稿（顶栏与检查器顶搜索框共用一份，回车提交为 keywords） */
@@ -1052,7 +1072,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, searchText, previewId, toast, importProgress, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, setUserThumbSize, searchText, previewId, toast, importProgress, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
