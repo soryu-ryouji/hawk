@@ -191,6 +191,8 @@ web/
     │   ├── PreviewOverlay.vue
     │   ├── ImageEditDialog.vue # 图片编辑窗口（右键「编辑图片…」）：旋转预览 + 保存/放弃/取消三选确认
     │   ├── ContextMenu.vue    # 全局单例自绘菜单
+    │   ├── ImportDuplicateDialog.vue # 导入重复策略对话框（忽略/仍然导入，整批生效）
+    │   ├── DeleteScopeDialog.vue # 多位置删除策略对话框（全部位置/仅当前文件夹/取消）
     │   └── EmptyState.vue     # 空库/空结果占位
     └── styles.css             # 深色主题 CSS 变量与全局样式
 ```
@@ -352,10 +354,13 @@ addCategoryToSelected(name) / addTagToSelected(tag): Promise<void>;  // 批量�
 moveSelectedToFolder(path): Promise<void>;         // 批量端点移动主位置；已在目标处的项跳过
 setStarForSelected(star): Promise<void>;           // 批量端点设置评分（多选面板与右键菜单共用）
 batchUpdate(ids, patch, doneText): Promise<void>;  // 批量端点统一入口；missing_ids 计数在 toast 提示「n 个未处理」
-trashSelected(): Promise<void>; restoreSelected(): Promise<void>;
+trashSelected(): Promise<void>; restoreSelected(): Promise<void>;   // 删除：选中项含多个库内位置副本时先问（DeleteScopeDialog：全部位置/仅当前文件夹/取消，单路径不弹）；恢复全部回收站位置
 clearTrash(): Promise<void>;                       // 调用方先二次确认
-importPaths(paths: string[]): Promise<void>;       // 拖拽导入（Electron）：逐个 itemAddByPath（server 逐文件处理完才返回，done 逐项推进）；结束汇总 toast（成功 n，已存在 m，失败 k）
-importFiles(files: File[]): Promise<void>;        // 浏览器端导入（拖拽/标题栏上传按钮）：逐个 multipart itemUpload，进度与汇总同 importPaths
+importPaths(paths: string[]): Promise<void>;       // 拖拽导入（Electron）：逐个 itemAddByPath（server 逐文件处理完才返回，done 逐项推进）；带 skip_existing，首个重复时经 dupPrompt 弹窗问一次（忽略/仍然导入，整批生效），结束汇总 toast（新增/忽略重复/重复导入/失败）
+importFiles(files: File[]): Promise<void>;        // 浏览器端导入（拖拽/上传按钮）：逐个 multipart itemUpload，重复策略与 importPaths 一致
+dupPrompt / resolveDuplicatePolicy;               // 重复策略弹窗挂起态（ImportDuplicateDialog 呈现，App.vue 挂载；resolve 触发续走）
+deleteLocation(id, path): Promise<void>;         // 按位置删除（Inspector 文件位置列表）：其余位置保留，最后一个库内位置被删时整项回收
+deleteScopePrompt / resolveDeleteScope;          // 多位置删除策略弹窗挂起态（DeleteScopeDialog 呈现；folder 非空时才有「仅从此处移除」选项）
 importBegin(): boolean;                           // 拖拽落下即占用导入态（并发导入拒绝并 toast）；importPaths 前置
 refreshFolders(): Promise<void>;
 openPreview(id): void; closePreview(): void; navigatePreview(step: 1 | -1): void;
@@ -395,7 +400,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；容器尺寸经 ResizeObserver 驱动（非正值忽略 + 挂载时主动测量 + 骨架到达时自愈兑底——RO 首帧可能在布局就绪前返回 0，且容器尺寸不再变化时不重发，会把布局永久卡在空网格）；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |
-| `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。SearchBox（`.inspector-search`，默认隐藏；触屏横屏 wide+touch 时填充顶部条——`flex:1` 占满、`no-drag` 退出拖拽区，浏览器端该条本是无拖拽需求的空条）。单选（触屏只读，`readOnly = touch`）：与桌面版同样的信息结构全部静态展示（名称/注释/网址链接/标签/分类 chips/文件夹/评分★/基本信息/文件位置，无输入控件与 ◎），实际生效于 wide 布局的 iPad 横屏（narrow 下检查器隐藏）；桌面编辑版：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径）；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
+| `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。SearchBox（`.inspector-search`，默认隐藏；触屏横屏 wide+touch 时填充顶部条——`flex:1` 占满、`no-drag` 退出拖拽区，浏览器端该条本是无拖拽需求的空条）。单选（触屏只读，`readOnly = touch`）：与桌面版同样的信息结构全部静态展示（名称/注释/网址链接/标签/分类 chips/文件夹/评分★/基本信息/文件位置，无输入控件与 ◎），实际生效于 wide 布局的 iPad 横屏（narrow 下检查器隐藏）；桌面编辑版：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径；文件位置列表在 item 多路径时逐行提供「删除此位置」按钮（store.deleteLocation，其余位置保留））；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
 | `CategoryPickerDialog.vue` | `title: string` | `confirm(name: string)`、`cancel` | 分类输入模态：输入框带已有分类候选（datalist），可输入新名字；确认单个分类名（Inspector「＋添加到分类」与多选批量添加共用） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
@@ -404,6 +409,8 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式磨砂玻璃遮罩覆盖底层界面，右上角 × 关闭；滚轮以光标为不动点缩放、双击未放大时退出预览（与双击卡片开预览对称）、放大状态仍先复位；**手势两级语义**：缩放>1 单图平移模式（v-if 互斥，缩放=1 为 carousel 模式）；**pointer 手势统一落在始终挂载的全屏 `.gesture` 层**（平移图/carousel 轨道只是其下 `pointer-events:none` 的视觉层）——模式切换不打断进行中的手势，**双指捏合**（以两指中点为不动点缩放、中点平移兼作双指拖移，双指变单指无缝接管平移）由此可跨 scale=1 不丢跟踪；放大后单指左右滑动即平移（缩放>1 语义），捏合收回到 ≤1 回翻页模式；carousel = **三图轨道**（前|当前|后 并排，iOS 相册式）：横向拖动时左右邻图实时可见，过 56px 阈值松手邻图滑至屏幕中央（轨道动画结束才提交切换并无缝复位，配合相邻原图 `new Image()` 预加载免解码等待），首/末张边缘橡皮筋阻尼（0.35x），不足阈值回弹；**手势层与位移层分离**（位移会改变元素命中区域，transform 只放在视觉层）；点击语义保持不变（carousel 点击不关闭；平移模式点空白边距关闭、点图像不关闭，`moved` 阈值区分点击与拖拽）；触屏另支持**下拉关闭**（阻尼跟手+背景渐亮，≥96px 松手滑出关闭；`touch` 判定，手机/iPad 横竖屏均触发，桌面鼠标不触发）与 **ⓘ 底部详情条**（仅 narrow，只读展示当前项元信息，补检查器在移动端的缺位）；`previewItem` 为 sticky（详情未加载不置空，防浮层卸载重建）；Esc/点遮罩/空格关闭（触屏无 ×，靠下拉/点遮罩）；←/→ 或底部按钮切换（**narrow 隐藏翻页栏**）；**关闭 × 触屏隐藏**（`v-if="!touch"`，下拉关闭/点遮罩替代）；右键菜单：在文件管理器中显示/复制文件路径/复制图片/编辑图片（仅 jpg/png/webp，`store.openEditor`，保存后本浮层经 previewId 切换到新 id 显示旋转结果；放弃则保持原图）/删除图片（删除后跳到下一张，末张关闭） |
 | `ImageEditDialog.vue` | `item: Item` | `close` | 图片编辑窗口：全屏 Eagle 式遮罩（观感同预览浮层、层级高于它），底部中间工具条为 ↺/↻ 旋转 + 「已旋转 n°」+ 退出/保存；`store.editorTarget` 驱动、App.vue 全局挂载（网格与预览浮层右键「编辑图片…」均可打开）。编辑期间旋转只作用于预览角（CSS 变换）；「保存」或带修改退出（×/退出/Esc/点遮罩）时三选确认（保存/不保存/取消）才经 `store.saveImageEdit` 做客户端重编码（canvas，EXIF 方向烘焙进像素；JPEG EXIF 字节级回填、Orientation 重置为 1）并提交 `item/replace`；id 漂移后详情就地替换、预览若正打开则跟随新 id；写回保留原修改时间，素材在按时间排序中不挪位 |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭（不选 = 保持不变）；打开期间挂 `body.menu-open` 挂起窗口拖拽区——Electron 的 `-webkit-app-region: drag` 由 OS 命中测试优先消费，遮罩盖在拖拽区上也收不到点击，禁用后点击空白才能正常关菜单 |
+| `ImportDuplicateDialog.vue` | — | — | 导入重复策略对话框：导入过程中首个「内容已在库内」触发（store.dupPrompt 挂起的 resolve，App.vue 全局挂载），「忽略重复」（默认，Esc/点遮罩同效）/「仍然导入」二选一，选择整批生效（批量导入逐文件弹窗不可用）；服务端 skip_existing 配合（见 item/add） |
+| `DeleteScopeDialog.vue` | — | — | 多位置删除策略对话框：删除选中项里含多个库内位置副本的素材时触发（store.deleteScopePrompt），「删除全部位置」（卡片级，所有副本入回收站）/「仅从此处移除」（folder/root 视图才有：只删当前文件夹范围内的位置，其余保留）/「取消」（Esc/点遮罩同效，中止本次删除）；单路径素材不弹窗 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
 
 ### composables

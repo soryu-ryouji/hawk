@@ -1452,6 +1452,8 @@ export interface paths {
                         file: string;
                         folder_path?: string;
                         name?: string;
+                        /** @description 传 "true" 时内容已在库内则跳过 */
+                        skip_existing?: string;
                     };
                 };
             };
@@ -1618,6 +1620,11 @@ export interface components {
             categories?: null | string[];
             annotation?: null | string;
             website?: null | string;
+            /**
+             * @description 内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true
+             * @default false
+             */
+            skip_existing: boolean;
         };
         ItemBatchUpdateRequest: {
             ids: string[];

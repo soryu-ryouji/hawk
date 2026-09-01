@@ -205,6 +205,15 @@ check "同内容 add already_existed=true" "$(echo "$ADD2" | jq -r .data.already
 check "同内容共享 item" "$(echo "$ADD2" | jq -r '.data.item.paths | length')" 2
 check "add 后 count=4" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -r .data)" 4
 
+# --- skip_existing：重复内容跳过（不写文件、不追加路径）；回收站内容不算重复 ---
+SKIP=$(post_json "$BASE/api/v1/item/add" "{\"img_base64\":\"$TINY_PNG\",\"name\":\"dot3\",\"skip_existing\":true}")
+check "skip_existing 跳过重复（skipped=true）" "$(echo "$SKIP" | jq -r .data.skipped)" true
+check "跳过不追加路径" "$(echo "$SKIP" | jq -r '.data.item.paths | length')" 2
+check "跳过不落盘" "$(ls "$LIB/dot3.png" >/dev/null 2>&1 && echo yes || echo no)" no
+SKIP_UPLOAD=$(curl -s -H "$AUTH" -F "file=@$LIB/sunset.png" -F "name=skip-up" -F "skip_existing=true" "$BASE/api/v1/item/upload")
+check "upload skip_existing 跳过重复" "$(echo "$SKIP_UPLOAD" | jq -r .data.skipped)" true
+check "跳过后 count 仍=4" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -r .data)" 4
+
 # --- folder ---
 post_json "$BASE/api/v1/folder/create" '{"name":"图标","parent_path":""}' >/dev/null
 check "folder/create 后树包含新目录" "$(curl -s -H "$AUTH" "$BASE/api/v1/folder/list" | jq -r '.data.children | map(.name) | join(",")')" "图标,海报"
@@ -286,6 +295,12 @@ check "batch_update missing_ids 报告不存在的 id" "$(echo "$BATCH2" | jq -r
 check "batch_update 无更新字段返回 400" "$(post_json "$BASE/api/v1/item/batch_update" "{\"ids\":[\"$CAT_ID\"]}" -o /dev/null -w '%{http_code}')" 400
 
 # --- 回收站 ---
+# 单位置删除（带 path）：多路径 item 只回收指定位置，其余保留（Inspector 按位置删除用）
+check "带 path 删除单位置" "$(post_json "$BASE/api/v1/item/delete" "{\"id\":\"$DOT_ID\",\"path\":\"海报/dot.png\"}" | jq -r .status)" success
+check "单位置删除后 item 仍在库内（另一路径保留）" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -r .data)" 6
+check "单位置删除后 paths 只剩一条" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$DOT_ID" | jq -r '.data.paths | length')" 1
+check "带 path 恢复单位置" "$(post_json "$BASE/api/v1/item/restore" "{\"id\":\"$DOT_ID\",\"path\":\"海报/dot.png\"}" | jq -r .status)" success
+check "恢复后 paths 回到两条" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$DOT_ID" | jq -r '.data.paths | length')" 2
 check "item/delete 移入回收站" "$(post_json "$BASE/api/v1/item/delete" "{\"id\":\"$DOT_ID\"}" | jq -r .status)" success
 check "回收站视图可见" "$(post_json "$BASE/api/v1/item/list" '{"in_trash":true}' | jq -r .data.total)" 1
 # dot 同内容有两条路径（海报/dot.png、dot2.png）：卡片级删除（无 path）应全部回收，
@@ -439,6 +454,10 @@ check "可写 token 上传成功" "$(echo "$SPLIT" | jq -r .data.item.name)" lan
 check "可写 token GET 正常" "$(curl -s -H "$RW_AUTH" "$LAN_BASE/api/v1/item/count" | jq -r .data)" 6
 SPLIT_ID=$(echo "$SPLIT" | jq -r .data.item.id)
 check "可写 token 删除成功" "$(curl -s -H "$RW_AUTH" -X POST "$LAN_BASE/api/v1/item/delete" -H 'Content-Type: application/json' --data-binary @- <<< "{\"id\":\"$SPLIT_ID\"}" | jq -r .status)" success
+# 回收站里的同内容不算重复：skip_existing 下重新上传应正常导入（复活），否则删掉的内容永远导不回来
+RES=$(curl -s -H "$RW_AUTH" -F "file=@$UPLOAD_SRC" -F "name=lan-resurrect" -F "skip_existing=true" "$LAN_BASE/api/v1/item/upload")
+check "回收站内容 skip 下仍导入（skipped=false）" "$(echo "$RES" | jq -r .data.skipped)" false
+curl -s -H "$RW_AUTH" -X POST "$LAN_BASE/api/v1/item/delete" -H 'Content-Type: application/json' --data-binary @- <<< "{\"id\":\"$SPLIT_ID\"}" >/dev/null
 # 拆分但未启用写：write_token 不生效（不算合法 token）
 cat > "$LIB/.hawk/config.toml" <<EOF
 [web]

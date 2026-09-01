@@ -633,17 +633,74 @@ export const useLibraryStore = defineStore('library', () => {
     return x.length === y.length && x.every((v) => y.includes(v));
   }
 
+  // ---- 多位置删除策略：选中项含多个库内位置副本时询问（DeleteScopeDialog 呈现，
+  // App.vue 挂载）；单路径素材不弹窗，维持直接删除 ----
+  const deleteScopePrompt = ref<null | { count: number; folder: string | null; resolve: (choice: 'all' | 'folder' | 'cancel') => void }>(null);
+
+  function askDeleteScope(count: number, folder: string | null): Promise<'all' | 'folder' | 'cancel'> {
+    return new Promise((resolve) => {
+      deleteScopePrompt.value = { count, folder, resolve };
+    });
+  }
+
+  function resolveDeleteScope(choice: 'all' | 'folder' | 'cancel') {
+    deleteScopePrompt.value?.resolve(choice);
+    deleteScopePrompt.value = null;
+  }
+
+  /** 视图位置范围：folder 视图 → "<path>/" 前缀，root 视图 → ""（顶层文件）；
+ *  其余视图无位置语义（返回 null，「仅从此处移除」选项不适用） */
+  function viewPathPrefix(): string | null {
+    const v = view.value;
+    if (v.kind === 'folder') return `${v.path}/`;
+    if (v.kind === 'root') return '';
+    return null;
+  }
+
   async function trashSelected() {
     const ids = [...selection.value];
+    // 多位置副本检测需要 paths（详情缓存，批量操作前统一补齐）
+    await ensureSelectionDetails();
+    const multiIds = ids.filter((id) => (details.value.get(id)?.paths.length ?? 0) > 1);
+    let scope: 'all' | 'folder' = 'all';
+    if (multiIds.length > 0) {
+      const prefix = viewPathPrefix();
+      const folderLabel = prefix === null ? null : prefix === '' ? '库根目录' : currentFolderPath.value;
+      const choice = await askDeleteScope(multiIds.length, folderLabel);
+      if (choice === 'cancel') {
+        return;
+      }
+      scope = choice;
+    }
+    const prefix = scope === 'folder' ? viewPathPrefix() : null;
     for (const id of ids) {
       try {
-        await api.itemDelete(id);
+        const paths = details.value.get(id)?.paths ?? [];
+        if (prefix !== null && paths.length > 1) {
+          // 仅删当前视图范围内的位置（可能多条），其余位置保留
+          const inScope = paths.filter((p) => (prefix === '' ? !p.includes('/') : p.startsWith(prefix)));
+          for (const p of inScope) {
+            await api.itemDelete(id, p);
+          }
+        } else {
+          await api.itemDelete(id);
+        }
       } catch (e) {
         showToast(errorText(e));
       }
     }
     clearSelection();
     debouncedSkeletonReload(() => void reloadSkeleton());
+  }
+
+  /** 删除单个文件位置（Inspector 文件位置列表）：item 其余位置保留；
+ *  删除后经 SSE item.updated 就地刷新，最后一个库内位置被删时按整项回收 */
+  async function deleteLocation(id: string, path: string) {
+    try {
+      await api.itemDelete(id, path);
+    } catch (e) {
+      showToast(errorText(e));
+    }
   }
 
   async function restoreSelected() {
@@ -706,6 +763,21 @@ export const useLibraryStore = defineStore('library', () => {
     return true;
   }
 
+  // ---- 导入重复策略：首个「内容已在库内」时暂停并问一次（ImportDuplicateDialog 呈现，
+  // App.vue 挂载），选择对整批生效——逐文件弹窗在批量导入下不可用 ----
+  const dupPrompt = ref<null | ((choice: 'skip' | 'import') => void)>(null);
+
+  function askDuplicatePolicy(): Promise<'skip' | 'import'> {
+    return new Promise((resolve) => {
+      dupPrompt.value = resolve;
+    });
+  }
+
+  function resolveDuplicatePolicy(choice: 'skip' | 'import') {
+    dupPrompt.value?.(choice);
+    dupPrompt.value = null;
+  }
+
   /** 拖拽导入：逐个 itemAddByPath（server 逐文件完成复制/哈希/索引/缩略图后才返回），done 逐项推进 */
   async function importPaths(paths: string[]) {
     if (paths.length === 0) {
@@ -716,22 +788,38 @@ export const useLibraryStore = defineStore('library', () => {
     importProgress.value = { total: paths.length, done: 0 };
     let added = 0;
     let existed = 0;
+    let skipped = 0;
     let failed = 0;
+    // ask：首个重复时弹窗；skip：重复一律跳过；import：重复也写入（追加路径副本）
+    let policy: 'ask' | 'skip' | 'import' = 'ask';
     for (const path of paths) {
       try {
-        const res = await api.itemAddByPath(path, { folder_path: currentFolderPath.value ?? undefined });
-        res.already_existed ? existed++ : added++;
+        let res = await api.itemAddByPath(path, {
+          folder_path: currentFolderPath.value ?? undefined,
+          skip_existing: policy !== 'import',
+        });
+        if (res.skipped && policy === 'ask') {
+          policy = await askDuplicatePolicy();
+          if (policy === 'import') {
+            res = await api.itemAddByPath(path, { folder_path: currentFolderPath.value ?? undefined });
+          }
+        }
+        if (res.skipped) skipped++;
+        else res.already_existed ? existed++ : added++;
       } catch {
         failed++;
       }
       importProgress.value.done += 1;
     }
     importProgress.value = null;
-    showToast(`导入完成：新增 ${added}${existed ? `，已存在 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`);
+    showToast(
+      `导入完成：新增 ${added}${skipped ? `，忽略重复 ${skipped}` : ''}${existed ? `，重复导入 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`,
+    );
     // SSE item.added 已触发防抖骨架重载，这里不重复拉取
   }
 
-  /** 浏览器端导入（无 hawkShell，拖拽/文件选择器拿到的是 File 内容）：逐个 multipart 上传 */
+  /** 浏览器端导入（无 hawkShell，拖拽/文件选择器拿到的是 File 内容）：逐个 multipart 上传。
+ * 重复策略与 importPaths 一致（首问后整批生效） */
   async function importFiles(files: File[]) {
     if (files.length === 0) {
       importProgress.value = null;
@@ -741,18 +829,32 @@ export const useLibraryStore = defineStore('library', () => {
     importProgress.value = { total: files.length, done: 0 };
     let added = 0;
     let existed = 0;
+    let skipped = 0;
     let failed = 0;
+    let policy: 'ask' | 'skip' | 'import' = 'ask';
     for (const file of files) {
       try {
-        const res = await api.itemUpload(file, { folder_path: currentFolderPath.value ?? undefined });
-        res.already_existed ? existed++ : added++;
+        let res = await api.itemUpload(file, {
+          folder_path: currentFolderPath.value ?? undefined,
+          skip_existing: policy !== 'import',
+        });
+        if (res.skipped && policy === 'ask') {
+          policy = await askDuplicatePolicy();
+          if (policy === 'import') {
+            res = await api.itemUpload(file, { folder_path: currentFolderPath.value ?? undefined });
+          }
+        }
+        if (res.skipped) skipped++;
+        else res.already_existed ? existed++ : added++;
       } catch {
         failed++;
       }
       importProgress.value.done += 1;
     }
     importProgress.value = null;
-    showToast(`上传完成：新增 ${added}${existed ? `，已存在 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`);
+    showToast(
+      `上传完成：新增 ${added}${skipped ? `，忽略重复 ${skipped}` : ''}${existed ? `，重复导入 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`,
+    );
   }
 
   // ---- 文件夹写操作 ----
@@ -1075,7 +1177,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, setUserThumbSize, searchText, previewId, toast, importProgress, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, setUserThumbSize, searchText, previewId, toast, importProgress, dupPrompt, resolveDuplicatePolicy, deleteScopePrompt, resolveDeleteScope, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, editorTarget, viewerMode, viewPrefs,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,

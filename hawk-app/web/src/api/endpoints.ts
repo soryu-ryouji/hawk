@@ -58,17 +58,19 @@ export const api = {
     request<ItemSkeletonResult>('POST', '/api/v1/item/skeleton', { body: params }),
   itemDetail: (id: string) => request<Item>('GET', '/api/v1/item/detail', { query: { id } }),
   itemCount: () => request<number>('GET', '/api/v1/item/count'),
-  itemAddByPath: (path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }) =>
-    request<{ item: Item; already_existed: boolean }>('POST', '/api/v1/item/add', {
-      body: { path, name: opts?.name, folder_path: opts?.folder_path, tags: opts?.tags },
+  itemAddByPath: (path: string, opts?: { name?: string; folder_path?: string; tags?: string[]; skip_existing?: boolean }) =>
+    request<{ item: Item; already_existed: boolean; skipped: boolean }>('POST', '/api/v1/item/add', {
+      body: { path, name: opts?.name, folder_path: opts?.folder_path, tags: opts?.tags, skip_existing: opts?.skip_existing },
     }),
-  /** multipart 上传（浏览器端无文件路径，拖拽/文件选择器的内容入库）；写权限需 viewer+writable 或 admin */
-  itemUpload: (file: File, opts?: { folder_path?: string; name?: string }) => {
+  /** multipart 上传（浏览器端无文件路径，拖拽/文件选择器的内容入库）；写权限需 viewer+writable 或 admin；
+ * skip_existing：内容已在库内时跳过（不写文件不追加路径），响应 skipped=true */
+  itemUpload: (file: File, opts?: { folder_path?: string; name?: string; skip_existing?: boolean }) => {
     const form = new FormData();
     form.append('file', file, file.name);
     if (opts?.folder_path) form.append('folder_path', opts.folder_path);
     if (opts?.name) form.append('name', opts.name);
-    return request<{ item: Item; already_existed: boolean }>('POST', '/api/v1/item/upload', { body: form });
+    if (opts?.skip_existing) form.append('skip_existing', 'true');
+    return request<{ item: Item; already_existed: boolean; skipped: boolean }>('POST', '/api/v1/item/upload', { body: form });
   },
   // undefined 键会被 JSON.stringify 省略,即「不更新该字段」;置空传空字符串/空数组
   itemUpdate: (id: string, patch: ItemPatch, path?: string) =>

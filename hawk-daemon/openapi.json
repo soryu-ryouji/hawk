@@ -967,8 +967,13 @@
                   },
                   "name": {
                     "type": "string"
+                  },
+                  "skip_existing": {
+                    "type": "string",
+                    "description": "传 \"true\" 时内容已在库内则跳过"
                   }
-                }
+                },
+                "description": "浏览器端无文件路径可引用（拖拽/文件选择器拿到的是内容），经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name / skip_existing（可选）。写权限：viewer 需 [web].writable。"
               }
             }
           }
@@ -1616,6 +1621,11 @@
               "null",
               "string"
             ]
+          },
+          "skip_existing": {
+            "type": "boolean",
+            "description": "内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true",
+            "default": false
           }
         }
       },

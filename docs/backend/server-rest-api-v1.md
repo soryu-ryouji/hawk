@@ -505,13 +505,15 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | categories  | string[] | 否     | 分类（扁平名称校验；浏览器拖拽收集用）   |
 | annotation  | string   | 否     | 备注                                   |
 | website     | string   | 否     | 来源网页（Eagle `website` 同义），记录为 Item.url |
+| skip_existing | boolean | 否     | 内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 `skipped: true`（默认 false，即始终写入） |
 
 #### 响应
 
-Item 对象，并附带 `already_existed` 标志：
+Item 对象，并附带 `already_existed` / `skipped` 标志：
 
 - 内容不存在：写入文件并索引，返回新 item，`already_existed: false`
-- 内容已存在（同哈希）：仍将文件复制到 `folder_path` 目标位置，已有 item 的 `paths` 追加新路径，返回该 item，`already_existed: true`——客户端可据此提示「内容已存在，已关联到现有条目」
+- 内容已存在（同哈希）且未 skip：仍将文件复制到 `folder_path` 目标位置，已有 item 的 `paths` 追加新路径，返回该 item，`already_existed: true`——客户端可据此提示「内容已存在，已关联到现有条目」
+- 内容已在库内且 `skip_existing: true`：不写入，`skipped: true`（前端导入的重复策略弹窗用）；内容仅存在于回收站时不视为重复，正常导入（删掉的内容应可重新导入）
 
 ```json
 {
@@ -539,6 +541,7 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 | file        | binary | 是   | 文件内容；文件名只取末段（防跨目录），扩展名决定入库类型（与 path 导入同语义，不校验内容） |
 | folder_path | text   | 否   | 目标文件夹路径，缺省为库根目录         |
 | name        | text   | 否   | 文件名（不含扩展名），缺省取 file 文件名 |
+| skip_existing | text | 否   | 传 `"true"` 时内容已在库内则跳过（同 item/add） |
 
 #### 响应
 

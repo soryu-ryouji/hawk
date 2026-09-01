@@ -20,6 +20,8 @@ import SetupScreen from './components/SetupScreen.vue';
 import ConnectScreen from './components/ConnectScreen.vue';
 import StartingScreen from './components/StartingScreen.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
+import ImportDuplicateDialog from './components/ImportDuplicateDialog.vue';
+import DeleteScopeDialog from './components/DeleteScopeDialog.vue';
 
 const store = useLibraryStore();
 const { narrow, touch } = useLayout();
@@ -317,6 +319,10 @@ useDragImport();
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
     <ImageEditDialog v-if="store.editorTarget" :item="store.editorTarget" @close="store.closeEditor()" />
     <SettingsDialog v-if="showSettings" @close="showSettings = false" @logout="logoutToken" />
+    <!-- 导入重复策略对话框（导入中首个重复内容触发，选择整批生效） -->
+    <ImportDuplicateDialog />
+    <!-- 多位置删除策略对话框（删除含多位置副本的素材时触发） -->
+    <DeleteScopeDialog />
     <ContextMenu />
 
     <Teleport to="body">

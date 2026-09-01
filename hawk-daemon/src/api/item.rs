@@ -218,6 +218,9 @@ struct ItemAddRequest {
     annotation: Option<String>,
     /// 来源网页(收集场景:图片所在的页面地址),记录为 Item.url;与下载用的 url 区分
     website: Option<String>,
+    /// 内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true
+    #[serde(default)]
+    skip_existing: bool,
 }
 
 #[derive(Serialize)]
@@ -225,6 +228,9 @@ struct ItemAddRequest {
 struct ItemAddResponse {
     item: ItemDto,
     already_existed: bool,
+    /// 内容已存在且按 skip_existing 跳过：未写入文件、未追加路径（already_existed 旧语义仍保留：
+    /// 已写入并关联到既有条目）
+    skipped: bool,
 }
 
 async fn item_add(
@@ -307,6 +313,17 @@ async fn item_add(
     };
     let existed_before_write = state.index.contains(&hash);
 
+    // skip_existing：内容已在库内（不含回收站——删掉的内容应可重新导入）则跳过，
+    // 不写文件也不追加路径（多路径副本是重复导入的磁盘占用来源）
+    if req.skip_existing && state.index.has_library_location(&hash) {
+        let dto = state.index.get_dto(&hash).ok_or_else(|| ApiError::internal("索引失败"))?;
+        return Ok(Json(Envelope::ok(ItemAddResponse {
+            item: dto,
+            already_existed: true,
+            skipped: true,
+        })));
+    }
+
     // 文件落库（阻塞 IO 移出运行时线程）。path 导入保留原文件的创建时间与修改时间
     tokio::task::spawn_blocking({
         let src = source_abs.clone();
@@ -368,13 +385,15 @@ async fn item_add(
     Ok(Json(Envelope::ok(ItemAddResponse {
         item: dto,
         already_existed: existed_before_write,
+        skipped: false,
     })))
 }
 
 // ---------- upload（web 端内容上传） ----------
 
 /// multipart/form-data 上传：浏览器无文件路径可引用（拖拽/文件选择器拿到的是内容），
-/// 经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）。
+/// 经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/
+/// skip_existing（可选，内容已在库内时跳过）。
 /// 写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）
 async fn item_upload(
     State(state): State<SharedState>,
@@ -382,6 +401,7 @@ async fn item_upload(
 ) -> Result<Json<Envelope<ItemAddResponse>>, ApiError> {
     let mut folder_rel = String::new();
     let mut name_override: Option<String> = None;
+    let mut skip_existing = false;
     let mut file: Option<(String, Vec<u8>)> = None;
     while let Some(field) = multipart
         .next_field()
@@ -402,6 +422,13 @@ async fn item_upload(
                         .await
                         .map_err(|e| ApiError::invalid_param(format!("读取 name 失败: {e}")))?,
                 );
+            }
+            "skip_existing" => {
+                skip_existing = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::invalid_param(format!("读取 skip_existing 失败: {e}")))?
+                    == "true";
             }
             "file" => {
                 // 文件名只取最后一段（防跨目录写入），扩展名决定入库类型（与 path 导入同语义：不眼内容）
@@ -454,6 +481,16 @@ async fn item_upload(
     let hash = content_hash::hash_bytes(&bytes);
     let existed_before_write = state.index.contains(&hash);
 
+    // skip_existing：内容已在库内则跳过（不写文件、不追加路径）；仅回收站存在时不跳过
+    if skip_existing && state.index.has_library_location(&hash) {
+        let dto = state.index.get_dto(&hash).ok_or_else(|| ApiError::internal("索引失败"))?;
+        return Ok(Json(Envelope::ok(ItemAddResponse {
+            item: dto,
+            already_existed: true,
+            skipped: true,
+        })));
+    }
+
     // 文件落库（阻塞 IO 移出运行时线程）
     tokio::task::spawn_blocking({
         let target = target_abs.clone();
@@ -478,6 +515,7 @@ async fn item_upload(
     Ok(Json(Envelope::ok(ItemAddResponse {
         item: dto,
         already_existed: existed_before_write,
+        skipped: false,
     })))
 }
 

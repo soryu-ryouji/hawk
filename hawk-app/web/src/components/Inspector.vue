@@ -7,6 +7,7 @@ import { showInFileManagerLabel } from '../platform';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
 import SearchBox from './SearchBox.vue';
+import Icon from './Icon.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
 
@@ -338,6 +339,15 @@ function batchMoveFolder(path: string) {
           <div class="section-title">文件位置</div>
           <div v-for="path in item.paths" :key="path" class="path-row">
             <span class="path" :title="path">{{ path }}</span>
+            <!-- 多位置素材：按位置删除（其余位置保留，最后一个库内位置被删时整项回收） -->
+            <button
+              v-if="!store.viewerMode && (item.paths?.length ?? 0) > 1"
+              class="finder danger-btn"
+              title="删除此位置（其余位置保留）"
+              @click="store.deleteLocation(item.id, path)"
+            >
+              <Icon name="trash" :size="13" />
+            </button>
             <button class="finder" :title="showInFileManagerLabel" @click="showInFinder(path)">◎</button>
           </div>
         </section>
@@ -643,6 +653,10 @@ section {
 .finder:hover {
   color: var(--accent);
   background: transparent;
+}
+
+.danger-btn:hover {
+  color: var(--danger);
 }
 
 .multi {
