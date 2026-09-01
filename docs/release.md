@@ -42,8 +42,8 @@ git push origin v0.2.0
 **tag 推送后 CI 自动接管**：
 
 1. 一致性守卫：`v0.2.0` ≠ package.json `0.2.0` → 立即失败
-2. windows job：打包 `hawk.zip` + `hawk.zip.sha256` 边车 → 创建 Release 并附资产
-3. macos job：打包双架构 `hawk-mac-arm64.zip` / `hawk-mac-x64.zip`（各带 `.sha256` 边车）→ 补充上传
+2. windows job：web 构建与 cargo 并行 → 打包 `hawk.zip` + `hawk.zip.sha256` 边车（正式版 mx=9 最小体积）→ 创建 Release 并附资产
+3. macos job（arm64/x64 双架构 matrix 并行）：各腿产出 `hawk-mac-<arch>.zip` + 边车 → 并行附到 Release
 
 **发布后验证**：
 
@@ -58,11 +58,11 @@ git push origin v0.2.0
 main 分支出现 `feat` / `fix` 开头的提交即触发（`concurrency` 串行，避免滚动覆盖竞争）：
 
 1. windows job 删除旧 `nightly` Release 与 tag → 重建（name = `Nightly <sha7>`，body = 触发提交信息 + 末尾注入完整 sha 注释，prerelease）→ 上传产物
-2. macos job 补充双架构产物
+2. macos 双架构 matrix 两腿并行补充产物
 
 特性与边界：
 
-- **滚动覆盖，无历史**：旧 nightly 即删，要看历史版本用正式 Release
+- **滚动覆盖，无历史**：旧 nightly 即删，要看历史版本用正式 Release；打包用 mx=5 快速出包（正式版才用 mx=9 最小体积）
 - prerelease 不出现在 `releases/latest`，stable 通道查询天然隔离
 - nightly 通道客户端（含局域网 web 端刷新）自动拿到最新构建
 - 版本覆写与 sha 注入见上文「版本号规则」

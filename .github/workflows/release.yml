@@ -2,8 +2,9 @@
 # - 推 v* tag：正式 Release
 # - main 分支提交信息以 feat/fix 开头（conventional commits）：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
 # - 手动触发：只构建上传 Artifacts，不创建 Release
-# 压缩级别：CI 固定 mx=9（最小体积）；本地 npm run pack 默认 mx=5（见 scripts/pack.mjs）。
-# Windows 产物为 zip（解压即用，全 64 位，无 NSIS 启动壳）。
+# 压缩级别按构建类型分流：正式版（v* tag）mx=9 最小体积；nightly/手动 mx=5 快速出包
+# （mx=9 压缩耗时翻倍只换 ~10-20MB 体积；下载走 GitHub CDN，仅正式版在意最小体积）
+# Windows 产物为 zip（解压即用，全 64 位，无 NSIS 启动壳）；mac 双架构 matrix 并行构建。
 name: release
 
 on:
@@ -51,6 +52,15 @@ jobs:
 
       - run: npm ci
 
+      # electron 发行包与 electron-builder 工具（7zip 等）缓存：免每次 ~100MB 下载
+      - name: Cache electron & builder tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: tools-win-x64-${{ hashFiles('hawk-app/package-lock.json') }}
+
       # 正式版守卫：tag v<version> 必须与 package.json version 一致（版本唯一来源），不一致直接失败
       - name: Verify tag matches version
         if: startsWith(github.ref, 'refs/tags/')
@@ -77,10 +87,19 @@ jobs:
         env:
           HAWK_SHA: ${{ github.sha }}
 
+      # web 构建与 cargo 无共享状态，并行跑：vite/vue-tsc 藏进 cargo 的耗时里
+      - name: Build web & daemon (parallel)
+        shell: bash
+        run: |
+          node scripts/build-server.mjs &
+          npm run build &
+          wait
+
       - name: Pack
-        run: npm run pack -- ${{ steps.nightly_ver.outputs.verflag }}
+        run: node scripts/pack.mjs ${{ steps.nightly_ver.outputs.verflag }}
         env:
-          ELECTRON_BUILDER_COMPRESSION_LEVEL: 9
+          # 正式版 mx=9 最小体积；nightly/手动 mx=5 快速出包（高频构建在意时间不在意 +10-20MB）
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ startsWith(github.ref, 'refs/tags/') && '9' || '5' }}
 
       # 自动更新校验：产物 sha256 边车（<artifact>.sha256，内容为十六进制哈希），随 Release 上传
       - name: Generate checksum
@@ -138,11 +157,18 @@ jobs:
             hawk-app/dist/hawk.zip
             hawk-app/dist/hawk.zip.sha256
 
-  # macOS app：标准 runner 已是 arm64（macos-latest），x64 由交叉打包产出，两者同机构建
+  # macOS app：标准 runner 已是 arm64（macos-latest），x64 由交叉打包产出；双架构 matrix 并行
+  # （原串行 cargo→builder→ditto 两轮占 job 大头），两条腿各自产出 hawk-mac-<arch>.zip 后并行附到 Release
   # GitHub 只能上传单文件，因此 .app 目录打 zip 发布（VS Code/Slack 同款方式）
-  # needs: windows——nightly 的删除/重建由 windows job 先行完成，本 job 只补充上传，避免竞争
+  # needs: windows——nightly 的删除/重建由 windows job 先行完成，两腿只补充上传，避免竞争
   macos:
     needs: windows
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, rid: osx-arm64, rust-target: aarch64-apple-darwin, outdir: mac-arm64 }
+          - { arch: x64, rid: osx-x64, rust-target: x86_64-apple-darwin, outdir: mac }
     runs-on: macos-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -158,11 +184,20 @@ jobs:
       # mac 同机双架构：rust target 分别为 aarch64/x86_64-apple-darwin（C 依赖 sqlite/libwebp 由 cc 按 -arch 编译）
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.rust-target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: hawk-daemon
+
+      # electron 发行包与 electron-builder 工具缓存（两腿 arch 不同，key 带 arch）
+      - name: Cache electron & builder tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: tools-macos-${{ matrix.arch }}-${{ hashFiles('hawk-app/package-lock.json') }}
 
       - uses: actions/setup-node@v4
         with:
@@ -190,37 +225,29 @@ jobs:
 
       # 前后端都构建到目标架构（electron-builder 直接下载对应 electron 产物；rust 同机跨 target 编译）
       # 输出目录：arm64 → dist/mac-arm64；x64 是 mac 默认架构 → dist/mac（无后缀）
-      - name: Pack app (arm64)
+      - name: Pack app
         run: |
-          node scripts/build-server.mjs osx-arm64
+          node scripts/build-server.mjs ${{ matrix.rid }}
+          # set -e 下不能用 [ -n "" ] && 赋值的短 circuit 写法（空值路径非零退出），显式 if
           VER_ARGS=""
-          [ -n "${{ steps.nightly_ver.outputs.version }}" ] && VER_ARGS="--config.extraMetadata.version=${{ steps.nightly_ver.outputs.version }}"
-          npx electron-builder --dir --arm64 $VER_ARGS
-          ditto -c -k --keepParent dist/mac-arm64/hawk.app dist/hawk-mac-arm64.zip
-
-      - name: Pack app (x64)
-        run: |
-          node scripts/build-server.mjs osx-x64
-          VER_ARGS=""
-          [ -n "${{ steps.nightly_ver.outputs.version }}" ] && VER_ARGS="--config.extraMetadata.version=${{ steps.nightly_ver.outputs.version }}"
-          npx electron-builder --dir --x64 $VER_ARGS
-          ditto -c -k --keepParent dist/mac/hawk.app dist/hawk-mac-x64.zip
+          if [ -n "${{ steps.nightly_ver.outputs.version }}" ]; then
+            VER_ARGS="--config.extraMetadata.version=${{ steps.nightly_ver.outputs.version }}"
+          fi
+          npx electron-builder --dir --${{ matrix.arch }} $VER_ARGS
+          ditto -c -k --keepParent dist/${{ matrix.outdir }}/hawk.app dist/hawk-mac-${{ matrix.arch }}.zip
 
       # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
-      - name: Generate checksums
+      - name: Generate checksum
         run: |
-          for f in dist/hawk-mac-arm64.zip dist/hawk-mac-x64.zip; do
-            shasum -a 256 "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
-          done
+          f=dist/hawk-mac-${{ matrix.arch }}.zip
+          shasum -a 256 "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hawk-macos
+          name: hawk-macos-${{ matrix.arch }}
           path: |
-            hawk-app/dist/hawk-mac-arm64.zip
-            hawk-app/dist/hawk-mac-arm64.zip.sha256
-            hawk-app/dist/hawk-mac-x64.zip
-            hawk-app/dist/hawk-mac-x64.zip.sha256
+            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip
+            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip.sha256
           if-no-files-found: error
 
       # ---- 正式版：v* tag（release 由 windows job 创建，这里补充 zip 资产）----
@@ -230,10 +257,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            hawk-app/dist/hawk-mac-arm64.zip
-            hawk-app/dist/hawk-mac-arm64.zip.sha256
-            hawk-app/dist/hawk-mac-x64.zip
-            hawk-app/dist/hawk-mac-x64.zip.sha256
+            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip
+            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip.sha256
 
       # ---- nightly：main 分支 feat/fix 提交（nightly release/tag 已由 windows job 重建）----
 
@@ -243,7 +268,5 @@ jobs:
         with:
           tag_name: nightly
           files: |
-            hawk-app/dist/hawk-mac-arm64.zip
-            hawk-app/dist/hawk-mac-arm64.zip.sha256
-            hawk-app/dist/hawk-mac-x64.zip
-            hawk-app/dist/hawk-mac-x64.zip.sha256
+            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip
+            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip.sha256

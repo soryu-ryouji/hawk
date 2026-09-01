@@ -107,4 +107,4 @@ cd hawk
 
 ## 许可证
 
-[AGPL-3.0](LICENSE)
+Copyright (c) 2026 soryu-ryouji. 本项目基于 [AGPL-3.0](LICENSE) 授权发布。
