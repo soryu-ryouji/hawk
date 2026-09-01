@@ -1,6 +1,6 @@
 // Pinia 主 store：视图/查询/列表/选择集/文件夹树，以及全部业务 action。
 // 组件不直接调 api，一切经 action；SSE 事件经 applyEvent 分发。
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
@@ -64,7 +64,30 @@ export const useLibraryStore = defineStore('library', () => {
   const uncategorizedCount = ref(0);
   const untaggedCount = ref(0);
   const library = ref<LibraryInfo | null>(null);
-  const thumbSize = ref(160);
+  // 网格卡片边长偏好（滑杆 120–280）：web 端（浏览器，含局域网查看）为设备级显示偏好——
+  // 记忆到 localStorage 且默认最小（手机小屏多看几张）；桌面端会话级、默认 160，不持久化
+  const THUMB_SIZE_MIN = 120;
+  const THUMB_SIZE_MAX = 280;
+  const isBrowserClient = !window.hawkShell;
+  const thumbSize = ref(isBrowserClient ? loadThumbSize() : 160);
+  if (isBrowserClient) {
+    watch(thumbSize, (size) => {
+      try {
+        localStorage.setItem('hawk:thumbSize', String(size));
+      } catch {
+        // 隐私模式等写入失败：仅本次会话生效
+      }
+    });
+  }
+
+  function loadThumbSize(): number {
+    try {
+      const saved = Number(localStorage.getItem('hawk:thumbSize'));
+      return Number.isFinite(saved) && saved >= THUMB_SIZE_MIN && saved <= THUMB_SIZE_MAX ? saved : THUMB_SIZE_MIN;
+    } catch {
+      return THUMB_SIZE_MIN;
+    }
+  }
   /** 搜索框草稿（顶栏与检查器顶搜索框共用一份，回车提交为 keywords） */
   const searchText = ref('');
   const previewId = ref<string | null>(null);
