@@ -127,15 +127,15 @@ jobs:
       - name: Generate checksum
         shell: pwsh
         run: |
-          $hash = (Get-FileHash -Algorithm SHA256 'dist/hawk.zip').Hash.ToLower()
-          Set-Content -NoNewline -Path 'dist/hawk.zip.sha256' -Value $hash
+          $hash = (Get-FileHash -Algorithm SHA256 'dist/hawk-windows-x64.zip').Hash.ToLower()
+          Set-Content -NoNewline -Path 'dist/hawk-windows-x64.zip.sha256' -Value $hash
 
       - uses: actions/upload-artifact@v4
         with:
           name: hawk-windows-zip
           path: |
-            hawk-app/dist/hawk.zip
-            hawk-app/dist/hawk.zip.sha256
+            hawk-app/dist/hawk-windows-x64.zip
+            hawk-app/dist/hawk-windows-x64.zip.sha256
           if-no-files-found: error
 
       # ---- 正式版：release 提交（tag+Release 由 action-gh-release 的 tag_name 在当前 commit 创建）----
@@ -148,8 +148,8 @@ jobs:
           name: ${{ steps.release.outputs.tag }}
           body: ${{ steps.release.outputs.body }}
           files: |
-            hawk-app/dist/hawk.zip
-            hawk-app/dist/hawk.zip.sha256
+            hawk-app/dist/hawk-windows-x64.zip
+            hawk-app/dist/hawk-windows-x64.zip.sha256
 
       # ---- nightly：main 分支 feat/fix 提交 ----
 
@@ -179,8 +179,8 @@ jobs:
             <!-- hawk-nightly-sha: ${{ github.sha }} -->
           prerelease: true
           files: |
-            hawk-app/dist/hawk.zip
-            hawk-app/dist/hawk.zip.sha256
+            hawk-app/dist/hawk-windows-x64.zip
+            hawk-app/dist/hawk-windows-x64.zip.sha256
 
   # macOS app：标准 runner 已是 arm64（macos-latest），x64 由交叉打包产出；双架构 matrix 并行
   # （原串行 cargo→builder→ditto 两轮占 job 大头），两条腿各自产出 hawk-mac-<arch>.zip 后并行附到 Release

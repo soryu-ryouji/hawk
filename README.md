@@ -73,11 +73,11 @@ cd hawk
 # 本机安装：构建应用并安装到本机
 ./tools/install.ps1              # Windows → out/（免安装目录，hawk.exe 就地可运行）
 ./tools/install.ps1 -Path D:/Tools/hawk   # Windows → 指定目录
-./tools/install.sh               # macOS → /Applications/hawk.app；Linux → out/hawk.AppImage
+./tools/install.sh               # macOS → /Applications/hawk.app；Linux → out/hawk-linux-x64.AppImage
 
 # 发包：产出分发包到 out/
-./tools/build.ps1      # Windows → out/hawk.zip
-./tools/build.sh       # macOS → out/hawk-mac-<arch>.zip；Linux → out/hawk.AppImage
+./tools/build.ps1      # Windows → out/hawk-windows-x64.zip
+./tools/build.sh       # macOS → out/hawk-mac-<arch>.zip；Linux → out/hawk-linux-x64.AppImage
 ./tools/build.ps1 -Extensions    # 附带浏览器插件（out/hawk-extension-chrome|firefox/，加载已解压扩展即用）
 ```
 

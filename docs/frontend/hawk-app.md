@@ -510,7 +510,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 - `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`）；`files` 含 `build-info.json`（打包前由 `scripts/stamp-build.mjs` 写入 git sha，CI 注入 `HAWK_SHA`；自动更新比较 nightly 新旧用）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
-- 产物：macOS `hawk.app` 目录（CI 交叉打包 arm64 + x64 后 zip 发布；不做 dmg）/ Windows `hawk.zip`（解压即用）/ Linux AppImage
+- 产物名统一「产品-平台-架构」，不带版本号：Windows `hawk-windows-x64.zip`（绿色解压即用）/ macOS `hawk.app` 目录（CI 双架构打包为 `hawk-mac-<arch>.zip` 发布，不做 dmg）/ Linux `hawk-linux-x64.AppImage`
 - CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
 
 ## 应用自动更新

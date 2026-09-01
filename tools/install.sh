@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 本机安装：构建 hawk 桌面应用并安装到本机。
-# macOS 直接安装到 /Applications/hawk.app；Linux 产物为 hawk.AppImage（已赋予执行权限），归置到仓库根目录的 out/。
+# macOS 直接安装到 /Applications/hawk.app；Linux 产物为 hawk-linux-x64.AppImage（已赋予执行权限），归置到仓库根目录的 out/。
 #
 # 用法: ./tools/install.sh（仓库根目录或任意位置执行均可）
 # 前置: 最新 Node.js 与 Rust 工具链（https://rustup.rs/）

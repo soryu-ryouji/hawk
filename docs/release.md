@@ -43,7 +43,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 **push 后 CI 自动接管**：
 
 1. 守卫：提交首行解析版本号，与 package.json 不一致或 tag 已存在 → 立即失败
-2. windows job：web 构建与 cargo 并行 → 打包 `hawk.zip` + `hawk.zip.sha256` 边车（正式版 mx=9 最小体积）→ 以 `tag_name: v0.2.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）
+2. windows job：web 构建与 cargo 并行 → 打包 `hawk-windows-x64.zip` + 边车（正式版 mx=9 最小体积）→ 以 `tag_name: v0.2.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）
 3. macos job（arm64/x64 双架构 matrix 并行）：各腿产出 `hawk-mac-<arch>.zip` + 边车 → 并行附到 Release
 
 **发布后验证**：

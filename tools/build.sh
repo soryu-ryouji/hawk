@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 发包：构建 hawk 桌面应用的分发包并归置到仓库根目录的 out/。
-# macOS 产物为 hawk-mac-<arch>.zip（.app 目录压缩包），Linux 产物为 hawk.AppImage。
+# macOS 产物为 hawk-mac-<arch>.zip（.app 目录压缩包），Linux 产物为 hawk-linux-x64.AppImage。
 # -e/--extensions：附带构建浏览器插件（out/hawk-extension-chrome|firefox/，加载已解压扩展即用）。
 #
 # 用法: ./tools/build.sh [-e|--extensions]

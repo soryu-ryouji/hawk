@@ -443,14 +443,15 @@ function readBuildInfo() {
   }
 }
 
-/** 按平台选 Release 资产（名称约定见 electron-builder.yml artifactName 与 release.yml） */
+/** 按平台选 Release 资产（名称约定见 electron-builder.yml artifactName 与 release.yml：
+ *  统一「产品-平台-架构」后缀，mac 由 CI 打包命名） */
 function pickAsset(assets) {
   const want =
     process.platform === 'win32'
-      ? 'hawk.zip'
+      ? 'hawk-windows-x64.zip'
       : process.platform === 'darwin'
         ? `hawk-mac-${process.arch === 'arm64' ? 'arm64' : 'x64'}.zip`
-        : 'hawk.AppImage';
+        : 'hawk-linux-x64.AppImage';
   return (assets ?? []).find((a) => a.name === want) ?? null;
 }
 

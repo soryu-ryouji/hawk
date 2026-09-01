@@ -2,9 +2,9 @@
 # 产出当前平台的 hawk-daemon 二进制（Rust）。
 appId: com.hawk.app
 productName: hawk
-# 产物固定为 hawk.exe / hawk.app（目录）/ hawk.AppImage，不带版本号
-# mac 用 dir target 直接产 .app 目录；GitHub 只能上传单文件，发布时由 CI zip 成 hawk-mac-<arch>.zip
-artifactName: ${productName}.${ext}
+# 产物名统一「产品-平台-架构」后缀（与 mac 的 hawk-mac-<arch>.zip 对齐，不带版本号）：
+# Windows hawk-windows-x64.zip / Linux hawk-linux-x64.AppImage；mac 为 --dir 产物（.app 目录名取 productName），
+# zip 由 CI 打包命名 hawk-mac-<arch>.zip
 # 只保留中英 Chromium 语言包（默认携带全部 55 种，约 49MB）
 electronLanguages:
   - zh-CN
@@ -32,5 +32,7 @@ mac:
 win:
   # 绿色软件：zip 解压即用，免安装。相比 portable（NSIS 单文件）无 32 位启动壳，产物全 64 位，构建也不依赖 GitHub 下载 NSIS 工具链
   target: zip
+  artifactName: ${productName}-windows-${arch}.${ext}
 linux:
   target: AppImage
+  artifactName: ${productName}-linux-${arch}.${ext}
