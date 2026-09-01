@@ -9,4 +9,5 @@
 
 # Rust 后端构建产物
 hawk-daemon/target/
+hawk-update/target/
 /tools/.tmp/

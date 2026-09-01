@@ -100,6 +100,7 @@ Electron 退出
 ```text
 hawk/
 ├── hawk-daemon/  ← Rust 后端（桌面版与服务器版共用）
+├── hawk-update/  ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
 ├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 └── docs/            ← 设计文档
 ```

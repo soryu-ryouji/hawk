@@ -18,10 +18,13 @@
     "dev:web": "vite",
     "build": "vue-tsc --noEmit -p web/tsconfig.json && vite build",
     "build:server": "node scripts/build-server.mjs",
+    "build:update": "node scripts/build-update.mjs",
     "test:unit": "vitest run",
     "test:mobile": "node scripts/test-mobile-web.mjs",
-    "pack": "npm run build && npm run build:server && node scripts/pack.mjs",
-    "pack:dir": "npm run build && npm run build:server && node scripts/pack.mjs --dir"
+    "test:update": "node tools/test-update.mjs",
+    "test:resources": "node tools/test-resources.mjs",
+    "pack": "npm run build && npm run build:server && npm run build:update && node scripts/pack.mjs",
+    "pack:dir": "npm run build && npm run build:server && npm run build:update && node scripts/pack.mjs --dir"
   },
   "dependencies": {
     "@vueuse/core": "^14.4.0",

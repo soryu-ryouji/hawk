@@ -22,13 +22,15 @@ npm run test:unit      # Vitest 纯函数/决策逻辑单测（web/src/**/*.spec
 ```bash
 npm run test:unit     # Vitest 单测：viewLogic（SSE 决策/排序继承/选择）/importBatch（导入状态机）/layout（齐行布局）
 npm run test:mobile   # 移动端网页冒烟：临时库 + hawk-daemon 托管 web/dist + 无 preload 探针窗口断言全链路
+npm run test:update   # hawk-update.exe 端到端验证：等进程/覆盖/清理/坏包日志（需先在 hawk-update/ cargo build）
+npm run test:resources  # extraResources 平台隔离回归：hawk-update 只进 Windows 产物，mac/linux 只带 hawk-daemon
 node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断言 DOM/交互/SSE 并截图
 ```
 
 ## 打包
 
 ```bash
-npm run pack      # 一条命令：build 前端 + cargo build --release 产出当前平台 hawk-daemon 单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
+npm run pack      # 一条命令：build 前端 + cargo build 当前平台 hawk-daemon 与 hawk-update（Windows 更新辅助）单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
 npm run pack:dir  # 同上但 --dir：只出未打包目录（win-unpacked / hawk.app），跳过 zip 压缩（install 脚本与本地快速验证用）
 ```
 

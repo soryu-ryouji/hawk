@@ -33,6 +33,11 @@ win:
   # 绿色软件：zip 解压即用，免安装。相比 portable（NSIS 单文件）无 32 位启动壳，产物全 64 位，构建也不依赖 GitHub 下载 NSIS 工具链
   target: zip
   artifactName: ${productName}-windows-${arch}.${ext}
+  # 平台级 extraResources 与顶层追加合并非覆盖，只写增量：Windows 更新辅助程序
+  # （hawk-update/，替代 PowerShell 脚本的安装接力，见 scripts/build-update.mjs）
+  extraResources:
+    - from: resources/hawk-update
+      to: hawk-update
 linux:
   target: AppImage
   # AppImage 的 ${arch} 会被映射为 x86_64（AppImage 生态命名），与 win/mac 的 x64 不一致——

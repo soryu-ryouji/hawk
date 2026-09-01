@@ -609,7 +609,8 @@ ipcMain.handle('hawk:update-download', async () => {
   sendProgress({ phase: 'ready' });
 });
 
-/** 重启并安装已校验的更新：成功后本进程退出（IPC 不再返回），由平台替换脚本接力 */
+/** 重启并安装已校验的更新：成功后本进程退出（IPC 不再返回），由更新辅助程序接力（Windows）
+ *  或平台替换脚本接力（macOS/Linux） */
 ipcMain.handle('hawk:update-install', () => {
   if (!verifiedFile || !fs.existsSync(verifiedFile)) {
     throw new Error('更新包尚未就绪');
@@ -635,11 +636,6 @@ function shQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-/** PowerShell 单引号转义（单引号内 '' 表示一个单引号） */
-function psQuote(s) {
-  return `'${String(s).replace(/'/g, "''")}`;
-}
-
 /** macOS：detached sh 脚本等旧进程退出 → 解压 zip → 替换 .app → 拉起新实例。
  *  解压/暂存目录与 .app 同目录（同卷，mv 原子）；app 内 fetch 下载无 quarantine 标记，不触发 Gatekeeper */
 function installMacUpdate(zip) {
@@ -663,29 +659,26 @@ open ${shQuote(bundle)}
   spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref();
 }
 
-/** Windows 绿色版：detached PowerShell 等旧进程退出 → 解压 zip → 覆盖应用目录 → 拉起新实例。
- *  zip 根布局（hawk.exe 在根）与嵌套目录布局均兼容 */
+/** Windows 绿色版更新：复制辅助程序（resources/hawk-update/hawk-update.exe，实现见仓库根
+ *  hawk-update/）到更新临时目录后启动，由它等旧进程退出 → 解压 zip → 覆盖应用目录 → 拉起新实例。
+ *  temp 副本运行：更新会覆盖应用目录内的 hawk-update.exe，运行中的自身无法被覆盖。
+ *  全过程写更新目录 install.log，失败非零退出——不静默，留现场 */
 function installWindowsUpdate(zip) {
   const appDir = path.dirname(process.execPath);
-  const extractDir = path.join(path.dirname(zip), 'extract');
-  const script = path.join(path.dirname(zip), 'install.ps1');
-  fs.writeFileSync(
-    script,
-    `$ErrorActionPreference = 'Stop'
-while (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 300 }
-$tmp = ${psQuote(extractDir)}
-Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-Expand-Archive -Path ${psQuote(zip)} -DestinationPath $tmp -Force
-$exe = Get-ChildItem -Path $tmp -Filter 'hawk.exe' -Recurse | Select-Object -First 1
-$src = if ($exe) { $exe.DirectoryName } else { $tmp }
-Get-ChildItem -Path $src | Copy-Item -Destination ${psQuote(appDir)} -Recurse -Force
-Remove-Item -Recurse -Force $tmp, ${psQuote(script)} -ErrorAction SilentlyContinue
-Remove-Item -Force ${psQuote(zip)} -ErrorAction SilentlyContinue
-Start-Process (Join-Path ${psQuote(appDir)} 'hawk.exe')
-`,
-    'utf8',
-  );
-  spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+  const dir = path.dirname(zip);
+  const updaterSrc = path.join(process.resourcesPath, 'hawk-update', 'hawk-update.exe');
+  if (!fs.existsSync(updaterSrc)) {
+    throw new Error('更新辅助程序缺失，请到 GitHub 手动下载更新');
+  }
+  // 同名旧副本是上次运行残留；删除失败（被占用）则改用带 pid 的名字
+  let runCopy = path.join(dir, 'hawk-update.exe');
+  try {
+    fs.rmSync(runCopy, { force: true });
+  } catch {
+    runCopy = path.join(dir, `hawk-update-${process.pid}.exe`);
+  }
+  fs.copyFileSync(updaterSrc, runCopy);
+  spawn(runCopy, ['--pid', String(process.pid), '--zip', zip, '--app', appDir], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,

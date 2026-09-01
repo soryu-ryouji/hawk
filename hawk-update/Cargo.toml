@@ -1,0 +1,15 @@
+[package]
+name = "hawk-update"
+version = "0.1.0"
+edition = "2021"
+authors = ["soryu-ryouji <helloryouji@outlook.com>"]
+description = "hawk Windows 更新辅助程序"
+license = "AGPL-3.0-only"
+
+[dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[profile.release]
+strip = true
+lto = true

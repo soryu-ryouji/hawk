@@ -101,7 +101,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `getAppVersion()` | 当前应用版本与构建 sha（`{ version, sha }`；sha 来自打包时写入的 `build-info.json`，开发态为 `'dev'`） |
 | `checkUpdate(channel)` | 检查更新（`'stable'`=GitHub latest 正式版比 semver；`'nightly'`=滚动预发布比构建 sha）；有更新返回 `UpdateInfo`，无更新返回 null；查询/比较逻辑在主进程（GitHub Releases API，无自建服务） |
 | `downloadUpdate()` | 下载上次检查到的更新包并强制 sha256 校验（Release 附带 `<artifact>.sha256` 边车，缺失即失败不提供无校验更新）；进度经 `onUpdateProgress` 推送 |
-| `installUpdate()` | 重启并安装已校验的更新（成功后应用退出，IPC 不再返回）：Linux AppImage 同目录拷贝后原子改名覆盖自身 + relaunch；macOS/Windows 由 detached 脚本等旧进程退出→解压→替换→拉起新实例接力 |
+| `installUpdate()` | 重启并安装已校验的更新（成功后应用退出，IPC 不再返回）：Linux AppImage 同目录拷贝后原子改名覆盖自身 + relaunch；macOS 由 detached sh 脚本接力；Windows 由更新辅助程序 hawk-update.exe 接力（实现见仓库根 `hawk-update/`） |
 | `onUpdateProgress(cb)` | 订阅更新包下载进度：`{ phase: 'downloading', received, total } \| { phase: 'verifying' } \| { phase: 'ready' }`；返回退订函数 |
 
 ## 契约与类型生成
@@ -508,7 +508,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 ## 打包与分发
 
-- `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`）；`files` 含 `build-info.json`（打包前由 `scripts/stamp-build.mjs` 写入 git sha，CI 注入 `HAWK_SHA`；自动更新比较 nightly 新旧用）
+- `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`），Windows 额外携带更新辅助程序 hawk-update.exe（`win.extraResources` 与顶层追加合并非覆盖，hawk-update 只写在平台级条目里、mac/linux 产物不带；`npm run test:resources` 回归验证，见 `scripts/build-update.mjs`）；`files` 含 `build-info.json`（打包前由 `scripts/stamp-build.mjs` 写入 git sha，CI 注入 `HAWK_SHA`；自动更新比较 nightly 新旧用）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
 - 产物名统一「产品-平台-架构」，不带版本号：Windows `hawk-windows-x64.zip`（绿色解压即用）/ macOS `hawk.app` 目录（CI 双架构打包为 `hawk-mac-<arch>.zip` 发布，不做 dmg）/ Linux `hawk-linux-x64.AppImage`
 - CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
@@ -529,7 +529,7 @@ Electron 端内置「检查更新 → 下载（sha256 校验）→ 重启替换�
 
 - **双通道**：`stable` = `releases/latest`（正式 `v*` tag，与 `app.getVersion()` 比 semver，发版流程与版本策略见上节）；`nightly` = `releases/tags/nightly`（滚动预发布，比 Release 所指 commit 与本机构建 sha——Release 的 `target_commitish` 是分支名不可用，CI 在 body 末尾注入 `<!-- hawk-nightly-sha: <sha> -->` HTML 注释供解析，旧版退化为 Release 名 `Nightly <短sha>` 前缀匹配）。通道偏好存 localStorage（`hawk:updateChannel`），切换后旧检查结果作废需重查；局域网 web 端无更新功能（刷新即得宿主新前端）
 - **校验**：CI 为每个产物生成 `<artifact>.sha256` 边车随 Release 上传；主进程下载后强制比对，缺失即报错引导手动下载——不提供无校验的更新。因此**边车机制上线的首个发布之后，更新功能才可用**（存量发布无边车）
-- **替换**（运行中文件被锁，不能自我替换）：Linux AppImage 同目录拷贝 + 原子改名覆盖自身（旧挂载来自旧 inode 不受影响）+ `app.relaunch()`；macOS/Windows 由 detached 脚本接力（等旧进程 pid 退出 → 解压 zip → 替换 `.app`/覆盖应用目录 → 拉起新实例 → 自清理）。macOS 解压/暂存与 `.app` 同目录（同卷 mv 原子；需对安装位置有写权限）；app 内 fetch 下载无 quarantine 标记，不触发 Gatekeeper
+- **替换**（运行中文件被锁，不能自我替换）：Linux AppImage 同目录拷贝 + 原子改名覆盖自身（旧挂载来自旧 inode 不受影响）+ `app.relaunch()`；macOS 由 detached sh 脚本接力（等旧进程 pid 退出 → 解压 zip → 替换 `.app` → 拉起新实例 → 自清理；解压/暂存与 `.app` 同目录同卷 mv 原子，需对安装位置有写权限；app 内 fetch 下载无 quarantine 标记，不触发 Gatekeeper）；Windows 由随包分发的更新辅助程序接力（Rust 单文件 `hawk-update.exe`，源码在仓库根 `hawk-update/`，经 `win.extraResources` 进产物）：主进程把它复制到更新临时目录后启动（temp 副本运行，避免应用目录内同名文件被更新时占用自身），它用 OpenProcess+WaitForSingleObject 等旧进程退出（校验进程名防 PID 复用误等）→ 解压 → 递归覆盖（单文件带重试窗口）→ 拉起新实例 → 自清理，全程写更新目录 `install.log`、失败非零退出——曾用 PowerShell 脚本做同一件事，执行策略/PSModulePath 污染等环境差异导致静默失败（「点安装没反应」且现场无迹可循），故换确定性行为的专用程序
 - **UI**：设置面板「更新」分区（仅 Electron）：当前版本（v + 短 sha）、通道单选、检查/下载（进度条，total 未知时不定态动画）/重启安装；启动后主界面就绪延迟 8s 静默检查（每会话一次），发现新版本 toast 提示一次（`hawk:lastUpdateNotice` 按 通道@版本 去重，避免每次启动重复打扰）。渲染层状态机在 `composables/useUpdater.ts`（idle → checking → uptodate/available/error → downloading → ready），检查/下载/安装语义全部在主进程「应用更新」段，渲染层只做编排
 
 ## 目录结构
@@ -545,6 +545,7 @@ hawk-app/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
 │   ├── build-server.mjs    # cargo build --release 产出指定 target 的 hawk-daemon 单文件
+│   ├── build-update.mjs    # 构建 hawk-update.exe（Windows 更新辅助，hawk-update/）到 resources/hawk-update/；非 Windows 自跳过
 │   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）；先 stamp 构建标识
 │   ├── stamp-build.mjs     # 打包前写入 build-info.json（git sha，自动更新比较 nightly 新旧用；CI 用 HAWK_SHA 注入）
 │   ├── test-mobile-web.mjs # 移动端网页冒烟测试编排（临时库 + server + 断言）
