@@ -642,6 +642,8 @@ section {
   background: transparent;
   color: inherit;
   font: inherit;
+  /* button UA 默认 text-align: center——跳转文字一律左对齐（只读端文件夹按钮曾因此居中） */
+  text-align: left;
   cursor: pointer;
 }
 
