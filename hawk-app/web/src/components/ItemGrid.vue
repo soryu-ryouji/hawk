@@ -13,6 +13,7 @@ import FolderPickerDialog from './FolderPickerDialog.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import { isRotatableImage } from '../imageEdit';
 import { useLayout } from '../composables/useLayout';
+import { CARD_BORDER, CARD_META_H, GRID_GAP } from '../layout';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
@@ -43,13 +44,9 @@ interface LayoutRow {
   endIdx: number;
 }
 
-const GAP = 10;
 /** 视口外行缓存：上下各多渲染的行数，吸收快速滚动的渲染延迟 */
 const OVERSCAN_ROWS = 4;
-/** 卡片 meta 区定高（Eagle 式 3 行：标题 2 + 像素 1），必须与 ItemCard.vue 中 .meta 的 height 一致 */
-const META_H = 54;
-/** 卡片边框 2px×2：行距必须计入，否则下一行图片盖住上一行的 meta 文字 */
-const CARD_BORDER = 4;
+// 行距/卡片 meta 高/卡片边框：与 ItemCard 的 CSS 变量同一来源（layout.ts），改一处全局生效
 
 const gridRef = ref<HTMLElement | null>(null);
 const containerWidth = ref(0);
@@ -133,11 +130,11 @@ const layout = computed<LayoutRow[]>(() => {
     // 行宽绝不超出容器。非末行：上限防行过高、下限防行过矮；末行保持目标高。
     // 但移动端窄屏遇全景图等宽行时，0.5×下限/末行规则会把行推出视口——
     // fitH（按容器宽反推）是硬顶，任何夹紧结果都不得宽于它（桌面容器宽，fitH 极少生效）
-    const fitH = (width - (row.length - 1) * GAP) / ratiosSum;
+    const fitH = (width - (row.length - 1) * GRID_GAP) / ratiosSum;
     const ideal = isLast ? targetH : Math.min(Math.max(fitH, targetH * 0.5), targetH * 1.75);
     const h = Math.max(1, Math.floor(Math.min(ideal, fitH)));
     // 行高 = 卡片总高（缩略图 + meta + 边框），行槽位与真实卡片一致，杜绝行间重叠
-    const rowH = h + META_H + CARD_BORDER;
+    const rowH = h + CARD_META_H + CARD_BORDER;
     rows.push({
       key: row[0].id,
       cells: row.map((r) => ({ id: r.id, width: Math.round(h * r.ratio), height: h, star: r.star })),
@@ -146,7 +143,7 @@ const layout = computed<LayoutRow[]>(() => {
       startIdx: row[0].idx,
       endIdx: row[row.length - 1].idx + 1,
     });
-    y += rowH + GAP;
+    y += rowH + GRID_GAP;
     row = [];
     ratiosSum = 0;
   };
@@ -154,7 +151,7 @@ const layout = computed<LayoutRow[]>(() => {
   for (let idx = 0; idx < sk.length; idx++) {
     const s = sk[idx];
     const ratio = Number(s.width) > 0 && Number(s.height) > 0 ? Number(s.width) / Number(s.height) : 1;
-    if (row.length > 0 && (ratiosSum + ratio) * targetH + row.length * GAP > width) {
+    if (row.length > 0 && (ratiosSum + ratio) * targetH + row.length * GRID_GAP > width) {
       flush(false);
     }
     row.push({ idx, id: s.id, ratio, star: Number(s.star) });
@@ -226,7 +223,7 @@ watchEffect(() => {
     let x = 0;
     return row.cells.map((cell) => {
       const cx = x + cell.width / 2;
-      x += cell.width + GAP;
+      x += cell.width + GRID_GAP;
       return { id: cell.id, cx };
     });
   });
@@ -333,7 +330,7 @@ function onMenu(item: Item, e: MouseEvent) {
       :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'"
     />
 
-    <div v-if="totalHeight > 0" class="grid" :style="{ height: `${totalHeight}px` }">
+    <div v-if="totalHeight > 0" class="grid" :style="{ height: `${totalHeight}px`, '--grid-gap': `${GRID_GAP}px` }">
       <div v-for="row in renderedRows" :key="row.key" class="row" :style="{ transform: `translateY(${row.y}px)` }">
         <template v-for="cell in row.cells" :key="cell.id">
           <ItemCard
@@ -353,7 +350,7 @@ function onMenu(item: Item, e: MouseEvent) {
             v-else
             class="cell-placeholder"
             :class="{ selected: store.selection.includes(cell.id) }"
-            :style="{ width: `${cell.width}px`, height: `${cell.height + META_H}px` }"
+            :style="{ width: `${cell.width}px`, height: `${cell.height + CARD_META_H}px` }"
             :data-item-id="cell.id"
           >
             <span v-if="cell.star > 0" class="star">★{{ cell.star }}</span>
@@ -420,7 +417,7 @@ function onMenu(item: Item, e: MouseEvent) {
   left: 0;
   right: 0;
   display: flex;
-  gap: 10px;
+  gap: var(--grid-gap, 10px);
 }
 
 .cell-placeholder {

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { startItemsDrag } from '../dnd';
 import { useLibraryStore } from '../stores/library';
+import { CARD_BORDER, CARD_META_H } from '../layout';
 import type { Item } from '../types';
 
 const props = withDefaults(
@@ -33,8 +34,17 @@ const thumbStyle = computed(() =>
     : { width: '100%', aspectRatio: '1' },
 );
 
-/** 卡片宽度锁定为缩略图宽度：长名称不得撑开卡片（名称走 ellipsis 截断） */
-const cardStyle = computed(() => (props.width ? { width: props.width + 'px' } : {}));
+/** 卡片宽度锁定为缩略图宽度：长名称不得撑开卡片（名称走 ellipsis 截断）。
+ * 卡片样式常量（meta 高/边框）经 CSS 变量下发，与 ItemGrid 的行距数学同一来源（layout.ts） */
+const cardStyle = computed(() =>
+  props.width
+    ? {
+        width: props.width + 'px',
+        '--meta-h': `${CARD_META_H}px`,
+        '--card-border': `${CARD_BORDER}px`,
+      }
+    : { '--meta-h': `${CARD_META_H}px`, '--card-border': `${CARD_BORDER}px` },
+);
 
 // 缩略图单尺寸 1024（内容寻址、immutable），小图由浏览器缩小显示
 const thumbSrc = computed(() => api.thumbnailUrl(props.item.id));
@@ -87,7 +97,8 @@ function onDragStart(e: DragEvent) {
   border-radius: 4px;
   overflow: hidden;
   background: var(--bg-2);
-  border: 2px solid transparent;
+  /* 总边框宽 = --card-border（2px × 2），与 ItemGrid 行槽位计算同一来源 */
+  border: calc(var(--card-border, 4px) / 2) solid transparent;
   cursor: default;
 }
 
@@ -130,8 +141,8 @@ function onDragStart(e: DragEvent) {
 }
 
 .meta {
-  /* 定高：ItemGrid.vue 的 META_H 常量与此保持一致，行距按它计算； Eagle 式预留 3 行（标题 2 + 像素 1） */
-  height: 54px;
+  /* 定高（--meta-h）：行距按它计算，与 ItemGrid 的 CARD_META_H 同一来源； Eagle 式预留 3 行（标题 2 + 像素 1） */
+  height: var(--meta-h, 54px);
   box-sizing: border-box;
   padding: 5px 7px 6px;
   background: var(--bg-2);
