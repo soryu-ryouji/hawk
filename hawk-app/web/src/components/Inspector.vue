@@ -10,6 +10,7 @@ import SearchBox from './SearchBox.vue';
 import Icon from './Icon.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
+import type { ViewState } from '../types';
 
 const store = useLibraryStore();
 const { touch } = useLayout();
@@ -142,6 +143,19 @@ function showInFinder(path: string) {
   void shell.showInFinder(path);
 }
 
+/** 点击信息（标签/分类/文件夹/文件位置）跳转对应视图；已在该视图时不重查 */
+function goView(v: ViewState) {
+  if (JSON.stringify(store.view) !== JSON.stringify(v)) {
+    store.setView(v);
+  }
+}
+
+/** 文件位置 → 所在文件夹视图（根目录文件 → 根目录素材视图） */
+function folderViewOf(path: string): ViewState {
+  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+  return dir ? { kind: 'folder', path: dir } : { kind: 'root' };
+}
+
 /** 点击色块：在当前视图范围内按颜色检索；再次点击当前检索色则清除 */
 function searchColor(color: string) {
   store.setQuery({ color: store.query.color === color ? undefined : color });
@@ -225,7 +239,9 @@ function batchMoveFolder(path: string) {
         <section>
           <div class="section-title">标签</div>
           <div v-if="item.tags?.length" class="chips">
-            <span v-for="tag in item.tags" :key="tag" class="chip">{{ tag }}</span>
+            <span v-for="tag in item.tags" :key="tag" class="chip">
+              <button class="jump" :title="`查看标签「${tag}」`" @click="goView({ kind: 'tag', name: tag })">{{ tag }}</button>
+            </span>
           </div>
           <span v-else class="ro-empty">—</span>
         </section>
@@ -233,14 +249,17 @@ function batchMoveFolder(path: string) {
         <section>
           <div class="section-title">分类</div>
           <div v-if="item.categories?.length" class="chips">
-            <span v-for="category in item.categories" :key="category" class="chip">{{ category }}</span>
+            <span v-for="category in item.categories" :key="category" class="chip">
+              <button class="jump" :title="`查看分类「${category}」`" @click="goView({ kind: 'category', name: category })">{{ category }}</button>
+            </span>
           </div>
           <span v-else class="ro-empty">—</span>
         </section>
 
         <section>
           <div class="section-title">文件夹</div>
-          <span class="ro-text">{{ item.folders?.[0] || '—' }}</span>
+          <button v-if="item.folders?.[0]" class="jump ro-text" @click="goView(folderViewOf(item.folders[0]))">{{ item.folders[0] }}</button>
+          <span v-else class="ro-text">—</span>
         </section>
 
         <section>
@@ -263,7 +282,7 @@ function batchMoveFolder(path: string) {
 
         <section>
           <div class="section-title">文件位置</div>
-          <div v-for="path in item.paths" :key="path" class="path">{{ path }}</div>
+          <button v-for="path in item.paths" :key="path" class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(folderViewOf(path))">{{ path }}</button>
           <span v-if="!item.paths?.length" class="ro-empty">—</span>
         </section>
       </div>
@@ -299,7 +318,7 @@ function batchMoveFolder(path: string) {
           <div class="section-title">分类</div>
           <div class="chips">
             <span v-for="category in item.categories ?? []" :key="category" class="chip">
-              {{ category }}
+              <button class="jump" :title="`查看分类「${category}」`" @click="goView({ kind: 'category', name: category })">{{ category }}</button>
               <button class="remove" title="移出该分类" @click="removeCategory(category)">×</button>
             </span>
             <button class="add" title="添加到分类" @click="showCategoryPicker = true">＋</button>
@@ -308,14 +327,17 @@ function batchMoveFolder(path: string) {
 
         <section>
           <div class="section-title">文件夹</div>
-          <select
-            class="folder-select"
-            :value="item.folders?.[0] ?? ''"
-            title="所在文件夹（选择即移动）"
-            @change="moveToFolder(($event.target as HTMLSelectElement).value)"
-          >
-            <option v-for="f in folderOptions" :key="f.path" :value="f.path">{{ f.label }}</option>
-          </select>
+          <div class="folder-row">
+            <select
+              class="folder-select"
+              :value="item.folders?.[0] ?? ''"
+              title="所在文件夹（选择即移动）"
+              @change="moveToFolder(($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="f in folderOptions" :key="f.path" :value="f.path">{{ f.label }}</option>
+            </select>
+            <button class="finder" title="打开所在文件夹" @click="goView(folderViewOf(item.folders?.[0] ?? ''))">›</button>
+          </div>
         </section>
 
         <section>
@@ -339,7 +361,7 @@ function batchMoveFolder(path: string) {
         <section>
           <div class="section-title">文件位置</div>
           <div v-for="path in item.paths" :key="path" class="path-row">
-            <span class="path" :title="path">{{ path }}</span>
+            <button class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(folderViewOf(path))">{{ path }}</button>
             <!-- 多位置素材：按位置删除（其余位置保留，最后一个库内位置被删时整项回收） -->
             <button
               v-if="!store.viewerMode && (item.paths?.length ?? 0) > 1"
@@ -601,6 +623,40 @@ section {
   line-height: 1.6;
 }
 
+/* 信息跳转（Eagle 式信息导航）：chip 文字/路径/文件夹值点击跳对应视图，删除等按钮不受影响 */
+.jump {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.jump:hover {
+  color: var(--accent);
+  background: transparent;
+  text-decoration: underline;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.folder-row .folder-select {
+  flex: 1;
+}
+
+.folder-row .finder {
+  font-size: 16px;
+}
+
+button.path {
+  text-align: left;
+}
+
 /* 文件夹为单值排他语义：下拉框（Eagle 同款），而非标签/分类的 chip */
 .folder-select {
   width: 100%;
@@ -643,7 +699,6 @@ section {
   font-size: 12px;
   color: var(--fg-1);
 }
-
 .finder {
   padding: 0 6px;
   border: none;

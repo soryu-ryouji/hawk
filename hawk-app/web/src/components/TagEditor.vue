@@ -38,12 +38,20 @@ function remove(tag: string) {
     props.modelValue.filter((t) => t !== tag),
   );
 }
+
+/** 点击标签跳转对应标签视图（已在该视图时不重查） */
+function jumpTo(tag: string) {
+  const v = { kind: 'tag', name: tag } as const;
+  if (JSON.stringify(store.view) !== JSON.stringify(v)) {
+    store.setView(v);
+  }
+}
 </script>
 
 <template>
   <div class="tags">
     <span v-for="tag in modelValue" :key="tag" class="chip">
-      {{ tag }}
+      <button class="jump" :title="`查看标签「${tag}」`" @click="jumpTo(tag)">{{ tag }}</button>
       <button class="remove" title="移除标签" @click="remove(tag)">×</button>
     </span>
     <input
@@ -92,6 +100,22 @@ function remove(tag: string) {
 .remove:hover {
   color: var(--danger);
   background: transparent;
+}
+
+/* 点击标签跳转到对应标签视图（Inspector 信息导航） */
+.jump {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.jump:hover {
+  color: var(--accent);
+  background: transparent;
+  text-decoration: underline;
 }
 
 .add {
