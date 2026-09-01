@@ -211,7 +211,7 @@ function onSidebarNav(e: MouseEvent) {
   if (!narrow.value || !touch.value) {
     return;
   }
-  if ((e.target as HTMLElement).closest('.entry, .node, .cat-row, .tag-row')) {
+  if ((e.target as HTMLElement).closest('.entry, .node, .tax-row')) {
     store.toggleSidebar();
   }
 }

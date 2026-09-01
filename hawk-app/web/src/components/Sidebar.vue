@@ -6,6 +6,7 @@ import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
 import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
 import PromptDialog from './PromptDialog.vue';
+import TaxonomyRow from './TaxonomyRow.vue';
 import type { MenuItem } from '../types';
 
 const store = useLibraryStore();
@@ -67,6 +68,12 @@ function submitRenameCategory(newName: string) {
   void store.categoryRename(renameTarget.value, newName);
 }
 
+/** 分类行「重命名」：记住目标名并弹输入框（TaxonomyRow 发来） */
+function startRenameCategory(name: string) {
+  renameTarget.value = name;
+  showRenameCategory.value = true;
+}
+
 function createTag(name: string) {
   showCreateTag.value = false;
   void store.tagCreate(name);
@@ -75,6 +82,12 @@ function createTag(name: string) {
 function submitRenameTag(newName: string) {
   showRenameTag.value = false;
   void store.tagRename(renameTarget.value, newName);
+}
+
+/** 标签行「重命名」：记住目标名并弹输入框（TaxonomyRow 发来） */
+function startRenameTag(name: string) {
+  renameTarget.value = name;
+  showRenameTag.value = true;
 }
 
 /** 树空白处右键：新建根节点 / 整库刷新缓存 */
@@ -106,7 +119,7 @@ function onTreeDragEnter(kind: DropKind, e: DragEvent) {
   if (!isItemsDrag(e)) {
     return;
   }
-  const row = (e.target as HTMLElement).closest('.cat-row, .tag-row');
+  const row = (e.target as HTMLElement).closest('.tax-row');
   if (!row) {
     return;
   }
@@ -116,7 +129,7 @@ function onTreeDragEnter(kind: DropKind, e: DragEvent) {
 }
 
 function onTreeDragLeave(kind: DropKind, e: DragEvent) {
-  const row = (e.target as HTMLElement).closest('.cat-row, .tag-row');
+  const row = (e.target as HTMLElement).closest('.tax-row');
   if (!row) {
     return;
   }
@@ -140,7 +153,7 @@ function onTreeDrop(kind: DropKind, e: DragEvent) {
   for (const k of Object.keys(dropDepth)) {
     dropDepth[k] = 0;
   }
-  const row = (e.target as HTMLElement).closest('.cat-row, .tag-row');
+  const row = (e.target as HTMLElement).closest('.tax-row');
   if (!row || !readItemsDrop(e)) {
     return;
   }
@@ -160,64 +173,6 @@ function onCategoryContextMenu(e: MouseEvent) {
     return;
   }
   menu.open([{ label: '新建分类', action: () => (showCreateCategory.value = true) }], e);
-}
-
-/** 分类右键：重命名/删除/刷新缓存 */
-function onCategoryRowContextMenu(name: string, e: MouseEvent) {
-  if (store.viewerMode) {
-    return;
-  }
-  menu.open(
-    [
-      {
-        label: '重命名',
-        action: () => {
-          renameTarget.value = name;
-          showRenameCategory.value = true;
-        },
-      },
-      { label: '刷新缓存', title: '修复该分类下素材缺失的宽高/缩略图/调色板', action: () => void store.refreshCache('category', name) },
-      {
-        label: '删除分类',
-        danger: true,
-        action: () => {
-          if (window.confirm(`删除分类「${name}」？全部素材的该分类将被清除。`)) {
-            void store.categoryDelete(name);
-          }
-        },
-      },
-    ],
-    e,
-  );
-}
-
-/** 标签右键：重命名/删除/刷新缓存 */
-function onTagContextMenu(name: string, e: MouseEvent) {
-  if (store.viewerMode) {
-    return;
-  }
-  menu.open(
-    [
-      {
-        label: '重命名',
-        action: () => {
-          renameTarget.value = name;
-          showRenameTag.value = true;
-        },
-      },
-      { label: '刷新缓存', title: '修复该标签下素材缺失的宽高/缩略图/调色板', action: () => void store.refreshCache('tag', name) },
-      {
-        label: '删除标签',
-        danger: true,
-        action: () => {
-          if (window.confirm(`删除标签「${name}」？全部素材的该标签将被清除。`)) {
-            void store.tagDelete(name);
-          }
-        },
-      },
-    ],
-    e,
-  );
 }
 </script>
 
@@ -313,19 +268,16 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         @dragover="onTreeDragOver"
         @drop="onTreeDrop('category', $event)"
       >
-        <div
+        <TaxonomyRow
           v-for="category in store.categories"
           :key="category.name"
-          class="cat-row"
-          :class="{ active: store.view.kind === 'category' && store.view.name === category.name, 'drop-target': dropKey === rowKey('category', category.name) }"
-          :data-name="category.name"
-          @click="store.setView({ kind: 'category', name: category.name })"
-          @contextmenu.prevent.stop="onCategoryRowContextMenu(category.name, $event)"
-        >
-          <Icon name="category" :size="13" />
-          <span class="cat-name">{{ category.name }}</span>
-          <span class="cat-count">{{ category.count }}</span>
-        </div>
+          kind="category"
+          :name="category.name"
+          :count="category.count"
+          :active="store.view.kind === 'category' && store.view.name === category.name"
+          :drop-target="dropKey === rowKey('category', category.name)"
+          @rename="startRenameCategory"
+        />
       </div>
 
       <div class="section" @click="collapsed.tag = !collapsed.tag">
@@ -343,19 +295,16 @@ function onTagContextMenu(name: string, e: MouseEvent) {
         @dragover="onTreeDragOver"
         @drop="onTreeDrop('tag', $event)"
       >
-        <div
+        <TaxonomyRow
           v-for="tag in store.tagList"
           :key="tag.name"
-          class="tag-row"
-          :class="{ active: store.view.kind === 'tag' && store.view.name === tag.name, 'drop-target': dropKey === rowKey('tag', tag.name) }"
-          :data-name="tag.name"
-          @click="store.setView({ kind: 'tag', name: tag.name })"
-          @contextmenu.prevent.stop="onTagContextMenu(tag.name, $event)"
-        >
-          <Icon name="tag" :size="13" />
-          <span class="tag-name">{{ tag.name }}</span>
-          <span class="tag-count">{{ tag.count }}</span>
-        </div>
+          kind="tag"
+          :name="tag.name"
+          :count="tag.count"
+          :active="store.view.kind === 'tag' && store.view.name === tag.name"
+          :drop-target="dropKey === rowKey('tag', tag.name)"
+          @rename="startRenameTag"
+        />
       </div>
 
     </div>
@@ -530,85 +479,4 @@ body.touch .library-name.in-body {
   color: var(--fg-1);
 }
 
-/* 左缩进与树节点名称列对齐（12px 内边距 + 14px 箭头占位），三个分区内容同一垂直线 */
-.tag-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 12px 4px 26px;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.tag-row:hover {
-  background: var(--bg-2);
-}
-
-.tag-row.active {
-  /* Eagle 式选中高亮:暗灰微亮(--bg-3),不用亮色 accent */
-  background: var(--bg-3);
-  color: #fff;
-}
-
-.tag-row.active .tag-count {
-  color: #fff;
-  font-weight: 600;
-}
-
-.tag-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 分类行与标签行同款对齐（分类/标签均为扁平名字，无树形层级） */
-.cat-row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 12px 4px 26px;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-/* 素材悬停：整行高亮示意可放置（与 FolderTreeNode 同款） */
-.cat-row.drop-target,
-.tag-row.drop-target {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
-  outline: 1px dashed var(--accent);
-  outline-offset: -1px;
-}
-
-.cat-row:hover {
-  background: var(--bg-2);
-}
-
-.cat-row.active {
-  /* Eagle 式选中高亮:暗灰微亮(--bg-3),不用亮色 accent */
-  background: var(--bg-3);
-  color: #fff;
-}
-
-.cat-row.active .cat-count {
-  color: #fff;
-  font-weight: 600;
-}
-
-.cat-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cat-count {
-  font-size: 11px;
-  color: var(--fg-1);
-}
-
-.tag-count {
-  font-size: 11px;
-  color: var(--fg-1);
-}
 </style>
