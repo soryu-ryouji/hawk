@@ -346,6 +346,7 @@ function batchMoveFolder(path: string) {
           <FolderTreePicker
             v-if="pickerAnchor"
             :current="item.folders?.[0] ?? ''"
+            :trigger="folderValueEl"
             :anchor="pickerAnchor"
             @pick="moveToFolder"
             @close="pickerAnchor = null"

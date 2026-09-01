@@ -10,6 +10,9 @@ import type { FolderNode } from '../types';
 const props = defineProps<{
   /** 当前所在文件夹（"" 为根目录），高亮并默认沿其路径展开 */
   current: string;
+  /** 触发按钮（检查器的文件夹当前值按钮）：点击它属于 toggle，不得按「点外部」关闭——
+   * 否则 pointerdown 先关、click 后开，再点一次永远关不上 */
+  trigger: HTMLElement | null;
   /** 触发按钮的视口定位（Inspector 计算，含下方空间不足时的翻转） */
   anchor: { left: number; width: number; top: number; bottom: number; flip: boolean };
 }>();
@@ -17,7 +20,11 @@ const emit = defineEmits<{ pick: [path: string]; close: [] }>();
 
 const store = useLibraryStore();
 const panelEl = ref<HTMLElement | null>(null);
-onClickOutside(panelEl, () => emit('close'));
+onClickOutside(
+  panelEl,
+  () => emit('close'),
+  { ignore: [computed(() => props.trigger)] },
+);
 onMounted(() => panelEl.value?.focus());
 
 // 面板内按键不透传给全局快捷键（Delete/Backspace 不误删素材）；Esc 关闭
