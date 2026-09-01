@@ -13,9 +13,10 @@ import FolderPickerDialog from './FolderPickerDialog.vue';
 
 const store = useLibraryStore();
 const { touch } = useLayout();
-// 触屏设备（iPad/手机网页，实际生效于 wide 布局的 iPad 横屏；narrow 下检查器隐藏）检查器只读：
-// 信息与桌面版一致但全部静态展示——触屏上编辑控件易误触，且网页端浏览场景不希望改动素材库
-const readOnly = computed(() => touch.value);
+// 检查器只读的两个来源（信息结构与桌面版一致但全部静态展示，无编辑控件）：
+// - 触屏设备（iPad/手机网页，实际生效于 wide 布局的 iPad 横屏；narrow 下检查器隐藏）——触屏上编辑控件易误触；
+// - 只读查看（局域网 viewer token，[web].writable 未开启）——无写权限也应能查看详细信息
+const readOnly = computed(() => touch.value || store.viewerMode);
 const showCategoryPicker = ref(false);
 const showFolderPicker = ref(false);
 
@@ -215,7 +216,7 @@ function batchMoveFolder(path: string) {
         />
       </div>
 
-      <!-- 触屏只读：与桌面版同样的信息结构，全部静态展示，不可修改 -->
+      <!-- 只读态（触屏/只读查看）：与桌面版同样的信息结构，全部静态展示，不可修改 -->
       <div v-if="readOnly" class="fields ro-fields">
         <div class="ro-name">{{ item.name }}</div>
         <div v-if="item.annotation" class="ro-annotation">{{ item.annotation }}</div>
