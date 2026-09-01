@@ -164,9 +164,14 @@ function goView(v: ViewState) {
   }
 }
 
-/** 文件位置 → 所在文件夹视图（根目录文件 → 根目录素材视图） */
+/** 文件夹值（folders[0]，已是文件夹路径）→ 文件夹视图；根目录（""）→ 根目录素材视图 */
 function folderViewOf(path: string): ViewState {
-  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+  return path ? { kind: 'folder', path } : { kind: 'root' };
+}
+
+/** 文件位置（完整文件路径）→ 所在文件夹视图（取目录部分；根目录文件 → 根目录素材视图） */
+function parentFolderViewOf(filePath: string): ViewState {
+  const dir = filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : '';
   return dir ? { kind: 'folder', path: dir } : { kind: 'root' };
 }
 
@@ -296,7 +301,7 @@ function batchMoveFolder(path: string) {
 
         <section>
           <div class="section-title">文件位置</div>
-          <button v-for="path in item.paths" :key="path" class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(folderViewOf(path))">{{ path }}</button>
+          <button v-for="path in item.paths" :key="path" class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(parentFolderViewOf(path))">{{ path }}</button>
           <span v-if="!item.paths?.length" class="ro-empty">—</span>
         </section>
       </div>
@@ -379,7 +384,7 @@ function batchMoveFolder(path: string) {
         <section>
           <div class="section-title">文件位置</div>
           <div v-for="path in item.paths" :key="path" class="path-row">
-            <button class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(folderViewOf(path))">{{ path }}</button>
+            <button class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(parentFolderViewOf(path))">{{ path }}</button>
             <!-- 多位置素材：按位置删除（其余位置保留，最后一个库内位置被删时整项回收） -->
             <button
               v-if="!store.viewerMode && (item.paths?.length ?? 0) > 1"
