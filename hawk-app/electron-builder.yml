@@ -16,8 +16,8 @@ files:
   - web/dist/**/*
   # 窗口/托盘图标（512px 源图，运行时按平台重采样）
   - build/icon.png
-// 打包前写入的构建标识（git sha，主进程自动更新比较 nightly 新旧用；见 scripts/stamp-build.mjs）
-- build-info.json
+  # 打包前写入的构建标识（git sha，主进程自动更新比较 nightly 新旧用；见 scripts/stamp-build.mjs）
+  - build-info.json
 extraResources:
   # 各平台 hawk-daemon 二进制（cargo build --release，见 scripts/build-server.mjs）
   - from: resources/hawk-daemon
