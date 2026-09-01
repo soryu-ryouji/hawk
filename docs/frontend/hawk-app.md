@@ -98,6 +98,11 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `onServerStarted(cb)` | 订阅 server 就绪：`{ address, token }`（冷启动/换库/应用设置重启都会到达；restart 会换端口，渲染进程须先重配 API 再重启数据）；返回退订函数 |
 | `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message }`（页面内错误屏呈现）；返回退订函数 |
 | `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的隐藏到托盘） |
+| `getAppVersion()` | 当前应用版本与构建 sha（`{ version, sha }`；sha 来自打包时写入的 `build-info.json`，开发态为 `'dev'`） |
+| `checkUpdate(channel)` | 检查更新（`'stable'`=GitHub latest 正式版比 semver；`'nightly'`=滚动预发布比构建 sha）；有更新返回 `UpdateInfo`，无更新返回 null；查询/比较逻辑在主进程（GitHub Releases API，无自建服务） |
+| `downloadUpdate()` | 下载上次检查到的更新包并强制 sha256 校验（Release 附带 `<artifact>.sha256` 边车，缺失即失败不提供无校验更新）；进度经 `onUpdateProgress` 推送 |
+| `installUpdate()` | 重启并安装已校验的更新（成功后应用退出，IPC 不再返回）：Linux AppImage 同目录拷贝后原子改名覆盖自身 + relaunch；macOS/Windows 由 detached 脚本等旧进程退出→解压→替换→拉起新实例接力 |
+| `onUpdateProgress(cb)` | 订阅更新包下载进度：`{ phase: 'downloading', received, total } \| { phase: 'verifying' } \| { phase: 'ready' }`；返回退订函数 |
 
 ## 契约与类型生成
 
@@ -176,6 +181,7 @@ web/
     │   ├── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
     │   ├── useZoomPan.ts      # 预览手势引擎：滚轮不动点缩放/双击（触屏按 300ms 两次点按自判，iOS 不产 dblclick）/单指平移与滑动切换/双指捏合/下拉关闭状态机（语义矩阵见头注释）
     │   ├── useLayout.ts       # 布局/触屏判定：narrow=matchMedia ≤1200px（同步 body.mobile，三栏最小健康宽度见布局章节），touch=(pointer: coarse) 或 maxTouchPoints>0（同步 body.touch，iPad「请求桌面网站」下 pointer 不命中需 maxTouchPoints 兜底）；narrow 驱动布局差异（抽屉侧栏/点按开预览/顶栏减负），touch 驱动触屏手势（下拉关闭/隐藏关闭 ×）；设备能力判断走 platform.ts
+    │   ├── useUpdater.ts      # 应用更新渲染层状态机（Electron）：通道偏好/检查/下载/安装编排，启动静默检查（发现新版本按 通道@版本 toast 一次）；语义在主进程
     │   └── useStartup.ts      # 启动状态机：server-started/error/progress 事件（Electron IPC）或浏览器轮询 /app startup，就绪计数驱动 App (re)boot
     ├── components/
     │   ├── TitleBar.vue
@@ -408,7 +414,7 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（preview.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，importer.importProgress 驱动，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；主界面就绪后延迟 8s 静默检查应用更新一次（useUpdater.startupAutoCheck，仅 Electron）；挂载 PreviewOverlay/ImageEditDialog（preview.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，importer.importProgress 驱动，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右组首为上传按钮（`!viewerMode` 时显示：隐藏 file input 多选 → `importer.importFiles` multipart 上传，手机端无拖拽的主导入入口）；右端设置齿轮（所有客户端常显，打开 SettingsDialog；web 端含连接分区/token 注销）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `TaxonomyRow.vue` | `kind: 'category' \| 'tag'`、`name`、`count`、`active`、`dropTarget` | `rename(name)` | 侧栏分类/标签共用的行：图标/名称/计数/点击切视图/右键菜单（重命名 emit 给 Sidebar 弹输入框；刷新缓存与删除按 kind 调 store）；dragenter/leave/drop 由 Sidebar 容器级委托（`.tax-row` + `data-name`） |
 | `SearchBox.vue` | — | — | 搜索框（store.searchText 草稿 + 回车 submitSearch）：TitleBar 与 Inspector 顶部共用同一实例模板；styles.css 按布局切换可见性——桌面在顶栏，触屏横屏（wide+touch，检查器可见）挪到 Inspector 顶（把顶栏空间留给筛选/排序按钮），窄屏隐藏、由 TitleBar 的搜索按钮 + 顶部搜索浮层替代（Enter 提交并关闭，Esc/点遮罩/× 关闭） |
@@ -417,7 +423,7 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板（TitleBar 齿轮打开，所有 web 客户端与 Electron 均可开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，所有端可用，均经 store.setUserThumbSize——web 端由此记住用户偏好并停止跟随动态默认；动态默认与记忆规则见 store）；局域网分区：开关（switch 样式）+ 一句说明，启用后才展开**「允许修改素材库」开关**（[web].writable，开启后查看端可上传/删除/修改，附风险提示，保存即热生效）、**token 拆分开关**（「拆分只读与可写 token」，仅写权限开启后显示：关闭时单一 token 读写兼具；开启时访问 token 降为只读、另签发可写 token，开启且为空时自动生成——separate_write_token + write_token）、端口/访问 token（拆分时标注「只读」；monospace 输入 + 复制/重新生成；拆分时另有可写 token 同款字段）/本机地址列表（链接 + 逐行复制，useClipboard legacy 回退，复制 toast 反馈；拆分/校验规则不变）——依赖 Electron preload 通道，移动端（浏览器触屏）不可见；**连接分区**（仅局域网 web 端，浏览器触屏/桌面浏览器均可达——设置齿轮由此在所有 web 客户端常显）：当前访问级别（只读/可读写，取自 store.viewerMode）+ 「注销 token」按钮（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页，重新输入另一 token 即可切换读写身份）；端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控，inputmode=numeric）：实时校验纯数字且 1–65535，不合法红框 + 提示，保存拦截（未启用时输入框不可见，静默回退默认 27372）；**遮罩关闭为 pointerdown/pointerup 配对判定**（按下与抬起都落在遮罩上才关）——拖动端口数字/滑杆滑出面板松开时 click 落在共同祖先即遮罩上，旧 click.self 判定会误关面板丢失未保存配置；Esc 关闭（捕获阶段拦截并阻断全局快捷键）；打开期间挂 `body.dialog-open` 挂起窗口拖拽区（同 ContextMenu 的 menu-open），点遮罩盖住的标题栏也是关闭而不是拖窗口；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置——daemon watcher 唤醒 LAN supervisor 热重绑（不重启进程、SSE 不断），主进程轮询 `app/info` 的 `lan` 状态确认收敛，绑定失败（端口占用等）自动写回旧配置回滚并弹错；成功后本对话框 emit close；无 shell（web 端）时底部仅「关闭」（滑杆实时生效无需保存） |
+| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板（TitleBar 齿轮打开，所有 web 客户端与 Electron 均可开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网/更新；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，所有端可用，均经 store.setUserThumbSize——web 端由此记住用户偏好并停止跟随动态默认；动态默认与记忆规则见 store）；局域网分区：开关（switch 样式）+ 一句说明，启用后才展开**「允许修改素材库」开关**（[web].writable，开启后查看端可上传/删除/修改，附风险提示，保存即热生效）、**token 拆分开关**（「拆分只读与可写 token」，仅写权限开启后显示：关闭时单一 token 读写兼具；开启时访问 token 降为只读、另签发可写 token，开启且为空时自动生成——separate_write_token + write_token）、端口/访问 token（拆分时标注「只读」；monospace 输入 + 复制/重新生成；拆分时另有可写 token 同款字段）/本机地址列表（链接 + 逐行复制，useClipboard legacy 回退，复制 toast 反馈；拆分/校验规则不变）——依赖 Electron preload 通道，移动端（浏览器触屏）不可见；**连接分区**（仅局域网 web 端，浏览器触屏/桌面浏览器均可达——设置齿轮由此在所有 web 客户端常显）：当前访问级别（只读/可读写，取自 store.viewerMode）+ 「注销 token」按钮（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页，重新输入另一 token 即可切换读写身份）；端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控，inputmode=numeric）：实时校验纯数字且 1–65535，不合法红框 + 提示，保存拦截（未启用时输入框不可见，静默回退默认 27372）；**遮罩关闭为 pointerdown/pointerup 配对判定**（按下与抬起都落在遮罩上才关）——拖动端口数字/滑杆滑出面板松开时 click 落在共同祖先即遮罩上，旧 click.self 判定会误关面板丢失未保存配置；Esc 关闭（捕获阶段拦截并阻断全局快捷键）；打开期间挂 `body.dialog-open` 挂起窗口拖拽区（同 ContextMenu 的 menu-open），点遮罩盖住的标题栏也是关闭而不是拖窗口；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置——daemon watcher 唤醒 LAN supervisor 热重绑（不重启进程、SSE 不断），主进程轮询 `app/info` 的 `lan` 状态确认收敛，绑定失败（端口占用等）自动写回旧配置回滚并弹错；成功后本对话框 emit close；**更新分区**（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha）、更新通道单选（稳定版/每日构建 nightly，存 `hawk:updateChannel`，切换后旧检查结果作废）、检查更新（发现新版本显示版本号 + 发布说明链接）、下载并安装（进度条，total 未知时不定态；sha256 校验阶段文案切换）、重启并安装（成功后应用退出由主进程替换脚本接力）；无 shell（web 端）时底部仅「关闭」（滑杆实时生效无需保存） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `FolderTreePicker.vue` | `current: string`、`trigger: HTMLElement \| null`、`anchor: {left,width,top,bottom,flip}` | `pick(path)`、`close` | Eagle 式文件夹树选择弹出层（检查器「文件夹」用，Teleport body 定位到触发按钮）：点击当前值弹出/再点收起（trigger 列为 outside 忽略，否则 pointerdown 先关、click 后开关不上），**点击文件夹行即选中移动**（无确认，与 Eagle 一致；点当前行=取消）；展开态默认沿当前路径、▸ 折叠箭头、当前行高亮；下方空间不足向上翻转；点外部/Esc 关闭，面板内按键拦截（Delete/Backspace 不误删素材）；空库提示先到侧栏新建 |
@@ -502,10 +508,29 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 ## 打包与分发
 
-- `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`）
+- `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`）；`files` 含 `build-info.json`（打包前由 `scripts/stamp-build.mjs` 写入 git sha，CI 注入 `HAWK_SHA`；自动更新比较 nightly 新旧用）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
 - 产物：macOS `hawk.app` 目录（CI 交叉打包 arm64 + x64 后 zip 发布；不做 dmg）/ Windows `hawk.zip`（解压即用）/ Linux AppImage
 - CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
+
+## 应用自动更新
+
+### 版本与发布流程
+
+版本号规则（唯一来源、nightly 覆写、开发态识别）与发版步骤、CI 行为、验证清单的完整说明见 **[docs/release.md](../release.md)**。要点：
+
+- **版本唯一来源**：`hawk-app/package.json` 的 `version`（electron-builder 打进 app，`app.getVersion()` 读取；设置面板「更新」分区显示）。首版 0.1.0，遵循 semver
+- **发正式版**：bump `version` → 附注 tag `v<version>` → push tag → CI 构建并创建 Release；**tag 与 version 不一致时 CI 直接失败**
+- **nightly**：CI 覆写构建版本为 `0.0.0-nightly.<sha7>`（仅 asar 内，不改仓库）；更新判定走 Release body 的 `hawk-nightly-sha` 注释
+- **开发态**：不追加 dev 后缀，`build-info.json` sha=`'dev'` 识别，设置面板显示「开发版」
+
+### 机制
+Electron 端内置「检查更新 → 下载（sha256 校验）→ 重启替换」，无自建更新服务，元数据直接查 GitHub Releases API（未认证限速 60 次/时/IP，对启动后 8s 静默检查一次 + 设置面板手动检查绰绰有余）：
+
+- **双通道**：`stable` = `releases/latest`（正式 `v*` tag，与 `app.getVersion()` 比 semver，发版流程与版本策略见上节）；`nightly` = `releases/tags/nightly`（滚动预发布，比 Release 所指 commit 与本机构建 sha——Release 的 `target_commitish` 是分支名不可用，CI 在 body 末尾注入 `<!-- hawk-nightly-sha: <sha> -->` HTML 注释供解析，旧版退化为 Release 名 `Nightly <短sha>` 前缀匹配）。通道偏好存 localStorage（`hawk:updateChannel`），切换后旧检查结果作废需重查；局域网 web 端无更新功能（刷新即得宿主新前端）
+- **校验**：CI 为每个产物生成 `<artifact>.sha256` 边车随 Release 上传；主进程下载后强制比对，缺失即报错引导手动下载——不提供无校验的更新。因此**边车机制上线的首个发布之后，更新功能才可用**（存量发布无边车）
+- **替换**（运行中文件被锁，不能自我替换）：Linux AppImage 同目录拷贝 + 原子改名覆盖自身（旧挂载来自旧 inode 不受影响）+ `app.relaunch()`；macOS/Windows 由 detached 脚本接力（等旧进程 pid 退出 → 解压 zip → 替换 `.app`/覆盖应用目录 → 拉起新实例 → 自清理）。macOS 解压/暂存与 `.app` 同目录（同卷 mv 原子；需对安装位置有写权限）；app 内 fetch 下载无 quarantine 标记，不触发 Gatekeeper
+- **UI**：设置面板「更新」分区（仅 Electron）：当前版本（v + 短 sha）、通道单选、检查/下载（进度条，total 未知时不定态动画）/重启安装；启动后主界面就绪延迟 8s 静默检查（每会话一次），发现新版本 toast 提示一次（`hawk:lastUpdateNotice` 按 通道@版本 去重，避免每次启动重复打扰）。渲染层状态机在 `composables/useUpdater.ts`（idle → checking → uptodate/available/error → downloading → ready），检查/下载/安装语义全部在主进程「应用更新」段，渲染层只做编排
 
 ## 目录结构
 
@@ -514,13 +539,14 @@ hawk-app/
 ├── package.json            # 全部依赖与脚本（单包，不做 workspaces）
 ├── electron-builder.yml
 ├── electron/
-│   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、关窗隐藏到托盘 + 系统托盘、单实例锁、拉起/回收 server、token、库选择、白名单 IPC
-│   ├── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/server 进度·就绪·错误事件/退出应用）+ webUtils
+│   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、关窗隐藏到托盘 + 系统托盘、单实例锁、拉起/回收 server、token、库选择、应用更新（GitHub Releases 检查/下载校验/重启替换）、白名单 IPC
+│   ├── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/server 进度·就绪·错误事件/更新检查·下载·安装·进度/退出应用）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
 │   ├── build-server.mjs    # cargo build --release 产出指定 target 的 hawk-daemon 单文件
-│   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）
+│   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）；先 stamp 构建标识
+│   ├── stamp-build.mjs     # 打包前写入 build-info.json（git sha，自动更新比较 nightly 新旧用；CI 用 HAWK_SHA 注入）
 │   ├── test-mobile-web.mjs # 移动端网页冒烟测试编排（临时库 + server + 断言）
 │   └── mobile-web-probe.cjs# 测试探针：无 preload 的 sandbox Electron 窗口模拟手机浏览器，输出 JSONL 探针与截图
 └── web/                    # Vue 3 + Vite 前端，src/ 详档见「前端信息架构 · 目录结构」

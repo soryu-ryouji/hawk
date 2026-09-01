@@ -10,6 +10,7 @@ import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
 import { useLayout } from './composables/useLayout';
 import { useStartup } from './composables/useStartup';
+import { startupAutoCheck } from './composables/useUpdater';
 import { hasShell, shell } from './platform';
 import Sidebar from './components/Sidebar.vue';
 import TitleBar from './components/TitleBar.vue';
@@ -215,6 +216,13 @@ function onSidebarNav(e: MouseEvent) {
     store.toggleSidebar();
   }
 }
+
+// 主界面就绪后触发一次启动静默检查（延迟 8s，每会话一次；见 useUpdater）
+watch(phase, (p) => {
+  if (p === 'ready') {
+    startupAutoCheck();
+  }
+});
 
 // 初始阶段判定（同步，须在 phase 监听器注册前完成：无参数时把 starting 纠正为 setup/error，
 // 否则 immediate 监听器会对 setup/error 误发起轮询）

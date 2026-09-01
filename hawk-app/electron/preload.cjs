@@ -20,6 +20,14 @@ contextBridge.exposeInMainWorld('hawkShell', {
   saveLanSettings: (web) => ipcRenderer.invoke('hawk:save-lan-settings', web),
   /** 真正退出应用（启动错误屏用；区别于 closeWindow 的隐藏到托盘） */
   quitApp: () => ipcRenderer.invoke('hawk:quit-app'),
+  /** 当前应用版本与构建 sha（sha='dev' 表示无构建标识，如开发态） */
+  getAppVersion: () => ipcRenderer.invoke('hawk:app-version'),
+  /** 检查更新（stable=latest 正式版比 semver；nightly=滚动预发布比构建 sha）；无更新返回 null，失败 reject */
+  checkUpdate: (channel) => ipcRenderer.invoke('hawk:update-check', channel),
+  /** 下载并校验上次检查到的更新（进度经 onUpdateProgress 推送；已就绪时幂等） */
+  downloadUpdate: () => ipcRenderer.invoke('hawk:update-download'),
+  /** 重启并安装已下载的更新（成功后应用退出，不再返回） */
+  installUpdate: () => ipcRenderer.invoke('hawk:update-install'),
   /** 在系统文件管理器中显示库内文件（相对路径） */
   showInFinder: (relPath) => ipcRenderer.invoke('hawk:show-in-finder', relPath),
   /** 拖拽导入时取文件绝对路径（Electron webUtils） */
@@ -59,5 +67,11 @@ contextBridge.exposeInMainWorld('hawkShell', {
     const listener = (_event, error) => cb(error);
     ipcRenderer.on('hawk:server-error', listener);
     return () => ipcRenderer.removeListener('hawk:server-error', listener);
+  },
+  /** 订阅更新包下载进度：{ phase: 'downloading', received, total } | { phase: 'verifying' } | { phase: 'ready' } */
+  onUpdateProgress: (cb) => {
+    const listener = (_event, progress) => cb(progress);
+    ipcRenderer.on('hawk:update-progress', listener);
+    return () => ipcRenderer.removeListener('hawk:update-progress', listener);
   },
 });

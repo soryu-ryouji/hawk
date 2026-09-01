@@ -4,5 +4,8 @@ dist/
 resources/
 tools/.tmp/
 
+# 打包前由 scripts/stamp-build.mjs 写入的构建标识（不入库）
+build-info.json
+
 # 移动端冒烟测试产物
 .tmp/

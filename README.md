@@ -82,7 +82,7 @@ cd hawk
 ```
 
 首次运行自动安装 npm 依赖并完成全量构建（前端 + Rust 后端 + electron-builder，约几分钟）。
-开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；CI 发版见 [release.yml](.github/workflows/release.yml)。
+开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；发版流程见 [docs/release.md](docs/release.md)（CI 定义在 [release.yml](.github/workflows/release.yml)）。
 
 ## 文档
 
@@ -90,6 +90,7 @@ cd hawk
 
 - [架构设计](docs/architecture.md)：进程模型、桌面/服务器部署形态、仓库结构
 - [技术栈](docs/tech-stack.md)：语言与框架选型
+- [发布流程](docs/release.md)：stable/nightly 双通道、版本号规则、发版步骤与 CI 行为
 
 **前端**（[hawk-app](hawk-app/README.md)）
 

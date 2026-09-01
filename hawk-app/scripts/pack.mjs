@@ -3,8 +3,12 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stampBuildInfo } from './stamp-build.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// 先写入构建标识（electron-builder 的 files 需要它存在），再进 electron-builder
+stampBuildInfo();
 
 process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL ??= '5';
 

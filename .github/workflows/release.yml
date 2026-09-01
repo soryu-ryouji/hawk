@@ -51,15 +51,50 @@ jobs:
 
       - run: npm ci
 
+      # 正式版守卫：tag v<version> 必须与 package.json version 一致（版本唯一来源），不一致直接失败
+      - name: Verify tag matches version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG 与 package.json version $PKG 不一致（版本唯一来源为 package.json，先 bump 再打 tag）" >&2
+            exit 1
+          fi
+
+      # nightly 版本覆写：0.0.0-nightly.<sha7>（元数据不冒充稳定版；stable 通道检查时 0.0.0 低于任何正式版，
+      # nightly 用户可随时切回稳定版）。更新判定不走版本号，走 Release body 的 hawk-nightly-sha 注释
+      - name: Nightly version
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        id: nightly_ver
+        shell: bash
+        run: echo "verflag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      # 构建标识（自动更新比较 nightly 新旧用，见 scripts/stamp-build.mjs；pack.mjs 亦会重写，此处 CI 注入为准）
+      - name: Stamp build info
+        run: node scripts/stamp-build.mjs
+        env:
+          HAWK_SHA: ${{ github.sha }}
+
       - name: Pack
-        run: npm run pack
+        run: npm run pack -- ${{ steps.nightly_ver.outputs.verflag }}
         env:
           ELECTRON_BUILDER_COMPRESSION_LEVEL: 9
+
+      # 自动更新校验：产物 sha256 边车（<artifact>.sha256，内容为十六进制哈希），随 Release 上传
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 'dist/hawk.zip').Hash.ToLower()
+          Set-Content -NoNewline -Path 'dist/hawk.zip.sha256' -Value $hash
 
       - uses: actions/upload-artifact@v4
         with:
           name: hawk-windows-zip
-          path: hawk-app/dist/hawk.zip
+          path: |
+            hawk-app/dist/hawk.zip
+            hawk-app/dist/hawk.zip.sha256
           if-no-files-found: error
 
       # ---- 正式版：v* tag ----
@@ -68,7 +103,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: hawk-app/dist/hawk.zip
+          files: |
+            hawk-app/dist/hawk.zip
+            hawk-app/dist/hawk.zip.sha256
 
       # ---- nightly：main 分支 feat/fix 提交 ----
 
@@ -90,9 +127,16 @@ jobs:
         with:
           tag_name: nightly
           name: Nightly ${{ steps.nightly.outputs.sha }}
-          body: ${{ github.event.head_commit.message }}
+          # body 末尾注入完整 sha（HTML 注释，用户不可见）：客户端自动更新比较 nightly 新旧用
+          # （release 的 target_commitish 是分支名不是 sha，不能用作比较）
+          body: |
+            ${{ github.event.head_commit.message }}
+
+            <!-- hawk-nightly-sha: ${{ github.sha }} -->
           prerelease: true
-          files: hawk-app/dist/hawk.zip
+          files: |
+            hawk-app/dist/hawk.zip
+            hawk-app/dist/hawk.zip.sha256
 
   # macOS app：标准 runner 已是 arm64（macos-latest），x64 由交叉打包产出，两者同机构建
   # GitHub 只能上传单文件，因此 .app 目录打 zip 发布（VS Code/Slack 同款方式）
@@ -128,6 +172,19 @@ jobs:
 
       - run: npm ci
 
+      # nightly 版本覆写（同 windows job；tag 构建留空用 package.json version）
+      - name: Nightly version
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        id: nightly_ver
+        shell: bash
+        run: echo "version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      # 构建标识（自动更新比较 nightly 新旧用，mac 不走 pack.mjs，直接执行 stamp 脚本）
+      - name: Stamp build info
+        run: node scripts/stamp-build.mjs
+        env:
+          HAWK_SHA: ${{ github.sha }}
+
       - name: Build web
         run: npm run build
 
@@ -136,21 +193,34 @@ jobs:
       - name: Pack app (arm64)
         run: |
           node scripts/build-server.mjs osx-arm64
-          npx electron-builder --dir --arm64
+          VER_ARGS=""
+          [ -n "${{ steps.nightly_ver.outputs.version }}" ] && VER_ARGS="--config.extraMetadata.version=${{ steps.nightly_ver.outputs.version }}"
+          npx electron-builder --dir --arm64 $VER_ARGS
           ditto -c -k --keepParent dist/mac-arm64/hawk.app dist/hawk-mac-arm64.zip
 
       - name: Pack app (x64)
         run: |
           node scripts/build-server.mjs osx-x64
-          npx electron-builder --dir --x64
+          VER_ARGS=""
+          [ -n "${{ steps.nightly_ver.outputs.version }}" ] && VER_ARGS="--config.extraMetadata.version=${{ steps.nightly_ver.outputs.version }}"
+          npx electron-builder --dir --x64 $VER_ARGS
           ditto -c -k --keepParent dist/mac/hawk.app dist/hawk-mac-x64.zip
+
+      # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
+      - name: Generate checksums
+        run: |
+          for f in dist/hawk-mac-arm64.zip dist/hawk-mac-x64.zip; do
+            shasum -a 256 "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
           name: hawk-macos
           path: |
             hawk-app/dist/hawk-mac-arm64.zip
+            hawk-app/dist/hawk-mac-arm64.zip.sha256
             hawk-app/dist/hawk-mac-x64.zip
+            hawk-app/dist/hawk-mac-x64.zip.sha256
           if-no-files-found: error
 
       # ---- 正式版：v* tag（release 由 windows job 创建，这里补充 zip 资产）----
@@ -161,7 +231,9 @@ jobs:
         with:
           files: |
             hawk-app/dist/hawk-mac-arm64.zip
+            hawk-app/dist/hawk-mac-arm64.zip.sha256
             hawk-app/dist/hawk-mac-x64.zip
+            hawk-app/dist/hawk-mac-x64.zip.sha256
 
       # ---- nightly：main 分支 feat/fix 提交（nightly release/tag 已由 windows job 重建）----
 
@@ -172,4 +244,6 @@ jobs:
           tag_name: nightly
           files: |
             hawk-app/dist/hawk-mac-arm64.zip
+            hawk-app/dist/hawk-mac-arm64.zip.sha256
             hawk-app/dist/hawk-mac-x64.zip
+            hawk-app/dist/hawk-mac-x64.zip.sha256
