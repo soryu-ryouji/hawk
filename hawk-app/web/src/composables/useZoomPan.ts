@@ -1,7 +1,9 @@
 // 预览浮层手势引擎：缩放/平移/滑动切换/下拉关闭的状态机（从 PreviewOverlay.vue 原样抽出）。
 // 语义矩阵（抽取时的逐条核对规格，行为与原实现一致）：
 // - 滚轮以光标为不动点缩放（MIN_SCALE–MAX_SCALE）
-// - 双击：scale≤1 关闭预览；>1 复位（先还原再退出，不因双击误退）
+// - 双击：scale≤1 关闭预览；>1 复位（先还原再退出，不因双击误退）。
+//   触屏/笔不保证触发原生 dblclick（iOS 明确不触发），双击在 pointer 层按「300ms 内两次点按」
+//   自判（与网格卡片同方案）；鼠标仍走原生 dblclick（系统双击节奏），按指针类型分流防双触发
 // - 单指拖拽：scale>1 平移；=1 横向主导 → 滑动切换（过 56px 且有邻图才切），
 //   触屏纵向向下主导 → 下拉关闭（向下 0.5 阻尼/向上 0.25 橡皮筋，过 96px 关闭）
 // - 双指捏合：两指中点为不动点缩放，中点平移带动图片（捏合兼双指拖移）；收回到 ≤1 回到翻页模式
@@ -21,6 +23,10 @@ const SWIPE_MIN = 56;
 const PULL_CLOSE_MIN = 96;
 /** 释放滑出/回弹过渡时长 */
 const SWIPE_ANIM_MS = 170;
+/** 双击判定窗口（触屏两次点按，与网格卡片一致） */
+const DOUBLE_TAP_MS = 300;
+/** 双击两次落点的容差半径（手指两下不会落在同一点） */
+const DOUBLE_TAP_RADIUS = 36;
 
 export interface ZoomPanOptions {
   /** 触屏布局（下拉关闭仅触屏可用；桌面纵向拖拽无语义） */
@@ -57,6 +63,10 @@ export function useZoomPan(opts: ZoomPanOptions) {
   let pinch: { startDist: number; startScale: number } | null = null;
   /** 本次按压是否已移动（区分点击与拖拽/捏合：移动过则点击关闭不触发） */
   let moved = false;
+  /** 最近一次 pointerdown 的指针类型：触屏/笔双击走 pointer 层自判，鼠标走原生 dblclick */
+  let lastPointerType = 'mouse';
+  /** 触屏双击计时的上次点按（位置 + 时刻）；拖拽/切图清零重计 */
+  let lastTap: { x: number; y: number; time: number } | null = null;
 
   /** 视觉层复位（切图/复位时调用；手指通常已抬起，手势状态一并清零兜底防泄漏） */
   function reset() {
@@ -74,16 +84,49 @@ export function useZoomPan(opts: ZoomPanOptions) {
     dragStart = null;
     dragging.value = false;
     moved = false;
+    lastTap = null;
   }
 
-  /** 双击：未放大（scale≤1）时退出预览（与双击卡片开预览对称）；放大状态仍复位
+  /** 双击语义：未放大（scale≤1）时退出预览（与双击卡片开预览对称）；放大状态仍复位
    * （放大看细节后先还原再退出，不因双击误退） */
-  function onDblClick() {
+  function doubleTap() {
     if (scale.value <= 1) {
       opts.close();
       return;
     }
     reset();
+  }
+
+  /** 鼠标双击（原生 dblclick）。触屏/笔的双击已在 pointer 层自判并执行；
+   * 个别移动浏览器会补发 dblclick，按指针类型抑制避免双触发 */
+  function onDblClick() {
+    if (lastPointerType !== 'mouse') {
+      return;
+    }
+    doubleTap();
+  }
+
+  /** 单指点按（未移动、未成滑动/下拉）：触屏/笔在此自判双击，鼠标不处理（走原生 dblclick）。
+   * 与网格卡片同方案：300ms 内同区域两次点按即双击 */
+  function handleTap(e: PointerEvent) {
+    if (lastPointerType === 'mouse') {
+      return;
+    }
+    if (moved) {
+      lastTap = null; // 拖拽打断双击计时
+      return;
+    }
+    const now = Date.now();
+    if (
+      lastTap &&
+      now - lastTap.time <= DOUBLE_TAP_MS &&
+      Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) <= DOUBLE_TAP_RADIUS
+    ) {
+      lastTap = null;
+      doubleTap();
+      return;
+    }
+    lastTap = { x: e.clientX, y: e.clientY, time: now };
   }
 
   function onWheel(e: WheelEvent) {
@@ -104,6 +147,7 @@ export function useZoomPan(opts: ZoomPanOptions) {
     if (e.pointerType === 'mouse' && e.button !== 0) {
       return;
     }
+    lastPointerType = e.pointerType;
     if (swipeAnim.value || pullAnim.value) {
       return; // 释放动画期间不接收新手势
     }
@@ -221,6 +265,7 @@ export function useZoomPan(opts: ZoomPanOptions) {
       return;
     }
     if (!swiping.value) {
+      handleTap(e);
       return;
     }
     // 释放：过阈值且有目标 → 轨道继续滑动使邻图落位中央,动画结束提交切换并无缝复位;否则回弹
