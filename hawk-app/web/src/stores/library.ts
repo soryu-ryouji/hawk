@@ -7,6 +7,7 @@ import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
 import { isUnfilteredView, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, viewPathPrefix } from '../viewLogic';
+import { runImportBatch } from '../importBatch';
 import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewPrefs, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
@@ -712,83 +713,43 @@ export const useLibraryStore = defineStore('library', () => {
     dupPrompt.value = null;
   }
 
-  /** 拖拽导入：逐个 itemAddByPath（server 逐文件完成复制/哈希/索引/缩略图后才返回），done 逐项推进 */
+  /** 拖拽导入：逐个 itemAddByPath（server 逐文件完成复制/哈希/索引/缩略图后才返回），done 逐项推进。
+   * 重复策略状态机在 importBatch.runImportBatch（与 importFiles 共用） */
   async function importPaths(paths: string[]) {
-    if (paths.length === 0) {
-      importProgress.value = null;
-      showToast('未找到可导入的文件');
-      return;
-    }
-    importProgress.value = { total: paths.length, done: 0 };
-    let added = 0;
-    let existed = 0;
-    let skipped = 0;
-    let failed = 0;
-    // ask：首个重复时弹窗；skip：重复一律跳过；import：重复也写入（追加路径副本）
-    let policy: 'ask' | 'skip' | 'import' = 'ask';
-    for (const path of paths) {
-      try {
-        let res = await api.itemAddByPath(path, {
+    await runImportBatch(paths, {
+      importOne: (path, skipExisting) =>
+        api.itemAddByPath(path, {
           folder_path: currentFolderPath.value ?? undefined,
-          skip_existing: policy !== 'import',
-        });
-        if (res.skipped && policy === 'ask') {
-          policy = await askDuplicatePolicy();
-          if (policy === 'import') {
-            res = await api.itemAddByPath(path, { folder_path: currentFolderPath.value ?? undefined });
-          }
-        }
-        if (res.skipped) skipped++;
-        else res.already_existed ? existed++ : added++;
-      } catch {
-        failed++;
-      }
-      importProgress.value.done += 1;
-    }
-    importProgress.value = null;
-    showToast(
-      `导入完成：新增 ${added}${skipped ? `，忽略重复 ${skipped}` : ''}${existed ? `，重复导入 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`,
-    );
+          skip_existing: skipExisting,
+        }),
+      askPolicy: askDuplicatePolicy,
+      setProgress: (p) => (importProgress.value = p),
+      onEmpty: () => showToast('未找到可导入的文件'),
+      onSummary: (c) =>
+        showToast(
+          `导入完成：新增 ${c.added}${c.skipped ? `，忽略重复 ${c.skipped}` : ''}${c.existed ? `，重复导入 ${c.existed}` : ''}${c.failed ? `，失败 ${c.failed}` : ''}`,
+        ),
+    });
     // SSE item.added 已触发防抖骨架重载，这里不重复拉取
   }
 
   /** 浏览器端导入（无 hawkShell，拖拽/文件选择器拿到的是 File 内容）：逐个 multipart 上传。
- * 重复策略与 importPaths 一致（首问后整批生效） */
+   * 重复策略与 importPaths 一致（首问后整批生效） */
   async function importFiles(files: File[]) {
-    if (files.length === 0) {
-      importProgress.value = null;
-      showToast('未找到可导入的文件');
-      return;
-    }
-    importProgress.value = { total: files.length, done: 0 };
-    let added = 0;
-    let existed = 0;
-    let skipped = 0;
-    let failed = 0;
-    let policy: 'ask' | 'skip' | 'import' = 'ask';
-    for (const file of files) {
-      try {
-        let res = await api.itemUpload(file, {
+    await runImportBatch(files, {
+      importOne: (file, skipExisting) =>
+        api.itemUpload(file, {
           folder_path: currentFolderPath.value ?? undefined,
-          skip_existing: policy !== 'import',
-        });
-        if (res.skipped && policy === 'ask') {
-          policy = await askDuplicatePolicy();
-          if (policy === 'import') {
-            res = await api.itemUpload(file, { folder_path: currentFolderPath.value ?? undefined });
-          }
-        }
-        if (res.skipped) skipped++;
-        else res.already_existed ? existed++ : added++;
-      } catch {
-        failed++;
-      }
-      importProgress.value.done += 1;
-    }
-    importProgress.value = null;
-    showToast(
-      `上传完成：新增 ${added}${skipped ? `，忽略重复 ${skipped}` : ''}${existed ? `，重复导入 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`,
-    );
+          skip_existing: skipExisting,
+        }),
+      askPolicy: askDuplicatePolicy,
+      setProgress: (p) => (importProgress.value = p),
+      onEmpty: () => showToast('未找到可导入的文件'),
+      onSummary: (c) =>
+        showToast(
+          `上传完成：新增 ${c.added}${c.skipped ? `，忽略重复 ${c.skipped}` : ''}${c.existed ? `，重复导入 ${c.existed}` : ''}${c.failed ? `，失败 ${c.failed}` : ''}`,
+        ),
+    });
   }
 
   // ---- 文件夹写操作 ----
