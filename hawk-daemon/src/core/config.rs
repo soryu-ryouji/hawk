@@ -1,14 +1,22 @@
 //! 项目配置（.hawk/config.toml）。由文件监听触发 Reload，索引流水线在配置变更后全量比对。
 //! 库配置：ignore 模式无 "/" 时匹配任意深度同名项；Matcher 默认序数忽略大小写。
+//! [web] 段保存即热生效（LAN 监听 supervisor 运行期重绑，见 api/lan.rs）。
 
 use crate::core::paths::LibraryPaths;
 use std::sync::RwLock;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct WebSettings {
     pub enabled: bool,
     pub port: u16,
     pub token: Option<String>,
+}
+
+/// reload 前后差异：调用方据此决定后续动作（ignore 变化 → 重扫，web 变化 → LAN 重绑）
+#[derive(Default)]
+pub struct ConfigChange {
+    pub ignore_changed: bool,
+    pub web_changed: bool,
 }
 
 #[derive(Clone, Default)]
@@ -40,26 +48,26 @@ impl LibraryConfig {
         self.current.read().unwrap().clone()
     }
 
-    pub fn reload(&self) {
+    /// 重读配置文件并重建 matcher，返回前后差异
+    pub fn reload(&self) -> ConfigChange {
         let snapshot = load(&self.paths);
         let matcher = IgnoreMatcher::build(&snapshot.ignore);
-        *self.current.write().unwrap() = snapshot;
+        let change = {
+            let mut cur = self.current.write().unwrap();
+            let change = ConfigChange {
+                ignore_changed: cur.ignore != snapshot.ignore,
+                web_changed: cur.web != snapshot.web,
+            };
+            *cur = snapshot;
+            change
+        };
         *self.matcher.write().unwrap() = matcher;
+        change
     }
 
     /// 相对路径是否被 ignore 规则命中（仅用于库内文件，回收站不参与）
     pub fn is_ignored(&self, rel: &str) -> bool {
         self.matcher.read().unwrap().is_ignored(rel)
-    }
-
-    /// 启动期静态读取 [web] 段；运行时读取走 current().web
-    pub fn peek_web(library_root: &str) -> WebSettings {
-        let paths = LibraryPaths::new(library_root, None);
-        if std::path::Path::new(&paths.config_file).is_file() {
-            parse_web(&paths.config_file)
-        } else {
-            WebSettings::default()
-        }
     }
 }
 
@@ -76,7 +84,7 @@ fn ensure_default(paths: &LibraryPaths) {
 
 const DEFAULT_CONFIG_TEXT: &str = r#"# hawk 项目配置（.hawk/config.toml，按素材库隔离、随库同步）
 # name / ignore 保存即热更（文件监听 Reload）
-# [web] 段的端口/绑定/token 保存后由桌面端重启服务生效
+# [web] 段的端口/token 保存即热生效（局域网监听运行期重绑，无需重启）
 
 # 素材库显示名（缺省为库目录名）
 # name = "我的素材库"
@@ -112,19 +120,6 @@ fn load(paths: &LibraryPaths) -> Snapshot {
     }
     snapshot.web = table.get("web").map(parse_web_value).unwrap_or_default();
     snapshot
-}
-
-/// 解析 [web] 段；缺段/非法值回退默认
-pub fn parse_web(config_file: &str) -> WebSettings {
-    let text = match std::fs::read_to_string(config_file) {
-        Ok(t) => t,
-        Err(_) => return WebSettings::default(),
-    };
-    let table: toml::Value = match toml::from_str(&text) {
-        Ok(t) => t,
-        Err(_) => return WebSettings::default(),
-    };
-    table.get("web").map(parse_web_value).unwrap_or_default()
 }
 
 fn parse_web_value(value: &toml::Value) -> WebSettings {

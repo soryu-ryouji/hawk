@@ -117,7 +117,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "version": "1.0.0",
     "platform": "windows",
     "exec_path": "C:/Tools/hawk/hawk-daemon.exe",
-    "access": "admin"
+    "access": "admin",
+    "lan": { "active": true, "port": 27372 }
   }
 }
 ```
@@ -128,6 +129,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
 | access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看只读 token，见 storage.md 的 `[web]` 配置） |
+| lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。设置面板保存 `[web]` 后轮询至此确认热生效/失败 |
 
 ### health
 

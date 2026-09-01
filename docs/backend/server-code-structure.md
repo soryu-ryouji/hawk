@@ -42,13 +42,14 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 
 | 文件 | 职责 |
 | ---- | ---- |
-| `src/main.rs` | 组装与启动（按执行顺序）：`Settings::from_args` 解析参数 → `resolve_port` 试绑 27371（占用回退动态分配）→ `resolve_lan_binding`（[web] 启用且配 token 时追加 0.0.0.0 绑定，端口占用直接启动失败）→ 构建全部单例 → `build_router` → **先监听**（环回 + 可选 LAN，`axum::serve` 优雅退出）→ `worker.attach(index, store, pipeline.sender())`（worker 回流接线，须在 start 前）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher → `startup.mark_ready()` → 后台全库对账扫描 |
+| `src/main.rs` | 组装与启动（按执行顺序）：`Settings::from_args` 解析参数 → `resolve_port` 试绑 27371（占用回退动态分配）→ 构建全部单例 → `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `worker.attach(index, store, pipeline.sender())`（worker 回流接线，须在 start 前）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore 变化 → 强制重扫；[web] 变化 → LAN supervisor 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
 | `src/settings.rs` | 启动设置：`--library` / `--port` / `--web-dist` 与 `HAWK_*` 环境变量解析；库目录不存在 exit(2)；token 未传入时生成随机值并打印 stdout（开发场景）；`HAWK_RESCAN_INTERVAL` 周期对账间隔（默认 60s，0 关闭） |
 
 ### api/ —— HTTP 层
 
 | 文件 | 职责 |
 | ---- | ---- |
+| `src/api/lan.rs` | LAN 监听 supervisor（期望态收敛）：持有当前 0.0.0.0 监听，被 watcher 的 ConfigChanged 唤醒后对比期望态（`[web]` enabled 且 token 非空 → port）与实际，差异时优雅关停旧监听（3s 排空超时强杀）重绑新端口；仅 token 变化为 no-op（token 每请求经 `current().web` 校验天然热）；绑定失败降级为状态错误（app/info 暴露，设置面板轮询），不崩进程 |
 | `src/api/mod.rs` | `AppState` 共享状态与 `build_router`；中间件链 cors → auth → ready_gate（axum 中后注册的 layer 在外层，请求依次经过）；auth 双 token：admin（进程 token，全权限）与 viewer（config.toml `[web].token`，只读：GET + item/list、skeleton），`/api/v1/events`、`item/thumbnail`、`item/file` 三个无法设请求头的 GET 端点放行 `?token=`；ready_gate 未就绪时 `/api/*` 一律 503 `NOT_READY`，仅放行 `app/startup` |
 | `src/api/envelope.rs` | 统一成功/错误信封、错误码常量、`ApiError` → 响应的 `IntoResponse`；`JsonBody` 提取器把 JSON 解析失败统一转为 `INVALID_PARAM` |
 | `src/api/app.rs` | `health`（就绪前 503，无需 token）、`startup`（starting 带进度 / ready / error）、`status`（缩略图与索引积压快照，轮询型客户端用）、`info`（版本/平台/可执行路径/access 级别）、`token`（token 发现：Host 限定环回地址防 DNS rebinding，响应不带 CORS 头） |
@@ -67,7 +68,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | 文件 | 职责 |
 | ---- | ---- |
 | `src/core/paths.rs` | 路径规则的唯一权威：`.hawk/` 布局与 `ensure_layout`（含给 `.hawk/.gitignore` 补 `trash/` 排除项）、库内相对路径 ↔ 绝对路径互转（`..`/越界/绝对路径一律拒绝）、`is_internal`（`.hawk` 内部，回收站除外）、回收站前缀换算、`is_valid_library_path`（API 入参守卫）、库外缓存目录命名（`<库文件夹名>_<根路径 SHA-256 前16位>`，同名库靠哈希区分）、纯路径工具（`full_path` 文本归约、`dir_of`/`name_of`/`ext_of`、`unix_ms`/`file_mtime_ms`） |
-| `src/core/config.rs` | `.hawk/config.toml` 快照（RwLock）与热更 `reload`（watcher 触发）；库首次打开生成带注释的默认配置；ignore 匹配器：无 `/` 的模式展开为 `**/p` + `**/p/**`（任意深度同名），分段 glob（`**` 跨目录、段内 `*`/`?`），大小写不敏感；`peek_web` 供启动期静态读取 `[web]` 段（LAN 绑定决策） |
+| `src/core/config.rs` | `.hawk/config.toml` 快照（RwLock）与热更 `reload`（返回 `ConfigChange` 差异：ignore/web 是否变化）；库首次打开生成带注释的默认配置；ignore 匹配器：无 `/` 的模式展开为 `**/p` + `**/p/**`（任意深度同名），分段 glob（`**` 跨目录、段内 `*`/`?`），大小写不敏感 |
 | `src/core/index_db.rs` | 元数据 SQLite 派生缓存（库外 `index.db`）：schema v1（`items`/`paths`/`tags`/`categories`/`folders` 五表 + `meta`，版本不符整库重建），`journal_mode=DELETE` 不产生 -wal/-shm，`busy_timeout` 5s；`hydrated` 注水标记（false 时内容不可信，必须由 TOML 全量重建）；打开失败/写失败/读失败一律 **poison 熔断**，退化为纯 TOML 模式——缓存故障绝不影响权威数据；`load_all`/`save`/`save_batch`（单事务）/`delete`/文件夹快照/`source_mtime` 快照 |
 | `src/core/metadata.rs` | 元数据模型（`ItemMetadata`：paths + url/tags/star/annotation + 宽高 + `palette`）。解析用 toml crate（宽容缺省）；**序列化手写**以精确控制输出格式（标量在前、`[[paths]]`/`[[palette]]` 数组表在后——数组表后的裸键会被解析进该表、缺省字段省略、字符串转义）；`is_valid_hash_file_name` 只认 64 位小写 hex（同步冲突副本自动忽略） |
 | `src/core/metadata_store.rs` | 元数据存取：内存权威副本 + path→hash 反查表。构造即注水：缓存已注水走 `IndexDb.load_all` 快路径，失败或未注水回退 **TOML 全量解析**（顺带 `db.hydrate` 建缓存，每 1000 文件经 StartupState 报一帧进度）；写入铁律：**先 TOML 原子写（tmp+rename）成功，再刷内存副本**（`save`）；SQLite 缓存写进**待冲刷缓冲**（≥256 条或滞留 200ms 单事务冲刷，消费循环每任务后检查、扫描收尾强制冲刷）——缓存可重建，崩溃后由启动期对账按 mtime 从 TOML 补齐；直写缓存的路径（delete/apply_batch/apply_external_toml/clear_external/replace_folder_snapshots）先冲刷缓冲或移除同 hash 待写项，避免旧值覆盖新值，中途崩溃朝 TOML 收敛；批量路径 `save_toml` 逐条落盘 + `apply_batch` 内存/SQLite 单事务统一应用（调色板批量回写用）；对账入口 `apply_external_toml`（只进不出，解析失败跳过不清空）与 `clear_external`（TOML 消失清空素材参数）；`hashes_with_missing_palette` 是派生缓存自愈的判定依据 |

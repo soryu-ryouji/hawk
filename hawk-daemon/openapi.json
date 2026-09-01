@@ -949,7 +949,8 @@
           "version",
           "platform",
           "exec_path",
-          "access"
+          "access",
+          "lan"
         ],
         "type": "object",
         "properties": {
@@ -964,6 +965,24 @@
           },
           "access": {
             "type": "string"
+          },
+          "lan": {
+            "type": "object",
+            "required": [
+              "active"
+            ],
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "port": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "error": {
+                "type": "string"
+              }
+            }
           }
         }
       },

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 设置面板：缩略图尺寸（实时生效，所有端可用）；局域网 web 查看开关/端口/token（仅 Electron，
-// 按库隔离存于 .hawk/config.toml 的 [web] 段；保存 = 主进程写配置并重启 hawk-daemon，失败自动回滚并弹错）。
+// 按库隔离存于 .hawk/config.toml 的 [web] 段；保存 = 主进程写配置，daemon 热重绑监听（不重启进程），
+// 主进程轮询确认收敛，失败自动写回旧配置回滚并弹错）。
 // 移动端（浏览器触屏）可打开本面板调整缩略图尺寸，但无 hawkShell，局域网设置段不渲染。
 import { onMounted, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
@@ -77,7 +78,7 @@ async function save() {
     if (!res.ok) {
       error.value = res.error ?? '应用失败';
     } else {
-      // 成功：server 已重启就绪（新地址/token 经 server-started 事件推送到 App 原地重载数据），关闭本对话框
+      // 成功：LAN 监听已热重绑（主进程轮询 app/info 确认收敛，无重启），关闭本对话框
       emit('close');
     }
   } catch (e) {
@@ -151,7 +152,7 @@ async function save() {
         <div class="actions">
           <button :disabled="saving || loading" @click="emit('close')">{{ hasShell ? '取消' : '关闭' }}</button>
           <button v-if="hasShell" class="primary" :disabled="saving || loading" @click="save">
-            {{ saving ? '应用中…（正在重启服务）' : '保存并重启服务' }}
+            {{ saving ? '保存中…' : '保存' }}
           </button>
         </div>
       </div>

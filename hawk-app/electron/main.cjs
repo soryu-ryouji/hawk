@@ -479,31 +479,46 @@ ipcMain.handle('hawk:save-lan-settings', async (_event, web) => {
     return { ok: false, error: '启用局域网查看需要填写访问 token' };
   }
 
+  // 热生效：写 config.toml → daemon watcher 唤醒 LAN supervisor 重绑，不重启 daemon。
+  // 轮询 app/info 的 lan 状态直到收敛（绑定失败在此暴露，如端口被占用）
   const file = libraryConfigFile();
   const backup = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  const wantActive = norm.enabled && !!norm.token;
   writeWebSection(file, norm);
-  // 端口/绑定的生效需重启监听。await ready 以支持失败回滚（spawn 同步失败由 select-library 路径的
-  // 系统弹窗兜底；此处失败信号来自 ready reject / hawk:server-error 事件）
-  try {
-    server = await openLibraryAt(libraryRoot);
-    await server.ready;
-  } catch (error) {
+  const converged = await waitLanConverged(wantActive, wantActive ? norm.port : null);
+  if (!converged.ok) {
+    // 失败回滚：写回旧配置，走同一条热更路径收敛回旧态
     if (backup === null) fs.rmSync(file, { force: true });
     else fs.writeFileSync(file, backup);
-    try {
-      stopServer();
-      server = await openLibraryAt(libraryRoot);
-      await server.ready;
-    } catch {
-      // 尽力恢复;仍失败则保持现状由用户重启应用
-    }
-    const message = String(error && error.message ? error.message : error);
-    dialog.showErrorBox('应用设置失败', message);
-    return { ok: false, error: message };
+    await waitLanConverged(false); // 尽力收敛，结果不敏感
+    return { ok: false, error: converged.error };
   }
-  // 无需重载页面：hawk:server-started 事件驱动渲染进程原地换地址重启数据
   return { ok: true };
 });
+
+/** 轮询 daemon app/info 的 lan 状态直至与期望一致或超时。
+ *  wantActive=false 表示期望不活跃；期望激活时同时校验端口一致与无错误 */
+async function waitLanConverged(wantActive, wantPort = null, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${server.address}/api/v1/app/info`, {
+        headers: { authorization: `Bearer ${server.token}` },
+      });
+      const lan = (await res.json())?.data?.lan;
+      if (lan && lan.active === wantActive && (!wantActive || (lan.port === wantPort && !lan.error))) {
+        return { ok: true };
+      }
+      if (lan && lan.error) {
+        return { ok: false, error: `局域网监听未生效：${lan.error}` };
+      }
+    } catch {
+      // daemon 未响应等瞬时错误：继续轮询直到超时
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return { ok: false, error: '局域网设置生效超时（daemon 未响应配置变更）' };
+}
 
 ipcMain.handle('hawk:show-in-finder', (_event, relPath) => {
   if (typeof relPath !== 'string' || relPath.includes('..')) {

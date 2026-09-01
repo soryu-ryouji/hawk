@@ -893,7 +893,6 @@ export interface paths {
             parameters: {
                 query: {
                     id: string;
-                    size?: number | string;
                 };
                 header?: never;
                 path?: never;
@@ -1677,7 +1676,6 @@ export interface components {
             /** Format: int64 */
             modification_time: number | string;
             application_version: string;
-            thumbnail_sizes: (number | string)[];
         };
         PaletteColorDto: {
             color: string;

@@ -113,16 +113,27 @@ async fn status(State(state): State<SharedState>) -> Json<Envelope<TaskStatus>> 
 }
 
 #[derive(Serialize)]
+struct LanInfo {
+    active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
 struct AppInfo {
     version: &'static str,
     platform: &'static str,
     exec_path: String,
     access: &'static str,
+    lan: LanInfo,
 }
 
-/// 运行信息；access 级别由鉴权中间件写入请求扩展
+/// 运行信息；access 级别由鉴权中间件写入请求扩展。lan 为局域网监听实况
+/// （设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）
 async fn info(
-    State(_state): State<SharedState>,
+    State(state): State<SharedState>,
     Extension(access): Extension<AccessLevel>,
 ) -> Json<Envelope<AppInfo>> {
     let access = match access {
@@ -139,11 +150,17 @@ async fn info(
     let exec_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
+    let lan = state.lan.snapshot();
     Json(Envelope::ok(AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         platform,
         exec_path,
         access,
+        lan: LanInfo {
+            active: lan.active,
+            port: lan.port,
+            error: lan.error,
+        },
     }))
 }
 

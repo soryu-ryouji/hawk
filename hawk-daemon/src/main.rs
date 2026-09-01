@@ -37,7 +37,6 @@ async fn main() {
 
     let settings = Settings::from_args();
     let port = resolve_port(settings.port);
-    let lan = resolve_lan_binding(&settings);
 
     // ---------- 服务构建 ----------
     let paths = LibraryPaths::new(&settings.library_root, None);
@@ -79,10 +78,13 @@ async fn main() {
     // 必须在 pipeline.start()（worker.start）之前完成
     worker.attach(index.clone(), store.clone(), pipeline.sender());
 
+    // LAN 监听 supervisor：期望态收敛（首轮回合即按配置绑定，变更由 watcher 唤醒重绑）
+    let lan = api::lan::LanSupervisor::new();
+
     let state: SharedState = Arc::new(api::AppState {
         settings: settings.clone(),
         paths: paths.clone(),
-        config,
+        config: config.clone(),
         startup: startup.clone(),
         index,
         bus: bus.clone(),
@@ -92,52 +94,31 @@ async fn main() {
         categories,
         tags,
         worker,
+        lan: lan.clone(),
     });
 
     // ---------- 先监听 ----------
     let local_listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .expect("绑定本地端口失败");
-    let lan_listener = match lan {
-        Some(lan_port) => Some(
-            tokio::net::TcpListener::bind(("0.0.0.0", lan_port))
-                .await
-                .expect("绑定局域网端口失败"),
-        ),
-        None => None,
-    };
 
     let app = api::build_router(state.clone());
 
     // 先监听端口：注水/缓存重建期间 startup 端点即可答 starting，客户端有进度反馈
     let local_addr = local_listener.local_addr().unwrap();
     let local_serve = tokio::spawn(async move {
-        if let Err(e) = axum::serve(local_listener, app.clone())
+        if let Err(e) = axum::serve(local_listener, app)
             .with_graceful_shutdown(shutdown_signal())
             .await
         {
             tracing::error!("本地监听退出: {e}");
         }
     });
-    let lan_serve = if let Some(listener) = lan_listener {
-        let addr = listener.local_addr().unwrap();
-        let app = api::build_router(state.clone());
-        Some(tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal())
-                .await
-            {
-                tracing::error!("局域网监听退出: {e}");
-            }
-            let _ = addr;
-        }))
-    } else {
-        None
-    };
+    let lan_task = tokio::spawn(lan.clone().run(state.clone()));
 
     // ---------- 随后装配索引流水线（HTTP 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
     pipeline.start();
-    let watcher = start_watcher(&paths, pipeline.clone(), prefs);
+    let watcher = start_watcher(&paths, pipeline.clone(), prefs, &config, &lan);
     startup.mark_ready();
     tracing::info!("hawk-daemon 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
 
@@ -158,7 +139,7 @@ async fn main() {
     shutdown_signal().await;
     let _ = watcher;
     let _ = local_serve;
-    let _ = lan_serve;
+    let _ = lan_task;
 }
 
 async fn shutdown_signal() {
@@ -177,36 +158,17 @@ fn resolve_port(preferred: u16) -> u16 {
     }
 }
 
-/// 监听地址：桌面 API 恒为环回；[web] 启用且配好 token 时追加局域网绑定。
-/// LAN 端口被占用直接启动失败（报错可见），不做静默回退——局域网访问依赖固定端口
-fn resolve_lan_binding(settings: &Settings) -> Option<u16> {
-    let web = LibraryConfig::peek_web(&settings.library_root);
-    if !web.enabled {
-        return None;
-    }
-    if web.token.is_none() {
-        eprintln!("[web] enabled 但缺少 token，局域网查看未启动（在设置面板配置 token）");
-        return None;
-    }
-    match StdTcpListener::bind(("0.0.0.0", web.port)) {
-        Ok(listener) => {
-            drop(listener);
-            Some(web.port)
-        }
-        Err(_) => {
-            eprintln!("局域网查看端口 {} 被占用，hawk-daemon 启动失败：请更换端口或关闭占用进程", web.port);
-            std::process::exit(3);
-        }
-    }
-}
-
 fn start_watcher(
     paths: &LibraryPaths,
     pipeline: IndexPipeline,
     prefs: Arc<ViewPreferences>,
+    config: &Arc<LibraryConfig>,
+    lan: &Arc<api::lan::LanSupervisor>,
 ) -> Arc<LibraryWatcher> {
     use crate::core::events::REASON_EXTERNAL;
     let watcher = LibraryWatcher::new(paths.clone(), {
+        let config = config.clone();
+        let lan = lan.clone();
         Arc::new(move |event| match event {
             WatcherEvent::FileUpsert(abs) => pipeline.notify_upsert(abs),
             WatcherEvent::Deleted(abs) => pipeline.notify_deleted(abs),
@@ -215,7 +177,17 @@ fn start_watcher(
                 tracing::trace!("目录创建: {path}");
                 pipeline.notify_folder_changed(REASON_EXTERNAL);
             }
-            WatcherEvent::ConfigChanged => pipeline.notify_config_changed(),
+            // 先重读配置再按变更分类分发：ignore 变化 → 强制重扫；[web] 变化 → LAN 热重绑。
+            // 仅 name 变化无后续动作（library/info 每次读 current()）
+            WatcherEvent::ConfigChanged => {
+                let change = config.reload();
+                if change.ignore_changed {
+                    pipeline.notify_config_changed();
+                }
+                if change.web_changed {
+                    lan.wake();
+                }
+            }
             WatcherEvent::RegistryChanged => pipeline.notify_registry_changed(),
             WatcherEvent::PreferencesChanged => prefs.reload(),
             WatcherEvent::Overflow => pipeline.notify_overflow(),

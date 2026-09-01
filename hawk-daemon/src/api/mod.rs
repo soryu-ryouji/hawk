@@ -19,6 +19,7 @@ pub mod envelope;
 pub mod events;
 pub mod folder;
 pub mod item;
+pub mod lan;
 pub mod library;
 pub mod openapi;
 pub mod taxonomy;
@@ -46,6 +47,8 @@ pub struct AppState {
     pub categories: Arc<CategoryRegistry>,
     pub tags: Arc<TagRegistry>,
     pub worker: Arc<ThumbnailWorker>,
+    /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
+    pub lan: Arc<lan::LanSupervisor>,
 }
 
 pub type SharedState = Arc<AppState>;
