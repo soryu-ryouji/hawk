@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useLayout } from '../composables/useLayout';
-import { showInFileManagerLabel, shell } from '../platform';
+import { shell } from '../platform';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
 import SearchBox from './SearchBox.vue';
@@ -138,10 +138,6 @@ function moveToFolder(path: string) {
 }
 
 // ---- 其他 ----
-
-function showInFinder(path: string) {
-  void shell.showInFinder(path);
-}
 
 /** 点击信息（标签/分类/文件夹/文件位置）跳转对应视图；已在该视图时不重查 */
 function goView(v: ViewState) {
@@ -371,7 +367,6 @@ function batchMoveFolder(path: string) {
             >
               <Icon name="trash" :size="13" />
             </button>
-            <button class="finder" :title="showInFileManagerLabel" @click="showInFinder(path)">◎</button>
           </div>
         </section>
       </div>
