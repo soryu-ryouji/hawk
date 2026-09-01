@@ -9,6 +9,7 @@ import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
 import { isUnfilteredView, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, viewPathPrefix } from '../viewLogic';
 import { runImportBatch } from '../importBatch';
 import { hasShell } from '../platform';
+import { loadJSON, loadText, saveJSON, saveText, STORAGE_KEYS } from '../persist';
 import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewPrefs, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
@@ -87,12 +88,8 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function loadUserThumbSize(): number | null {
-    try {
-      const saved = Number(localStorage.getItem('hawk:thumbSize'));
-      return Number.isFinite(saved) && saved >= THUMB_SIZE_MIN && saved <= THUMB_SIZE_MAX ? saved : null;
-    } catch {
-      return null;
-    }
+    const saved = Number(loadText(STORAGE_KEYS.thumbSize));
+    return Number.isFinite(saved) && saved >= THUMB_SIZE_MIN && saved <= THUMB_SIZE_MAX ? saved : null;
   }
 
   /** 用户显式设置缩略图尺寸（设置面板滑杆/± 按钮）：写入偏好并停止跟随动态默认 */
@@ -102,11 +99,7 @@ export const useLibraryStore = defineStore('library', () => {
       return;
     }
     userThumbSize = thumbSize.value;
-    try {
-      localStorage.setItem('hawk:thumbSize', String(thumbSize.value));
-    } catch {
-      // 隐私模式等写入失败：仅本次会话生效
-    }
+    saveText(STORAGE_KEYS.thumbSize, String(thumbSize.value));
   }
   /** 搜索框草稿（顶栏与检查器顶搜索框共用一份，回车提交为 keywords） */
   const searchText = ref('');
@@ -253,30 +246,25 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 视图记忆：按素材库路径存 localStorage（同一台机器多库互不干扰） */
+  /** 视图记忆：按素材库路径存 localStorage（同一台机器多库互不干扰）；键注册表在 persist.ts */
   function viewStorageKey() {
-    return `hawk:lastView:${library.value?.path ?? ''}`;
+    return STORAGE_KEYS.lastView(library.value?.path ?? '');
   }
 
   function restoreView() {
     // 恢复不了（无记忆/目标已删/数据损坏）一律回退全部素材：
     // 换库复用 init 时 view 残留上一库取值，任何 return 路径都必须显式重置
     const fallback: ViewState = { kind: 'all' };
-    try {
-      const saved = localStorage.getItem(viewStorageKey());
-      if (!saved) {
-        view.value = fallback;
-        return;
-      }
-      const parsed = JSON.parse(saved) as ViewState;
-      const valid =
-        (parsed.kind !== 'folder' || folderExists(parsed.path)) &&
-        (parsed.kind !== 'category' || categoryExists(parsed.name)) &&
-        (parsed.kind !== 'tag' || tagList.value.some((t) => t.name === parsed.name));
-      view.value = valid ? parsed : fallback;
-    } catch {
-      view.value = fallback; // 损坏的持久化数据
+    const parsed = loadJSON<ViewState | null>(viewStorageKey(), null);
+    if (parsed === null) {
+      view.value = fallback;
+      return;
     }
+    const valid =
+      (parsed.kind !== 'folder' || folderExists(parsed.path)) &&
+      (parsed.kind !== 'category' || categoryExists(parsed.name)) &&
+      (parsed.kind !== 'tag' || tagList.value.some((t) => t.name === parsed.name));
+    view.value = valid ? parsed : fallback;
   }
 
   function folderExists(path: string): boolean {
@@ -291,7 +279,7 @@ export const useLibraryStore = defineStore('library', () => {
   /** 应用视图：持久化 + 应用记忆排序 + 清选择 + 重查列表（setView/goBack/correctView 的公共收尾） */
   function applyView(v: ViewState) {
     view.value = v;
-    localStorage.setItem(viewStorageKey(), JSON.stringify(v));
+    saveJSON(viewStorageKey(), v);
     applySortForView(v);
     clearSelection();
     void resetList();

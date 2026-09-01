@@ -2,6 +2,7 @@
 // 连接参数经 URL hash 注入（Electron 主进程），或开发时用 VITE_HAWK_API/TOKEN 环境变量。
 
 import { hasShell } from '../platform';
+import { loadText, removeKey, saveText, STORAGE_KEYS } from '../persist';
 
 interface ApiConfig {
   api: string;
@@ -36,23 +37,23 @@ export function initApi(): ApiConfig | null {
   }
   // token 优先级：hash（Electron 注入）> ?token= 查询参数 > 本地存储（按 api 地址隔离，记住上次验证通过的 token）
   const token =
-    hash.get('token') || search.get('token') || localStorage.getItem(tokenStorageKey(api)) || '';
+    hash.get('token') || search.get('token') || loadText(tokenStorageKey(api)) || '';
   config = { api, token };
   return config;
 }
 
 /** token 在 localStorage 的存储键：按 api host 隔离，多素材库/多服务端互不覆盖 */
 export function tokenStorageKey(api: string): string {
-  return `hawk:token:${new URL(api).host}`;
+  return STORAGE_KEYS.token(new URL(api).host);
 }
 
 /** 记住验证通过的 token（局域网查看器下次免输入直连） */
 export function storeToken(api: string, token: string): void {
-  localStorage.setItem(tokenStorageKey(api), token);
+  saveText(tokenStorageKey(api), token);
 }
 
 export function clearStoredToken(api: string): void {
-  localStorage.removeItem(tokenStorageKey(api));
+  removeKey(tokenStorageKey(api));
 }
 
 /** 更新当前连接 token（ConnectScreen 验证通过后注入） */

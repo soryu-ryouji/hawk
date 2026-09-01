@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { initApi, apiConfig, clearStoredToken, ApiError } from './api/client';
 import { connectEvents } from './api/events';
+import { loadJSON, saveJSON, STORAGE_KEYS } from './persist';
 import { useLibraryStore } from './stores/library';
 import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
@@ -71,27 +72,17 @@ function clamp(v: number, min: number, max: number) {
 }
 
 function loadPanelWidths() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('hawk:panelWidths') ?? '{}') as {
-      sidebar?: number;
-      inspector?: number;
-    };
-    if (typeof saved.sidebar === 'number') {
-      sidebarWidth.value = clamp(saved.sidebar, SIDEBAR_MIN, SIDEBAR_MAX);
-    }
-    if (typeof saved.inspector === 'number') {
-      inspectorWidth.value = clamp(saved.inspector, INSPECTOR_MIN, INSPECTOR_MAX);
-    }
-  } catch {
-    // 损坏的持久化数据忽略
+  const saved = loadJSON(STORAGE_KEYS.panelWidths, {} as { sidebar?: number; inspector?: number });
+  if (typeof saved.sidebar === 'number') {
+    sidebarWidth.value = clamp(saved.sidebar, SIDEBAR_MIN, SIDEBAR_MAX);
+  }
+  if (typeof saved.inspector === 'number') {
+    inspectorWidth.value = clamp(saved.inspector, INSPECTOR_MIN, INSPECTOR_MAX);
   }
 }
 
 function savePanelWidths() {
-  localStorage.setItem(
-    'hawk:panelWidths',
-    JSON.stringify({ sidebar: sidebarWidth.value, inspector: inspectorWidth.value }),
-  );
+  saveJSON(STORAGE_KEYS.panelWidths, { sidebar: sidebarWidth.value, inspector: inspectorWidth.value });
 }
 
 function onResizeMove(e: MouseEvent) {
