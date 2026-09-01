@@ -152,22 +152,30 @@ web/
 ├── tsconfig.json
 └── src/
     ├── main.ts                # 入口：解析 hash 注入 api/token、创建 Pinia、挂载 App
-    ├── App.vue                # 布局骨架；挂载全局 composables（快捷键/拖拽导入）与浮层
-    ├── types.ts               # 业务类型（ViewState/QueryState/MenuItem）；Item 等从 schema.d.ts 别名导出
+    ├── App.vue                # 布局骨架；启动阶段状态机与跨 store 编排；挂载全局 composables（快捷键/拖拽导入）与浮层
+    ├── types.ts               # 业务类型（ViewState/QueryState/MenuItem）+ hawkShell 全局类型声明；Item 等从 schema.d.ts 别名导出
     ├── dnd.ts                 # 素材拖拽共享工具（网格→侧栏）：ITEMS_MIME、startItemsDrag/itemsDragOver/readItemsDrop
+    ├── viewLogic.ts           # 视图/查询纯决策逻辑（排序父链继承/无过滤视图/选择集 range/toggle/骨架合并判定）：library.ts 消费，Vitest 覆盖
+    ├── importBatch.ts         # 批量导入共享状态机（重复策略 ask→首问整批生效、计数、进度推进）：依赖注入不触碰 store，Vitest 覆盖
+    ├── layout.ts              # 网格布局单一来源：GRID_GAP/CARD_META_H/CARD_BORDER 常量（ItemCard 经 CSS 变量消费）+ 齐行布局纯函数 layoutRows，Vitest 覆盖
+    ├── persist.ts             # localStorage 收口：键注册表（hawk:panelWidths/thumbSize/lastView/token）+ 统一损坏回退/写入静默
+    ├── platform.ts            # 平台与 shell 收敛：platform/isMac/fileManagerName/hasShell/shell（浏览器端为类型化 no-op 壳，调用方免 ?. 兜底）
     ├── api/
-    │   ├── client.ts          # request 封装：baseURL、Bearer 头、信封解包、ApiError
+    │   ├── client.ts          # request 封装：baseURL、Bearer 头、信封解包、ApiError；token 记忆经 persist.ts
     │   ├── endpoints.ts       # 全部端点的强类型函数（api.itemList(...) 等）
     │   ├── events.ts          # SSE 连接管理：订阅、重连、分发
     │   └── schema.d.ts        # openapi-typescript 生成（入库，勿手改）
     ├── stores/
-    │   └── library.ts         # Pinia 主 store（见下）
+    │   ├── library.ts         # Pinia 主 store：视图/查询/列表/选择集/文件夹树/分类标签（见下）
+    │   ├── importer.ts        # 导入子 store：批量导入进度/重复策略弹窗/路径与文件两个入口（importBatch 接线）
+    │   └── preview.ts         # 预览子 store：预览浮层导航（sticky item）+ 图片编辑窗口目标与保存
     ├── composables/           # 只放业务 composable；通用能力直接用 @vueuse/core
     │   ├── useContextMenu.ts  # 右键菜单状态（visible/x/y/items）
-    │   ├── useDragImport.ts   # 拖拽导入（文件夹递归展开 + 对接 store.importPaths）
-    │   └── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
-    │   └── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
-    │   └── useLayout.ts       # 布局/触屏判定：narrow=matchMedia ≤1200px（同步 body.mobile，三栏最小健康宽度见布局章节），touch=(pointer: coarse) 或 maxTouchPoints>0（同步 body.touch，iPad「请求桌面网站」下 pointer 不命中需 maxTouchPoints 兜底）；narrow 驱动布局差异（抽屉侧栏/点按开预览/顶栏减负），touch 驱动触屏手势（下拉关闭/隐藏关闭 ×）；设备能力判断走 platform.ts
+    │   ├── useDragImport.ts   # 拖拽导入（文件夹递归展开 + 对接 importer.importPaths/importFiles）
+    │   ├── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
+    │   ├── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
+    │   ├── useZoomPan.ts      # 预览手势引擎：滚轮不动点缩放/双击/单指平移与滑动切换/双指捏合/下拉关闭状态机（语义矩阵见头注释）
+    │   ├── useLayout.ts       # 布局/触屏判定：narrow=matchMedia ≤1200px（同步 body.mobile，三栏最小健康宽度见布局章节），touch=(pointer: coarse) 或 maxTouchPoints>0（同步 body.touch，iPad「请求桌面网站」下 pointer 不命中需 maxTouchPoints 兜底）；narrow 驱动布局差异（抽屉侧栏/点按开预览/顶栏减负），touch 驱动触屏手势（下拉关闭/隐藏关闭 ×）；设备能力判断走 platform.ts
     │   └── useStartup.ts      # 启动状态机：server-started/error/progress 事件（Electron IPC）或浏览器轮询 /app startup，就绪计数驱动 App (re)boot
     ├── components/
     │   ├── TitleBar.vue
@@ -179,6 +187,7 @@ web/
     │   ├── ConnectScreen.vue  # 连接门页：局域网 web 查看先输入 token，验证通过后记忆、再访问免输入直连
     │   ├── Sidebar.vue
     │   ├── FolderTreeNode.vue
+    │   ├── TaxonomyRow.vue    # 分类/标签共用的侧栏行（图标/名称/计数/右键菜单/拖入高亮，kind 驱动差异）
     │   ├── SearchBox.vue      # 搜索框（TitleBar/Inspector 顶共用；触屏横屏挪到检查器顶）
     │   ├── ItemGrid.vue
     │   ├── ItemCard.vue
@@ -240,7 +249,7 @@ export class ApiError extends Error {
 export function initApi(): ApiConfig | null
 // api 解析优先级：location.hash(#api=…) > VITE_HAWK_API(纯前端调试) > 同源 location.origin(仅纯浏览器:
 // 页面由 hawk-daemon 托管的局域网 web 查看场景;Electron 内无 hash 视为未配置)
-// token 解析优先级：hash > ?token= 查询参数 > localStorage(键 hawk:token:<host>,ConnectScreen 验证通过后写入,
+// token 解析优先级：hash > ?token= 查询参数 > localStorage(键 hawk:token:<host>,经 persist.ts,ConnectScreen 验证通过后写入,
 // 同一服务端再访问免输入直连)
 export function storeToken(api, token) / clearStoredToken(api): void  // localStorage 按 api host 隔离
 export function setApiToken(token): void  // ConnectScreen 验证通过后更新当前连接
@@ -306,9 +315,13 @@ export function connectEvents(handlers: {
 
 事件名与负载的字段契约以 server-rest-api-v1.md「events」节为准（`ItemEvents` 常量与文档一一对应），此处只做类型分发，不自定义负载形状。
 
-### Pinia store（stores/library.ts）
+### Pinia store（stores/）
 
-单一 store `useLibraryStore`，组件不直接调 api（除缩略图 URL 拼接），一切经 action：
+三个 store 构成 DAG：子 store（importer/preview）可读主 store 的 state/getter、调其 action；
+**主 store 不反向依赖子 store，子 store 之间不互引**；跨 store 的编排（init 前的会话清理、SSE 分发）
+由组件层（App.vue）负责。组件不直接调 api（除缩略图 URL 拼接），一切经 action。
+
+**主 store `useLibraryStore`（stores/library.ts）**——视图/查询/列表/选择集/文件夹树/分类标签/回收站：
 
 ```ts
 // ---- state ----
@@ -321,13 +334,11 @@ totalSize: number; loading: boolean; windowLoading: boolean;   // 整表加载�
 selection: string[];             // 选中 id，有序；末位为主选中/连选锚点（selectAll 基于全量骨架）
 folders: FolderNode | null;      // 完整树（含根）
 library: LibraryInfo | null;
-thumbSize: number;               // 网格卡片边长偏好（滑杆 120–280，齐行布局目标行高）：桌面端会话级、固定 160 不持久化；web 端（浏览器）用户显式设置过则记忆 localStorage（`hawk:thumbSize`，越界/损坏回退到无偏好）且不再自动切换，未设置时跟随视口宽度的动态默认——≥700px 用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转经 useMediaQuery 自动跟随；用户设置统一走 setUserThumbSize（与动态默认写入路径区分）
+thumbSize: number;               // 网格卡片边长偏好（滑杆 120–280，齐行布局目标行高）：桌面端会话级、固定 160 不持久化；web 端（浏览器）用户显式设置过则记忆 localStorage（`hawk:thumbSize`，越界/损坏回退到无偏好，经 persist.ts）且不再自动切换，未设置时跟随视口宽度的动态默认——≥700px 用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转经 useMediaQuery 自动跟随；用户设置统一走 setUserThumbSize（与动态默认写入路径区分）
 sidebarVisible: boolean;         // 侧栏显隐（标题栏开关，默认开）
-previewId: string | null;        // 预览浮层
+toast: string | null;            // 轻提示（3s 自动清除）
 // 缩略图后台积压（task.progress 驱动；null 无积压，App.vue 顶部细进度条据此显隐）
 taskBacklog: { pending: number; active: number } | null;
-toast: string | null;            // 轻提示（3s 自动清除）
-importProgress: { total: number; done: number } | null;  // 导入进度：null 无任务；total=0 收集文件阶段（不定态进度条）
 // 会话内浏览历史：viewHistory/historyIndex，setView 压栈，数据变更修正就地替换当前条目
 
 // ---- getters ----
@@ -335,7 +346,6 @@ isTrash: boolean;                // view.kind === 'trash'
 currentFolderPath: string | null;
 selectedItems: Item[];
 primarySelected: Item | null;    // selection 末位对应的 item
-previewItem / previewPrevId / previewNextId: 浮层与左右切换
 
 // ---- actions ----
 init(): Promise<void>;           // libraryInfo + folders + resetList；失败进启动失败态
@@ -356,21 +366,28 @@ setStarForSelected(star): Promise<void>;           // 批量端点设置评分�
 batchUpdate(ids, patch, doneText): Promise<void>;  // 批量端点统一入口；missing_ids 计数在 toast 提示「n 个未处理」
 trashSelected(): Promise<void>; restoreSelected(): Promise<void>;   // 删除：选中项含多个库内位置副本时先问（DeleteScopeDialog：全部位置/仅当前文件夹/取消，单路径不弹）；恢复全部回收站位置
 clearTrash(): Promise<void>;                       // 调用方先二次确认
-importPaths(paths: string[]): Promise<void>;       // 拖拽导入（Electron）：逐个 itemAddByPath（server 逐文件处理完才返回，done 逐项推进）；带 skip_existing，首个重复时经 dupPrompt 弹窗问一次（忽略/仍然导入，整批生效），结束汇总 toast（新增/忽略重复/重复导入/失败）
-importFiles(files: File[]): Promise<void>;        // 浏览器端导入（拖拽/上传按钮）：逐个 multipart itemUpload，重复策略与 importPaths 一致
-dupPrompt / resolveDuplicatePolicy;               // 重复策略弹窗挂起态（ImportDuplicateDialog 呈现，App.vue 挂载；resolve 触发续走）
 deleteLocation(id, path): Promise<void>;         // 按位置删除（Inspector 文件位置列表）：其余位置保留，最后一个库内位置被删时整项回收
 deleteScopePrompt / resolveDeleteScope;          // 多位置删除策略弹窗挂起态（DeleteScopeDialog 呈现；folder 非空时才有「仅从此处移除」选项）
-importBegin(): boolean;                           // 拖拽落下即占用导入态（并发导入拒绝并 toast）；importPaths 前置
 refreshFolders(): Promise<void>;
-openPreview(id): void; closePreview(): void; navigatePreview(step: 1 | -1): void;
-editorTarget: Item | null;   // 图片编辑窗口目标(全局单例,App.vue 据此挂载 ImageEditDialog)
 viewerMode: boolean;          // 局域网 viewer token 且 [web].writable 未开启:隐藏全部写入口,服务端 403 为最终防线;writable 开启后 false(web 端与桌面端同权)
-openEditor(item): void; closeEditor(): void;   // 网格/预览浮层右键「编辑图片…」
-saveImageEdit(id, angle: 90 | 180 | 270): Promise<boolean>;  // 编辑窗口保存：客户端重编码（canvas，JPEG EXIF 字节级回填并重置 Orientation，见 imageEdit.ts）→ item/replace；id 漂移后新 item 就地替换详情（预览若正打开则跟随新 id）；返回是否成功，调用方据此关闭编辑窗口
 showToast(msg: string): void;
 applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略见下节）
 ```
+
+**导入子 store `useImporterStore`（stores/importer.ts）**：批量导入域。状态 `importProgress`
+（null 无任务；total=0 收集文件阶段不定态）、`dupPrompt`（重复策略弹窗挂起态，ImportDuplicateDialog
+呈现）；action `importBegin()`（拖拽落下占位，并发拒绝并 toast）、`importPaths(paths)`（Electron 拖拽：
+逐个 itemAddByPath，server 逐文件处理完才返回，done 逐项推进）、`importFiles(files)`（浏览器 multipart
+itemUpload，手机上传按钮的主入口）。两者共享 `importBatch.runImportBatch` 状态机（重复策略 ask→首问
+整批生效、计数、进度推进，依赖注入可单测）：带 skip_existing，首个重复时弹窗问一次（忽略/仍然导入），
+结束汇总 toast（新增/忽略重复/重复导入/失败）。folder_path 取主 store 的 currentFolderPath，提示经主 store showToast。
+
+**预览子 store `usePreviewStore`（stores/preview.ts）**：预览浮层与图片编辑域。状态 `previewId`、
+`previewItem`（sticky：详情未加载不置空，防浮层卸载重建）、`editorTarget`（编辑窗口目标，App.vue 据此挂载
+ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previewIndex/previewNavId`（邻居 id 取自
+主 store 骨架）、`openEditor/closeEditor`、`saveImageEdit(id, angle)`（编辑窗口保存：客户端重编码
+（canvas，JPEG EXIF 字节级回填并重置 Orientation，见 imageEdit.ts）→ item/replace；id 漂移后新 item 就地替换
+详情（预览若正打开则跟随新 id）；返回是否成功，调用方据此关闭编辑窗口）。打开预览时按需 ensureWindow 补详情。
 
 ### Vue 实践基线
 
@@ -381,14 +398,18 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 - 全局监听/观察器一律走 @vueuse/core（随组件卸载自动清理），不手写 `addEventListener`
 - 组件不直接调 api，一切经 Pinia action；跨组件共享逻辑才抽 composable
 - 组件局部状态用 `ref`；items 大数组只做整体替换，不依赖深度响应式
+- 纯决策逻辑抽纯函数模块（viewLogic/importBatch/layout），依赖注入、不触碰响应式状态，配 Vitest 单测
+- localStorage 一律经 persist.ts（键注册表 + 统一回退/静默）；shell/平台判断一律经 platform.ts（hasShell/shell/isMac）
+- 子 store 可引用主 store，主 store 不得反向引用子 store，跨 store 编排留在组件层
 - 构建先过类型检查：`vue-tsc --noEmit && vite build`
 
 ### 组件契约
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
-| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右组首为上传按钮（`!viewerMode` 时显示：隐藏 file input 多选 → `store.importFiles` multipart 上传，手机端无拖拽的主导入入口）；右端设置齿轮（所有客户端常显，打开 SettingsDialog；web 端含连接分区/token 注销）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（preview.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，importer.importProgress 驱动，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
+| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右组首为上传按钮（`!viewerMode` 时显示：隐藏 file input 多选 → `importer.importFiles` multipart 上传，手机端无拖拽的主导入入口）；右端设置齿轮（所有客户端常显，打开 SettingsDialog；web 端含连接分区/token 注销）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `TaxonomyRow.vue` | `kind: 'category' \| 'tag'`、`name`、`count`、`active`、`dropTarget` | `rename(name)` | 侧栏分类/标签共用的行：图标/名称/计数/点击切视图/右键菜单（重命名 emit 给 Sidebar 弹输入框；刷新缓存与删除按 kind 调 store）；dragenter/leave/drop 由 Sidebar 容器级委托（`.tax-row` + `data-name`） |
 | `SearchBox.vue` | — | — | 搜索框（store.searchText 草稿 + 回车 submitSearch）：TitleBar 与 Inspector 顶部共用同一实例模板；styles.css 按布局切换可见性——桌面在顶栏，触屏横屏（wide+touch，检查器可见）挪到 Inspector 顶（把顶栏空间留给筛选/排序按钮），窄屏隐藏、由 TitleBar 的搜索按钮 + 顶部搜索浮层替代（Enter 提交并关闭，Esc/点遮罩/× 关闭） |
 | `FilterBar.vue` | — | — | 筛选工具列（TitleBar 下方一行 chip，App.vue 以 `filterBarVisible || hasActiveFilters` 控制显隐）：评分 chip（点击弹星级单选菜单：全部/0–5 星，激活时显示当前值并高亮）+ 颜色 chip（条件激活时显示色块与 hex，× 就地清除） |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
@@ -398,7 +419,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `SettingsDialog.vue` | — | `close`、`logout` | 设置面板（TitleBar 齿轮打开，所有 web 客户端与 Electron 均可开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，所有端可用，均经 store.setUserThumbSize——web 端由此记住用户偏好并停止跟随动态默认；动态默认与记忆规则见 store）；局域网分区：开关（switch 样式）+ 一句说明，启用后才展开**「允许修改素材库」开关**（[web].writable，开启后查看端可上传/删除/修改，附风险提示，保存即热生效）、**token 拆分开关**（「拆分只读与可写 token」，仅写权限开启后显示：关闭时单一 token 读写兼具；开启时访问 token 降为只读、另签发可写 token，开启且为空时自动生成——separate_write_token + write_token）、端口/访问 token（拆分时标注「只读」；monospace 输入 + 复制/重新生成；拆分时另有可写 token 同款字段）/本机地址列表（链接 + 逐行复制，useClipboard legacy 回退，复制 toast 反馈；拆分/校验规则不变）——依赖 Electron preload 通道，移动端（浏览器触屏）不可见；**连接分区**（仅局域网 web 端，浏览器触屏/桌面浏览器均可达——设置齿轮由此在所有 web 客户端常显）：当前访问级别（只读/可读写，取自 store.viewerMode）+ 「注销 token」按钮（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页，重新输入另一 token 即可切换读写身份）；端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控，inputmode=numeric）：实时校验纯数字且 1–65535，不合法红框 + 提示，保存拦截（未启用时输入框不可见，静默回退默认 27372）；**遮罩关闭为 pointerdown/pointerup 配对判定**（按下与抬起都落在遮罩上才关）——拖动端口数字/滑杆滑出面板松开时 click 落在共同祖先即遮罩上，旧 click.self 判定会误关面板丢失未保存配置；Esc 关闭（捕获阶段拦截并阻断全局快捷键）；打开期间挂 `body.dialog-open` 挂起窗口拖拽区（同 ContextMenu 的 menu-open），点遮罩盖住的标题栏也是关闭而不是拖窗口；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置——daemon watcher 唤醒 LAN supervisor 热重绑（不重启进程、SSE 不断），主进程轮询 `app/info` 的 `lan` 状态确认收敛，绑定失败（端口占用等）自动写回旧配置回滚并弹错；成功后本对话框 emit close；无 shell（web 端）时底部仅「关闭」（滑杆实时生效无需保存） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
-| `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；容器尺寸经 ResizeObserver 驱动（非正值忽略 + 挂载时主动测量 + 骨架到达时自愈兑底——RO 首帧可能在布局就绪前返回 0，且容器尺寸不再变化时不重发，会把布局永久卡在空网格）；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
+| `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；容器尺寸经 ResizeObserver 驱动（非正值忽略 + 挂载时主动测量 + 骨架到达时自愈兑底——RO 首帧可能在布局就绪前返回 0，且容器尺寸不再变化时不重发，会把布局永久卡在空网格）；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`preview.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |
 | `Inspector.vue` | — | — | 顶部 40px 拖拽条（Windows/Linux 的窗口控制 fixed 在其右侧），内容区独立滚动。SearchBox（`.inspector-search`，默认隐藏；触屏横屏 wide+touch 时填充顶部条——`flex:1` 占满、`no-drag` 退出拖拽区，浏览器端该条本是无拖拽需求的空条）。单选（触屏只读，`readOnly = touch`）：与桌面版同样的信息结构全部静态展示（名称/注释/网址链接/标签/分类 chips/文件夹/评分★/基本信息/文件位置，无输入控件与 ◎），实际生效于 wide 布局的 iPad 横屏（narrow 下检查器隐藏）；桌面编辑版：1024 预览 + 调色板色块行（点击在当前视图范围内按颜色检索，再点当前色清除）+ 可编辑字段（失焦提交 updateItem；名称/注释为自动增高 textarea，名称回车提交且换行转空格，注释支持多行、Ctrl+Enter 提交）；多选：数量 + 批量按钮；只读信息区（ext/尺寸/大小/mtime/id 短码/全部路径；文件位置列表在 item 多路径时逐行提供「删除此位置」按钮（store.deleteLocation，其余位置保留））；无选中：当前分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size） |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
@@ -406,22 +427,23 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
 | `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
-| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式磨砂玻璃遮罩覆盖底层界面，右上角 × 关闭；滚轮以光标为不动点缩放、双击未放大时退出预览（与双击卡片开预览对称）、放大状态仍先复位；**手势两级语义**：缩放>1 单图平移模式（v-if 互斥，缩放=1 为 carousel 模式）；**pointer 手势统一落在始终挂载的全屏 `.gesture` 层**（平移图/carousel 轨道只是其下 `pointer-events:none` 的视觉层）——模式切换不打断进行中的手势，**双指捏合**（以两指中点为不动点缩放、中点平移兼作双指拖移，双指变单指无缝接管平移）由此可跨 scale=1 不丢跟踪；放大后单指左右滑动即平移（缩放>1 语义），捏合收回到 ≤1 回翻页模式；carousel = **三图轨道**（前|当前|后 并排，iOS 相册式）：横向拖动时左右邻图实时可见，过 56px 阈值松手邻图滑至屏幕中央（轨道动画结束才提交切换并无缝复位，配合相邻原图 `new Image()` 预加载免解码等待），首/末张边缘橡皮筋阻尼（0.35x），不足阈值回弹；**手势层与位移层分离**（位移会改变元素命中区域，transform 只放在视觉层）；点击语义保持不变（carousel 点击不关闭；平移模式点空白边距关闭、点图像不关闭，`moved` 阈值区分点击与拖拽）；触屏另支持**下拉关闭**（阻尼跟手+背景渐亮，≥96px 松手滑出关闭；`touch` 判定，手机/iPad 横竖屏均触发，桌面鼠标不触发）与 **ⓘ 底部详情条**（仅 narrow，只读展示当前项元信息，补检查器在移动端的缺位）；`previewItem` 为 sticky（详情未加载不置空，防浮层卸载重建）；Esc/点遮罩/空格关闭（触屏无 ×，靠下拉/点遮罩）；←/→ 或底部按钮切换（**narrow 隐藏翻页栏**）；**关闭 × 触屏隐藏**（`v-if="!touch"`，下拉关闭/点遮罩替代）；右键菜单：在文件管理器中显示/复制文件路径/复制图片/编辑图片（仅 jpg/png/webp，`store.openEditor`，保存后本浮层经 previewId 切换到新 id 显示旋转结果；放弃则保持原图）/删除图片（删除后跳到下一张，末张关闭） |
-| `ImageEditDialog.vue` | `item: Item` | `close` | 图片编辑窗口：全屏 Eagle 式遮罩（观感同预览浮层、层级高于它），底部中间工具条为 ↺/↻ 旋转 + 「已旋转 n°」+ 退出/保存；`store.editorTarget` 驱动、App.vue 全局挂载（网格与预览浮层右键「编辑图片…」均可打开）。编辑期间旋转只作用于预览角（CSS 变换）；「保存」或带修改退出（×/退出/Esc/点遮罩）时三选确认（保存/不保存/取消）才经 `store.saveImageEdit` 做客户端重编码（canvas，EXIF 方向烘焙进像素；JPEG EXIF 字节级回填、Orientation 重置为 1）并提交 `item/replace`；id 漂移后详情就地替换、预览若正打开则跟随新 id；写回保留原修改时间，素材在按时间排序中不挪位 |
+| `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式磨砂玻璃遮罩覆盖底层界面，右上角 × 关闭；**手势状态机在 `useZoomPan` composable**（滚轮以光标为不动点缩放、双击未放大时退出预览/放大时复位、单指平移与滑动切换、双指捏合、下拉关闭、点击边距关闭的完整语义矩阵见其头注释），本组件只保留视觉层（imageStyle/trackStyle/overlayStyle）与语义接线；**手势两级语义**：缩放>1 单图平移模式（v-if 互斥，缩放=1 为 carousel 模式）；**pointer 手势统一落在始终挂载的全屏 `.gesture` 层**（平移图/carousel 轨道只是其下 `pointer-events:none` 的视觉层）——模式切换不打断进行中的手势，**双指捏合**（以两指中点为不动点缩放、中点平移兼作双指拖移，双指变单指无缝接管平移）由此可跨 scale=1 不丢跟踪；放大后单指左右滑动即平移（缩放>1 语义），捏合收回到 ≤1 回翻页模式；carousel = **三图轨道**（前|当前|后 并排，iOS 相册式）：横向拖动时左右邻图实时可见，过 56px 阈值松手邻图滑至屏幕中央（轨道动画结束才提交切换并无缝复位，配合相邻原图 `new Image()` 预加载免解码等待），首/末张边缘橡皮筋阻尼（0.35x），不足阈值回弹；**手势层与位移层分离**（位移会改变元素命中区域，transform 只放在视觉层）；点击语义保持不变（carousel 点击不关闭；平移模式点空白边距关闭、点图像不关闭，`moved` 阈值区分点击与拖拽）；触屏另支持**下拉关闭**（阻尼跟手+背景渐亮，≥96px 松手滑出关闭；`touch` 判定，手机/iPad 横竖屏均触发，桌面鼠标不触发）与 **ⓘ 底部详情条**（仅 narrow，只读展示当前项元信息，补检查器在移动端的缺位）；`previewItem` 为 sticky（详情未加载不置空，防浮层卸载重建）；Esc/点遮罩/空格关闭（触屏无 ×，靠下拉/点遮罩）；←/→ 或底部按钮切换（**narrow 隐藏翻页栏**）；**关闭 × 触屏隐藏**（`v-if="!touch"`，下拉关闭/点遮罩替代）；右键菜单：在文件管理器中显示/复制文件路径/复制图片/编辑图片（仅 jpg/png/webp，`preview.openEditor`，保存后本浮层经 previewId 切换到新 id 显示旋转结果；放弃则保持原图）/删除图片（删除后跳到下一张，末张关闭） |
+| `ImageEditDialog.vue` | `item: Item` | `close` | 图片编辑窗口：全屏 Eagle 式遮罩（观感同预览浮层、层级高于它），底部中间工具条为 ↺/↻ 旋转 + 「已旋转 n°」+ 退出/保存；`preview.editorTarget` 驱动、App.vue 全局挂载（网格与预览浮层右键「编辑图片…」均可打开）。编辑期间旋转只作用于预览角（CSS 变换）；「保存」或带修改退出（×/退出/Esc/点遮罩）时三选确认（保存/不保存/取消）才经 `preview.saveImageEdit` 做客户端重编码（canvas，EXIF 方向烘焙进像素；JPEG EXIF 字节级回填、Orientation 重置为 1）并提交 `item/replace`；id 漂移后详情就地替换、预览若正打开则跟随新 id；写回保留原修改时间，素材在按时间排序中不挪位 |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭（不选 = 保持不变）；打开期间挂 `body.menu-open` 挂起窗口拖拽区——Electron 的 `-webkit-app-region: drag` 由 OS 命中测试优先消费，遮罩盖在拖拽区上也收不到点击，禁用后点击空白才能正常关菜单 |
-| `ImportDuplicateDialog.vue` | — | — | 导入重复策略对话框：导入过程中首个「内容已在库内」触发（store.dupPrompt 挂起的 resolve，App.vue 全局挂载），「忽略重复」（默认，Esc/点遮罩同效）/「仍然导入」二选一，选择整批生效（批量导入逐文件弹窗不可用）；服务端 skip_existing 配合（见 item/add） |
+| `ImportDuplicateDialog.vue` | — | — | 导入重复策略对话框：导入过程中首个「内容已在库内」触发（importer.dupPrompt 挂起的 resolve，App.vue 全局挂载），「忽略重复」（默认，Esc/点遮罩同效）/「仍然导入」二选一，选择整批生效（批量导入逐文件弹窗不可用）；服务端 skip_existing 配合（见 item/add） |
 | `DeleteScopeDialog.vue` | — | — | 多位置删除策略对话框：删除选中项里含多个库内位置副本的素材时触发（store.deleteScopePrompt），「删除全部位置」（卡片级，所有副本入回收站）/「仅从此处移除」（folder/root 视图才有：只删当前文件夹范围内的位置，其余保留）/「取消」（Esc/点遮罩同效，中止本次删除）；单路径素材不弹窗 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
 
 ### composables
 
-通用能力不重复造：滚动驱动用原生 `@scroll` + rAF（可见区间计算在 ItemGrid.vue 内联，配合骨架布局做虚拟渲染）；拖拽用 `useDropZone`；全局监听用 `useEventListener`。业务 composable 只保留三个：
+通用能力不重复造：滚动驱动用原生 `@scroll` + rAF（可见区间计算在 ItemGrid.vue 内联，配合骨架布局做虚拟渲染）；拖拽用 `useDropZone`；全局监听用 `useEventListener`。业务 composable 如下（单测只覆盖纯函数/决策逻辑模块 viewLogic/importBatch/layout，composable 本体靠移动端冒烟与手测）：
 
 | composable | 签名与行为 |
 | ---------- | ---------- |
 | `useContextMenu()` | 模块级单例响应式状态 `{visible, x, y, items}`（全局唯一菜单）；`open(items, MouseEvent)` 定位（防出屏翻转）；`close()` |
-| `useDragImport()` | `useDropZone` 接 drop → 库内素材拖拽静默忽略；只读查看（viewer）toast 提示且悬停光标置禁止 → 先 `importBegin()` 占位（收集文件阶段进度条即显示）→ `webkitGetAsEntry()` 递归展开文件夹 → Electron 经 `webUtils.getPathForFile` 取绝对路径走 `store.importPaths`；浏览器（局域网 web 端）无路径可取，改走 `store.importFiles`（multipart 内容上传，需 `[web].writable`；entries 不可用时退回平铺文件列表）；收集失败 toast |
-| `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；**图片编辑窗口打开时（store.editorTarget）整体让行**（窗口自带 Esc/关闭逻辑，否则 Esc 会关底层预览、Delete 会删正在编辑的素材）；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
+| `useDragImport()` | `useDropZone` 接 drop → 库内素材拖拽静默忽略；只读查看（viewer）toast 提示且悬停光标置禁止 → 先 `importer.importBegin()` 占位（收集文件阶段进度条即显示）→ `webkitGetAsEntry()` 递归展开文件夹 → Electron 经 `webUtils.getPathForFile` 取绝对路径走 `importer.importPaths`；浏览器（局域网 web 端）无路径可取，改走 `importer.importFiles`（multipart 内容上传，需 `[web].writable`；entries 不可用时退回平铺文件列表）；收集失败 toast |
+| `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；**图片编辑窗口打开时（preview.editorTarget）整体让行**（窗口自带 Esc/关闭逻辑，否则 Esc 会关底层预览、Delete 会删正在编辑的素材）；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ preview.navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
+| `useZoomPan()` | 预览浮层手势引擎（`useZoomPan({touch, hasNeighbor, navigate, close, hitImage})`）：管理 scale/tx/ty 与滑动/下拉跟手状态，返回视觉层消费的状态 ref 与一组 pointer/wheel/dblclick/click 处理器；语义矩阵（滚轮不动点缩放/双击/捏合跨 scale=1 不丢跟踪/56px 滑动阈值/96px 下拉关闭/0.35 边缘橡皮筋/点击 vs 拖拽区分）见文件头注释 |
 
 ### 样式约定
 
@@ -474,7 +496,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 - 瀑布流不等高布局、框选、颜色标签、标签云
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
-- 前端单元测试框架（Vitest 暂缓；契约层由 server 的 smoke.sh 兜底）
+- UI/组件级测试框架（组件树渲染测试不做）；Vitest 仅覆盖纯函数与决策逻辑（viewLogic/importBatch/layout），契约层由 server 的 smoke.sh 兜底
 
 ## 打包与分发
 
@@ -509,6 +531,7 @@ npm install
 npm run gen:types   # 生成/更新 API 类型（需先 cargo build hawk-daemon）
 npm run dev         # vite(5173) + electron；server 由 electron 拉起（Rust 二进制，release 优先）
 npm run build       # vue-tsc --noEmit && vite build
+npm run test:unit   # Vitest 纯函数/决策逻辑单测（web/src/**/*.spec.ts，默认 node 环境）
 npm run test:mobile # 移动端网页冒烟测试（见下）
 ```
 

@@ -350,7 +350,11 @@ function libraryConfigFile() {
   return path.join(libraryRoot, '.hawk', 'config.toml');
 }
 
-/** 文本级读取 [web] 段（保留文件其余内容不解析；TOML 由 server 权威解析） */
+/**
+ * 文本级读取 [web] 段（保留文件其余内容不解析；TOML 由 server 权威解析）。
+ * 边界：仅限 [web] 段——值内引号会被剥离（token 含 " / \ 时失真），若主进程需要读写其他配置段，
+ * 必须换用 TOML 库（如 smol-toml），不得在此基础上扩展手写解析。
+ */
 function readWebSection(file) {
   const out = { ...WEB_DEFAULTS };
   try {

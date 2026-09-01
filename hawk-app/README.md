@@ -11,6 +11,7 @@ npm run gen:types      # 从 hawk-daemon 的 OpenAPI schema 生成 TS 类型（w
 npm run dev            # vite + electron 一键起（server 由 electron 拉起）
 npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_TOKEN 可纯浏览器调试
 npm run build          # vue-tsc --noEmit && vite build
+npm run test:unit      # Vitest 纯函数/决策逻辑单测（web/src/**/*.spec.ts）
 ```
 
 开发态后端二进制取 `hawk-daemon/target/` 下的构建产物（本机 `release` 优先，其次 `--target` 交叉产物与 `debug`）；
@@ -19,6 +20,8 @@ npm run build          # vue-tsc --noEmit && vite build
 ## 测试
 
 ```bash
+npm run test:unit     # Vitest 单测：viewLogic（SSE 决策/排序继承/选择）/importBatch（导入状态机）/layout（齐行布局）
+npm run test:mobile   # 移动端网页冒烟：临时库 + hawk-daemon 托管 web/dist + 无 preload 探针窗口断言全链路
 node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断言 DOM/交互/SSE 并截图
 ```
 
