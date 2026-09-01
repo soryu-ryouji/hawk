@@ -40,11 +40,11 @@ git commit -am "release: v0.2.0
 git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台产物
 ```
 
-**push 后 CI 自动接管**：
+**push 后 CI 自动接管**（三个构建 job 全并行 + publish 汇流）：
 
-1. 守卫：提交首行解析版本号，与 package.json 不一致或 tag 已存在 → 立即失败
-2. windows job：web 构建与 cargo 并行 → 打包 `hawk-windows-x64.zip` + 边车（正式版 mx=9 最小体积）→ 以 `tag_name: v0.2.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）
-3. macos job（arm64/x64 双架构 matrix 并行）：各腿产出 `hawk-mac-<arch>.zip` + 边车 → 并行附到 Release
+1. windows job 守卫：提交首行解析版本号，与 package.json 不一致或 tag 已存在 → 立即失败（下游 publish 一并跳过）
+2. 构建层全并行：windows（web 与 cargo 并行 → `hawk-windows-x64.zip` + 边车，正式版 mx=9 最小体积）∥ mac 双架构 matrix 两腿（`hawk-mac-<arch>.zip` + 边车），各自上传 Artifacts
+3. publish 汇流 job（ubuntu，构建全成功后才跑）：下载全部 Artifacts → 正式版以 `tag_name: v0.2.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）；nightly 则轮转重建。任一平台构建失败则不发布（全有或全无，不会出现只有部分平台产物的半成品 Release）
 
 **发布后验证**：
 
@@ -56,10 +56,9 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 
 ## nightly（全自动，无需操作）
 
-main 分支出现 `feat` / `fix` 开头的提交即触发（`concurrency` 串行，避免滚动覆盖竞争）：
+main 分支出现 `feat` / `fix` 开头的提交即触发（`concurrency` 串行，避免滚动覆盖竞争）。
 
-1. windows job 删除旧 `nightly` Release 与 tag → 重建（name = `Nightly <sha7>`，body = 触发提交信息 + 末尾注入完整 sha 注释，prerelease）→ 上传产物
-2. macos 双架构 matrix 两腿并行补充产物
+三个构建 job 全并行产出 Artifacts，publish 汇流 job 删除旧 `nightly` Release 与 tag → 重建（name = `Nightly <sha7>`，body = 触发提交信息 + 末尾注入完整 sha 注释，prerelease）→ 附全部三平台产物
 
 特性与边界：
 
