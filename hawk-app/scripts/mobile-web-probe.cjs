@@ -178,6 +178,60 @@ app.whenReady().then(async () => {
     const v = await win.webContents.executeJavaScript(PREVIEW_SRC).catch(() => null);
     emit({ type: 'preview', t: Date.now() - t0, ...(v ?? { error: true }) });
     await shot('preview');
+
+    // 写路径回旧：上传 → SSE → 卡片出现；删除 → 卡片消失。覆盖两类历史回归：
+    // （1）item.updated（同内容复活）在未过滤视图不重拉骨架 → 上传后卡片不出现；
+    // （2）多路径 item 卡片级删除只回收一个位置 → 删除后卡片残留。探针为 admin token，可写
+    const UPDOWN_SRC = `(() => ({
+      cards: document.querySelectorAll('.card').length,
+    }))()`;
+    const before = await win.webContents.executeJavaScript(UPDOWN_SRC).catch(() => null);
+    const upload = await win.webContents.executeJavaScript(`(async () => {
+      const token = new URLSearchParams(location.search).get('token');
+      const blob = new Blob(['smoke-write-' + Date.now()], { type: 'image/png' });
+      const form = new FormData();
+      form.append('file', blob, 'smoke-write.png');
+      const res = await fetch('/api/v1/item/upload', { method: 'POST', body: form, headers: { Authorization: 'Bearer ' + token } });
+      const json = await res.json();
+      return { status: res.status, id: json?.data?.item?.id, existed: json?.data?.already_existed };
+    })()`).catch((e) => ({ error: String(e) }));
+    let upCount = before?.cards ?? -1;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      upCount = (await win.webContents.executeJavaScript(UPDOWN_SRC).catch(() => null))?.cards ?? -1;
+      if (upCount === (before?.cards ?? 0) + 1) break;
+    }
+    let delStatus = 0;
+    if (upload?.id) {
+      delStatus = await win.webContents
+        .executeJavaScript(
+          `(async () => {
+      const token = new URLSearchParams(location.search).get('token');
+      const res = await fetch('/api/v1/item/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ id: ${JSON.stringify(upload.id)} }),
+      });
+      return res.status;
+    })()`,
+        )
+        .catch(() => 0);
+    }
+    let delCount = upCount;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      delCount = (await win.webContents.executeJavaScript(UPDOWN_SRC).catch(() => null))?.cards ?? -1;
+      if (delCount === (before?.cards ?? 0)) break;
+    }
+    emit({
+      type: 'write-flow',
+      t: Date.now() - t0,
+      before: before?.cards,
+      uploadStatus: upload?.status,
+      cardsAfterUpload: upCount,
+      deleteStatus: delStatus,
+      cardsAfterDelete: delCount,
+    });
     app.exit(0);
   };
   // 首个 tick 立即执行：页面可能在 400ms 间隔内就完成 starting→ready（本机回环 + 小库），

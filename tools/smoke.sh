@@ -288,11 +288,14 @@ check "batch_update 无更新字段返回 400" "$(post_json "$BASE/api/v1/item/b
 # --- 回收站 ---
 check "item/delete 移入回收站" "$(post_json "$BASE/api/v1/item/delete" "{\"id\":\"$DOT_ID\"}" | jq -r .status)" success
 check "回收站视图可见" "$(post_json "$BASE/api/v1/item/list" '{"in_trash":true}' | jq -r .data.total)" 1
-# dot 同内容有两条路径（海报/dot.png、dot2.png），回收一份后 item 仍留在库内
-check "回收一份后 item 仍在库内" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -r .data)" 6
-check "回收站文件落盘" "$(ls "$LIB/.hawk/trash/海报/dot.png" >/dev/null 2>&1 && echo yes)" yes
+# dot 同内容有两条路径（海报/dot.png、dot2.png）：卡片级删除（无 path）应全部回收，
+# 否则卡片残留在网格（用户感知为「删除不生效」）
+check "卡片级删除回收全部路径（count 6→5）" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -r .data)" 5
+check "回收站文件落盘（路径 1）" "$(ls "$LIB/.hawk/trash/海报/dot.png" >/dev/null 2>&1 && echo yes)" yes
+check "回收站文件落盘（路径 2）" "$(ls "$LIB/.hawk/trash/dot2.png" >/dev/null 2>&1 && echo yes)" yes
 check "item/restore 恢复" "$(post_json "$BASE/api/v1/item/restore" "{\"id\":\"$DOT_ID\"}" | jq -r .status)" success
-check "恢复后文件归位" "$(ls "$LIB/海报/dot.png" >/dev/null 2>&1 && echo yes)" yes
+check "恢复后文件归位（路径 1）" "$(ls "$LIB/海报/dot.png" >/dev/null 2>&1 && echo yes)" yes
+check "恢复后文件归位（路径 2）" "$(ls "$LIB/dot2.png" >/dev/null 2>&1 && echo yes)" yes
 check "恢复后 count=6" "$(curl -s -H "$AUTH" "$BASE/api/v1/item/count" | jq -r .data)" 6
 
 # folder/delete + restore

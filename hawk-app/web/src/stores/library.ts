@@ -572,7 +572,7 @@ export const useLibraryStore = defineStore('library', () => {
   async function updateItem(id: string, patch: Parameters<typeof api.itemUpdate>[1], path?: string) {
     try {
       const updated = await api.itemUpdate(id, patch, path);
-      applyUpdatedItem(updated);
+      applyUpdatedItem(updated, true);
     } catch (e) {
       showToast(errorText(e));
     }
@@ -595,7 +595,7 @@ export const useLibraryStore = defineStore('library', () => {
    * 成员资格可能已变化（移出当前文件夹、摘掉当前分类/标签等），成员判定以服务端查询为准。
    * 标签/分类集合真的变化时才刷分类计数：缩略图就绪等高频 updated 与计数无关，不再每事件刷 taxonomy。
    */
-  function applyUpdatedItem(updated: Item) {
+  function applyUpdatedItem(updated: Item, single: boolean) {
     const prev = details.value.get(updated.id);
     const taxonomyChanged =
       prev !== undefined &&
@@ -614,8 +614,11 @@ export const useLibraryStore = defineStore('library', () => {
         next[skIdx] = { ...prev, star: updated.star, width: updated.width, height: updated.height };
         skeleton.value = next;
       }
-    }
-    if (!isUnfilteredView()) {
+    } else if (!isUnfilteredView() || single) {
+      // 不在当前骨架：可能刚成为本视图成员（同内容 item 经上传获得库内路径时服务端发的是
+      // item.updated 而非 added，未过滤视图原不重拉 → 卡片永远不出现，刷新才有）。
+      // 仅单条事件重拉（用户操作规模）；批量（items.updated，调色板回写）不重拉，
+      // 避免全库重建时非成员项触发重拉风暴
       debouncedSkeletonReload(() => void reloadSkeleton());
     }
     if (taxonomyChanged) {
@@ -1019,12 +1022,12 @@ export const useLibraryStore = defineStore('library', () => {
   function applyEvent(type: string, payload: unknown) {
     switch (type) {
       case 'item.updated': {
-        applyUpdatedItem(payload as Item);
+        applyUpdatedItem(payload as Item, true);
         break;
       }
       case 'items.updated': {
         for (const item of payload as Item[]) {
-          applyUpdatedItem(item);
+          applyUpdatedItem(item, false);
         }
         break;
       }

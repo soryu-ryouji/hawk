@@ -178,6 +178,7 @@ try {
   let grid = null;
   let titlebar = null;
   let preview = null;
+  let writeFlow = null;
   let loadFailed = null;
   let timedOut = false;
   await new Promise((resolvePromise) => {
@@ -194,6 +195,7 @@ try {
         else if (msg.type === 'grid') grid = msg;
         else if (msg.type === 'titlebar') titlebar = msg;
         else if (msg.type === 'preview') preview = msg;
+        else if (msg.type === 'write-flow') writeFlow = msg;
         else if (msg.type === 'load-failed') loadFailed = msg;
         else if (msg.type === 'timeout') timedOut = true;
       }
@@ -236,7 +238,24 @@ try {
       check(!preview.error && preview.overlay, '双击打开预览');
       check(!preview.error && preview.centerInViewport, '预览中央图在视口内', preview.error ? '' : `vw=${preview.vw} vh=${preview.vh}`);
     } else if (sawApp) {
-      check(false, '预览探针', '未执行');
+      check(false, '预针探针', '未执行');
+    }
+    if (writeFlow) {
+      // 写路径闭环：上传后卡片 +1（SSE → 骨架重拉）、删除后归位（多路径/同内容复活场景不残留）
+      check(writeFlow.uploadStatus === 200, '页内上传成功', `status=${writeFlow.uploadStatus}`);
+      check(
+        writeFlow.cardsAfterUpload === (writeFlow.before ?? 0) + 1,
+        '上传后卡片即时出现（SSE → 骨架重拉）',
+        `before=${writeFlow.before} after=${writeFlow.cardsAfterUpload}`,
+      );
+      check(writeFlow.deleteStatus === 200, '页内删除成功', `status=${writeFlow.deleteStatus}`);
+      check(
+        writeFlow.cardsAfterDelete === (writeFlow.before ?? 0),
+        '删除后卡片即时消失',
+        `before=${writeFlow.before} after=${writeFlow.cardsAfterDelete}`,
+      );
+    } else if (sawApp) {
+      check(false, '写路径探针', '未执行');
     }
   }
 } catch (e) {

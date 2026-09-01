@@ -616,7 +616,7 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 
 `POST /api/v1/item/delete`
 
-移入回收站：文件移入 `.hawk/trash/`（保留目录结构），元数据保留。
+移入回收站：文件移入 `.hawk/trash/`（保留目录结构），元数据保留。不带 `path` 为卡片级删除：回收该 item 的**全部**库内位置（同内容多路径 item 只回收一个位置会便卡片残留在网格）；带 `path` 为单位置删除。
 
 #### 请求
 
@@ -635,7 +635,7 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 
 `POST /api/v1/item/restore`
 
-从回收站恢复：文件移回元数据 `paths` 记录的原路径。原路径已被占用时返回 `FILE_EXISTS`。
+从回收站恢复：文件移回元数据 `paths` 记录的原路径。不带 `path` 恢复全部回收站位置（与 delete 对称）；原路径已被占用的位置跳过留在回收站，全部冲突才返回 `FILE_EXISTS`。
 
 #### 请求
 

@@ -110,7 +110,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 - **upload**：multipart/form-data 内容入库（web 端用，浏览器无文件路径可引用）：`file`（文件名只取末段防跨目录，扩展名决定类型，与 path 导入同语义不校验内容）/`folder_path`/`name` → 与 add 相同的同名检查→哈希→落盘→upsert 闭环，响应同 add；写权限 viewer 需 `[web].writable`（auth 中间件统一拦截）
 - **update**：经 `find_location` 取位置快照 → 回收站中的文件禁止改名/移动 → `name` 分支做真实 rename 并 `submit_move`；`folder_path` 分支**按移动后的最新位置再移动**（改名+移动同请求时基于新文件名计算目标）→ tags/star(0–5 校验)/categories/annotation/url 走 `submit_metadata` → 响应 `get_dto` 投影
 - **batch_update**：校验后先逐个移动主位置（同名冲突不整体失败，跳过该项记入 missing），再 `submit_batch_metadata` 一次提交（标签/分类并集追加、评分设置）；不存在的 id 由流水线记入 `missing_ids`；无任何更新字段返回 400
-- **delete / restore**：delete 把文件移入 `.hawk/trash/`（保留目录结构，冲突加 ` (n)` 后缀）；restore 按回收站实际名称去掉前缀后的路径放回，被占用报 `FILE_EXISTS`；位置定位均走 `find_location` 快照
+- **delete / restore**：delete 把文件移入 `.hawk/trash/`（保留目录结构，冲突加 ` (n)` 后缀）；restore 按回收站实际名称去掉前缀后的路径放回。位置定位：带 `path` 走 `find_location` 单位置快照；不带 `path` 为卡片级操作，经 `item_locations` 枚举全部库内（delete）/回收站（restore）位置逐个处理——同内容多路径 item 只回收一个位置会便卡片残留；restore 同名冲突的位置跳过留在回收站，全部冲突才报 `FILE_EXISTS`
 - **thumbnail**：缩略图为单一尺寸 1024 的缓存（扫描导入即时生成，增量/对账不生成，读取端兜底）：命中返回 webp；未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ **直接回源原图**（200，同时后台入队生成缓存）；不可渲染格式（tiff 等）后台生成、生成中 404（经 `item.updated` 重建）。响应 `Cache-Control: immutable`（id 是内容哈希，内容永不变）——注意未命中回源的原图响应同样 immutable，客户端可能长期持有原图字节而非升级 webp（视觉无损，接受）
 - **file / thumbnail 均流式返回**（tokio 异步读 128KB 块，`Body::from_stream`）：大文件不整读进内存、不阻塞运行时线程；读中途出错以流错误终止响应（客户端感知截断）
 - **file**：主位置（优先库内）原图二进制，Content-Type 按扩展名 `mime_guess`；同样 immutable、放行 `?token=`

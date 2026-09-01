@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch, watchEffect } from 'vue';
+import { computed, nextTick, onMounted, ref, watch, watchEffect } from 'vue';
 import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
@@ -56,10 +56,49 @@ const containerWidth = ref(0);
 const viewportHeight = ref(0);
 const scrollTop = ref(0);
 
-useResizeObserver(gridRef, ([entry]) => {
-  containerWidth.value = entry.contentRect.width;
-  viewportHeight.value = entry.contentRect.height;
+useResizeObserver(gridRef, (entries) => {
+  // 取最后一个 entry；非正值忽略（首帧可能在布局就绪前触发返回 0，
+  // 写入会把 containerWidth 卡死在 0：容器尺寸不再变化时 RO 不会重发，网格永久空白）
+  const entry = entries[entries.length - 1];
+  if (entry.contentRect.width > 0) {
+    containerWidth.value = entry.contentRect.width;
+  }
+  if (entry.contentRect.height > 0) {
+    viewportHeight.value = entry.contentRect.height;
+  }
 });
+
+/** 主动测量内容区尺寸（clientWidth 含 padding，需扣除；与 RO 的 contentRect 同口径） */
+function measureGrid() {
+  const el = gridRef.value;
+  if (!el) {
+    return;
+  }
+  const style = getComputedStyle(el);
+  const w = el.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+  const h = el.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom);
+  if (w > 0) {
+    containerWidth.value = w;
+  }
+  if (h > 0) {
+    viewportHeight.value = h;
+  }
+}
+
+onMounted(() => {
+  void nextTick(measureGrid);
+});
+
+// 自愈兑底：骨架到达/变化时若尺寸仍缺失（RO 首帧 0 值且容器尺寸未再变），就地重测。
+// 骨架经网络返回时布局必然已就绪，此次测量可靠
+watch(
+  () => store.skeleton,
+  () => {
+    if (containerWidth.value <= 0 || viewportHeight.value <= 0) {
+      measureGrid();
+    }
+  },
+);
 
 let scrollRaf = 0;
 function onScroll() {

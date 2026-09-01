@@ -30,12 +30,13 @@ export function useDragImport() {
 
   useDropZone(document, {
     onDrop: async (_files, event) => {
-      // 只读查看（局域网 viewer）：导入即写操作,禁用
-      if (store.viewerMode) {
-        return;
-      }
       // 库内素材拖拽（拖到侧栏文件夹/分类/标签）：不是文件导入，静默忽略
       if (event.dataTransfer?.types.includes(ITEMS_MIME)) {
+        return;
+      }
+      // 只读查看（局域网 viewer）：导入即写操作，给出明确反馈（悬停光标也已置为禁止）
+      if (store.viewerMode) {
+        store.showToast('只读模式无法导入，需使用可写 token');
         return;
       }
       // 落下即占用导入态：文件夹递归收集可能耗时，期间进度条显示「正在收集文件」
@@ -66,20 +67,28 @@ export function useDragImport() {
               files.push(file);
             }
           }
+          // webkitGetAsEntry 不可用/返回空的浏览器：退回平铺文件列表（无文件夹递归展开）
+          if (files.length === 0 && _files?.length) {
+            files.push(..._files);
+          }
           await store.importFiles(files);
         }
       } catch {
         store.showToast('读取文件列表失败');
       }
     },
-    // 仅库内视图可导入；库内素材拖拽只有侧栏是合法放置区（行级处理器已置 move），
-    // 悬停在网格等其他位置时显式禁止，避免 document 级处理器给出误导性的 copy 光标
+    // 仅库内视图可导入；只读查看与库内素材拖拽（仅侧栏是合法放置区）显式禁止，
+    // 避免 document 级处理器给出误导性的 copy 光标
     onOver: (_files, event) => {
       const dt = event.dataTransfer;
       if (!dt) {
         return;
       }
-      if (store.isTrash || (dt.types.includes(ITEMS_MIME) && !(event.target as HTMLElement).closest('.sidebar'))) {
+      if (
+        store.viewerMode ||
+        store.isTrash ||
+        (dt.types.includes(ITEMS_MIME) && !(event.target as HTMLElement).closest('.sidebar'))
+      ) {
         dt.dropEffect = 'none';
       }
     },

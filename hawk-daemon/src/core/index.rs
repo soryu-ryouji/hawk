@@ -210,6 +210,24 @@ impl ItemIndex {
         self.inner.lock().unwrap().hash_by_location.get(location_path).cloned()
     }
 
+    /// 指定 item 的全部位置快照（want_trash 过滤，None 为全部）：
+    /// 卡片级删除/恢复（无 path 参数）需要枚举同内容多路径 item 的全部位置
+    pub fn item_locations(&self, hash: &str, want_trash: Option<bool>) -> Vec<LocationSnapshot> {
+        let inner = self.inner.lock().unwrap();
+        let Some(item) = inner.by_hash.get(hash) else {
+            return Vec::new();
+        };
+        item.locations
+            .iter()
+            .filter(|l| want_trash.is_none() || l.in_trash() == want_trash.unwrap())
+            .map(|l| LocationSnapshot {
+                path: l.path.clone(),
+                library_path: l.library_path().to_string(),
+                in_trash: l.in_trash(),
+            })
+            .collect()
+    }
+
     /// 库内 item 总数（不含回收站）
     pub fn count(&self) -> usize {
         let inner = self.inner.lock().unwrap();
