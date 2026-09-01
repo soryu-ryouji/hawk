@@ -2,9 +2,6 @@
 # 产出当前平台的 hawk-daemon 二进制（Rust）。
 appId: com.hawk.app
 productName: hawk
-# 显式禁用 electron-builder 自带发布：CI 环境下 v26 会隐式触发 publish 并索要 GH_TOKEN，
-# 而我们的发布统一走 release.yml 的 publish 汇流 job
-publish: never
 # 产物名统一「产品-平台-架构」后缀（与 mac 的 hawk-mac-<arch>.zip 对齐，不带版本号）：
 # Windows hawk-windows-x64.zip / Linux hawk-linux-x64.AppImage；mac 为 --dir 产物（.app 目录名取 productName），
 # zip 由 CI 打包命名 hawk-mac-<arch>.zip

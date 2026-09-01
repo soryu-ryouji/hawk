@@ -119,7 +119,9 @@ jobs:
           wait
 
       - name: Pack
-        run: node scripts/pack.mjs ${{ steps.nightly_ver.outputs.verflag }}
+        # --publish never：禁用 electron-builder 自带发布（CI 下会隐式触发并索要 GH_TOKEN；
+        # 配置文件里写 never 会被当成自定义 publisher 模块名，只能走 CLI）——发布统一由 publish job 负责
+        run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.verflag }}
         env:
           # 正式版（release 提交）mx=9 最小体积；nightly/手动 mx=5 快速出包（高频构建在意时间不在意 +10-20MB）
           ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ startsWith(github.event.head_commit.message, 'release') && '9' || '5' }}
@@ -200,7 +202,8 @@ jobs:
           wait
 
       - name: Pack
-        run: node scripts/pack.mjs ${{ steps.nightly_ver.outputs.verflag }}
+        # --publish never 同 windows job（禁用隐式发布）
+        run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.verflag }}
 
       # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
       - name: Generate checksum
@@ -289,7 +292,7 @@ jobs:
           if [ -n "${{ steps.nightly_ver.outputs.version }}" ]; then
             VER_ARGS="--config.extraMetadata.version=${{ steps.nightly_ver.outputs.version }}"
           fi
-          npx electron-builder --dir --${{ matrix.arch }} $VER_ARGS
+          npx electron-builder --dir --${{ matrix.arch }} --publish never $VER_ARGS
           ditto -c -k --keepParent dist/${{ matrix.outdir }}/hawk.app dist/hawk-mac-${{ matrix.arch }}.zip
 
       # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
