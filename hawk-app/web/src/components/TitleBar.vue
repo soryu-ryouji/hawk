@@ -9,6 +9,7 @@ import { useContextMenu } from '../composables/useContextMenu';
 import { useLayout } from '../composables/useLayout';
 import Icon from './Icon.vue';
 import SearchBox from './SearchBox.vue';
+import { hasShell, isMac, shell } from '../platform';
 import type { MenuItem, QueryState } from '../types';
 
 const store = useLibraryStore();
@@ -53,9 +54,8 @@ function submitMobileSearch() {
   closeMobileSearch();
 }
 const emit = defineEmits<{ 'open-settings': [] }>();
-const isMac = window.hawkShell?.platform === 'darwin';
 // 窗口控制为 fixed 在窗口右上角的自绘按钮（仅 Windows/Linux 渲染）：侧栏隐藏时本栏通栏，右端需预留避让
-const reserveControls = !!window.hawkShell && !isMac;
+const reserveControls = hasShell && !isMac;
 
 /** 文件夹视图显示可点击面包屑（根 = 全部素材），其余视图显示固定标题 */
 const breadcrumb = computed(() => {
@@ -148,7 +148,7 @@ function onDblClick(e: MouseEvent) {
   if ((e.target as HTMLElement).closest('button, input, select, .search-box')) {
     return;
   }
-  void window.hawkShell?.toggleMaximizeWindow();
+  void shell.toggleMaximizeWindow();
 }
 </script>
 

@@ -4,27 +4,26 @@
 // 仅 Electron 内渲染；纯浏览器调试时 hawkShell 不存在，整体不显示。
 import { ref } from 'vue';
 import Icon from './Icon.vue';
+import { hasShell, isMac, shell } from '../platform';
 
-const hasShell = !!window.hawkShell;
-const isMac = window.hawkShell?.platform === 'darwin';
 const isMaximized = ref(false);
 
 // TitleBar/SetupScreen 均为顶层常驻组件，订阅随应用生命周期，不手动退订
-window.hawkShell?.onWindowMaximized((maximized) => (isMaximized.value = maximized));
+shell.onWindowMaximized((maximized) => (isMaximized.value = maximized));
 
 function minimize() {
-  void window.hawkShell?.minimizeWindow();
+  void shell.minimizeWindow();
 }
 
 async function toggleMaximize() {
-  const maximized = await window.hawkShell?.toggleMaximizeWindow();
+  const maximized = await shell.toggleMaximizeWindow();
   if (typeof maximized === 'boolean') {
     isMaximized.value = maximized;
   }
 }
 
 function close() {
-  void window.hawkShell?.closeWindow();
+  void shell.closeWindow();
 }
 </script>
 

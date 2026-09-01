@@ -4,6 +4,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api/endpoints';
 import { ApiError, configureApi } from '../api/client';
+import { hasShell, shell } from '../platform';
 
 export interface ServerProgress {
   phase: string;
@@ -28,7 +29,7 @@ export function useStartup() {
 
   /** 浏览器路径：轮询启动状态。Electron 路径（有 hawkShell）为空操作，就绪走 IPC */
   async function poll(): Promise<void> {
-    if (polling || window.hawkShell) {
+    if (polling || hasShell) {
       return;
     }
     polling = true;
@@ -65,8 +66,7 @@ export function useStartup() {
   }
 
   onMounted(() => {
-    const shell = window.hawkShell;
-    if (!shell) {
+    if (!hasShell) {
       return;
     }
     shell.onServerProgress((p) => {

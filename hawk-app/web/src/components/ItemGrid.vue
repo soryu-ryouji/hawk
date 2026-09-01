@@ -4,7 +4,7 @@ import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import { gridNavRows } from '../composables/useGridNav';
-import { showInFileManagerLabel } from '../platform';
+import { showInFileManagerLabel, hasShell, shell } from '../platform';
 import type { Item } from '../types';
 import ItemCard from './ItemCard.vue';
 import EmptyState from './EmptyState.vue';
@@ -314,7 +314,7 @@ function onMenu(item: Item, e: MouseEvent) {
         // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
         ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => store.openEditor(item) }] : []),
         // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现
-        ...(window.hawkShell ? [{ label: showInFileManagerLabel, action: () => window.hawkShell?.showInFinder(item.paths[0]) }] : []),
+        ...(hasShell ? [{ label: showInFileManagerLabel, action: () => void shell.showInFinder(item.paths[0]) }] : []),
         { separator: true, label: '' },
         { label: '移入回收站', danger: true, action: () => void store.trashSelected() },
       ];

@@ -3,6 +3,7 @@
 // 浏览器（局域网 web 端）无路径可取，改为读 File 内容逐个 multipart 上传。
 import { useDropZone } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { hasShell, shell } from '../platform';
 import { ITEMS_MIME } from '../dnd';
 
 async function* walkEntry(entry: FileSystemEntry): AsyncGenerator<File> {
@@ -48,8 +49,7 @@ export function useDragImport() {
         .filter((entry): entry is FileSystemEntry => entry !== null);
 
       try {
-        const shell = window.hawkShell;
-        if (shell) {
+        if (hasShell) {
           const paths: string[] = [];
           for (const entry of entries) {
             for await (const file of walkEntry(entry)) {

@@ -8,6 +8,7 @@ import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
 import { isUnfilteredView, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, viewPathPrefix } from '../viewLogic';
 import { runImportBatch } from '../importBatch';
+import { hasShell } from '../platform';
 import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewPrefs, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
@@ -71,7 +72,7 @@ export const useLibraryStore = defineStore('library', () => {
   //   常规横图）用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转自动跟随
   const THUMB_SIZE_MIN = 120;
   const THUMB_SIZE_MAX = 280;
-  const isBrowserClient = !window.hawkShell;
+  const isBrowserClient = !hasShell;
   const thumbSize = ref(160);
   let userThumbSize: number | null = null;
   if (isBrowserClient) {

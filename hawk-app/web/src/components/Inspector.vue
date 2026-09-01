@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useLayout } from '../composables/useLayout';
-import { showInFileManagerLabel } from '../platform';
+import { showInFileManagerLabel, shell } from '../platform';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
 import SearchBox from './SearchBox.vue';
@@ -21,7 +21,7 @@ const showFolderPicker = ref(false);
 
 /** 顶部拖拽条双击切换最大化（与 TitleBar 一致；条内无交互控件，无需排除判断） */
 function onHeadDblClick() {
-  void window.hawkShell?.toggleMaximizeWindow();
+  void shell.toggleMaximizeWindow();
 }
 
 // 编辑字段为本地副本，切换选中项时重置；失焦/回车提交
@@ -138,7 +138,7 @@ function moveToFolder(path: string) {
 // ---- 其他 ----
 
 function showInFinder(path: string) {
-  void window.hawkShell?.showInFinder(path);
+  void shell.showInFinder(path);
 }
 
 /** 点击色块：在当前视图范围内按颜色检索；再次点击当前检索色则清除 */

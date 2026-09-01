@@ -17,13 +17,13 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useClipboard, useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { hasShell, shell } from '../platform';
 import Icon from './Icon.vue';
 import type { LanSettings } from '../types';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
 const store = useLibraryStore();
-const hasShell = !!window.hawkShell;
 const loading = ref(true);
 const saving = ref(false);
 const error = ref<string | null>(null);
@@ -47,10 +47,6 @@ onMounted(async () => {
     return;
   }
   try {
-    const shell = window.hawkShell;
-    if (!shell?.getLanSettings) {
-      throw new Error('preload 无 getLanSettings 通道');
-    }
     const s: LanSettings = await shell.getLanSettings();
     enabled.value = s.enabled;
     port.value = String(s.port);
@@ -167,10 +163,6 @@ async function save() {
   saving.value = true;
   error.value = null;
   try {
-    const shell = window.hawkShell;
-    if (!shell?.saveLanSettings) {
-      throw new Error('preload 无 saveLanSettings 通道');
-    }
     const res = await shell.saveLanSettings({
       enabled: enabled.value,
       port: portValue(),

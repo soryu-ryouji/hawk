@@ -5,7 +5,7 @@ import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import { useLayout } from '../composables/useLayout';
 import { isRotatableImage } from '../imageEdit';
-import { showInFileManagerLabel } from '../platform';
+import { showInFileManagerLabel, hasShell, shell } from '../platform';
 import type { Item } from '../types';
 
 const props = defineProps<{ item: Item }>();
@@ -28,11 +28,11 @@ const imageUrl = computed(() => api.fileUrl(props.item.id));
 // 浏览器（无 hawkShell）隐藏系统相关项；只读查看（viewer）隐藏全部写操作，无可用项时不弹菜单。
 function onMenu(e: MouseEvent) {
   const items = [
-    ...(window.hawkShell
+    ...(hasShell
       ? [
-          { label: showInFileManagerLabel, action: () => void window.hawkShell?.showInFinder(props.item.paths[0]) },
-          { label: '复制文件路径', action: () => void window.hawkShell?.copyPath(props.item.paths[0]) },
-          { label: '复制图片', action: () => void window.hawkShell?.copyImage(props.item.paths[0]) },
+          { label: showInFileManagerLabel, action: () => void shell.showInFinder(props.item.paths[0]) },
+          { label: '复制文件路径', action: () => void shell.copyPath(props.item.paths[0]) },
+          { label: '复制图片', action: () => void shell.copyImage(props.item.paths[0]) },
         ]
       : []),
     // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口;viewer 下禁用

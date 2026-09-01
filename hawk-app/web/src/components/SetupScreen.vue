@@ -1,18 +1,19 @@
 <script setup lang="ts">
 // 引导页：素材库未配置或失效时展示，点击按钮才弹系统目录选择框。
 import { ref } from 'vue';
+import { hasShell, shell } from '../platform';
 
 const emit = defineEmits<{ selected: [] }>();
 const busy = ref(false);
 
 async function openLibrary() {
-  if (!window.hawkShell) {
+  if (!hasShell) {
     return;
   }
   busy.value = true;
   try {
     // 选定后主进程拉起新 server；本页切启动屏，就绪经 server-started 事件进入主界面
-    if (await window.hawkShell.selectLibrary()) {
+    if (await shell.selectLibrary()) {
       emit('selected');
     }
   } finally {

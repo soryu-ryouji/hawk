@@ -3,13 +3,11 @@
 // 单页生命周期无二次导航，启动过程不会出现空白窗口；窗口在首帧渲染后才 show）。
 // Electron 进度经主进程 IPC 推送；浏览器（局域网查看）由 useStartup 轮询驱动。
 import WindowControls from './WindowControls.vue';
+import { hasShell, isMac } from '../platform';
 import type { ServerProgress } from '../composables/useStartup';
 
 defineProps<{ progress: ServerProgress | null; error: string | null }>();
 const emit = defineEmits<{ quit: [] }>();
-
-const hasShell = !!window.hawkShell;
-const isMac = window.hawkShell?.platform === 'darwin';
 
 const LABELS: Record<string, string> = {
   scan: '正在扫描素材库…',

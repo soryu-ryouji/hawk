@@ -7,6 +7,7 @@ import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
 import { useLayout } from './composables/useLayout';
 import { useStartup } from './composables/useStartup';
+import { hasShell, shell } from './platform';
 import Sidebar from './components/Sidebar.vue';
 import TitleBar from './components/TitleBar.vue';
 import FilterBar from './components/FilterBar.vue';
@@ -179,7 +180,7 @@ watch(failed, (message) => {
 watch(
   phase,
   (p) => {
-    if (p === 'starting' && !window.hawkShell) {
+    if (p === 'starting' && !hasShell) {
       void poll();
     }
   },
@@ -190,13 +191,13 @@ watch(
 // Electron 的 server 必已就绪（token 由主进程持有，401 场景实际不可达），直接 boot
 function onConnected() {
   phase.value = 'starting';
-  if (window.hawkShell) {
+  if (hasShell) {
     void runBoot();
   }
 }
 
 function quitApp() {
-  void window.hawkShell?.quitApp();
+  void shell.quitApp();
 }
 
 /** web 端注销 token：清除本浏览器记忆的局域网 token，回门页重新输入（切换只读/可写身份用） */
@@ -219,15 +220,15 @@ function onSidebarNav(e: MouseEvent) {
 // 初始阶段判定（同步，须在 phase 监听器注册前完成：无参数时把 starting 纠正为 setup/error，
 // 否则 immediate 监听器会对 setup/error 误发起轮询）
 if (!initApi()) {
-  phase.value = window.hawkShell ? 'setup' : 'error';
-  bootError.value = window.hawkShell ? null : '缺少后端连接参数';
+  phase.value = hasShell ? 'setup' : 'error';
+  bootError.value = hasShell ? null : '缺少后端连接参数';
 }
 
 onMounted(() => {
   loadPanelWidths();
   // 换库/应用设置重启：主进程停旧 server 时即收到事件（早于 ready），
   // 立刻切启动屏——旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效（假死）
-  window.hawkShell?.onServerRestarting(() => {
+  shell.onServerRestarting(() => {
     phase.value = 'starting';
   });
 });

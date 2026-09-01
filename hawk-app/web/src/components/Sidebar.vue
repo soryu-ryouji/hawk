@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
+import { hasShell, shell } from '../platform';
 import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
 import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
@@ -11,14 +12,13 @@ import type { MenuItem } from '../types';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
-const hasShell = !!window.hawkShell;
 
 // 三个分区的折叠态（点分区标题收起/展开，v-show 保留树节点内部的展开/编辑状态）
 const collapsed = reactive({ folder: false, category: false, tag: false });
 
 /** 顶部拖拽条双击切换最大化（与 TitleBar 一致；条内无交互控件，无需排除判断） */
 function onHeadDblClick() {
-  void window.hawkShell?.toggleMaximizeWindow();
+  void shell.toggleMaximizeWindow();
 }
 
 const showCreateFolder = ref(false);
@@ -33,8 +33,7 @@ const showRenameCategory = ref(false);
  * 底部「打开文件夹…」弹系统目录选择框加入新库。换库就绪经 hawk:server-started 事件驱动 App 原地重启数据。
  */
 async function onLibraryClick(e: MouseEvent) {
-  const shell = window.hawkShell;
-  if (!shell) {
+  if (!hasShell) {
     return;
   }
   const res = await shell.listLibraries();

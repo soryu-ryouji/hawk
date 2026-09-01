@@ -1,6 +1,8 @@
 // API 连接配置与请求封装：baseURL、Bearer 头、信封解包、ApiError。
 // 连接参数经 URL hash 注入（Electron 主进程），或开发时用 VITE_HAWK_API/TOKEN 环境变量。
 
+import { hasShell } from '../platform';
+
 interface ApiConfig {
   api: string;
   token: string;
@@ -27,7 +29,7 @@ export function initApi(): ApiConfig | null {
   const api =
     hash.get('api') ||
     (import.meta.env.VITE_HAWK_API as string | undefined) ||
-    (!window.hawkShell ? location.origin : null);
+    (!hasShell ? location.origin : null);
   if (!api) {
     config = null;
     return null;
