@@ -36,3 +36,6 @@ win:
 linux:
   target: AppImage
   artifactName: ${productName}-linux-${arch}.${ext}
+  # 单 png 图标可用（linux 支持直接指定一个 png 文件）；分类写入 desktop entry（无则默认 Utility）
+  icon: build/icon.png
+  category: Graphics

@@ -6,7 +6,7 @@ hawk 的桌面端发布全部由 CI（[release.yml](../.github/workflows/release
 
 | 事件 | 动作 |
 | ---- | ---- |
-| push main 且提交信息以 `release` 开头 | 构建三平台产物 + sha256 边车，创建 tag + **正式 Release**（发布动作 = 一次 push，无需手动打 tag） |
+| push main 且提交信息以 `release` 开头 | 构建全平台产物（Windows/macOS 双架构/Linux）+ sha256 边车，创建 tag + **正式 Release**（发布动作 = 一次 push，无需手动打 tag） |
 | push main 且提交信息以 `feat` / `fix` 开头 | 删除并重建 `nightly` Release（prerelease），滚动覆盖 |
 | `workflow_dispatch` 手动触发 | 只构建上传 Artifacts，**不**创建/修改任何 Release |
 
@@ -43,12 +43,12 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 **push 后 CI 自动接管**（三个构建 job 全并行 + publish 汇流）：
 
 1. windows job 守卫：提交首行解析版本号，与 package.json 不一致或 tag 已存在 → 立即失败（下游 publish 一并跳过）
-2. 构建层全并行：windows（web 与 cargo 并行 → `hawk-windows-x64.zip` + 边车，正式版 mx=9 最小体积）∥ mac 双架构 matrix 两腿（`hawk-mac-<arch>.zip` + 边车），各自上传 Artifacts
+2. 构建层全并行：windows（web 与 cargo 并行 → `hawk-windows-x64.zip` + 边车，正式版 mx=9 最小体积）∥ mac 双架构 matrix 两腿（`hawk-mac-<arch>.zip` + 边车）∥ linux（`hawk-linux-x64.AppImage` + 边车），各自上传 Artifacts
 3. publish 汇流 job（ubuntu，构建全成功后才跑）：下载全部 Artifacts → 正式版以 `tag_name: v0.2.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）；nightly 则轮转重建。任一平台构建失败则不发布（全有或全无，不会出现只有部分平台产物的半成品 Release）
 
 **发布后验证**：
 
-- Release 资产齐全：上述 6 个文件（3 产物 + 3 边车；缺边车则存量客户端无法自动更新到该版本，只能手动下载）
+- Release 资产齐全：上述 8 个文件（4 产物 + 4 边车；缺边车则存量客户端无法自动更新到该版本，只能手动下载）
 - stable 通道：任一客户端 → 设置 → 更新 → 检查更新，应发现新版本并完成下载/安装
 - nightly 客户端：切 stable 通道检查，应能拿到本次发布
 
@@ -58,7 +58,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 
 main 分支出现 `feat` / `fix` 开头的提交即触发（`concurrency` 串行，避免滚动覆盖竞争）。
 
-三个构建 job 全并行产出 Artifacts，publish 汇流 job 删除旧 `nightly` Release 与 tag → 重建（name = `Nightly <sha7>`，body = 触发提交信息 + 末尾注入完整 sha 注释，prerelease）→ 附全部三平台产物
+三个构建 job 全并行产出 Artifacts，publish 汇流 job 删除旧 `nightly` Release 与 tag → 重建（name = `Nightly <sha7>`，body = 触发提交信息 + 末尾注入完整 sha 注释，prerelease）→ 附全部平台产物
 
 特性与边界：
 

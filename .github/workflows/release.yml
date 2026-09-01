@@ -141,6 +141,81 @@ jobs:
 
       # Release 创建/轮转统一由 publish 汇流 job 负责（三个构建 job 全并行，见文末）
 
+  # Linux AppImage：与 windows job 同构（构建 + Artifacts，发布统一走 publish 汇流）；
+  # ubuntu-latest 即 x64，cargo/electron 均原生目标无需交叉
+  linux:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.head_commit.message, 'release') ||
+      startsWith(github.event.head_commit.message, 'feat') ||
+      startsWith(github.event.head_commit.message, 'fix')
+    defaults:
+      run:
+        working-directory: hawk-app
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hawk-daemon
+
+      # electron 发行包与 electron-builder 工具（appimage 打包器等）缓存
+      - name: Cache electron & builder tools
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: tools-linux-x64-${{ hashFiles('hawk-app/package-lock.json') }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: hawk-app/package-lock.json
+
+      - run: npm ci
+
+      # nightly 版本覆写（同 windows job；release 提交留空用 package.json version）
+      - name: Nightly version
+        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
+        id: nightly_ver
+        shell: bash
+        run: echo "verflag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      # 构建标识（自动更新比较 nightly 新旧用，见 scripts/stamp-build.mjs；pack.mjs 亦会重写，此处 CI 注入为准）
+      - name: Stamp build info
+        run: node scripts/stamp-build.mjs
+        env:
+          HAWK_SHA: ${{ github.sha }}
+
+      # web 构建与 cargo 无共享状态，并行跑：vite/vue-tsc 藏进 cargo 的耗时里
+      - name: Build web & daemon (parallel)
+        run: |
+          node scripts/build-server.mjs &
+          npm run build &
+          wait
+
+      - name: Pack
+        run: node scripts/pack.mjs ${{ steps.nightly_ver.outputs.verflag }}
+
+      # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
+      - name: Generate checksum
+        run: |
+          f=dist/hawk-linux-x64.AppImage
+          sha256sum "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hawk-linux-appimage
+          path: |
+            hawk-app/dist/hawk-linux-x64.AppImage
+            hawk-app/dist/hawk-linux-x64.AppImage.sha256
+          if-no-files-found: error
+
   # macOS app：标准 runner 已是 arm64（macos-latest），x64 由交叉打包产出；双架构 matrix 并行
   # GitHub 只能上传单文件，因此 .app 目录打 zip 发布（VS Code/Slack 同款方式）
   macos:
@@ -231,12 +306,12 @@ jobs:
             hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip.sha256
           if-no-files-found: error
 
-  # 发布汇流：windows + mac 双架构三个构建 job 全并行，各自上传 Artifacts；
+  # 发布汇流：windows + linux + mac 双架构四个构建 job 全并行，各自上传 Artifacts；
   # 全部成功后由本 job 统一创建/轮转 Release 并附全部资产——「建 Release」只有一个执行者，
   # 无并发竞争（此前 mac 附资产需要 needs: windows 串行等待 mac 排队；且失败语义变为全有或全无：
   # 任一构建失败则不发布，不会出现只有部分平台产物的半成品 Release）。手动触发只出 Artifacts，本 job 不跑
   publish:
-    needs: [windows, macos]
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'push' &&
@@ -277,6 +352,8 @@ jobs:
             dist/hawk-mac-arm64.zip.sha256
             dist/hawk-mac-x64.zip
             dist/hawk-mac-x64.zip.sha256
+            dist/hawk-linux-x64.AppImage
+            dist/hawk-linux-x64.AppImage.sha256
 
       # ---- nightly：main 分支 feat/fix 提交（滚动覆盖）----
 
@@ -309,3 +386,5 @@ jobs:
             dist/hawk-mac-arm64.zip.sha256
             dist/hawk-mac-x64.zip
             dist/hawk-mac-x64.zip.sha256
+            dist/hawk-linux-x64.AppImage
+            dist/hawk-linux-x64.AppImage.sha256
