@@ -10,6 +10,7 @@ import SearchBox from './SearchBox.vue';
 import Icon from './Icon.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
+import FolderTreePicker from './FolderTreePicker.vue';
 import type { ViewState } from '../types';
 
 const store = useLibraryStore();
@@ -121,15 +122,27 @@ function removeCategory(category: string) {
 
 // ---- 文件夹 ----
 
-/** 单值排他语义，用下拉框而非 chip：当前值取主位置（folders[0]），切换即移动文件 */
-const folderOptions = computed(() => {
-  const current = item.value?.folders?.[0] ?? '';
-  const options = [...store.flatFolders];
-  if (current !== '' && !options.some((f) => f.path === current)) {
-    options.push({ path: current, label: current }); // 树里已不存在的兜底（外部删除等）
+const folderValueEl = ref<HTMLButtonElement | null>(null);
+/** 树选择弹出层锚点（null = 关闭）；flip = 触发按钮下方空间不足，向上弹出 */
+const pickerAnchor = ref<{ left: number; width: number; top: number; bottom: number; flip: boolean } | null>(null);
+
+function toggleFolderPicker() {
+  if (pickerAnchor.value) {
+    pickerAnchor.value = null;
+    return;
   }
-  return options;
-});
+  const rect = folderValueEl.value?.getBoundingClientRect();
+  if (!rect) {
+    return;
+  }
+  pickerAnchor.value = {
+    left: rect.left,
+    width: rect.width,
+    top: rect.bottom + 4,
+    bottom: window.innerHeight - rect.top + 4,
+    flip: rect.bottom + 308 > window.innerHeight,
+  };
+}
 
 function moveToFolder(path: string) {
   if (item.value && path !== (item.value.folders?.[0] ?? '')) {
@@ -324,16 +337,19 @@ function batchMoveFolder(path: string) {
         <section>
           <div class="section-title">文件夹</div>
           <div class="folder-row">
-            <select
-              class="folder-select"
-              :value="item.folders?.[0] ?? ''"
-              title="所在文件夹（选择即移动）"
-              @change="moveToFolder(($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="f in folderOptions" :key="f.path" :value="f.path">{{ f.label }}</option>
-            </select>
+            <!-- Eagle 式：点击当前值弹出可折叠文件夹树，选择即移动（FolderTreePicker） -->
+            <button ref="folderValueEl" class="folder-value" title="选择所在文件夹（点击移动）" @click="toggleFolderPicker">
+              {{ item.folders?.[0] || '（根目录）' }}
+            </button>
             <button class="finder" title="打开所在文件夹" @click="goView(folderViewOf(item.folders?.[0] ?? ''))">›</button>
           </div>
+          <FolderTreePicker
+            v-if="pickerAnchor"
+            :current="item.folders?.[0] ?? ''"
+            :anchor="pickerAnchor"
+            @pick="moveToFolder"
+            @close="pickerAnchor = null"
+          />
         </section>
 
         <section>
@@ -640,10 +656,6 @@ section {
   gap: 6px;
 }
 
-.folder-row .folder-select {
-  flex: 1;
-}
-
 .folder-row .finder {
   font-size: 16px;
 }
@@ -652,19 +664,23 @@ button.path {
   text-align: left;
 }
 
-/* 文件夹为单值排他语义：下拉框（Eagle 同款），而非标签/分类的 chip */
-.folder-select {
-  width: 100%;
+/* 文件夹为单值排他语义：Eagle 式树选择（点击当前值弹出 FolderTreePicker，选择即移动） */
+.folder-value {
+  flex: 1;
+  min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--bg-3);
   color: var(--fg-0);
   font-size: 12px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.folder-select:focus {
-  outline: none;
+.folder-value:hover {
   border-color: var(--accent);
 }
 
