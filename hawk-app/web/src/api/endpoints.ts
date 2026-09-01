@@ -26,10 +26,15 @@ export interface ItemBatchPatch {
 
 export const api = {
   appInfo: () =>
-    request<{ version: string; platform: string; exec_path: string; /** viewer=局域网只读查看 token */ access: 'viewer' | 'admin' }>(
-      'GET',
-      '/api/v1/app/info',
-    ),
+    request<{
+      version: string;
+      platform: string;
+      exec_path: string;
+      /** viewer=局域网查看 token；writable=当前 token 可写（admin 恒 true，viewer 为 [web].writable） */
+      access: 'viewer' | 'admin';
+      writable: boolean;
+      lan: { active: boolean; port?: number; error?: string };
+    }>('GET', '/api/v1/app/info'),
   startupStatus: () => request<StartupInfo>('GET', '/api/v1/app/startup'),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
@@ -57,6 +62,14 @@ export const api = {
     request<{ item: Item; already_existed: boolean }>('POST', '/api/v1/item/add', {
       body: { path, name: opts?.name, folder_path: opts?.folder_path, tags: opts?.tags },
     }),
+  /** multipart 上传（浏览器端无文件路径，拖拽/文件选择器的内容入库）；写权限需 viewer+writable 或 admin */
+  itemUpload: (file: File, opts?: { folder_path?: string; name?: string }) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    if (opts?.folder_path) form.append('folder_path', opts.folder_path);
+    if (opts?.name) form.append('name', opts.name);
+    return request<{ item: Item; already_existed: boolean }>('POST', '/api/v1/item/upload', { body: form });
+  },
   // undefined 键会被 JSON.stringify 省略,即「不更新该字段」;置空传空字符串/空数组
   itemUpdate: (id: string, patch: ItemPatch, path?: string) =>
     request<Item>('POST', '/api/v1/item/update', { body: { id, path, ...patch } }),

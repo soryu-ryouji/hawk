@@ -20,7 +20,7 @@ import { useLibraryStore } from '../stores/library';
 import Icon from './Icon.vue';
 import type { LanSettings } from '../types';
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; logout: [] }>();
 
 const store = useLibraryStore();
 const hasShell = !!window.hawkShell;
@@ -30,11 +30,14 @@ const error = ref<string | null>(null);
 const enabled = ref(false);
 const port = ref('27372');
 const token = ref('');
+const writable = ref(false);
+const separate = ref(false);
+const writeToken = ref('');
 const addresses = ref<string[]>([]);
 const { copy: copyText } = useClipboard({ legacy: true });
 
-/** 当前分区：外观 / 局域网（无 shell 时固定外观且导航不渲染） */
-const section = ref<'appearance' | 'lan'>('appearance');
+/** 当前分区：外观 / 局域网（Electron）/ 连接（局域网 web 端，含 token 注销） */
+const section = ref<'appearance' | 'lan' | 'connection'>('appearance');
 
 onMounted(async () => {
   document.body.classList.add('dialog-open');
@@ -52,6 +55,9 @@ onMounted(async () => {
     enabled.value = s.enabled;
     port.value = String(s.port);
     token.value = s.token;
+    writable.value = s.writable;
+    separate.value = s.separateWriteToken;
+    writeToken.value = s.writeToken;
     addresses.value = s.addresses;
   } catch (e) {
     // 多见于主进程/preload 未随新版本重启（dev.mjs 不监听主进程文件）
@@ -102,11 +108,27 @@ function portValue() {
   return portValid.value ? Number(port.value.trim()) : 27372;
 }
 
-/** 重新生成随机访问 token（32 字节 hex） */
-function regenerate() {
+/** 生成随机 token（32 字节 hex） */
+function randomToken() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  token.value = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function regenerateToken() {
+  token.value = randomToken();
+}
+
+function regenerateWriteToken() {
+  writeToken.value = randomToken();
+}
+
+/** 切换拆分模式：开启且可写 token 为空时自动签发一个 */
+function toggleSeparate(on: boolean) {
+  separate.value = on;
+  if (on && !writeToken.value.trim()) {
+    writeToken.value = randomToken();
+  }
 }
 
 /** 复制文本并给全局 toast 反馈（token/访问地址，发给手机侧粘贴用） */
@@ -128,6 +150,10 @@ async function save() {
     error.value = '启用局域网查看需要填写访问 token';
     return;
   }
+  if (enabled.value && writable.value && separate.value && !writeToken.value.trim()) {
+    error.value = '拆分只读/可写 token 需要填写可写 token';
+    return;
+  }
   if (enabled.value && !portValid.value) {
     error.value = PORT_ERROR;
     section.value = 'lan';
@@ -144,6 +170,9 @@ async function save() {
       enabled: enabled.value,
       port: portValue(),
       token: token.value.trim(),
+      writable: writable.value,
+      separateWriteToken: separate.value,
+      writeToken: writeToken.value.trim(),
     });
     if (!res.ok) {
       error.value = res.error ?? '应用失败';
@@ -162,7 +191,7 @@ async function save() {
 <template>
   <Teleport to="body">
     <div class="mask" @pointerdown="onMaskDown" @pointerup="onMaskUp">
-      <div class="dialog" :class="{ 'with-nav': hasShell }" role="dialog" aria-modal="true" aria-label="设置">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="设置">
         <header class="dialog-head">
           <span class="dialog-title">设置</span>
           <button class="icon-btn" title="关闭 (Esc)" @click="emit('close')">
@@ -171,12 +200,27 @@ async function save() {
         </header>
 
         <div class="dialog-main">
-          <!-- 左侧导航：仅 Electron（两个分区）渲染；窄屏折叠为顶部横向页签 -->
-          <nav v-if="hasShell" class="nav">
+          <!-- 左侧导航：桌面（外观/局域网）与局域网 web 端（外观/连接）均为双分区；窄屏折叠为顶部横向页签 -->
+          <nav class="nav">
             <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">
               外观
             </button>
-            <button class="nav-item" :class="{ active: section === 'lan' }" @click="section = 'lan'">局域网</button>
+            <button
+              v-if="hasShell"
+              class="nav-item"
+              :class="{ active: section === 'lan' }"
+              @click="section = 'lan'"
+            >
+              局域网
+            </button>
+            <button
+              v-else
+              class="nav-item"
+              :class="{ active: section === 'connection' }"
+              @click="section = 'connection'"
+            >
+              连接
+            </button>
           </nav>
 
           <!-- 外观：所有端可用 -->
@@ -192,14 +236,14 @@ async function save() {
             </div>
           </div>
 
-          <!-- 局域网：依赖 Electron preload 通道，移动端（浏览器触屏）不可达（导航不渲染该项） -->
-          <div v-else class="pane">
+          <!-- 局域网：依赖 Electron preload 通道，浏览器 web 端导航不渲染该项 -->
+          <div v-else-if="section === 'lan'" class="pane">
             <div class="switch-row">
               <div>
-                <div class="switch-label">启用局域网 web 查看（只读）</div>
+                <div class="switch-label">启用局域网 web 查看</div>
                 <p class="hint">同一局域网的设备可用浏览器只读浏览本素材库。</p>
               </div>
-              <label class="switch" title="启用局域网 web 查看（只读）">
+              <label class="switch" title="启用局域网 web 查看">
                 <input v-model="enabled" type="checkbox" />
                 <span class="track" />
               </label>
@@ -209,6 +253,34 @@ async function save() {
             <template v-else>
               <!-- 未启用时收起细节字段，减少噪音 -->
               <div v-show="enabled" class="lan-detail">
+                <div class="switch-row">
+                  <div>
+                    <div class="switch-label">允许修改素材库</div>
+                    <p class="hint">开启后查看端可上传、删除、修改素材；请谨慎签发可写 token。</p>
+                  </div>
+                  <label class="switch" title="允许局域网查看端执行写操作">
+                    <input v-model="writable" type="checkbox" />
+                    <span class="track" />
+                  </label>
+                </div>
+
+                <!-- token 模式：二合一（单 token 读写）/拆分（只读 token + 可写 token），
+                     类似双频 WiFi 的合频/分频；仅写权限开启后有意义 -->
+                <div v-if="writable" class="switch-row">
+                  <div>
+                    <div class="switch-label">拆分只读与可写 token</div>
+                    <p class="hint">关闭时访问 token 兼具读写权限；开启后访问 token 仅可浏览，修改需另签发可写 token。</p>
+                  </div>
+                  <label class="switch" title="拆分只读 token 与可写 token">
+                    <input
+                      :checked="separate"
+                      type="checkbox"
+                      @change="toggleSeparate(($event.target as HTMLInputElement).checked)"
+                    />
+                    <span class="track" />
+                  </label>
+                </div>
+
                 <div class="field column">
                   <span class="field-label">端口</span>
                   <input
@@ -225,13 +297,24 @@ async function save() {
                 </div>
 
                 <div class="field column">
-                  <span class="field-label">访问 token</span>
+                  <span class="field-label">访问 token{{ separate ? '（只读）' : '' }}</span>
                   <div class="token-row">
                     <input v-model="token" type="text" autocomplete="off" spellcheck="false" />
                     <button class="icon-btn" title="复制 token" @click="copy(token)">
                       <Icon name="copy" :size="13" />
                     </button>
-                    <button title="重新生成随机 token" @click="regenerate">重新生成</button>
+                    <button title="重新生成随机 token" @click="regenerateToken">重新生成</button>
+                  </div>
+                </div>
+
+                <div v-if="separate" class="field column">
+                  <span class="field-label">可写 token</span>
+                  <div class="token-row">
+                    <input v-model="writeToken" type="text" autocomplete="off" spellcheck="false" />
+                    <button class="icon-btn" title="复制可写 token" @click="copy(writeToken)">
+                      <Icon name="copy" :size="13" />
+                    </button>
+                    <button title="重新生成随机 token" @click="regenerateWriteToken">重新生成</button>
                   </div>
                 </div>
 
@@ -263,6 +346,20 @@ async function save() {
               </div>
             </template>
           </div>
+
+          <!-- 连接（仅局域网 web 端）：当前访问级别 + token 注销（换身份重新输入） -->
+          <div v-else-if="section === 'connection'" class="pane">
+            <div class="field">
+              <span class="field-label">访问级别</span>
+              <span>{{ store.viewerMode ? '只读' : '可读写' }}</span>
+            </div>
+            <p class="hint">
+              本浏览器已记住当前 token；切换只读/可写身份时注销后重新输入另一个 token 即可。
+            </p>
+            <div class="actions-left">
+              <button class="danger" @click="emit('logout')">注销 token</button>
+            </div>
+          </div>
         </div>
 
         <div v-if="error" class="dialog-error">{{ error }}</div>
@@ -289,12 +386,12 @@ async function save() {
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* 标题栏/底部按钮常驻，只有内容区滚动；带导航时加宽。
-   带导航时高度固定（钳制视口）：分区切换/开关展开细节/错误条出现只改变内容区滚动，
-   面板尺寸不变，避免界面跳跃；无导航的单分区（浏览器触屏端）无跳变源，维持内容自适应高 */
+/* 标题栏/底部按钮常驻，只有内容区滚动。
+   高度固定（钳制视口）：分区切换/开关展开细节/错误条出现只改变内容区滚动，
+   面板尺寸不变，避免界面跳跃 */
 .dialog {
-  width: min(440px, calc(100vw - 32px));
-  max-height: min(560px, 86vh);
+  width: min(560px, calc(100vw - 32px));
+  height: min(520px, 86vh);
   display: flex;
   flex-direction: column;
   border-radius: 10px;
@@ -302,11 +399,6 @@ async function save() {
   border: 1px solid var(--border);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
   overflow: hidden;
-}
-
-.dialog.with-nav {
-  width: min(560px, calc(100vw - 32px));
-  height: min(520px, 86vh);
 }
 
 .dialog-head {
@@ -549,6 +641,11 @@ async function save() {
   border-top: 1px solid var(--border);
   color: var(--danger);
   font-size: 12px;
+}
+
+.actions-left {
+  display: flex;
+  margin-top: 8px;
 }
 
 .actions {

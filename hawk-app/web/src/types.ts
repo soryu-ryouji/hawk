@@ -68,8 +68,15 @@ declare global {
       openLibrary(path: string): Promise<boolean>;
       /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
       getLanSettings(): Promise<LanSettings>;
-      /** 保存 [web] 配置并重启 hawk-daemon（失败自动回滚），返回 { ok, error? } */
-      saveLanSettings(web: { enabled: boolean; port: number; token: string }): Promise<{ ok: boolean; error?: string }>;
+      /** 保存 [web] 配置（失败自动回滚），返回 { ok, error? } */
+      saveLanSettings(web: {
+        enabled: boolean;
+        port: number;
+        token: string;
+        writable: boolean;
+        separateWriteToken: boolean;
+        writeToken: string;
+      }): Promise<{ ok: boolean; error?: string }>;
       showInFinder(relPath: string): Promise<void>;
       /** 复制库内文件的绝对路径到剪贴板 */
       copyPath(relPath: string): Promise<void>;
@@ -99,6 +106,12 @@ export interface LanSettings {
   enabled: boolean;
   port: number;
   token: string;
+  /** 允许局域网查看端执行写操作（上传/删除/修改等） */
+  writable: boolean;
+  /** 拆分只读/可写 token：token 降为只读，write_token 具备写权限 */
+  separateWriteToken: boolean;
+  /** 拆分模式下的可写 token */
+  writeToken: string;
   /** 本机局域网 IPv4 地址列表（展示用） */
   addresses: string[];
 }

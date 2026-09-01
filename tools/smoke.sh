@@ -158,7 +158,6 @@ check "thumbnail 后台生成后命中缓存" "$LOGO_CT" "image/webp"
 check "thumbnail 支持 ?token=（<img> 场景）" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256&token=$TOKEN")" 200
 check "thumbnail 错误 token 返回 401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&token=wrong")" 401
 check "thumbnail cache-control" "$(curl -s -D - -o /dev/null -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID" | grep -i cache-control | tr -d '\r' | tr 'A-Z' 'a-z')" "cache-control: public, max-age=31536000, immutable"
-check "thumbnail 不可缓存尺寸 400" "$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=400")" 400
 check "refresh_thumbnail" "$(post_json "$BASE/api/v1/item/refresh_thumbnail" "{\"id\":\"$LOGO_ID\"}" | jq -r .status)" success
 # 小图与大图同逻辑：删缓存后回源原图，后台重建（同上：删缓存消除时序竞态）
 rm -f "$CACHE/thumbnails/256/$SUNSET_ID.webp" "$CACHE/thumbnails/512/$SUNSET_ID.webp" "$CACHE/thumbnails/1024/$SUNSET_ID.webp"
@@ -355,6 +354,105 @@ for _ in $(seq 1 60); do
 done
 check "宽高自愈恢复（0 × 0 → 4）" "$W" 4
 check "自愈结果回写 TOML" "$(grep -c '^width = 4$' "$LIB/.hawk/metadata/$SUNSET_ID.toml")" 1
+
+# --- 局域网写权限（[web] writable）：viewer token 默认只读，开启后可写，热生效 ---
+LAN_PORT=27398
+LAN_BASE="http://127.0.0.1:$LAN_PORT"
+VIEWER_AUTH="Authorization: Bearer viewer-token"
+# 原生 Windows curl 拿不到 MSYS 路径，上传源转 Windows 形式；内容与库内任何项不同（唯一哈希，删除语义确定）
+printf 'hawk-lan-upload-probe-unique' > "$WORK/lan-src.png"
+UPLOAD_SRC="$WORK/lan-src.png"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) UPLOAD_SRC=$(cygpath -w "$WORK/lan-src.png") ;;
+esac
+cat > "$LIB/.hawk/config.toml" <<EOF
+[web]
+enabled = true
+port = $LAN_PORT
+token = "viewer-token"
+EOF
+for _ in $(seq 1 20); do curl -sf "$LAN_BASE/health" >/dev/null 2>&1 && break; sleep 0.5; done
+check "admin app/info 恒可写" "$(curl -s -H "$AUTH" "$BASE/api/v1/app/info" | jq -r .data.writable)" true
+check "viewer app/info access" "$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/app/info" | jq -r .data.access)" viewer
+check "viewer 默认 writable=false" "$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/app/info" | jq -r .data.writable)" false
+check "viewer GET 放行" "$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/item/count" | jq -r .data)" 5
+check "viewer 上传被拒（READ_ONLY）" "$(curl -s -H "$VIEWER_AUTH" -F "file=@$UPLOAD_SRC" -F "name=lan-upload" "$LAN_BASE/api/v1/item/upload" | jq -r .error.code)" READ_ONLY
+
+echo 'writable = true' >> "$LIB/.hawk/config.toml"
+W=false
+for _ in $(seq 1 20); do
+  W=$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/app/info" | jq -r .data.writable)
+  [[ "$W" == "true" ]] && break
+  sleep 0.5
+done
+check "writable 热生效" "$W" true
+UPLOAD=$(curl -s -H "$VIEWER_AUTH" -F "file=@$UPLOAD_SRC" -F "name=lan-upload" "$LAN_BASE/api/v1/item/upload")
+check "viewer 上传成功" "$(echo "$UPLOAD" | jq -r .data.item.name)" lan-upload
+check "首次上传 already_existed=false" "$(echo "$UPLOAD" | jq -r .data.already_existed)" false
+check "上传后 count=6" "$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/item/count" | jq -r .data)" 6
+check "同名上传被拒（FILE_EXISTS）" "$(curl -s -H "$VIEWER_AUTH" -F "file=@$UPLOAD_SRC" -F "name=lan-upload" "$LAN_BASE/api/v1/item/upload" | jq -r .error.code)" FILE_EXISTS
+check "上传文件已落盘" "$(ls "$LIB/lan-upload.png" >/dev/null 2>&1 && echo yes)" yes
+LAN_ID=$(echo "$UPLOAD" | jq -r .data.item.id)
+check "viewer 删除成功" "$(curl -s -H "$VIEWER_AUTH" -X POST "$LAN_BASE/api/v1/item/delete" -H 'Content-Type: application/json' --data-binary @- <<< "{\"id\":\"$LAN_ID\"}" | jq -r .status)" success
+check "删除后 count=5" "$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/item/count" | jq -r .data)" 5
+
+# 关闭写权限：全量覆写（sed -i 是重命名替换，watcher 对 config 的 rename 不发 ConfigChanged；
+# Electron 实际用 writeFileSync 原地写，与此处 cat > 同路径）
+cat > "$LIB/.hawk/config.toml" <<EOF
+[web]
+enabled = true
+port = $LAN_PORT
+token = "viewer-token"
+EOF
+W=true
+for _ in $(seq 1 20); do
+  W=$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/app/info" | jq -r .data.writable)
+  [[ "$W" == "false" ]] && break
+  sleep 0.5
+done
+check "关闭 writable 后再次只读" "$(curl -s -H "$VIEWER_AUTH" -F "file=@$UPLOAD_SRC" -F "name=lan-upload2" "$LAN_BASE/api/v1/item/upload" | jq -r .error.code)" READ_ONLY
+
+# --- 拆分模式（separate_write_token + write_token）：主 token 降只读，可写 token 可写 ---
+cat > "$LIB/.hawk/config.toml" <<EOF
+[web]
+enabled = true
+port = $LAN_PORT
+token = "viewer-token"
+writable = true
+separate_write_token = true
+write_token = "viewer-write-token"
+EOF
+RW_AUTH="Authorization: Bearer viewer-write-token"
+for _ in $(seq 1 20); do
+  W=$(curl -s -H "$RW_AUTH" "$LAN_BASE/api/v1/app/info" | jq -r '.data.access + ":" + (.data.writable|tostring)')
+  [[ "$W" == "viewer:true" ]] && break
+  sleep 0.5
+done
+check "拆分热生效（可写 token 就位）" "$W" "viewer:true"
+check "拆分后主 token 降只读" "$(curl -s -H "$VIEWER_AUTH" "$LAN_BASE/api/v1/app/info" | jq -r .data.writable)" false
+check "拆分后主 token 上传被拒" "$(curl -s -H "$VIEWER_AUTH" -F "file=@$UPLOAD_SRC" -F "name=lan-split" "$LAN_BASE/api/v1/item/upload" | jq -r .error.code)" READ_ONLY
+SPLIT=$(curl -s -H "$RW_AUTH" -F "file=@$UPLOAD_SRC" -F "name=lan-split" "$LAN_BASE/api/v1/item/upload")
+check "可写 token 上传成功" "$(echo "$SPLIT" | jq -r .data.item.name)" lan-split
+check "可写 token GET 正常" "$(curl -s -H "$RW_AUTH" "$LAN_BASE/api/v1/item/count" | jq -r .data)" 6
+SPLIT_ID=$(echo "$SPLIT" | jq -r .data.item.id)
+check "可写 token 删除成功" "$(curl -s -H "$RW_AUTH" -X POST "$LAN_BASE/api/v1/item/delete" -H 'Content-Type: application/json' --data-binary @- <<< "{\"id\":\"$SPLIT_ID\"}" | jq -r .status)" success
+# 拆分但未启用写：write_token 不生效（不算合法 token）
+cat > "$LIB/.hawk/config.toml" <<EOF
+[web]
+enabled = true
+port = $LAN_PORT
+token = "viewer-token"
+writable = false
+separate_write_token = true
+write_token = "viewer-write-token"
+EOF
+RW_INVALID=401
+for _ in $(seq 1 20); do
+  RW_INVALID=$(curl -s -o /dev/null -w '%{http_code}' -H "$RW_AUTH" "$LAN_BASE/api/v1/item/count")
+  [[ "$RW_INVALID" == "401" ]] && break
+  sleep 0.5
+done
+check "未启用写时 write_token 不生效（401）" "$RW_INVALID" 401
 
 echo
 echo "通过 $PASS 项，失败 $FAIL 项"

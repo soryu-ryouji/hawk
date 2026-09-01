@@ -21,7 +21,7 @@
 }
 ```
 
-错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（viewer token 访问写端点，403）
+错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer token 访问写端点，403；见 storage.md 的 `[web]` 写权限/token 拆分配置）
 
 ### ID 规范
 
@@ -118,6 +118,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "platform": "windows",
     "exec_path": "C:/Tools/hawk/hawk-daemon.exe",
     "access": "admin",
+    "writable": true,
     "lan": { "active": true, "port": 27372 }
   }
 }
@@ -128,7 +129,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | version   | string | 后端版本号                    |
 | platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
-| access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看只读 token，见 storage.md 的 `[web]` 配置） |
+| access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看器 token，见 storage.md 的 `[web]` 配置） |
+| writable  | boolean | 当前 token 是否可执行写操作：admin 恒 true；viewer 取决于 `[web]` 的写权限配置（未开启写一律 false；开启且未拆分时 token 读写兼具；拆分时仅 write_token 为 true），保存即热生效 |
 | lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。设置面板保存 `[web]` 后轮询至此确认热生效/失败 |
 
 ### health
@@ -341,6 +343,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | GET  | `/api/v1/item/detail`            | 获取单个 item  |
 | GET  | `/api/v1/item/count`             | 获取 item 总数 |
 | POST | `/api/v1/item/add`               | 添加新 item    |
+| POST | `/api/v1/item/upload`             | multipart 上传新 item（web 端） |
 | POST | `/api/v1/item/update`            | 更新 item      |
 | POST | `/api/v1/item/batch_update`      | 批量更新(标签/分类并集、评分/文件夹设置) |
 | POST | `/api/v1/item/delete`            | 移入回收站     |
@@ -522,6 +525,24 @@ Item 对象，并附带 `already_existed` 标志：
   }
 }
 ```
+
+### upload
+
+`POST /api/v1/item/upload`
+
+multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路径可引用（拖拽/文件选择器拿到的是 File 内容），经本端点以内容入库。写权限：admin 恒可用；viewer 需 `[web].writable`（否则 403 `READ_ONLY`）。
+
+#### 请求（multipart/form-data）
+
+| 字段        | 类型   | 必填 | 说明                                   |
+| ----------- | ------ | ---- | -------------------------------------- |
+| file        | binary | 是   | 文件内容；文件名只取末段（防跨目录），扩展名决定入库类型（与 path 导入同语义，不校验内容） |
+| folder_path | text   | 否   | 目标文件夹路径，缺省为库根目录         |
+| name        | text   | 否   | 文件名（不含扩展名），缺省取 file 文件名 |
+
+#### 响应
+
+与 `item/add` 相同（Item + `already_existed`）。请求体上限 256MB。
 
 ### update
 

@@ -247,7 +247,7 @@ export async function request<T>(method: string, path: string,
 // 行为：拼 Bearer 头；信封解包（status==='error' → throw ApiError）；网络错误 → ApiError('NETWORK')；无 data → undefined
 ```
 
-**局域网 web 查看**（server 侧见 storage.md 的 `[web]` 段与 server-rest-api-v1.md 的 `app/info.access`）：桌面端设置面板配置 enabled/port/token（按库隔离），server 追加监听 `0.0.0.0:<port>` 并托管前端静态文件；浏览器打开 `http://<电脑IP>:<port>` 先进 ConnectScreen 输入 token，验证通过后经 `app/info.access` 进入 viewer/admin 模式——**viewer 为只读**：前端隐藏全部写入口（store.viewerMode 驱动：右键写菜单/编辑窗口/检查器编辑字段/侧栏新建/多选批量/删除快捷键/拖拽导入与放置），服务端写端点对该 token 一律 `403 READ_ONLY` 为最终防线。
+**局域网 web 查看**（server 侧见 storage.md 的 `[web]` 段与 server-rest-api-v1.md 的 `app/info.access`）：桌面端设置面板配置 enabled/port/token 与写权限（按库隔离，token 支持「二合一/拆分」两模式），server 追加监听 `0.0.0.0:<port>` 并托管前端静态文件；浏览器打开 `http://<电脑IP>:<port>` 先进 ConnectScreen 输入 token，验证通过后经 `app/info` 的 `access`/`writable` 判定写能力（store.viewerMode 驱动，同一浏览器切换身份用设置面板「连接」分区的注销按钮）——**只读 token**：前端隐藏全部写入口（右键写菜单/编辑窗口/检查器编辑字段/侧栏新建/多选批量/删除快捷键/拖拽导入与放置/上传按钮），服务端写端点对该 token 一律 `403 READ_ONLY` 为最终防线；**持可写 token**（未拆分时的 token 或拆分时的 write_token，保存即热生效）web 端与桌面端同权：上传（multipart `item/upload`，浏览器无文件路径可引用）、删除、标签/评分/文件夹等全部写操作可用。
 
 **endpoints.ts**——端点一一对应 server-rest-api-v1.md，签名即契约：
 
@@ -266,6 +266,7 @@ export const api = {
   itemDetail(id: string): Promise<Item>;
   itemCount(): Promise<number>;
   itemAddByPath(path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }): Promise<{ item: Item; already_existed: boolean }>;
+  itemUpload(file: File, opts?: { folder_path?: string; name?: string }): Promise<{ item: Item; already_existed: boolean }>;  // multipart 上传（web 端内容入库）；request 对 FormData 不做 JSON 序列化
   itemUpdate(id: string, patch: { name?; tags?; categories?; star?; annotation?; url?; folder_path? }, path?: string): Promise<Item>;
   itemBatchUpdate(ids: string[], patch: { add_tags?; add_categories?; star?; folder_path? }): Promise<{ updated: number; missing_ids: string[] }>;  // 批量：标签/分类并集、评分/文件夹设置（见 API 文档 batch_update 节）
   itemDelete(id: string, path?: string): Promise<void>;
@@ -353,12 +354,13 @@ setStarForSelected(star): Promise<void>;           // 批量端点设置评分�
 batchUpdate(ids, patch, doneText): Promise<void>;  // 批量端点统一入口；missing_ids 计数在 toast 提示「n 个未处理」
 trashSelected(): Promise<void>; restoreSelected(): Promise<void>;
 clearTrash(): Promise<void>;                       // 调用方先二次确认
-importPaths(paths: string[]): Promise<void>;       // 逐个 itemAddByPath（server 逐文件处理完才返回，done 逐项推进）；结束汇总 toast（成功 n，已存在 m，失败 k）
+importPaths(paths: string[]): Promise<void>;       // 拖拽导入（Electron）：逐个 itemAddByPath（server 逐文件处理完才返回，done 逐项推进）；结束汇总 toast（成功 n，已存在 m，失败 k）
+importFiles(files: File[]): Promise<void>;        // 浏览器端导入（拖拽/标题栏上传按钮）：逐个 multipart itemUpload，进度与汇总同 importPaths
 importBegin(): boolean;                           // 拖拽落下即占用导入态（并发导入拒绝并 toast）；importPaths 前置
 refreshFolders(): Promise<void>;
 openPreview(id): void; closePreview(): void; navigatePreview(step: 1 | -1): void;
 editorTarget: Item | null;   // 图片编辑窗口目标(全局单例,App.vue 据此挂载 ImageEditDialog)
-viewerMode: boolean;          // 局域网 viewer token(只读查看):隐藏全部写入口,服务端 403 为最终防线
+viewerMode: boolean;          // 局域网 viewer token 且 [web].writable 未开启:隐藏全部写入口,服务端 403 为最终防线;writable 开启后 false(web 端与桌面端同权)
 openEditor(item): void; closeEditor(): void;   // 网格/预览浮层右键「编辑图片…」
 saveImageEdit(id, angle: 90 | 180 | 270): Promise<boolean>;  // 编辑窗口保存：客户端重编码（canvas，JPEG EXIF 字节级回填并重置 Orientation，见 imageEdit.ts）→ item/replace；id 漂移后新 item 就地替换详情（预览若正打开则跟随新 id）；返回是否成功，调用方据此关闭编辑窗口
 showToast(msg: string): void;
@@ -381,14 +383,14 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
 | `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；挂载 PreviewOverlay/ImageEditDialog（store.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
-| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右端设置齿轮（Electron 或触屏设备显示，打开 SettingsDialog）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右组首为上传按钮（`!viewerMode` 时显示：隐藏 file input 多选 → `store.importFiles` multipart 上传，手机端无拖拽的主导入入口）；右端设置齿轮（所有客户端常显，打开 SettingsDialog；web 端含连接分区/token 注销）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `SearchBox.vue` | — | — | 搜索框（store.searchText 草稿 + 回车 submitSearch）：TitleBar 与 Inspector 顶部共用同一实例模板；styles.css 按布局切换可见性——桌面在顶栏，触屏横屏（wide+touch，检查器可见）挪到 Inspector 顶（把顶栏空间留给筛选/排序按钮），窄屏隐藏、由 TitleBar 的搜索按钮 + 顶部搜索浮层替代（Enter 提交并关闭，Esc/点遮罩/× 关闭） |
 | `FilterBar.vue` | — | — | 筛选工具列（TitleBar 下方一行 chip，App.vue 以 `filterBarVisible || hasActiveFilters` 控制显隐）：评分 chip（点击弹星级单选菜单：全部/0–5 星，激活时显示当前值并高亮）+ 颜色 chip（条件激活时显示色块与 hex，× 就地清除） |
 | `WindowControls.vue` | — | — | 最小化/最大化(还原)/关闭按钮（Windows/Linux 风格），fixed 于窗口右上角（z-index 100，预览浮层/对话框之下），侧栏显隐不影响位置；macOS 不渲染（系统原生红绿灯）；控件区由本组件自带 `app-region: no-drag`（下方是拖拽区，缺了真实点击会被拦截）；仅 Electron 内渲染；最大化态经 `onWindowMaximized` 订阅同步 |
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close` | 设置面板（TitleBar 齿轮打开；Electron 与触屏设备可开）：标题栏（标题 + × 关闭）+ **左侧导航分区（外观/局域网）+ 右侧内容**的两栏结构（窄屏 ≤520px 折叠为顶部横向页签；带导航时宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃；无 shell 单分区时 `min(440px, …)` 且导航不渲染，高度内容自适应），正文独立滚动、底部按钮常驻；外观分区：缩略图尺寸滑杆（−/滑杆/＋，v-model store.thumbSize 实时生效，所有端可用）；局域网分区：开关（switch 样式）+ 一句说明，启用后才展开端口/访问 token（monospace 输入 + 复制/重新生成）/本机地址列表（链接 + 逐行复制，useClipboard legacy 回退，复制 toast 反馈）——依赖 Electron preload 通道，移动端（浏览器触屏）不可见；**端口为纯文本输入**（type=number 的原生步进按钮易误触且样式不可控，inputmode=numeric）：实时校验纯数字且 1–65535，不合法红框 + 提示，保存拦截（未启用时输入框不可见，静默回退默认 27372）；**遮罩关闭为 pointerdown/pointerup 配对判定**（按下与抬起都落在遮罩上才关）——拖动端口数字/滑杆滑出面板松开时 click 落在共同祖先即遮罩上，旧 click.self 判定会误关面板丢失未保存配置；Esc 关闭（捕获阶段拦截并阻断全局快捷键）；打开期间挂 `body.dialog-open` 挂起窗口拖拽区（同 ContextMenu 的 menu-open），点遮罩盖住的标题栏也是关闭而不是拖窗口；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置——daemon watcher 唤醒 LAN supervisor 热重绑（不重启进程、SSE 不断），主进程轮询 `app/info` 的 `lan` 状态确认收敛，绑定失败（端口占用等）自动写回旧配置回滚并弹错；成功后本对话框 emit close；无 shell 时底部仅「关闭」（滑杆实时生效无需保存） |
+| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板（TitleBar 齿轮打开，所有 web 客户端与 Electron 均可开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；外观分区：缩略图尺寸滑杆（−/滑杆/＋，v-model store.thumbSize 实时生效，所有端可用）；局域网分区：开关（switch 样式）+ 一句说明，启用后才展开**「允许修改素材库」开关**（[web].writable，开启后查看端可上传/删除/修改，附风险提示，保存即热生效）、**token 拆分开关**（「拆分只读与可写 token」，仅写权限开启后显示：关闭时单一 token 读写兼具；开启时访问 token 降为只读、另签发可写 token，开启且为空时自动生成——separate_write_token + write_token）、端口/访问 token（拆分时标注「只读」；monospace 输入 + 复制/重新生成；拆分时另有可写 token 同款字段）/本机地址列表（链接 + 逐行复制，useClipboard legacy 回退，复制 toast 反馈；拆分/校验规则不变）——依赖 Electron preload 通道，移动端（浏览器触屏）不可见；**连接分区**（仅局域网 web 端，浏览器触屏/桌面浏览器均可达——设置齿轮由此在所有 web 客户端常显）：当前访问级别（只读/可读写，取自 store.viewerMode）+ 「注销 token」按钮（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页，重新输入另一 token 即可切换读写身份）；端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控，inputmode=numeric）：实时校验纯数字且 1–65535，不合法红框 + 提示，保存拦截（未启用时输入框不可见，静默回退默认 27372）；**遮罩关闭为 pointerdown/pointerup 配对判定**（按下与抬起都落在遮罩上才关）——拖动端口数字/滑杆滑出面板松开时 click 落在共同祖先即遮罩上，旧 click.self 判定会误关面板丢失未保存配置；Esc 关闭（捕获阶段拦截并阻断全局快捷键）；打开期间挂 `body.dialog-open` 挂起窗口拖拽区（同 ContextMenu 的 menu-open），点遮罩盖住的标题栏也是关闭而不是拖窗口；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置——daemon watcher 唤醒 LAN supervisor 热重绑（不重启进程、SSE 不断），主进程轮询 `app/info` 的 `lan` 状态确认收敛，绑定失败（端口占用等）自动写回旧配置回滚并弹错；成功后本对话框 emit close；无 shell（web 端）时底部仅「关闭」（滑杆实时生效无需保存） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；空态 EmptyState；右键/双击/点选转发 store。右键菜单：添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`store.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
@@ -411,7 +413,7 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 | composable | 签名与行为 |
 | ---------- | ---------- |
 | `useContextMenu()` | 模块级单例响应式状态 `{visible, x, y, items}`（全局唯一菜单）；`open(items, MouseEvent)` 定位（防出屏翻转）；`close()` |
-| `useDragImport()` | `useDropZone` 接 drop → 先 `importBegin()` 占位（收集文件阶段进度条即显示）→ `webkitGetAsEntry()` 递归展开文件夹 → `webUtils.getPathForFile` 取绝对路径 → `store.importPaths`；收集失败 toast |
+| `useDragImport()` | `useDropZone` 接 drop → 先 `importBegin()` 占位（收集文件阶段进度条即显示）→ `webkitGetAsEntry()` 递归展开文件夹 → Electron 经 `webUtils.getPathForFile` 取绝对路径走 `store.importPaths`；浏览器（局域网 web 端）无路径可取，改走 `store.importFiles`（multipart 内容上传，需 `[web].writable`）；收集失败 toast |
 | `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；**图片编辑窗口打开时（store.editorTarget）整体让行**（窗口自带 Esc/关闭逻辑，否则 Esc 会关底层预览、Delete 会删正在编辑的素材）；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
 
 ### 样式约定

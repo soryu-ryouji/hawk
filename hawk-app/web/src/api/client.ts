@@ -82,15 +82,17 @@ export async function request<T>(
     url.searchParams.set(key, value);
   }
 
+  // FormData（multipart 上传）不做 JSON 序列化，让 fetch 自带 boundary 的 Content-Type
+  const raw = opts?.body instanceof FormData ? opts.body : undefined;
   let res: Response;
   try {
     res = await fetch(url, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
-        ...(opts?.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(opts?.body !== undefined && !raw ? { 'Content-Type': 'application/json' } : {}),
       },
-      body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      body: raw ?? (opts?.body !== undefined ? JSON.stringify(opts.body) : undefined),
     });
   } catch {
     throw new ApiError('NETWORK', '无法连接 hawk-daemon', 0);

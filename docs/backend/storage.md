@@ -134,10 +134,13 @@ ignore = ["node_modules", "*.tmp"]
 [web]
 enabled = false      # 开启后 server 追加监听 0.0.0.0:<port>,并托管前端页面
 port = 27372
-token = ""           # 查看者 token;浏览器打开 http://<电脑IP>:<port> 后输入,仅可浏览
+token = ""           # 访问 token;浏览器打开 http://<电脑IP>:<port> 后输入
+writable = false     # 允许写:开启后查看端可上传/删除/修改(与桌面端同等操作),请谨慎授权
+separate_write_token = false  # 拆分只读/可写 token:token 降为只读,write_token 可写(不拆分时 token 读写兼具)
+write_token = ""     # 拆分模式下的可写 token
 ```
 
-`[web]` 保存即热生效（文件监听 Reload → LAN 监听 supervisor 运行期重绑，见 server-code-structure.md 的 api/lan.rs；仅 token 变化不重绑连接，token 每请求校验）。viewer token 通过时写端点一律 `403 READ_ONLY`（放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）。
+`[web]` 保存即热生效（文件监听 Reload → LAN 监听 supervisor 运行期重绑，见 server-code-structure.md 的 api/lan.rs；仅 token/writable 等权限字段变化不重绑连接——每请求经 current().web 判定）。token 能力分三档：`writable = false` 时一律只读（写端点 `403 READ_ONLY`，放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）；`writable = true` 且未拆分时 `token` 读写兼具；拆分时 `token` 只读、`write_token` 可写（仅在 `writable = true` 且拆分时才是合法 token）。web 端写能力由 `app/info` 的 `writable` 字段按当前 token 告知前端。
 
 全局配置文件位于 `~/.config/hawk/config.toml`，只存放跨项目的全局设置（目前没有全局配置项）。
 

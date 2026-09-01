@@ -6,7 +6,7 @@ description = "hawk 素材管理后端"
 license = "AGPL-3.0-only"
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower = "0.5"

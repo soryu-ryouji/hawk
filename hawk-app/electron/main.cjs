@@ -344,7 +344,7 @@ function listLibraries() {
 
 // ---------- 局域网 web 查看（[web] 段按库隔离，存于 .hawk/config.toml） ----------
 
-const WEB_DEFAULTS = { enabled: false, port: 27372, token: '' };
+const WEB_DEFAULTS = { enabled: false, port: 27372, token: '', writable: false, separateWriteToken: false, writeToken: '' };
 
 function libraryConfigFile() {
   return path.join(libraryRoot, '.hawk', 'config.toml');
@@ -370,6 +370,9 @@ function readWebSection(file) {
       if (key === 'enabled') out.enabled = value === 'true';
       else if (key === 'port') out.port = Number.parseInt(value, 10) || WEB_DEFAULTS.port;
       else if (key === 'token') out.token = value;
+      else if (key === 'writable') out.writable = value === 'true';
+      else if (key === 'separate_write_token') out.separateWriteToken = value === 'true';
+      else if (key === 'write_token') out.writeToken = value;
     }
   } catch { /* 文件不存在等,用默认 */ }
   if (!(out.port > 0 && out.port <= 65535)) out.port = WEB_DEFAULTS.port;
@@ -392,7 +395,17 @@ function writeWebSection(file, web) {
   }
   while (kept.length && kept[kept.length - 1].trim() === '') kept.pop();
   const token = String(web.token).replace(/["\\]/g, '');
-  kept.push('[web]', `enabled = ${web.enabled ? 'true' : 'false'}`, `port = ${web.port}`, `token = "${token}"`, '');
+  const writeToken = String(web.writeToken).replace(/["\\]/g, '');
+  kept.push(
+    '[web]',
+    `enabled = ${web.enabled ? 'true' : 'false'}`,
+    `port = ${web.port}`,
+    `token = "${token}"`,
+    `writable = ${web.writable ? 'true' : 'false'}`,
+    `separate_write_token = ${web.separateWriteToken ? 'true' : 'false'}`,
+    `write_token = "${writeToken}"`,
+    '',
+  );
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, kept.join('\n'));
 }
@@ -474,9 +487,15 @@ ipcMain.handle('hawk:save-lan-settings', async (_event, web) => {
     enabled: !!web?.enabled,
     port: Number.parseInt(web?.port, 10) || WEB_DEFAULTS.port,
     token: String(web?.token ?? '').trim(),
+    writable: !!web?.writable,
+    separateWriteToken: !!web?.separateWriteToken,
+    writeToken: String(web?.writeToken ?? '').trim(),
   };
   if (norm.enabled && !norm.token) {
     return { ok: false, error: '启用局域网查看需要填写访问 token' };
+  }
+  if (norm.enabled && norm.writable && norm.separateWriteToken && !norm.writeToken) {
+    return { ok: false, error: '拆分只读/可写 token 需要填写可写 token' };
   }
 
   // 热生效：写 config.toml → daemon watcher 唤醒 LAN supervisor 重绑，不重启 daemon。

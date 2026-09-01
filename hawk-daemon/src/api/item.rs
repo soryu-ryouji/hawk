@@ -1,4 +1,4 @@
-//! item 端点（12 个）：list/skeleton/detail/count/add/update/batch_update/delete/restore/
+//! item 端点（14 个）：list/skeleton/detail/count/add/upload/update/batch_update/delete/restore/
 //! thumbnail/file/refresh_thumbnail/replace。
 //! 写路径的真实文件操作在本层完成，随后提交索引流水线并等待完成；读取一律走索引锁内投影。
 
@@ -25,6 +25,7 @@ pub fn routes() -> Router<SharedState> {
         .route("/api/v1/item/detail", get(item_detail))
         .route("/api/v1/item/count", get(item_count))
         .route("/api/v1/item/add", post(item_add))
+        .route("/api/v1/item/upload", post(item_upload))
         .route("/api/v1/item/update", post(item_update))
         .route("/api/v1/item/batch_update", post(item_batch_update))
         .route("/api/v1/item/delete", post(item_delete))
@@ -282,7 +283,6 @@ async fn item_add(
                 .ok_or_else(|| ApiError::unsupported_format("无法识别的图像数据"))?;
             (ext, "image".to_string(), Some(bytes), None)
         };
-
     let name = req.name.clone().unwrap_or(default_name);
     if !fs_util::is_valid_name(Some(&name)) {
         return Err(ApiError::invalid_param(format!("非法文件名: {}", req.name.unwrap_or_default())));
@@ -361,6 +361,116 @@ async fn item_add(
     }
 
     // 元数据可能刚经 submit_metadata 更新,响应以最新投影为准
+    let dto = state
+        .index
+        .get_dto(&hash)
+        .ok_or_else(|| ApiError::internal("索引失败"))?;
+    Ok(Json(Envelope::ok(ItemAddResponse {
+        item: dto,
+        already_existed: existed_before_write,
+    })))
+}
+
+// ---------- upload（web 端内容上传） ----------
+
+/// multipart/form-data 上传：浏览器无文件路径可引用（拖拽/文件选择器拿到的是内容），
+/// 经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）。
+/// 写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）
+async fn item_upload(
+    State(state): State<SharedState>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<Envelope<ItemAddResponse>>, ApiError> {
+    let mut folder_rel = String::new();
+    let mut name_override: Option<String> = None;
+    let mut file: Option<(String, Vec<u8>)> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::invalid_param(format!("multipart 解析失败: {e}")))?
+    {
+        match field.name().unwrap_or_default() {
+            "folder_path" => {
+                folder_rel = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::invalid_param(format!("读取 folder_path 失败: {e}")))?;
+            }
+            "name" => {
+                name_override = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| ApiError::invalid_param(format!("读取 name 失败: {e}")))?,
+                );
+            }
+            "file" => {
+                // 文件名只取最后一段（防跨目录写入），扩展名决定入库类型（与 path 导入同语义：不眼内容）
+                let raw = field.file_name().unwrap_or_default().to_string();
+                let filename = std::path::Path::new(&raw)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| ApiError::invalid_param(format!("读取文件内容失败: {e}")))?
+                    .to_vec();
+                file = Some((filename, bytes));
+            }
+            _ => {} // 未知字段忽略
+        }
+    }
+    let Some((filename, bytes)) = file else {
+        return Err(ApiError::invalid_param("缺少 file 字段"));
+    };
+
+    if !folder_rel.is_empty() && !LibraryPaths::is_valid_library_path(Some(&folder_rel)) {
+        return Err(ApiError::invalid_param(format!("非法文件夹路径: {folder_rel}")));
+    }
+    let folder_abs = if folder_rel.is_empty() {
+        state.paths.root.clone()
+    } else {
+        state.paths.to_absolute(&folder_rel).unwrap()
+    };
+    std::fs::create_dir_all(&folder_abs).map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
+
+    let stem = name_override.unwrap_or_else(|| LibraryPaths::name_of(&filename).to_string());
+    if !fs_util::is_valid_name(Some(&stem)) {
+        return Err(ApiError::invalid_param(format!("非法文件名: {filename}")));
+    }
+    let ext = LibraryPaths::ext_of(&filename);
+    let file_name = if ext.is_empty() { stem.clone() } else { format!("{stem}.{ext}") };
+    let target_rel = if folder_rel.is_empty() {
+        file_name.clone()
+    } else {
+        format!("{folder_rel}/{file_name}")
+    };
+    let target_abs = state.paths.to_absolute(&target_rel).unwrap();
+    if std::path::Path::new(&target_abs).exists() {
+        return Err(ApiError::file_exists(&target_rel));
+    }
+
+    // 先算哈希判断内容是否已存在(already_existed 语义以写入前为准)
+    let hash = content_hash::hash_bytes(&bytes);
+    let existed_before_write = state.index.contains(&hash);
+
+    // 文件落库（阻塞 IO 移出运行时线程）
+    tokio::task::spawn_blocking({
+        let target = target_abs.clone();
+        move || std::fs::write(&target, &bytes).map_err(|e| format!("写入文件失败: {e}"))
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("写入任务失败: {e}")))?
+    .map_err(ApiError::internal)?;
+
+    // 哈希已算好,流水线跳过重算,避免大文件导入时二次读盘
+    state
+        .pipeline
+        .submit_upsert(target_abs, Some(hash.clone()))
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::internal("索引失败"))?;
+
     let dto = state
         .index
         .get_dto(&hash)

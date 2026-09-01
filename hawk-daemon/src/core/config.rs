@@ -1,6 +1,9 @@
 //! 项目配置（.hawk/config.toml）。由文件监听触发 Reload，索引流水线在配置变更后全量比对。
 //! 库配置：ignore 模式无 "/" 时匹配任意深度同名项；Matcher 默认序数忽略大小写。
-//! [web] 段保存即热生效（LAN 监听 supervisor 运行期重绑，见 api/lan.rs）。
+//! [web] 段保存即热生效（LAN 监听 supervisor 运行期重绑，见 api/lan.rs）；
+//! token 读写能力同样每请求经 current().web 判定，热生效：
+//! writable=false 时 token 只读；true 且未拆分时 token 读写；拆分时 token 只读、
+//! write_token 读写（separate_write_token 防止误删 write_token 后主 token 静默获得写权限）。
 
 use crate::core::paths::LibraryPaths;
 use std::sync::RwLock;
@@ -10,6 +13,12 @@ pub struct WebSettings {
     pub enabled: bool,
     pub port: u16,
     pub token: Option<String>,
+    /// 允许局域网 token 执行写操作（上传/删除/修改等）；关闭则一律只读（403 READ_ONLY）
+    pub writable: bool,
+    /// 拆分只读/可写 token：token 降为只读，write_token 具备写权限
+    pub separate_write_token: bool,
+    /// 拆分模式下的可写 token
+    pub write_token: Option<String>,
 }
 
 /// reload 前后差异：调用方据此决定后续动作（ignore 变化 → 重扫，web 变化 → LAN 重绑）
@@ -92,11 +101,15 @@ const DEFAULT_CONFIG_TEXT: &str = r#"# hawk 项目配置（.hawk/config.toml，�
 # 索引时忽略的路径（不含 "/" 的模式匹配任意深度同名项）
 ignore = []
 
-# 局域网 web 查看（只读；桌面端设置面板读写）
+# 局域网 web 查看（桌面端设置面板读写；开启「允许修改素材库」后查看端可上传/删除等，请谨慎授权）
 [web]
 enabled = false
 port = 27372
 token = ""
+writable = false
+# 拆分只读/可写 token：token 只读，write_token 可写（不拆分时 token 读写兼具）
+separate_write_token = false
+write_token = ""
 "#;
 
 fn load(paths: &LibraryPaths) -> Snapshot {
@@ -135,6 +148,14 @@ fn parse_web_value(value: &toml::Value) -> WebSettings {
             let token = token.trim();
             if !token.is_empty() {
                 web.token = Some(token.to_string());
+            }
+        }
+        web.writable = table.get("writable").and_then(|v| v.as_bool()).unwrap_or(false);
+        web.separate_write_token = table.get("separate_write_token").and_then(|v| v.as_bool()).unwrap_or(false);
+        if let Some(write_token) = table.get("write_token").and_then(|v| v.as_str()) {
+            let write_token = write_token.trim();
+            if !write_token.is_empty() {
+                web.write_token = Some(write_token.to_string());
             }
         }
     }

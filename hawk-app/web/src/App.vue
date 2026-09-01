@@ -197,6 +197,13 @@ function quitApp() {
   void window.hawkShell?.quitApp();
 }
 
+/** web 端注销 token：清除本浏览器记忆的局域网 token，回门页重新输入（切换只读/可写身份用） */
+function logoutToken() {
+  clearStoredToken(apiConfig().api);
+  showSettings.value = false;
+  phase.value = 'connect';
+}
+
 /** 触屏窄屏：点击侧栏导航项（智能条目/文件夹/分类/标签）后收起抽屉；鼠标设备保持展开（桌面窄窗可连续切换） */
 function onSidebarNav(e: MouseEvent) {
   if (!narrow.value || !touch.value) {
@@ -309,7 +316,7 @@ useDragImport();
     />
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
     <ImageEditDialog v-if="store.editorTarget" :item="store.editorTarget" @close="store.closeEditor()" />
-    <SettingsDialog v-if="showSettings" @close="showSettings = false" />
+    <SettingsDialog v-if="showSettings" @close="showSettings = false" @logout="logoutToken" />
     <ContextMenu />
 
     <Teleport to="body">

@@ -127,6 +127,9 @@ struct AppInfo {
     platform: &'static str,
     exec_path: String,
     access: &'static str,
+    /// 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
+    /// （前端 viewerMode 依据，开启后 web 端展示全部写入口）
+    writable: bool,
     lan: LanInfo,
 }
 
@@ -136,9 +139,9 @@ async fn info(
     State(state): State<SharedState>,
     Extension(access): Extension<AccessLevel>,
 ) -> Json<Envelope<AppInfo>> {
-    let access = match access {
-        AccessLevel::Admin => "admin",
-        AccessLevel::Viewer => "viewer",
+    let (access, writable) = match access {
+        AccessLevel::Admin => ("admin", true),
+        AccessLevel::Viewer { writable } => ("viewer", writable),
     };
     let platform = if cfg!(target_os = "windows") {
         "windows"
@@ -156,6 +159,7 @@ async fn info(
         platform,
         exec_path,
         access,
+        writable,
         lan: LanInfo {
             active: lan.active,
             port: lan.port,

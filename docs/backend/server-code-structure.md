@@ -50,7 +50,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | 文件 | 职责 |
 | ---- | ---- |
 | `src/api/lan.rs` | LAN 监听 supervisor（期望态收敛）：持有当前 0.0.0.0 监听，被 watcher 的 ConfigChanged 唤醒后对比期望态（`[web]` enabled 且 token 非空 → port）与实际，差异时优雅关停旧监听（3s 排空超时强杀）重绑新端口；仅 token 变化为 no-op（token 每请求经 `current().web` 校验天然热）；绑定失败降级为状态错误（app/info 暴露，设置面板轮询），不崩进程 |
-| `src/api/mod.rs` | `AppState` 共享状态与 `build_router`；中间件链 cors → auth → ready_gate（axum 中后注册的 layer 在外层，请求依次经过）；auth 双 token：admin（进程 token，全权限）与 viewer（config.toml `[web].token`，只读：GET + item/list、skeleton），`/api/v1/events`、`item/thumbnail`、`item/file` 三个无法设请求头的 GET 端点放行 `?token=`；ready_gate 未就绪时 `/api/*` 一律 503 `NOT_READY`，仅放行 `app/startup` |
+| `src/api/mod.rs` | `AppState` 共享状态与 `build_router`；中间件链 cors → auth → ready_gate（axum 中后注册的 layer 在外层，请求依次经过）；auth 双 token：admin（进程 token，全权限）与 viewer（局域网 token，`AccessLevel::Viewer { writable }` 携带 per-token 写能力：未开启写则只读，开启且未拆分时 token 读写兼具，拆分时 token 只读、write_token 可写——每请求经 current().web 判定，热生效），`/api/v1/events`、`item/thumbnail`、`item/file` 三个无法设请求头的 GET 端点放行 `?token=`；ready_gate 未就绪时 `/api/*` 一律 503 `NOT_READY`，仅放行 `app/startup`；全局 DefaultBodyLimit 256MB（upload 整文件与 replace 的 base64 超出 axum 默认 2MB） |
 | `src/api/envelope.rs` | 统一成功/错误信封、错误码常量、`ApiError` → 响应的 `IntoResponse`；`JsonBody` 提取器把 JSON 解析失败统一转为 `INVALID_PARAM` |
 | `src/api/app.rs` | `health`（就绪前 503，无需 token）、`startup`（starting 带进度 / ready / error）、`status`（缩略图与索引积压快照，轮询型客户端用）、`info`（版本/平台/可执行路径/access 级别）、`token`（token 发现：Host 限定环回地址防 DNS rebinding，响应不带 CORS 头） |
 | `src/api/library.rs` | `library/info`（显示名取 config 的 name，缺省目录名）、`reindex`（全量重哈希扫描，异步立即返回）、`rescan`（忽略目录快照强制遍历，仍按 size/mtime 复用哈希） |
@@ -61,7 +61,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/api/events.rs` | SSE 订阅端点：`broadcast::Receiver` 转 `event:`/`data:` 帧；lagged（消费跟不上）或总线关闭即结束流，客户端重连后须以 `item/skeleton` + `folder/list` 全量对齐 |
 | `src/api/openapi.rs` | `/openapi/v1.json` 静态服务（`include_str!` 固化 `hawk-daemon/openapi.json`），schema 即契约，不随后端实现漂移 |
 | `src/api/web_dist.rs` | 局域网 web 查看的静态托管（fallback 挂载；`--web-dist` 传入时启用）：SPA 回退 `index.html`，`/assets/` 内容哈希资源 immutable 长缓存，其余 no-cache（防手机浏览器启发式缓存旧 HTML） |
-| `src/api/item.rs` | item 十三端点，逻辑最重，见下节 |
+| `src/api/item.rs` | item 十四端点，逻辑最重，见下节 |
 
 ### core/ —— 与 HTTP 无关的领域核心
 
@@ -107,6 +107,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 
 - **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影
 - **add**：`path`/`url`/`img_base64` 三选一取内容（url 经 ureq 30s 超时下载到内存，扩展名从 URL 推断、推断不出按内容嗅探；base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（`spawn_blocking`，不阻塞运行时线程；path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
+- **upload**：multipart/form-data 内容入库（web 端用，浏览器无文件路径可引用）：`file`（文件名只取末段防跨目录，扩展名决定类型，与 path 导入同语义不校验内容）/`folder_path`/`name` → 与 add 相同的同名检查→哈希→落盘→upsert 闭环，响应同 add；写权限 viewer 需 `[web].writable`（auth 中间件统一拦截）
 - **update**：经 `find_location` 取位置快照 → 回收站中的文件禁止改名/移动 → `name` 分支做真实 rename 并 `submit_move`；`folder_path` 分支**按移动后的最新位置再移动**（改名+移动同请求时基于新文件名计算目标）→ tags/star(0–5 校验)/categories/annotation/url 走 `submit_metadata` → 响应 `get_dto` 投影
 - **batch_update**：校验后先逐个移动主位置（同名冲突不整体失败，跳过该项记入 missing），再 `submit_batch_metadata` 一次提交（标签/分类并集追加、评分设置）；不存在的 id 由流水线记入 `missing_ids`；无任何更新字段返回 400
 - **delete / restore**：delete 把文件移入 `.hawk/trash/`（保留目录结构，冲突加 ` (n)` 后缀）；restore 按回收站实际名称去掉前缀后的路径放回，被占用报 `FILE_EXISTS`；位置定位均走 `find_location` 快照

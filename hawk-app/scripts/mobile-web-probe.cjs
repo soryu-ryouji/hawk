@@ -117,7 +117,7 @@ app.whenReady().then(async () => {
   const t0 = Date.now();
   let shotStartup = false;
   let shotGrid = false;
-  const timer = setInterval(async () => {
+  const tick = async () => {
     const p = await win.webContents.executeJavaScript(TICK_SRC).catch(() => null);
     if (!p) {
       return;
@@ -179,5 +179,9 @@ app.whenReady().then(async () => {
     emit({ type: 'preview', t: Date.now() - t0, ...(v ?? { error: true }) });
     await shot('preview');
     app.exit(0);
-  }, 400);
+  };
+  // 首个 tick 立即执行：页面可能在 400ms 间隔内就完成 starting→ready（本机回环 + 小库），
+  // 只靠 setInterval 会漏检启动屏（assertion 偶发失败的真实原因）
+  void tick();
+  const timer = setInterval(tick, 400);
 });

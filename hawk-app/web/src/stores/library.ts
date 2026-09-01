@@ -173,12 +173,13 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   // ---- 初始与查询 ----
-  /** 局域网 web 查看（viewer token）：只读模式，全部写入口隐藏；服务端 403 为最终防线 */
+  /** 局域网 web 查看（viewer token）：默认只读（全部写入口隐藏，服务端 403 为最终防线）；
+   * [web] writable 开启后解除只读（app/info.writable 驱动，web 端可上传/删除/修改） */
   const viewerMode = ref(false);
 
   async function init() {
     const info = await api.appInfo();
-    viewerMode.value = info.access === 'viewer';
+    viewerMode.value = info.access === 'viewer' && !info.writable;
     library.value = await api.libraryInfo();
 
     // 换库/应用设置重启复用本入口：清掉上一库的会话状态，避免视图/预览/进度指示残留。
@@ -684,6 +685,30 @@ export const useLibraryStore = defineStore('library', () => {
     // SSE item.added 已触发防抖骨架重载，这里不重复拉取
   }
 
+  /** 浏览器端导入（无 hawkShell，拖拽/文件选择器拿到的是 File 内容）：逐个 multipart 上传 */
+  async function importFiles(files: File[]) {
+    if (files.length === 0) {
+      importProgress.value = null;
+      showToast('未找到可导入的文件');
+      return;
+    }
+    importProgress.value = { total: files.length, done: 0 };
+    let added = 0;
+    let existed = 0;
+    let failed = 0;
+    for (const file of files) {
+      try {
+        const res = await api.itemUpload(file, { folder_path: currentFolderPath.value ?? undefined });
+        res.already_existed ? existed++ : added++;
+      } catch {
+        failed++;
+      }
+      importProgress.value.done += 1;
+    }
+    importProgress.value = null;
+    showToast(`上传完成：新增 ${added}${existed ? `，已存在 ${existed}` : ''}${failed ? `，失败 ${failed}` : ''}`);
+  }
+
   // ---- 文件夹写操作 ----
   async function folderCreate(parentPath: string, name: string) {
     try {
@@ -1008,7 +1033,7 @@ export const useLibraryStore = defineStore('library', () => {
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, previewItem, previewIndex, previewNavId, flatFolders, categoryOptions, hasActiveFilters,
     init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, importBegin, importPaths,
+    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, importBegin, importPaths, importFiles,
     folderCreate, folderRename, folderDelete, refreshFolders,
     refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
     openPreview, closePreview, navigatePreview, saveImageEdit, openEditor, closeEditor, showToast, applyEvent,

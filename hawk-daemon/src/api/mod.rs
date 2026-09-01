@@ -27,11 +27,13 @@ pub mod trash;
 pub mod view;
 pub mod web_dist;
 
-/// 请求级扩展：当前 token 的访问级别（admin/viewer），app/info 据此报告
+/// 请求级扩展：当前 token 的访问级别，app/info 据此报告。
+/// Viewer 携带该 token 的写能力（[web] 的 writable/separate/write_token 共同决定，
+/// 每请求解析，配置热生效）
 #[derive(Clone, Copy)]
 pub enum AccessLevel {
     Admin,
-    Viewer,
+    Viewer { writable: bool },
 }
 
 pub struct AppState {
@@ -68,6 +70,9 @@ pub fn build_router(state: SharedState) -> axum::Router {
         .merge(events::routes())
         .fallback(web_dist::serve)
         .with_state(state.clone())
+        // 请求体上限放宽到 256MB（axum 默认 2MB）：item/upload 整文件上传与 item/replace 的
+        // base64 内容替换都会超过默认值；端点全部 token 鉴权，局域网/本机场景风险可控
+        .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
         // axum 中后注册的 layer 在外层：请求依次经过 cors → auth → ready_gate
         .layer(axum::middleware::from_fn_with_state(state.clone(), ready_gate))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
@@ -117,7 +122,7 @@ async fn auth(
             .into_response();
     };
 
-    if matches!(access, AccessLevel::Viewer) && !is_viewer_allowed(&req) {
+    if matches!(access, AccessLevel::Viewer { writable: false }) && !is_viewer_allowed(&req) {
         return (
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(
@@ -131,7 +136,7 @@ async fn auth(
     next.run(req).await
 }
 
-/// 返回 access 级别，token 无效返回 None
+/// 返回 access 级别（含 viewer 的 per-token 写能力），token 无效返回 None
 fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<AccessLevel> {
     let headers = req.headers();
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
@@ -140,8 +145,8 @@ fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<Acce
                 if token == state.settings.token {
                     return Some(AccessLevel::Admin);
                 }
-                if is_viewer_token(state, token) {
-                    return Some(AccessLevel::Viewer);
+                if let Some(access) = viewer_access(state, token) {
+                    return Some(access);
                 }
             }
         }
@@ -165,8 +170,8 @@ fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<Acce
                 if token == state.settings.token {
                     return Some(AccessLevel::Admin);
                 }
-                if is_viewer_token(state, token) {
-                    return Some(AccessLevel::Viewer);
+                if let Some(access) = viewer_access(state, token) {
+                    return Some(access);
                 }
             }
         }
@@ -174,12 +179,27 @@ fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<Acce
     None
 }
 
-fn is_viewer_token(state: &AppState, token: &str) -> bool {
+/// 局域网 viewer token 的访问能力（每请求解析，配置变更热生效）：
+/// - token：未拆分时随 writable，拆分（separate_write_token）时恒只读
+/// - write_token：仅在启用写 + 拆分时有效，恒可写
+fn viewer_access(state: &AppState, token: &str) -> Option<AccessLevel> {
     let web = &state.config.current().web;
-    web.enabled && web.token.as_deref().map(|t| t == token).unwrap_or(false)
+    if !web.enabled {
+        return None;
+    }
+    if web.token.as_deref() == Some(token) {
+        return Some(AccessLevel::Viewer {
+            writable: web.writable && !web.separate_write_token,
+        });
+    }
+    if web.separate_write_token && web.writable && web.write_token.as_deref() == Some(token) {
+        return Some(AccessLevel::Viewer { writable: true });
+    }
+    None
 }
 
-/// viewer（局域网 web 查看）仅放行只读端点；写端点一律 403 READ_ONLY
+/// viewer（局域网 web 查看）默认只读：仅放行 GET 与查询类 POST；
+/// 可写 token（[web] writable，拆分时为 write_token）解除限制（每请求经 current() 校验，保存即热生效）
 fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
     if req.method() == axum::http::Method::GET {
         return true;

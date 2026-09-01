@@ -1425,6 +1425,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/item/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 上传素材（multipart/form-data）
+         * @description 浏览器端无文件路径可引用（拖拽/文件选择器拿到的是内容），经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）。写权限：admin 恒可用；viewer 需 [web].writable。
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        file: string;
+                        folder_path?: string;
+                        name?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1434,6 +1480,14 @@ export interface components {
             platform: string;
             exec_path: string;
             access: string;
+            lan: {
+                active: boolean;
+                /** Format: int32 */
+                port?: number;
+                error?: string;
+            };
+            /** @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable（局域网写权限开关） */
+            writable: boolean;
         };
         CategoryCreateRequest: {
             name: string;

@@ -13,11 +13,26 @@ import type { MenuItem, QueryState } from '../types';
 
 const store = useLibraryStore();
 const { open: openMenu } = useContextMenu();
-const { narrow, touch } = useLayout();
+const { narrow } = useLayout();
 
 /** 窄屏搜索浮层：搜索框退化为按钮后的展开形态（Enter 提交并关闭，Esc/点遮罩/× 关闭） */
 const mobileSearchOpen = ref(false);
 const mobileSearchInput = ref<HTMLInputElement | null>(null);
+
+/** 上传文件选择器：多选，选定即逐个上传；input 隐藏在标题栏，选完置空以便重复选同一文件 */
+const pickerInput = ref<HTMLInputElement | null>(null);
+
+function openPicker() {
+  pickerInput.value?.click();
+}
+
+function onPicked(e: Event) {
+  const files = [...(e.target as HTMLInputElement).files ?? []];
+  (e.target as HTMLInputElement).value = '';
+  if (files.length) {
+    void store.importFiles(files);
+  }
+}
 watch(mobileSearchOpen, async (open) => {
   if (open) {
     await nextTick();
@@ -39,8 +54,6 @@ function submitMobileSearch() {
 }
 const emit = defineEmits<{ 'open-settings': [] }>();
 const isMac = window.hawkShell?.platform === 'darwin';
-/** 设置面板入口：桌面端（Electron）与触屏设备（浏览器移动端）可用 */
-const hasSettings = !!window.hawkShell || touch;
 // 窗口控制为 fixed 在窗口右上角的自绘按钮（仅 Windows/Linux 渲染）：侧栏隐藏时本栏通栏，右端需预留避让
 const reserveControls = !!window.hawkShell && !isMac;
 
@@ -185,6 +198,18 @@ function onDblClick(e: MouseEvent) {
     <div class="spacer" />
 
     <div class="group right">
+      <!-- 上传（文件选择器）：拖拽之外的主入口，手机端（无拖拽）依额它导入；只读查看隐藏 -->
+      <button v-if="!store.viewerMode" class="bar-btn" title="导入文件" @click="openPicker">
+        <Icon name="upload" :size="14" />
+      </button>
+      <input
+        ref="pickerInput"
+        type="file"
+        multiple
+        class="file-picker"
+        @change="onPicked"
+      />
+
       <button class="bar-btn" title="刷新缓存（重新扫描素材库）" @click="store.refreshLibrary()">
         <Icon name="refresh" :size="14" />
       </button>
@@ -209,7 +234,7 @@ function onDblClick(e: MouseEvent) {
         <Icon name="search" :size="14" />
       </button>
 
-      <button v-if="hasSettings" class="bar-btn" title="设置" @click="emit('open-settings')">
+      <button class="bar-btn" title="设置" @click="emit('open-settings')">
         <Icon name="settings" :size="14" />
       </button>
 
@@ -296,6 +321,11 @@ function onDblClick(e: MouseEvent) {
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+/* 上传文件选择器：仅作 click 触发器，不参与布局 */
+.file-picker {
+  display: none;
 }
 
 /* 侧栏隐藏时标题栏通栏：macOS 左端避开窗口左上角的原生红绿灯 */
