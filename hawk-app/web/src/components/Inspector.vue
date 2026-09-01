@@ -154,6 +154,11 @@ function moveToFolder(path: string) {
 
 /** 点击信息（标签/分类/文件夹/文件位置）跳转对应视图；已在该视图时不重查 */
 function goView(v: ViewState) {
+  // 根目录素材 ⊆ 全部素材：在 all/root 视图里点根目录文件的文件夹信息不跳——
+  // 两视图内容几乎一致，跳了像界面被重置
+  if (v.kind === 'root' && (store.view.kind === 'all' || store.view.kind === 'root')) {
+    return;
+  }
   if (JSON.stringify(store.view) !== JSON.stringify(v)) {
     store.setView(v);
   }
