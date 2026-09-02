@@ -266,11 +266,8 @@ body.touch .app:not(.mobile) .inspector .inspector-search input {
 }
 
 /* 翻页器仅在窄屏隐藏（手机横屏走 wide 布局时仍显示，滑动切换并存）；
-   关闭 × 在触屏隐藏——下拉关闭/点遮罩替代（iOS 相册式），桌面保留 */
+   关闭 × 的显隐由 PreviewOverlay 模板控制：仅触屏且窄屏（手机，下拉关闭替代）隐藏 */
 body.mobile .overlay .pager {
-  display: none;
-}
-body.touch .overlay .close {
   display: none;
 }
 

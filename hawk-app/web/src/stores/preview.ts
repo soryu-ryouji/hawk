@@ -6,6 +6,7 @@ import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
+import { loadText, saveText, STORAGE_KEYS } from '../persist';
 import { errorText, useLibraryStore } from './library';
 import type { Item } from '../types';
 
@@ -13,6 +14,15 @@ export const usePreviewStore = defineStore('preview', () => {
   const library = useLibraryStore();
 
   const previewId = ref<string | null>(null);
+
+  // 预览关闭按钮显隐偏好（设置面板外观分区开关，所有端即时生效）：默认显示；
+  // localStorage 记忆（web 与 Electron 均持久，同 panelWidths/updateChannel 的全局键）
+  const hidePreviewClose = ref(loadText(STORAGE_KEYS.hidePreviewClose) === '1');
+
+  function setHidePreviewClose(on: boolean) {
+    hidePreviewClose.value = on;
+    saveText(STORAGE_KEYS.hidePreviewClose, on ? '1' : '0');
+  }
 
   /** 预览浮层 sticky item：详情未加载时不置空（浮层不卸载，滑动切换动画与状态不丢）；关闭时随 previewId 归零 */
   let lastPreviewItem: Item | null = null;
@@ -98,6 +108,7 @@ export const usePreviewStore = defineStore('preview', () => {
 
   return {
     previewId, previewItem, previewIndex, previewNavId, openPreview, closePreview, navigatePreview,
+    hidePreviewClose, setHidePreviewClose,
     editorTarget, openEditor, closeEditor, saveImageEdit,
   };
 });

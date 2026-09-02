@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
+import { useWindowSize } from '@vueuse/core';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
@@ -17,6 +18,15 @@ const store = useLibraryStore();
 const preview = usePreviewStore();
 const menu = useContextMenu();
 const { narrow, touch } = useLayout();
+
+// 右上角关闭 ×：仅「触屏且窄屏」（手机）隐藏——下拉关闭替代；触屏宽屏（iPad 横屏/触屏笔记本）
+// 鼠标没有下拉手势，且 touch 判定含 maxTouchPoints>0，混合设备不能没有关闭按钮。
+// 设置面板「预览模式隐藏关闭按钮」开启时全端隐藏（Esc/双击/触屏下拉仍可关闭）。
+const showClose = computed(() => (!touch.value || !narrow.value) && !preview.hidePreviewClose);
+
+// 视口宽度（响应式）：carousel 轨道基准偏移 -100vw 依赖它；直接读 window.innerWidth 非响应式，
+// 拖动窗口尺寸时图片 100vw 已变而 transform 仍是旧值，当前帧会漂移不居中
+const { width: viewportW } = useWindowSize();
 
 // 底部中间序号：当前项在视图中的位置 / 视图总条目数（Eagle 式）
 const indexText = computed(() => {
@@ -80,9 +90,6 @@ const {
   onWheel, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onDblClick, onGestureClick,
 } = gestures;
 
-// 移动端详情条：触屏无检查器面板且点按不开选中，预览内 ⓘ 开关底部只读详情（Eagle 信息面板的最小集）
-const showInfo = ref(false);
-
 // 预加载相邻原图：内容寻址 immutable，浏览器缓存命中——carousel 拖动时邻图已解码，切换零等待
 function preloadNeighbors() {
   for (const step of [1, -1] as const) {
@@ -107,8 +114,9 @@ const imageStyle = computed(() => ({
 }));
 
 // carousel 轨道：三张并排（前|当前|后），基准 translateX=-100vw 使当前图居中，swipeX 为跟手偏移
+// （基准取响应式 viewportW：拖动窗口时轨道随视口重算，当前帧保持居中）
 const trackStyle = computed(() => ({
-  transform: `translate(${swipeX.value - window.innerWidth}px, ${pullActive.value || pullAnim.value ? pullY.value : 0}px)`,
+  transform: `translate(${swipeX.value - viewportW.value}px, ${pullActive.value || pullAnim.value ? pullY.value : 0}px)`,
 }));
 
 // 下拉跟手时背景随位移渐亮（松手回弹/滑出后恢复默认遮罩）
@@ -121,17 +129,10 @@ const overlayStyle = computed(() => {
 });
 
 watch(() => props.item.id, () => {
-  // 切图复位：手势状态机清零（手指通常已抬起，兜底防泄漏）+ 详情条收起 + 相邻预加载
+  // 切图复位：手势状态机清零（手指通常已抬起，兜底防泄漏）+ 相邻预加载
   gestures.reset();
-  showInfo.value = false;
   preloadNeighbors();
 });
-
-function formatSize(bytes: number): string {
-  if (bytes >= 1 << 20) return (bytes / (1 << 20)).toFixed(2) + ' MB';
-  if (bytes >= 1 << 10) return (bytes / (1 << 10)).toFixed(1) + ' KB';
-  return bytes + ' B';
-}
 
 /** 平移模式图像显示区域命中测试：基准 90vw/90vh object-fit: contain，transform 以元素中心为原点 */
 function pointInImage(px: number, py: number): boolean {
@@ -184,24 +185,7 @@ function pointInImage(px: number, py: number): boolean {
         <span class="page-index">{{ indexText }}</span>
         <button class="page-btn" title="下一个 (→)" @click.stop="emit('navigate', 1)">›</button>
       </div>
-      <button v-if="!touch" class="close" title="关闭 (Esc)" @click="emit('close')">×</button>
-      <!-- 窄屏：ⓘ 开关底部详情条（触屏无检查器，详情只读；桌面走右侧面板不出现） -->
-      <template v-if="narrow">
-        <button class="info-toggle" :class="{ open: showInfo }" title="详情" @click.stop="showInfo = !showInfo">i</button>
-        <div v-if="showInfo" class="info-sheet" @click.stop>
-          <div class="info-name">{{ item.name }}.{{ item.ext }}</div>
-          <div class="info-grid">
-            <span>尺寸</span><span>{{ item.width }} × {{ item.height }}</span>
-            <span>大小</span><span>{{ formatSize(Number(item.size)) }}</span>
-            <span>评分</span><span>{{ Number(item.star) > 0 ? '★'.repeat(Number(item.star)) : '—' }}</span>
-            <span>标签</span><span>{{ item.tags?.length ? item.tags.join('、') : '—' }}</span>
-            <span>分类</span><span>{{ item.categories?.length ? item.categories.join('、') : '—' }}</span>
-            <span>文件夹</span><span>{{ item.folders?.[0] || '—' }}</span>
-            <span>修改时间</span><span>{{ new Date(Number(item.modification_time)).toLocaleString() }}</span>
-          </div>
-          <div v-if="item.annotation" class="info-annotation">{{ item.annotation }}</div>
-        </div>
-      </template>
+      <button v-if="showClose" class="close" title="关闭 (Esc)" @click="emit('close')">×</button>
     </div>
   </Teleport>
 </template>
@@ -283,10 +267,12 @@ function pointInImage(px: number, py: number): boolean {
   position: absolute;
   top: 12px;
   right: 16px;
+  width: 32px;
   border: none;
   background: transparent;
   color: var(--fg-1);
   font-size: 28px;
+  text-align: center;
 }
 
 .close:hover {
@@ -325,74 +311,4 @@ function pointInImage(px: number, py: number): boolean {
   user-select: none;
 }
 
-/* 移动端详情条：右上角 ⓘ 开关，底部滑出只读面板（close 在触屏隐藏，位置不与它冲突） */
-.info-toggle {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: rgba(30, 30, 30, 0.6);
-  color: var(--fg-1);
-  font-size: 16px;
-  font-style: italic;
-  font-family: Georgia, serif;
-}
-
-.info-toggle.open {
-  color: var(--fg-0);
-  border-color: var(--accent);
-}
-
-.info-sheet {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  max-height: 46vh;
-  overflow-y: auto;
-  /* 滑动手势不作用在条上，条内独立滚动（触屏纵向滚动与下拉关闭手势隔离） */
-  touch-action: pan-y;
-  padding: 14px 16px 20px;
-  border-top: 1px solid var(--border);
-  border-radius: 12px 12px 0 0;
-  background: rgba(30, 30, 30, 0.92);
-  backdrop-filter: blur(12px);
-}
-
-.info-name {
-  font-size: 14px;
-  font-weight: 600;
-  word-break: break-all;
-  margin-bottom: 10px;
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 14px;
-  font-size: 12px;
-}
-
-.info-grid > span:nth-child(odd) {
-  color: var(--fg-1);
-  white-space: nowrap;
-}
-
-.info-grid > span:nth-child(even) {
-  word-break: break-all;
-}
-
-.info-annotation {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--fg-1);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 </style>

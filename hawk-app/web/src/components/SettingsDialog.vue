@@ -17,6 +17,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useClipboard, useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { usePreviewStore } from '../stores/preview';
 import { hasShell, shell } from '../platform';
 import { useUpdater } from '../composables/useUpdater';
 import Icon from './Icon.vue';
@@ -25,6 +26,7 @@ import type { LanSettings } from '../types';
 const emit = defineEmits<{ close: []; logout: [] }>();
 
 const store = useLibraryStore();
+const preview = usePreviewStore();
 const loading = ref(true);
 const saving = ref(false);
 const error = ref<string | null>(null);
@@ -163,6 +165,11 @@ function onThumbInput(e: Event) {
   store.setUserThumbSize(Number((e.target as HTMLInputElement).value));
 }
 
+/** 预览关闭按钮开关（外观分区，即时生效）：写入偏好并记忆 */
+function onHidePreviewClose(e: Event) {
+  preview.setHidePreviewClose((e.target as HTMLInputElement).checked);
+}
+
 async function save() {
   if (saving.value) {
     return;
@@ -265,6 +272,17 @@ async function save() {
                 @input="onThumbInput"
               />
               <button title="放大" @click="stepThumb(8)">＋</button>
+            </div>
+
+            <div class="switch-row">
+              <div>
+                <div class="switch-label">预览模式隐藏关闭按钮</div>
+                <p class="hint">开启后全屏预览不显示右上角 ×；仍可用 Esc、双击或触屏下拉手势关闭。</p>
+              </div>
+              <label class="switch" title="预览模式隐藏关闭按钮">
+                <input type="checkbox" :checked="preview.hidePreviewClose" @change="onHidePreviewClose" />
+                <span class="track" />
+              </label>
             </div>
           </div>
 
