@@ -93,7 +93,7 @@ Electron 退出
 
 ### 远程访问（规划中）
 
-远程访问不走服务器版路线：hawk-daemon 本体保持桌面版定位不变，远程查看经 QUIC 隧道接回本机环回端口，复用现有 API 与只读鉴权。账户、信令、中继为独立云端服务（闭源、独立仓库），与 hawk 仓库只共享协议契约、零代码共享。社区构建默认不含任何云端代码与 UI。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)。
+远程访问不走服务器版路线，由三个进程协作：hawk-daemon 本体保持桌面版定位不变，唯一的调用点是鉴权中间件多认一种 env 注入的受托只读 token（无 remote 语义、无需门控）；广域网连接能力全部收在独立进程 **hawk-remote**（仓库内独立项目，随 AGPL 开源），负责信令、心跳、UPnP、QUIC 隧道与本地代理；hawk-app 主进程是接线枢纽（拉起/传参/回收、连接描述符）。远程查看时数据面为端到端 QUIC 隧道，素材数据始终由素材库所在机的 daemon 产出，复用现有 API 与只读鉴权。云端服务（hawk-server：hub + relay，闭源独立仓库）与 hawk 仓库只共享协议契约、零代码共享。产物裁剪在打包层：社区构建不编译、不携带 hawk-remote，前端不定义 HAWK_REMOTE。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)。
 
 ## 仓库结构
 
@@ -102,5 +102,6 @@ hawk/
 ├── hawk-daemon/  ← Rust 后端（桌面版与服务器版共用）
 ├── hawk-update/  ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
 ├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
+├── hawk-remote/  ← Rust 远程访问客户端（可选进程，见 docs/backend/remote-access.md，规划中）
 └── docs/            ← 设计文档
 ```

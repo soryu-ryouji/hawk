@@ -41,6 +41,8 @@ Eagle 主窗口的关键特征：
 
 严格遵循 architecture.md 的 sidecar 模式：前端不依赖 Electron IPC 做业务通信，主进程只管窗口、拉起/回收后端、注入 token。
 
+远程访问扩展此模型：产物携带 hawk-remote 二进制且用户配置过接入时，主进程额外拉起/回收 hawk-remote 进程并维护连接描述符（切换本地/远端库），见 [远程访问设计](../backend/remote-access.md)。本节其余内容不变。
+
 ```text
 Electron 主进程启动
   → 读用户配置（userData/hawk-app.json）取最近素材库；无/失效 → 加载应用页（无连接参数，页面内进 SetupScreen）

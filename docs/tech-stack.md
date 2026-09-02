@@ -14,6 +14,10 @@
 Rust，见 [hawk-daemon](backend/server-rust.md)（`hawk-daemon/`，axum、notify、blake3、image + fast_image_resize、rusqlite）。
 已实现全部 API/存储/事件契约，为 app 唯一后端。
 
+## 远程访问客户端：hawk-remote/（规划中）
+
+独立 Rust 进程，承载全部广域网连接能力（信令/心跳/WSS/UPnP/QUIC 隧道/本地代理），见 [远程访问设计](backend/remote-access.md)。技术栈：tokio、axum、quinn、rcgen、igd、tokio-tungstenite。
+
 ## 前端与桌面壳：hawk-app/
 
 Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），设计见 [hawk-app 设计](frontend/hawk-app.md)。约束：

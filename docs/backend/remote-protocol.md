@@ -1,6 +1,6 @@
 # 远程访问协议 V1（remote-protocol）
 
-> hawk 客户端（remote 模块）与云端服务之间的接口契约。本协议是唯一共享物：云端服务（hawk-remote-server，闭源）照此实现；hawk 仓库内不包含任何云端实现代码。
+> hawk 客户端（hawk-remote 进程，见 [remote-access.md](remote-access.md)）与云端服务之间的接口契约。本协议是唯一共享物：云端服务（hawk-server，闭源）照此实现；hawk 仓库内不包含任何云端实现代码。
 > 总体架构见 [remote-access.md](remote-access.md)。客户端不理解服务端的准入规则：协议无任何会员/计费字段，访问被拒以 HTTP 401 表达（message 说明原因）。
 > 标注 `[P1]` 的为阶段 1 范围，`[P2]` 阶段 2，`[P3]` 阶段 3 占位。
 
@@ -296,9 +296,9 @@ UDP 被网络封锁时使用。双方以 TCP 连接中继，数据以 2 字节�
 ## 数据面（QUIC 隧道）
 
 - 双方 QUIC 连接（quinn），自签名证书，对端身份 = 信令交换的指纹钉扎（TOFU）。证书轮换走 `PATCH /devices/{id}` 更新指纹：新指纹立即生效，旧证书会话失效
-- A 侧隧道端：将隧道内收到的 HTTP 请求转发到 `127.0.0.1:27371`，注入 `Authorization: Bearer <远端只读 token>`（hawk-daemon 启动时经 env 注入的第三种 token，只读级别）
+- A 侧隧道端：将隧道内收到的 HTTP 请求转发到 `127.0.0.1:27371`，注入 `Authorization: Bearer <受托只读 token>`（hawk-daemon 启动时经 env `HAWK_DELEGATE_TOKEN` 注入的只读 token，权限与 LAN viewer 同级）
 - **隧道端必须拒绝转发 `GET /api/v1/app/token`（直接返回 404）**，并将全部转发请求的 Host 头改写为固定非环回值（如 `hawk-remote.tunnel`）。该端点免鉴权返回主 token（完全读写权限），仅服务于本机浏览器插件的零配置发现（插件直连环回，不经隧道）；远程查看方不需要它——B 侧已持有代理会话 token。若经隧道转发，Host 恰为环回（B 侧代理地址），端点的环回检查与无 CORS 防护均失效，等于把主 token 交给远端。Host 改写使端点自带的环回检查天然挡住隧道流量，作为 denylist 之外的纵深防御
-- B 侧本地代理：监听 `127.0.0.1:27374`，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口与 token 由 B 侧 remote 模块本地生成，web 查看器 URL 由客户端拼装，不经过信令服务
+- B 侧本地代理：监听 `127.0.0.1:27374`，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口由 Electron 预选后经参数下发（见 remote-access.md 进程接线），会话 token 由 B 侧 hawk-remote 生成，web 查看器 URL 由客户端拼装，不经过信令服务
 - 隧道默认端口：A 侧 QUIC UDP 27373（UPnP 映射目标；双栈监听，IPv4/IPv6 同端口）；均可配置
 
 ## 默认值与时限
@@ -313,7 +313,7 @@ UDP 被网络封锁时使用。双方以 TCP 连接中继，数据以 2 字节�
 | 中继会话时长上限    | 24 小时                                                               |
 | 设备数上限          | 服务端逻辑，不进协议                                                  |
 | 中继用量上报周期    | 60s                                                                   |
-| 端口默认值          | hawk API 27371 / LAN web 27372 / 远程 QUIC UDP 27373 / 本地代理 27374 |
+| 端口默认值          | hawk API 27371 / LAN web 27372 / 远程 QUIC UDP 27373 / 本地代理 27374 / remote 状态 API 27375（本地端口均由 Electron 预选后经参数下发） |
 
 ## 版本策略
 
