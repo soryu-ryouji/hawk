@@ -49,6 +49,16 @@ watch(
 const showSettings = ref(false);
 let disconnectEvents: (() => void) | null = null;
 
+// 页面标题：hawk | 素材库名（浏览器标签页；Electron 下同为本窗口标题，任务栏/切换窗口可见）。
+// 库未加载/门页阶段保持纯 hawk
+watch(
+  () => store.library?.name,
+  (name) => {
+    document.title = name ? `hawk | ${name}` : 'hawk';
+  },
+  { immediate: true },
+);
+
 // 索引进度条文案：扫描中带阶段进度（遍历阶段总数未知，只报已处理数）；否则报剩余任务数
 const indexProgressText = computed(() => {
   const p = store.indexProgress;

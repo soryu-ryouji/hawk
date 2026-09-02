@@ -60,7 +60,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/api/trash.rs` | `trash/clear`。顺序铁律：先 `submit_clear_trash` 清索引位置、元数据与缓存（缩略图/调色板），再物理删除 `.hawk/trash/` 内容——先物理删除会让 watcher 的 Deleted 事件抢先摘除位置，导致元数据与缓存泄漏 |
 | `src/api/events.rs` | SSE 订阅端点：`broadcast::Receiver` 转 `event:`/`data:` 帧；lagged（消费跟不上）或总线关闭即结束流，客户端重连后须以 `item/skeleton` + `folder/list` 全量对齐 |
 | `src/api/openapi.rs` | `/openapi/v1.json` 静态服务（`include_str!` 固化 `hawk-daemon/openapi.json`），schema 即契约，不随后端实现漂移 |
-| `src/api/web_dist.rs` | 局域网 web 查看的静态托管（fallback 挂载；`--web-dist` 传入时启用）：SPA 回退 `index.html`，`/assets/` 内容哈希资源 immutable 长缓存，其余 no-cache（防手机浏览器启发式缓存旧 HTML） |
+| `src/api/web_dist.rs` | 局域网 web 查看的静态托管（fallback 挂载；`--web-dist` 传入时启用）：SPA 回退 `index.html`，`/assets/` 内容哈希资源 immutable 长缓存，其余 no-cache（防手机浏览器启发式缓存旧 HTML）；favicon 经 vite publicDir=build/ 落在 dist 根（icon.png，index.html 内 link rel=icon 引用），由本服务一并返回 |
 | `src/api/item.rs` | item 十四端点，逻辑最重，见下节 |
 
 ### core/ —— 与 HTTP 无关的领域核心
