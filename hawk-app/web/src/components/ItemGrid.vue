@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch, watchEffect } from 'vue';
 import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from '../composables/useContextMenu';
 import { gridNavRows } from '../composables/useGridNav';
@@ -17,6 +18,7 @@ import { useLayout } from '../composables/useLayout';
 import { CARD_META_H, GRID_GAP, layoutRows, type LayoutCell, type LayoutRow } from '../layout';
 
 const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const preview = usePreviewStore();
 const menu = useContextMenu();
 const { narrow } = useLayout();
@@ -311,7 +313,7 @@ function onMenu(item: Item, e: MouseEvent) {
       v-if="showTagDialog"
       title="添加标签"
       placeholder="输入标签，回车确认"
-      :suggestions="store.tagList.map((t) => t.name)"
+      :suggestions="taxonomy.tagList.map((t) => t.name)"
       @confirm="
         store.addTagToSelected($event);
         showTagDialog = false;

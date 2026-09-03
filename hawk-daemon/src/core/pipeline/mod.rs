@@ -20,6 +20,8 @@ mod fs_ops;
 mod reconcile;
 mod scan;
 mod upsert;
+#[cfg(test)]
+mod tests;
 
 pub use ctx::{BatchMetadataResult, UpsertResult};
 pub(crate) use ctx::JobSender;

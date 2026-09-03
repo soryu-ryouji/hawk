@@ -1,14 +1,16 @@
-//! 内存索引:hash → item,位置路径 → hash 反查。一把锁保护。
-//! 写入只发生在索引流水线(单写者),读取可来自任意 HTTP 线程。
+//! 内存索引:hash → item,位置路径 → hash 反查。一把 RwLock 保护。
+//! 写入只发生在索引流水线(单写者),读取可来自任意 HTTP 线程（RwLock 读并发）。
 //! 读取纪律:HTTP 层一律走 get_dto / query / query_skeleton / find_location / main_source_abs /
 //! contains / count 等不可变快照与锁内投影;可变引用仅限流水线(经 with_item_mut)。
+//! 查询路径「锁内只做过滤与排序键投影，排序在锁外」：读写互相阻塞的时间不含 O(N log N) 排序。
 //! 排序稳定:主键同值按 id 字典序打破平局。
 
 use crate::core::color_math::delta_e_squared;
 use crate::core::item::{Item, ItemDto, ItemLocation, ItemQuery, ItemSkeletonDto};
 use crate::core::paths::LibraryPaths;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 /// 颜色检索的 ΔE 阈值（CIE76）。约覆盖「同一颜色家族」的宽松度
 pub const COLOR_MATCH_THRESHOLD: f64 = 25.0;
@@ -39,19 +41,31 @@ struct IndexInner {
 
 #[derive(Default)]
 pub struct ItemIndex {
-    inner: Mutex<IndexInner>,
+    inner: RwLock<IndexInner>,
+}
+
+/// 读锁快捷方式（索引为进程内单例，锁污染即 panic 传播，与此前 Mutex 行为一致）
+macro_rules! read_inner {
+    ($self:expr) => {
+        $self.inner.read().unwrap()
+    };
+}
+macro_rules! write_inner {
+    ($self:expr) => {
+        $self.inner.write().unwrap()
+    };
 }
 
 impl ItemIndex {
     /// 索引中是否存在该 item
     pub fn contains(&self, hash: &str) -> bool {
-        self.inner.lock().unwrap().by_hash.contains_key(hash)
+        read_inner!(self).by_hash.contains_key(hash)
     }
 
     /// 锁内投影为 DTO(trashView 按「是否只剩回收站位置」自动判定),HTTP 层的读取出口。
     /// 零位置 item 不投影（不应存在；防御性返回 None）
     pub fn get_dto(&self, hash: &str) -> Option<ItemDto> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         inner
             .by_hash
             .get(hash)
@@ -61,13 +75,13 @@ impl ItemIndex {
 
     /// 宽高是否尚未解析（0 × 0）。只读访问，缩略图 worker 的补宽高闸门用
     pub fn dim_is_zero(&self, hash: &str) -> bool {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         inner.by_hash.get(hash).map(|i| i.width == 0).unwrap_or(false)
     }
 
     /// 取得或创建 item（不存在时创建并登记）。返回是否新建。仅限流水线(单写者)与测试
     pub fn get_or_add(&self, hash: &str) -> bool {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = write_inner!(self);
         if inner.by_hash.contains_key(hash) {
             return false;
         }
@@ -91,7 +105,7 @@ impl ItemIndex {
         size: i64,
         mtime: i64,
     ) -> (bool, bool) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = write_inner!(self);
         let created = !inner.by_hash.contains_key(hash);
         if created {
             inner.by_hash.insert(
@@ -121,13 +135,13 @@ impl ItemIndex {
 
     /// 可变 item 访问（单写者纪律由调用方保证）
     pub fn with_item_mut<R>(&self, hash: &str, f: impl FnOnce(&mut Item) -> R) -> Option<R> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = write_inner!(self);
         inner.by_hash.get_mut(hash).map(f)
     }
 
     /// 登记/刷新一个位置。返回是否为新增位置
     pub fn add_or_update_location(&self, hash: &str, location_path: &str, size: i64, mtime: i64) -> bool {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = write_inner!(self);
         let item = inner.by_hash.get_mut(hash).expect("add_or_update_location: item must exist");
         if let Some(loc) = item.locations.iter_mut().find(|l| l.path == location_path) {
             loc.size = size;
@@ -146,7 +160,7 @@ impl ItemIndex {
 
     /// 移除一个位置；item 不再有任何位置时从索引移除
     pub fn remove_location(&self, location_path: &str) -> Option<String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = write_inner!(self);
         let hash = inner.hash_by_location.remove(location_path)?;
         if let Some(item) = inner.by_hash.get_mut(&hash) {
             item.locations.retain(|l| l.path != location_path);
@@ -159,7 +173,7 @@ impl ItemIndex {
 
     /// 位置移动（同内容改名/移动/进出回收站，hash 不变）。返回所属 hash，未索引返回 None
     pub fn move_location(&self, old_path: &str, new_path: &str) -> Option<String> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = write_inner!(self);
         let hash = inner.hash_by_location.remove(old_path)?;
         inner.hash_by_location.insert(new_path.to_string(), hash.clone());
         let item = inner.by_hash.get_mut(&hash).expect("move_location: item must exist");
@@ -171,7 +185,7 @@ impl ItemIndex {
     /// 位置定位并返回不可变快照:缺省为主位置(want_trash=false 取首个库内位置,true 取首个回收站位置);
     /// 指定 path 时按视图匹配(回收站位置以其原库内路径匹配)
     pub fn find_location(&self, hash: &str, path: Option<&str>, want_trash: Option<bool>) -> Option<LocationSnapshot> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         let item = inner.by_hash.get(hash)?;
         let loc = match path {
             None => match want_trash {
@@ -196,7 +210,7 @@ impl ItemIndex {
 
     /// 主位置(优先库内)的源文件绝对路径快照;item/file、refresh_thumbnail 用
     pub fn main_source_abs(&self, hash: &str, paths: &LibraryPaths) -> Option<String> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         let item = inner.by_hash.get(hash)?;
         let loc = item
             .locations
@@ -207,13 +221,13 @@ impl ItemIndex {
     }
 
     pub fn hash_by_location(&self, location_path: &str) -> Option<String> {
-        self.inner.lock().unwrap().hash_by_location.get(location_path).cloned()
+        read_inner!(self).hash_by_location.get(location_path).cloned()
     }
 
     /// 指定 item 的全部位置快照（want_trash 过滤，None 为全部）：
     /// 卡片级删除/恢复（无 path 参数）需要枚举同内容多路径 item 的全部位置
     pub fn item_locations(&self, hash: &str, want_trash: Option<bool>) -> Vec<LocationSnapshot> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         let Some(item) = inner.by_hash.get(hash) else {
             return Vec::new();
         };
@@ -230,19 +244,19 @@ impl ItemIndex {
 
     /// 库内 item 总数（不含回收站）
     pub fn count(&self) -> usize {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         inner.by_hash.values().filter(|i| i.has_library_locations()).count()
     }
 
     /// 指定 item 是否还有库内位置（回收站视图判定用）
     pub fn has_library_location(&self, hash: &str) -> bool {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         inner.by_hash.get(hash).map(|i| i.has_library_locations()).unwrap_or(false)
     }
 
     /// 指定 item 的库内位置数（事件转换判定用）
     pub fn library_location_count(&self, hash: &str) -> usize {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         inner
             .by_hash
             .get(hash)
@@ -252,12 +266,12 @@ impl ItemIndex {
 
     /// 全部位置路径快照（扫描时做消失检测用）
     pub fn all_location_paths(&self) -> Vec<String> {
-        self.inner.lock().unwrap().hash_by_location.keys().cloned().collect()
+        read_inner!(self).hash_by_location.keys().cloned().collect()
     }
 
     /// 某目录前缀下的全部位置路径快照
     pub fn locations_under(&self, rel_dir_prefix: &str) -> Vec<String> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         inner
             .hash_by_location
             .keys()
@@ -268,7 +282,7 @@ impl ItemIndex {
 
     /// 全部分类路径快照（含回收站 item 的赋值，分类树派生用）
     pub fn all_categories(&self) -> Vec<String> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for item in inner.by_hash.values() {
@@ -283,7 +297,7 @@ impl ItemIndex {
 
     /// 全部标签及库内计数快照（计数不含回收站）
     pub fn tags_with_counts(&self) -> Vec<(String, usize)> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         let mut counts: HashMap<String, usize> = HashMap::new();
         for item in inner.by_hash.values().filter(|i| i.has_library_locations()) {
             for t in &item.tags {
@@ -302,7 +316,7 @@ impl ItemIndex {
     /// 按目录统计库内 item 数（不含回收站）。key 为目录相对路径（"" 为库根）。
     /// 计数含全部子孙目录；同一 item 在同一目录节点只计一次
     pub fn folder_counts(&self) -> HashMap<String, usize> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         let mut counts: HashMap<String, usize> = HashMap::new();
         for item in inner.by_hash.values() {
             let mut dirs: HashSet<String> = HashSet::new();
@@ -325,7 +339,7 @@ impl ItemIndex {
 
     /// 按分类统计 item 数（同一 item 重复挂同一分类只计一次）
     pub fn category_counts(&self) -> HashMap<String, usize> {
-        let inner = self.inner.lock().unwrap();
+        let inner = read_inner!(self);
         let mut counts: HashMap<String, usize> = HashMap::new();
         for item in inner.by_hash.values().filter(|i| i.has_library_locations()) {
             let mut seen = HashSet::new();
@@ -338,71 +352,89 @@ impl ItemIndex {
         counts
     }
 
-    /// 条件查询。锁内完成过滤、排序、分页与 DTO 投影；total_size 为过滤后全量（未分页）的字节数合计。
-    /// 排序在轻量键上进行，DTO 只投影分页窗口——大库下避免为全部命中项克隆完整 DTO（UI 卡死的根因之一）
+    /// 条件查询。锁内只做过滤与轻量排序键投影，排序在锁外进行（读写互堵不含 O(N log N) 排序）；
+    /// DTO 只投影分页窗口——大库下避免为全部命中项克隆完整 DTO（UI 卡死的根因之一）。
+    /// total_size 为过滤后全量（未分页）的字节数合计。
+    /// 窗口 DTO 投影需二次读锁：排序快照与 DTO 快照之间可能隔一个写事件，UI 列表差一帧无碍（SSE 会推送对齐）
     pub fn query(&self, q: &ItemQuery) -> (Vec<ItemDto>, usize, i64) {
-        let inner = self.inner.lock().unwrap();
-        let items = filter_items(&inner, q);
-        let total = items.len();
-        let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
-        let ordered = sort_items(items, q);
+        let (mut keyed, total_size) = {
+            let inner = read_inner!(self);
+            let items = filter_items(&inner, q);
+            let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
+            let keyed = items.into_iter().map(|i| (sort_key(i, q), i.id.clone())).collect::<Vec<_>>();
+            (keyed, total_size)
+        };
+        let total = keyed.len();
+        sort_keyed(&mut keyed, q, |id| id.as_str());
         let offset = q.offset.max(0) as usize;
         let limit = q.limit.max(1) as usize;
-        (
-            ordered.into_iter().skip(offset).take(limit).map(|i| i.to_dto(q.in_trash)).collect(),
-            total,
-            total_size,
-        )
+        let inner = read_inner!(self);
+        let dtos = keyed
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .filter_map(|(_, id)| inner.by_hash.get(&id).map(|i| i.to_dto(q.in_trash)))
+            .collect();
+        (dtos, total, total_size)
     }
 
     /// 骨架查询：与 query 同过滤、同排序（含确定性次序），投影为 id/width/height/star，不分页
     pub fn query_skeleton(&self, q: &ItemQuery) -> (Vec<ItemSkeletonDto>, i64) {
-        let inner = self.inner.lock().unwrap();
-        let items = filter_items(&inner, q);
-        let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
-        (
-            sort_items(items, q)
+        let (mut keyed, total_size) = {
+            let inner = read_inner!(self);
+            let items = filter_items(&inner, q);
+            let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
+            let keyed = items
                 .into_iter()
-                .map(|i| ItemSkeletonDto {
-                    id: i.id.clone(),
-                    width: i.width,
-                    height: i.height,
-                    star: i.star,
+                .map(|i| {
+                    (
+                        sort_key(i, q),
+                        ItemSkeletonDto {
+                            id: i.id.clone(),
+                            width: i.width,
+                            height: i.height,
+                            star: i.star,
+                        },
+                    )
                 })
-                .collect(),
-            total_size,
-        )
+                .collect::<Vec<_>>();
+            (keyed, total_size)
+        };
+        sort_keyed(&mut keyed, q, |s| s.id.as_str());
+        (keyed.into_iter().map(|(_, s)| s).collect(), total_size)
     }
 
     /// 范围内全部 item 的 hash 快照（宽高为 0 的项优先，修复时最先被处理）。
     /// folder 按库内位置前缀匹配；category/tag 与位置无关；library 含回收站
     pub fn hashes_in_scope(&self, scope: &RefreshScope) -> Vec<String> {
-        let inner = self.inner.lock().unwrap();
-        let mut hashes: Vec<(String, i32)> = match scope {
+        let inner = read_inner!(self);
+        let hashes = match scope {
             RefreshScope::Library => inner
                 .by_hash
                 .values()
                 .map(|i| (i.id.clone(), i.width))
-                .collect(),
+                .collect::<Vec<_>>(),
             RefreshScope::Folder(f) => inner
                 .by_hash
                 .values()
                 .filter(|i| in_folder(i, f, false, false))
                 .map(|i| (i.id.clone(), i.width))
-                .collect(),
+                .collect::<Vec<_>>(),
             RefreshScope::Category(c) => inner
                 .by_hash
                 .values()
                 .filter(|i| i.categories.contains(c))
                 .map(|i| (i.id.clone(), i.width))
-                .collect(),
+                .collect::<Vec<_>>(),
             RefreshScope::Tag(t) => inner
                 .by_hash
                 .values()
                 .filter(|i| i.tags.contains(t))
                 .map(|i| (i.id.clone(), i.width))
-                .collect(),
+                .collect::<Vec<_>>(),
         };
+        drop(inner);
+        let mut hashes = hashes;
         hashes.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
         hashes.into_iter().map(|(h, _)| h).collect()
     }
@@ -505,49 +537,43 @@ fn main_size(item: &Item, trash_view: bool) -> i64 {
     view_main_location(item, trash_view).map(|l| l.size).unwrap_or(0)
 }
 
-/// 排序。主键同值时按 id 字典序打破平局：排序不稳定 + 两次独立查询（骨架/视口窗口）
+/// 排序键：查询时锁内预计算（name 键预转小写避免比较器内反复分配；size/mtime/star 统一为数值键），
+/// 排序在锁外进行。同一查询键类型一致，不会混合
+enum SortKey {
+    Name(String),
+    Num(i64),
+}
+
+fn sort_key(item: &Item, q: &ItemQuery) -> SortKey {
+    match q.order_by.as_deref().unwrap_or("modification_time") {
+        "name" => SortKey::Name(
+            view_main_location(item, q.in_trash)
+                .map(|l| LibraryPaths::name_of(l.library_path()).to_lowercase())
+                .unwrap_or_default(),
+        ),
+        "size" => SortKey::Num(main_size(item, q.in_trash)),
+        "star" => SortKey::Num(i64::from(item.star)),
+        _ => SortKey::Num(main_mtime(item, q.in_trash)),
+    }
+}
+
+fn cmp_sort_key(a: &SortKey, b: &SortKey) -> Ordering {
+    match (a, b) {
+        (SortKey::Name(x), SortKey::Name(y)) => x.cmp(y),
+        (SortKey::Num(x), SortKey::Num(y)) => x.cmp(y),
+        _ => Ordering::Equal,
+    }
+}
+
+/// 锁外排序。主键同值时按 id 字典序打破平局：排序不稳定 + 两次独立查询（骨架/视口窗口）
 /// 的次序必须逐位一致，否则按 offset 取窗口会错位。
 /// desc 反转整个比较结果（含 id 平局）
-fn sort_items<'a>(mut items: Vec<&'a Item>, q: &ItemQuery) -> Vec<&'a Item> {
+fn sort_keyed<T>(entries: &mut [(SortKey, T)], q: &ItemQuery, id_of: impl Fn(&T) -> &str) {
     let desc = !q.order.as_deref().map(|o| o.eq_ignore_ascii_case("asc")).unwrap_or(false);
-    match q.order_by.as_deref().unwrap_or("modification_time") {
-        "name" => {
-            // 名称键忽略大小写；预计算小写键避免比较器内反复分配
-            let mut keyed: Vec<(String, &Item)> = items
-                .into_iter()
-                .map(|i| {
-                    let name = view_main_location(i, q.in_trash)
-                        .map(|l| LibraryPaths::name_of(l.library_path()).to_lowercase())
-                        .unwrap_or_default();
-                    (name, i)
-                })
-                .collect();
-            keyed.sort_by(|a, b| {
-                let c = a.0.cmp(&b.0).then_with(|| a.1.id.cmp(&b.1.id));
-                if desc { c.reverse() } else { c }
-            });
-            items = keyed.into_iter().map(|(_, i)| i).collect();
-        }
-        "size" => {
-            items.sort_by(|a, b| {
-                let c = main_size(a, q.in_trash).cmp(&main_size(b, q.in_trash)).then_with(|| a.id.cmp(&b.id));
-                if desc { c.reverse() } else { c }
-            });
-        }
-        "star" => {
-            items.sort_by(|a, b| {
-                let c = a.star.cmp(&b.star).then_with(|| a.id.cmp(&b.id));
-                if desc { c.reverse() } else { c }
-            });
-        }
-        _ => {
-            items.sort_by(|a, b| {
-                let c = main_mtime(a, q.in_trash).cmp(&main_mtime(b, q.in_trash)).then_with(|| a.id.cmp(&b.id));
-                if desc { c.reverse() } else { c }
-            });
-        }
-    }
-    items
+    entries.sort_by(|a, b| {
+        let c = cmp_sort_key(&a.0, &b.0).then_with(|| id_of(&a.1).cmp(id_of(&b.1)));
+        if desc { c.reverse() } else { c }
+    });
 }
 
 fn main_mtime(item: &Item, trash_view: bool) -> i64 {

@@ -6,6 +6,7 @@ import { loadJSON, saveJSON, STORAGE_KEYS } from './persist';
 import { useLibraryStore } from './stores/library';
 import { useImporterStore } from './stores/importer';
 import { usePreviewStore } from './stores/preview';
+import { useTaxonomyStore } from './stores/taxonomy';
 import { useShortcuts } from './composables/useShortcuts';
 import { useDragImport } from './composables/useDragImport';
 import { useLayout } from './composables/useLayout';
@@ -31,6 +32,7 @@ import DeleteScopeDialog from './components/DeleteScopeDialog.vue';
 const store = useLibraryStore();
 const importer = useImporterStore();
 const preview = usePreviewStore();
+const taxonomy = useTaxonomyStore();
 const { narrow, touch } = useLayout();
 // 启动阶段状态机：starting（应用内启动屏，等 server 就绪）→ ready（主界面）；
 // 旁路：setup（未配置素材库）/ connect（浏览器 token 门页）/ error（启动失败）。
@@ -134,7 +136,13 @@ async function runBoot() {
     // store 之间不互相调用初始化逻辑），再重启数据
     preview.closePreview();
     preview.closeEditor();
-    await store.init();
+    // 分类维度先行：主 store init 的 restoreView 校验依赖 taxonomy 数据（validators 注入，保持 store 间 DAG）
+    await taxonomy.refreshAll();
+    await store.init({
+      folderExists: taxonomy.folderExists,
+      categoryExists: taxonomy.categoryExists,
+      tagExists: taxonomy.tagExists,
+    });
     disconnectEvents?.();
     disconnectEvents = connectEvents({
       onAdded: (item) => store.applyEvent('item.added', item),
@@ -148,7 +156,7 @@ async function runBoot() {
       onFolderChanged: () => store.applyEvent('folder.changed', {}),
       onReconnect: () => {
         void store.reloadSkeleton();
-        void store.refreshFolders();
+        void taxonomy.refreshFolders();
       },
     });
     phase.value = 'ready';

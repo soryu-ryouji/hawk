@@ -93,6 +93,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
 | `copyImage(path)` | 预览右键「复制图片」：主进程 `nativeImage.createFromPath` + `clipboard.writeImage` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
+| `lanAddresses()` | 本机局域网 IPv4 地址列表（设置面板展示访问地址用；LAN 配置读写走 REST `GET/PUT /api/v1/app/lan`，不经 IPC） |
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
 | `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），应用内启动屏用；返回退订函数 |
@@ -173,9 +174,11 @@ web/
     │   ├── events.ts          # SSE 连接管理：订阅、重连、分发
     │   └── schema.d.ts        # openapi-typescript 生成（入库，勿手改）
     ├── stores/
-    │   ├── library.ts         # Pinia 主 store：视图/查询/列表/选择集/文件夹树/分类标签（见下）
+    │   ├── library.ts         # Pinia 主 store：视图/查询/列表/选择集/回收站（见下）
+    │   ├── taxonomy.ts        # 分类维度子 store：文件夹树/分类/标签/侧栏计数及其 CRUD
     │   ├── importer.ts        # 导入子 store：批量导入进度/重复策略弹窗/路径与文件两个入口（importBatch 接线）
-    │   └── preview.ts         # 预览子 store：预览浮层导航（sticky item）+ 图片编辑窗口目标与保存
+    │   ├── preview.ts         # 预览子 store：预览浮层导航（sticky item）+ 图片编辑窗口目标与保存
+    │   └── util.ts            # store 共用：errorText 错误码翻译、debounce
     ├── composables/           # 只放业务 composable；通用能力直接用 @vueuse/core
     │   ├── useContextMenu.ts  # 右键菜单状态（visible/x/y/items）
     │   ├── useDragImport.ts   # 拖拽导入（文件夹递归展开 + 对接 importer.importPaths/importFiles）
@@ -326,11 +329,16 @@ export function connectEvents(handlers: {
 
 ### Pinia store（stores/）
 
-三个 store 构成 DAG：子 store（importer/preview）可读主 store 的 state/getter、调其 action；
-**主 store 不反向依赖子 store，子 store 之间不互引**；跨 store 的编排（init 前的会话清理、SSE 分发）
-由组件层（App.vue）负责。组件不直接调 api（除缩略图 URL 拼接），一切经 action。
+四个 store 构成 DAG：子 store（taxonomy/importer/preview）可读主 store 的 state/getter、调其 action；
+**主 store 不反向依赖子 store，子 store 之间不互引**。两个例外通道（仍是单向语义的解耦）：
+- `registerTaxonomyHooks`：taxonomy store 创建时把「防抖刷新计数/文件夹树」两个回调注册到主 store
+  的模块级钩子，主 store 的 SSE 分发与批量 action 经钩子转发刷新——主 store 不 import taxonomy；
+- `init(validators)`：restoreView 的存在性校验（文件夹/分类/标签是否在词表中）由 App.vue 以参数注入，
+  主 store 不知道数据来自 taxonomy store。
+跨 store 的编排（init 顺序、init 前的会话清理、SSE 分发）由组件层（App.vue）负责。组件不直接调 api
+（除缩略图 URL 拼接），一切经 action。
 
-**主 store `useLibraryStore`（stores/library.ts）**——视图/查询/列表/选择集/文件夹树/分类标签/回收站：
+**主 store `useLibraryStore`（stores/library.ts）**——视图/查询/列表/选择集/回收站：
 
 ```ts
 // ---- state ----
@@ -341,7 +349,6 @@ details: Map<string, Item>;      // 已拉取详情（视口窗口 + 预取）�
 total: number;                   // = skeleton.length
 totalSize: number; loading: boolean; windowLoading: boolean;   // 整表加载中 / 视口窗口补数据中
 selection: string[];             // 选中 id，有序；末位为主选中/连选锚点（selectAll 基于全量骨架）
-folders: FolderNode | null;      // 完整树（含根）
 library: LibraryInfo | null;
 thumbSize: number;               // 网格卡片边长偏好（滑杆 120–280，齐行布局目标行高）：桌面端会话级、固定 160 不持久化；web 端（浏览器）用户显式设置过则记忆 localStorage（`hawk:thumbSize`，越界/损坏回退到无偏好，经 persist.ts）且不再自动切换，未设置时跟随视口宽度的动态默认——≥700px 用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转经 useMediaQuery 自动跟随；用户设置统一走 setUserThumbSize（与动态默认写入路径区分）
 sidebarVisible: boolean;         // 侧栏显隐（标题栏开关，默认开）
@@ -357,7 +364,7 @@ selectedItems: Item[];
 primarySelected: Item | null;    // selection 末位对应的 item
 
 // ---- actions ----
-init(): Promise<void>;           // libraryInfo + folders + resetList；失败进启动失败态
+init(validators): Promise<void>;  // libraryInfo + resetList；restoreView 的存在性校验经 validators 注入（taxonomy 数据）
 setView(v: ViewState): void;                     // 切视图：压浏览历史 → 清空选择 → resetList
 goBack() / goForward(): void;                    // 标题栏前进/后退（canGoBack/canGoForward 驱动禁用态）
 toggleSidebar(): void;                           // 侧栏显隐开关
@@ -377,11 +384,18 @@ trashSelected(): Promise<void>; restoreSelected(): Promise<void>;   // 删除：
 clearTrash(): Promise<void>;                       // 调用方先二次确认
 deleteLocation(id, path): Promise<void>;         // 按位置删除（Inspector 文件位置列表）：其余位置保留，最后一个库内位置被删时整项回收
 deleteScopePrompt / resolveDeleteScope;          // 多位置删除策略弹窗挂起态（DeleteScopeDialog 呈现；folder 非空时才有「仅从此处移除」选项）
-refreshFolders(): Promise<void>;
 viewerMode: boolean;          // 局域网 viewer token 且 [web].writable 未开启:隐藏全部写入口,服务端 403 为最终防线;writable 开启后 false(web 端与桌面端同权)
 showToast(msg: string): void;
 applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略见下节）
 ```
+
+**分类维度子 store `useTaxonomyStore`（stores/taxonomy.ts）**：文件夹树 / 分类 / 标签 / 侧栏计数域。
+状态 `folders`（完整树含根）、`categories`、`tagList`、`trashTotal`、`rootCount`、`uncategorizedCount`、
+`untaggedCount`；getter `flatFolders`（移动目标选择控件）、`categoryOptions`、`folderExists/categoryExists/
+tagExists`（restoreView 校验经 App.vue 注入主 store init）；action `refreshAll`（首屏/换库加载，先于主
+store init）、`refreshFolders/refreshTaxonomy` 与文件夹/分类/标签 CRUD（视图跟随重命名/删除回退让当前
+视图经主 store `correctView` 修正）。创建时经 `registerTaxonomyHooks` 注册两个防抖刷新回调，SSE 事件
+（item 增删/集合变化/folder.changed）与本地批量 action 的分类维度刷新都由主 store 经钩子转发至此。
 
 **导入子 store `useImporterStore`（stores/importer.ts）**：批量导入域。状态 `importProgress`
 （null 无任务；total=0 收集文件阶段不定态）、`dupPrompt`（重复策略弹窗挂起态，ImportDuplicateDialog
@@ -425,7 +439,7 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板（TitleBar 齿轮打开，所有 web 客户端与 Electron 均可开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网/更新；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，所有端可用，均经 store.setUserThumbSize——web 端由此记住用户偏好并停止跟随动态默认；动态默认与记忆规则见 store）；预览关闭按钮开关（开启后全屏预览不显示右上角 ×，Esc/双击/触屏下拉仍可关闭；经 preview.setHidePreviewClose 即时生效并 localStorage `hawk:hidePreviewClose` 记忆，web 与 Electron 均持久）；局域网分区：开关（switch 样式）+ 一句说明，启用后才展开**「允许修改素材库」开关**（[web].writable，开启后查看端可上传/删除/修改，附风险提示，保存即热生效）、**token 拆分开关**（「拆分只读与可写 token」，仅写权限开启后显示：关闭时单一 token 读写兼具；开启时访问 token 降为只读、另签发可写 token，开启且为空时自动生成——separate_write_token + write_token）、端口/访问 token（拆分时标注「只读」；monospace 输入 + 复制/重新生成；拆分时另有可写 token 同款字段）/本机地址列表（链接 + 逐行复制，useClipboard legacy 回退，复制 toast 反馈；拆分/校验规则不变）——依赖 Electron preload 通道，移动端（浏览器触屏）不可见；**连接分区**（仅局域网 web 端，浏览器触屏/桌面浏览器均可达——设置齿轮由此在所有 web 客户端常显）：当前访问级别（只读/可读写，取自 store.viewerMode）+ 「注销 token」按钮（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页，重新输入另一 token 即可切换读写身份）；端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控，inputmode=numeric）：实时校验纯数字且 1–65535，不合法红框 + 提示，保存拦截（未启用时输入框不可见，静默回退默认 27372）；**遮罩关闭为 pointerdown/pointerup 配对判定**（按下与抬起都落在遮罩上才关）——拖动端口数字/滑杆滑出面板松开时 click 落在共同祖先即遮罩上，旧 click.self 判定会误关面板丢失未保存配置；Esc 关闭（捕获阶段拦截并阻断全局快捷键）；打开期间挂 `body.dialog-open` 挂起窗口拖拽区（同 ContextMenu 的 menu-open），点遮罩盖住的标题栏也是关闭而不是拖窗口；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，保存经 preload `saveLanSettings()` 由主进程写配置——daemon watcher 唤醒 LAN supervisor 热重绑（不重启进程、SSE 不断），主进程轮询 `app/info` 的 `lan` 状态确认收敛，绑定失败（端口占用等）自动写回旧配置回滚并弹错；成功后本对话框 emit close；**更新分区**（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha）、更新通道单选（稳定版/每日构建 nightly，存 `hawk:updateChannel`，切换后旧检查结果作废）、检查更新（发现新版本显示版本号 + 发布说明链接）、下载并安装（进度条，total 未知时不定态；sha256 校验阶段文案切换）、重启并安装（成功后应用退出由主进程替换脚本接力）；无 shell（web 端）时底部仅「关闭」（滑杆实时生效无需保存） |
+| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板（TitleBar 齿轮打开，所有 web 客户端与 Electron 均可开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网/更新；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，所有端可用，均经 store.setUserThumbSize——web 端由此记住用户偏好并停止跟随动态默认；动态默认与记忆规则见 store）；预览关闭按钮开关（开启后全屏预览不显示右上角 ×，Esc/双击/触屏下拉仍可关闭；经 preview.setHidePreviewClose 即时生效并 localStorage `hawk:hidePreviewClose` 记忆，web 与 Electron 均持久）；局域网分区：开关（switch 样式）+ 一句说明，启用后才展开**「允许修改素材库」开关**（[web].writable，开启后查看端可上传/删除/修改，附风险提示，保存即热生效）、**token 拆分开关**（「拆分只读与可写 token」，仅写权限开启后显示：关闭时单一 token 读写兼具；开启时访问 token 降为只读、另签发可写 token，开启且为空时自动生成——separate_write_token + write_token）、端口/访问 token（拆分时标注「只读」；monospace 输入 + 复制/重新生成；拆分时另有可写 token 同款字段）/本机地址列表（链接 + 逐行复制，useClipboard legacy 回退，复制 toast 反馈；拆分/校验规则不变）——依赖 Electron preload 通道，移动端（浏览器触屏）不可见；**连接分区**（仅局域网 web 端，浏览器触屏/桌面浏览器均可达——设置齿轮由此在所有 web 客户端常显）：当前访问级别（只读/可读写，取自 store.viewerMode）+ 「注销 token」按钮（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页，重新输入另一 token 即可切换读写身份）；端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控，inputmode=numeric）：实时校验纯数字且 1–65535，不合法红框 + 提示，保存拦截（未启用时输入框不可见，静默回退默认 27372）；**遮罩关闭为 pointerdown/pointerup 配对判定**（按下与抬起都落在遮罩上才关）——拖动端口数字/滑杆滑出面板松开时 click 落在共同祖先即遮罩上，旧 click.self 判定会误关面板丢失未保存配置；Esc 关闭（捕获阶段拦截并阻断全局快捷键）；打开期间挂 `body.dialog-open` 挂起窗口拖拽区（同 ContextMenu 的 menu-open），点遮罩盖住的标题栏也是关闭而不是拖窗口；按库隔离存于 `.hawk/config.toml` 的 `[web]` 段，读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启进程、SSE 不断），PUT 内置收敛等待，绑定失败（端口占用等）自动回滚旧配置并返回错误；成功后本对话框 emit close；**更新分区**（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha）、更新通道单选（稳定版/每日构建 nightly，存 `hawk:updateChannel`，切换后旧检查结果作废）、检查更新（发现新版本显示版本号 + 发布说明链接）、下载并安装（进度条，total 未知时不定态；sha256 校验阶段文案切换）、重启并安装（成功后应用退出由主进程替换脚本接力）；无 shell（web 端）时底部仅「关闭」（滑杆实时生效无需保存） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
 | `FolderTreePicker.vue` | `current: string`、`trigger: HTMLElement \| null`、`anchor: {left,width,top,bottom,flip}` | `pick(path)`、`close` | Eagle 式文件夹树选择弹出层（检查器「文件夹」用，Teleport body 定位到触发按钮）：点击当前值弹出/再点收起（trigger 列为 outside 忽略，否则 pointerdown 先关、click 后开关不上），**点击文件夹行即选中移动**（无确认，与 Eagle 一致；点当前行=取消）；展开态默认沿当前路径、▸ 折叠箭头、当前行高亮；下方空间不足向上翻转；点外部/Esc 关闭，面板内按键拦截（Delete/Backspace 不误删素材）；空库提示先到侧栏新建 |
@@ -541,8 +555,15 @@ hawk-app/
 ├── package.json            # 全部依赖与脚本（单包，不做 workspaces）
 ├── electron-builder.yml
 ├── electron/
-│   ├── main.cjs            # 窗口管理（macOS 原生红绿灯 / Windows/Linux 无边框 + 窗口控制 IPC）、关窗隐藏到托盘 + 系统托盘、单实例锁、拉起/回收 server、token、库选择、应用更新（GitHub Releases 检查/下载校验/重启替换）、白名单 IPC
-│   ├── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/server 进度·就绪·错误事件/更新检查·下载·安装·进度/退出应用）+ webUtils
+│   ├── main.mjs            # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
+│   ├── server.mjs          # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
+│   ├── window.mjs          # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、关窗隐藏到托盘 + 系统托盘、退出标志
+│   ├── app-config.mjs      # 用户配置（userData/hawk-app.json）：最近素材库与历史记录、当前库根会话状态
+│   ├── updater.mjs         # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
+│   ├── lan.mjs             # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）
+│   ├── ipc.mjs             # 白名单 IPC 注册（换库/文件管理器/剪贴板/窗口控制/局域网地址/退出应用）
+│   ├── paths.mjs           # 共用路径（ESM 无 __dirname；应用图标单一来源）
+│   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/server 进度·就绪·错误事件/更新检查·下载·安装·进度/退出应用）+ webUtils
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）

@@ -2,7 +2,6 @@
 // 全库一律经本模块访问 shell（不再散点 window.hawkShell 判断）：
 // - hasShell：能力/UI 分支（如「在文件管理器中显示」仅 Electron 出现）；
 // - shell：类型化通道，浏览器端为 no-op 壳（各方法返回类型化空值），调用方无需 ?. 兜底。
-import type { LanSettings } from './types';
 
 /** 是否存在 Electron preload 注入的 shell（false = 纯浏览器/局域网查看） */
 export const hasShell = !!window.hawkShell;
@@ -28,16 +27,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   selectLibrary: async () => false,
   listLibraries: async () => ({ current: null, libraries: [] }),
   openLibrary: async () => false,
-  getLanSettings: async () => ({
-    enabled: false,
-    port: 0,
-    token: '',
-    writable: false,
-    separateWriteToken: false,
-    writeToken: '',
-    addresses: [],
-  }) as LanSettings,
-  saveLanSettings: async () => ({ ok: false }),
+  lanAddresses: async () => [],
   showInFinder: async () => {},
   copyPath: async () => {},
   copyImage: async () => {},

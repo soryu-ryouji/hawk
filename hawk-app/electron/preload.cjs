@@ -14,10 +14,8 @@ contextBridge.exposeInMainWorld('hawkShell', {
   copyPath: (relPath) => ipcRenderer.invoke('hawk:copy-path', relPath),
   /** 复制图片文件本身到剪贴板 */
   copyImage: (relPath) => ipcRenderer.invoke('hawk:copy-image', relPath),
-  /** 局域网查看设置：读取 [web] 配置与本机局域网地址 */
-  getLanSettings: () => ipcRenderer.invoke('hawk:get-lan-settings'),
-  /** 保存 [web] 配置并重启 hawk-daemon（失败自动回滚），返回 { ok, error? }；重启后 onServerStarted 带新地址到达 */
-  saveLanSettings: (web) => ipcRenderer.invoke('hawk:save-lan-settings', web),
+  /** 本机局域网 IPv4 地址列表（设置面板展示用；LAN 配置读写走 REST app/lan） */
+  lanAddresses: () => ipcRenderer.invoke('hawk:lan-addresses'),
   /** 真正退出应用（启动错误屏用；区别于 closeWindow 的隐藏到托盘） */
   quitApp: () => ipcRenderer.invoke('hawk:quit-app'),
   /** 当前应用版本与构建 sha（sha='dev' 表示无构建标识，如开发态） */

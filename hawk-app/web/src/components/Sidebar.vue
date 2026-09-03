@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
 import { hasShell, shell } from '../platform';
 import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
@@ -11,6 +12,7 @@ import TaxonomyRow from './TaxonomyRow.vue';
 import type { MenuItem } from '../types';
 
 const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const menu = useContextMenu();
 
 // 三个分区的折叠态（点分区标题收起/展开，v-show 保留树节点内部的展开/编辑状态）
@@ -54,17 +56,17 @@ async function onLibraryClick(e: MouseEvent) {
 
 function createRootFolder(name: string) {
   showCreateFolder.value = false;
-  void store.folderCreate('', name);
+  void taxonomy.folderCreate('', name);
 }
 
 function createRootCategory(name: string) {
   showCreateCategory.value = false;
-  void store.categoryCreate(name);
+  void taxonomy.categoryCreate(name);
 }
 
 function submitRenameCategory(newName: string) {
   showRenameCategory.value = false;
-  void store.categoryRename(renameTarget.value, newName);
+  void taxonomy.categoryRename(renameTarget.value, newName);
 }
 
 /** 分类行「重命名」：记住目标名并弹输入框（TaxonomyRow 发来） */
@@ -75,12 +77,12 @@ function startRenameCategory(name: string) {
 
 function createTag(name: string) {
   showCreateTag.value = false;
-  void store.tagCreate(name);
+  void taxonomy.tagCreate(name);
 }
 
 function submitRenameTag(newName: string) {
   showRenameTag.value = false;
-  void store.tagRename(renameTarget.value, newName);
+  void taxonomy.tagRename(renameTarget.value, newName);
 }
 
 /** 标签行「重命名」：记住目标名并弹输入框（TaxonomyRow 发来） */
@@ -213,31 +215,31 @@ function onCategoryContextMenu(e: MouseEvent) {
       <div class="entry" :class="{ active: store.view.kind === 'all' }" @click="store.setView({ kind: 'all' })">
         <Icon name="all" />
         <span class="label">全部素材</span>
-        <span class="count">{{ store.folders?.count ?? 0 }}</span>
+        <span class="count">{{ taxonomy.folders?.count ?? 0 }}</span>
       </div>
 
       <div class="entry" :class="{ active: store.view.kind === 'root' }" @click="store.setView({ kind: 'root' })">
         <Icon name="home" />
         <span class="label">根目录素材</span>
-        <span class="count">{{ store.rootCount }}</span>
+        <span class="count">{{ taxonomy.rootCount }}</span>
       </div>
 
       <div class="entry" :class="{ active: store.view.kind === 'uncategorized' }" @click="store.setView({ kind: 'uncategorized' })">
         <Icon name="inbox" />
         <span class="label">未分类素材</span>
-        <span class="count">{{ store.uncategorizedCount }}</span>
+        <span class="count">{{ taxonomy.uncategorizedCount }}</span>
       </div>
 
       <div class="entry" :class="{ active: store.view.kind === 'untagged' }" @click="store.setView({ kind: 'untagged' })">
         <Icon name="tagOff" />
         <span class="label">未标签素材</span>
-        <span class="count">{{ store.untaggedCount }}</span>
+        <span class="count">{{ taxonomy.untaggedCount }}</span>
       </div>
 
       <div class="entry" :class="{ active: store.view.kind === 'trash' }" @click="store.setView({ kind: 'trash' })">
         <Icon name="trash" />
         <span class="label">回收站</span>
-        <span class="count">{{ store.trashTotal }}</span>
+        <span class="count">{{ taxonomy.trashTotal }}</span>
       </div>
 
       <div class="section" @click="collapsed.folder = !collapsed.folder">
@@ -248,7 +250,7 @@ function onCategoryContextMenu(e: MouseEvent) {
         <button v-if="!store.viewerMode" class="add" title="新建文件夹" @click.stop="showCreateFolder = true">＋</button>
       </div>
       <div v-show="!collapsed.folder" class="tree" @contextmenu.prevent="onTreeContextMenu">
-        <FolderTreeNode v-for="node in store.folders?.children ?? []" :key="node.path" :node="node" :depth="0" />
+        <FolderTreeNode v-for="node in taxonomy.folders?.children ?? []" :key="node.path" :node="node" :depth="0" />
       </div>
 
       <div class="section" @click="collapsed.category = !collapsed.category">
@@ -268,7 +270,7 @@ function onCategoryContextMenu(e: MouseEvent) {
         @drop="onTreeDrop('category', $event)"
       >
         <TaxonomyRow
-          v-for="category in store.categories"
+          v-for="category in taxonomy.categories"
           :key="category.name"
           kind="category"
           :name="category.name"
@@ -295,7 +297,7 @@ function onCategoryContextMenu(e: MouseEvent) {
         @drop="onTreeDrop('tag', $event)"
       >
         <TaxonomyRow
-          v-for="tag in store.tagList"
+          v-for="tag in taxonomy.tagList"
           :key="tag.name"
           kind="tag"
           :name="tag.name"

@@ -3,8 +3,8 @@
 // 移动端只有「外观」一个分区，导航不渲染）。
 // - 缩略图尺寸滑杆：实时生效，所有端可用（含局域网浏览器触屏端）。
 // - 局域网查看（仅 Electron）：开关/端口/token/本机地址，按库隔离存于 .hawk/config.toml 的 [web] 段；
-//   保存 = 主进程写配置，daemon 热重绑监听（不重启进程），主进程轮询确认收敛，
-//   失败自动写回旧配置回滚并弹错。
+//   读写直连 daemon REST（GET/PUT /api/v1/app/lan，admin 限定），保存 = daemon 写配置并热重绑监听
+//  （不重启进程），绑定失败 daemon 侧自动回滚并返回错误；本机地址列表仍经 preload（主进程网卡信息）。
 // 交互要点：
 // - 遮罩「按下与抬起都落在遮罩上」才关闭：在端口输入框里拖动选择文本、拖动滑杆时滑出面板松开，
 //   click 事件落在 mousedown/mouseup 目标的共同祖先（遮罩）上，按 click.self 判定会误关面板丢失未保存
@@ -20,8 +20,9 @@ import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
 import { hasShell, shell } from '../platform';
 import { useUpdater } from '../composables/useUpdater';
+import { api } from '../api/endpoints';
+import { errorText } from '../stores/util';
 import Icon from './Icon.vue';
-import type { LanSettings } from '../types';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
@@ -65,21 +66,20 @@ onMounted(async () => {
     return;
   }
   try {
-    const s: LanSettings = await shell.getLanSettings();
+    const s = await api.appLan();
     enabled.value = s.enabled;
     port.value = String(s.port);
     token.value = s.token;
     writable.value = s.writable;
-    separate.value = s.separateWriteToken;
-    writeToken.value = s.writeToken;
-    addresses.value = s.addresses;
+    separate.value = s.separate_write_token;
+    writeToken.value = s.write_token;
+    addresses.value = await shell.lanAddresses();
     void shell.getAppVersion().then((v) => {
       appVersion.value = v.version;
       buildSha.value = v.sha;
     });
   } catch (e) {
-    // 多见于主进程/preload 未随新版本重启（dev.mjs 不监听主进程文件）
-    error.value = `读取设置失败：${e instanceof Error ? e.message : String(e)}（请完全重启 hawk 后重试）`;
+    error.value = `读取设置失败：${errorText(e)}`;
   } finally {
     loading.value = false;
   }
@@ -190,22 +190,18 @@ async function save() {
   saving.value = true;
   error.value = null;
   try {
-    const res = await shell.saveLanSettings({
+    await api.saveAppLan({
       enabled: enabled.value,
       port: portValue(),
       token: token.value.trim(),
       writable: writable.value,
-      separateWriteToken: separate.value,
-      writeToken: writeToken.value.trim(),
+      separate_write_token: separate.value,
+      write_token: writeToken.value.trim(),
     });
-    if (!res.ok) {
-      error.value = res.error ?? '应用失败';
-    } else {
-      // 成功：LAN 监听已热重绑（主进程轮询 app/info 确认收敛，无重启），关闭本对话框
-      emit('close');
-    }
+    // 成功：LAN 监听已热重绑（daemon 侧确认收敛，失败已自动回滚），关闭本对话框
+    emit('close');
   } catch (e) {
-    error.value = `应用失败：${e instanceof Error ? e.message : String(e)}（请完全重启 hawk 后重试）`;
+    error.value = `应用失败：${errorText(e)}`;
   } finally {
     saving.value = false;
   }

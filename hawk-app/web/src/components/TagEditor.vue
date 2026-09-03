@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 
 const props = defineProps<{ modelValue: string[] }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>();
 
 const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 
 // 与分类/文件夹一致的「＋」模式：点击才展开输入框，Enter/失焦提交，Esc 取消
 const editing = ref(false);
@@ -67,7 +69,7 @@ function jumpTo(tag: string) {
     />
     <button v-else class="add" title="新建标签" @click="startEdit">＋</button>
     <datalist id="tag-suggestions">
-      <option v-for="t in store.tagList" :key="t.name" :value="t.name" />
+      <option v-for="t in taxonomy.tagList" :key="t.name" :value="t.name" />
     </datalist>
   </div>
 </template>

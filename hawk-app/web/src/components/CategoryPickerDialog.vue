@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type { Directive } from 'vue';
-import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 
 defineProps<{ title: string }>();
 const emit = defineEmits<{ confirm: [name: string]; cancel: [] }>();
 
-const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const text = ref('');
 
 const vFocus: Directive<HTMLElement> = {
@@ -37,7 +37,7 @@ function confirm() {
           @keydown.esc="emit('cancel')"
         />
         <datalist id="category-names">
-          <option v-for="category in store.categories" :key="category.name" :value="category.name" />
+          <option v-for="category in taxonomy.categories" :key="category.name" :value="category.name" />
         </datalist>
         <div class="actions">
           <button @click="emit('cancel')">取消</button>

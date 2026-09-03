@@ -4,6 +4,25 @@
 > 供后续实施者（人或模型）直接执行。每个问题含：现状证据、风险、改造方案、验收标准。
 > 相关设计文档：[hawk-app.md](./hawk-app.md)（实施完成后必须同步更新）。
 
+## 实施状态（全部完成，文档存档）
+
+| 编号 | 状态 | 落点 |
+| ---- | ---- | ---- |
+| P1 god store | ✅ 已拆 importer/preview（方案 A）+ taxonomy（hook 注册解耦，见下） | `stores/importer.ts`、`stores/preview.ts`、`stores/taxonomy.ts` |
+| P2-1 导入重复 | ✅ 共享 `importBatch.runImportBatch` 状态机 | `web/src/importBatch.ts` |
+| P2-2 Sidebar 复制 | ✅ 抽象 TaxonomyRow | `components/TaxonomyRow.vue` |
+| P2-3 布局耦合 | ✅ layout.ts 单一来源 + CSS 变量 | `web/src/layout.ts` |
+| P3 手势/布局不可单测 | ✅ useZoomPan + layoutRows 纯函数 | `composables/useZoomPan.ts`、`layout.spec.ts` |
+| P4 缺少单测 | ✅ vitest 3 个纯逻辑 spec | `viewLogic/importBatch/layout.spec.ts` |
+| P5 hawkShell 散点 | ✅ platform.ts 收敛 + no-op 壳 | `web/src/platform.ts` |
+| P6 localStorage 键散落 | ✅ persist.ts STORAGE_KEYS 注册表 | `web/src/persist.ts` |
+| P7 主进程手写 TOML | ✅ LAN 配置读写下沉 daemon（`GET/PUT /api/v1/app/lan`，toml_edit 保留注释），主进程手写解析已删除 | `hawk-daemon/src/api/lan.rs` |
+| P8 大组件观察项 | 维持观察 | — |
+
+P1 补记：taxonomy 拆分未采用本文档方案 B 的「返回值 + 组件层编排」，而是用 `registerTaxonomyHooks`
+模块级钩子（taxonomy 创建时注册防抖刷新回调，主 store 经钩子转发、不反向 import）解决了预言中的
+双向引用问题；restoreView 的存在性校验经 `init(validators)` 参数注入。
+
 ## 总体结论
 
 前端架构**不是屎山，整体健康**。分层清晰（api → Pinia store → 组件，依赖单向）、契约先行

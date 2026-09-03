@@ -36,6 +36,11 @@ export const api = {
       lan: { active: boolean; port?: number; error?: string };
     }>('GET', '/api/v1/app/info'),
   startupStatus: () => request<StartupInfo>('GET', '/api/v1/app/startup'),
+  /** 局域网 web 查看配置与运行状态（admin 限定，daemon 权威读写） */
+  appLan: () => request<components['schemas']['LanSettings']>('GET', '/api/v1/app/lan'),
+  /** 保存 [web] 配置并热重绑监听（失败 daemon 侧自动回滚并返回错误） */
+  saveAppLan: (body: components['schemas']['LanSettingsPutRequest']) =>
+    request<components['schemas']['LanSettings']>('PUT', '/api/v1/app/lan', { body }),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
   /** 刷新缓存：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */

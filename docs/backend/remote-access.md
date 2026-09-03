@@ -226,7 +226,7 @@ hawk-server：校验访问资格与中继额度（服务端规则，拒绝时 40
 | ---- | ---- |
 | `hawk-remote/` | 新项目（独立 crate）：信令客户端 / WSS 通道 / UPnP / QUIC 隧道端 / B 侧本地代理 / 本地状态 API |
 | `hawk-daemon/src/api/mod.rs` | 鉴权中间件增加受托 token 源（env `HAWK_DELEGATE_TOKEN`，只读，与 LAN viewer 同级）。daemon 其余零改动、零门控 |
-| `hawk-app/electron/main.cjs` | 端口统一预选；受托 token 生成与双进程注入；hawk-remote 拉起/回收/崩溃重启；连接描述符与 `connection-changed`；订阅 remote 状态 API |
+| `hawk-app/electron/`（主进程模块） | 端口统一预选；受托 token 生成与双进程注入；hawk-remote 拉起/回收/崩溃重启；连接描述符与 `connection-changed`；订阅 remote 状态 API |
 | `hawk-app/src/remote/` | 接入配置（URL + KEY）/ 设备列表 / 连接流程 / 错误提示 UI，构建期 `HAWK_REMOTE` 门控 |
 | `hawk-app` web 前端 | 连接参数由启动时常量改为响应式描述符；切换重置流程（启动注水逻辑泛化） |
 | `.hawk/remote/` | 本地专用设备身份目录（device_id、自签证书），不参与同步 |

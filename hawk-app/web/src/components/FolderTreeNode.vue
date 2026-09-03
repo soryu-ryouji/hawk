@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import type { Directive } from 'vue';
 import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
 import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
 import type { FolderNode } from '../types';
@@ -16,6 +17,7 @@ const vFocus: Directive<HTMLElement> = {
 const props = defineProps<{ node: FolderNode; depth: number }>();
 
 const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const menu = useContextMenu();
 
 const expanded = ref(props.depth < 1);
@@ -36,9 +38,9 @@ async function submitEdit() {
   const text = editText.value.trim();
   if (text) {
     if (editing.value === 'rename') {
-      await store.folderRename(props.node.path, text);
+      await taxonomy.folderRename(props.node.path, text);
     } else {
-      await store.folderCreate(props.node.path, text);
+      await taxonomy.folderCreate(props.node.path, text);
     }
   }
   editing.value = false;
@@ -61,7 +63,7 @@ function onContextMenu(e: MouseEvent) {
         danger: true,
         action: () => {
           if (window.confirm(`删除文件夹「${props.node.name}」？其中素材将一并移入回收站。`)) {
-            void store.folderDelete(props.node.path);
+            void taxonomy.folderDelete(props.node.path);
           }
         },
       },

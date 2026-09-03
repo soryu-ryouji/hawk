@@ -7,7 +7,8 @@ import { api } from '../api/endpoints';
 import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
 import { loadText, saveText, STORAGE_KEYS } from '../persist';
-import { errorText, useLibraryStore } from './library';
+import { useLibraryStore } from './library';
+import { errorText } from './util';
 import type { Item } from '../types';
 
 export const usePreviewStore = defineStore('preview', () => {

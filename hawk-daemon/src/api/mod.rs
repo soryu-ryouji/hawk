@@ -61,6 +61,7 @@ pub fn build_router(state: SharedState) -> axum::Router {
         .route("/health", axum::routing::get(app::health))
         .route("/openapi/v1.json", axum::routing::get(openapi::openapi_schema))
         .merge(app::routes())
+        .merge(lan::routes())
         .merge(library::routes())
         .merge(folder::routes())
         .merge(item::routes())

@@ -1,42 +1,36 @@
-// Pinia 主 store：视图/查询/列表/选择集/文件夹树，以及全部业务 action。
-// 组件不直接调 api，一切经 action；SSE 事件经 applyEvent 分发。
+// Pinia 主 store：视图/查询/列表/选择集/回收站，以及列表与 item 写操作 action。
+// 组件不直接调 api，一切经 action；SSE 事件经 applyEvent 分发（分类维度分支在 taxonomy store，组件层编排）。
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { useMediaQuery } from '@vueuse/core';
 import { api } from '../api/endpoints';
-import { ApiError } from '../api/client';
 import { isUnfilteredView, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, viewPathPrefix } from '../viewLogic';
 import { hasShell } from '../platform';
 import { loadJSON, loadText, saveJSON, saveText, STORAGE_KEYS } from '../persist';
-import type { CategoryInfo, FolderNode, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, TagInfo, ViewPrefs, ViewState } from '../types';
+import { debounce, errorText } from './util';
+import type { Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, ViewPrefs, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
 const INITIAL_WINDOW = 150;
 
-const ERROR_TEXT: Record<string, string> = {
-  FILE_EXISTS: '同名文件或文件夹已存在',
-  ITEM_NOT_FOUND: '素材不存在或已被移除',
-  FOLDER_NOT_FOUND: '文件夹不存在',
-  CATEGORY_NOT_FOUND: '分类不存在',
-  CATEGORY_EXISTS: '分类已存在',
-  TAG_NOT_FOUND: '标签不存在',
-  UNSUPPORTED_FORMAT: '不支持的格式',
-  INVALID_PARAM: '参数无效',
-  NETWORK: '无法连接 hawk-daemon',
-};
-
-/** ApiError 错误码翻译（store 与需要错误文案的模块共用） */
-export function errorText(e: unknown): string {
-  return e instanceof ApiError ? (ERROR_TEXT[e.code] ?? e.message) : String(e);
+/** restoreView 的存在性校验（文件夹/分类/标签数据在 taxonomy store，由组件层注入，保持引用方向 DAG） */
+export interface ViewValidators {
+  folderExists(path: string): boolean;
+  categoryExists(name: string): boolean;
+  tagExists(name: string): boolean;
 }
 
-/** 简易防抖（模块级，store 单例无需多实例隔离） */
-function debounce(ms: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return (fn: () => void) => {
-    clearTimeout(timer);
-    timer = setTimeout(fn, ms);
-  };
+/** 分类维度刷新钩子：taxonomy store 创建时注册（子 → 主方向 import，主 store 不反向引用 taxonomy）。
+ *  两个入口内部均防抖——SSE 事件爆发期合并刷新；本地批量操作后调用同样收敛到 300ms 内一次 */
+export interface TaxonomyHooks {
+  /** 分类/标签集合或成员计数可能变化 → 防抖刷新计数与词表 */
+  refreshTaxonomy(): void;
+  /** 目录结构变化 → 防抖刷新文件夹树 */
+  refreshFolders(): void;
+}
+let taxonomyHooks: TaxonomyHooks | null = null;
+export function registerTaxonomyHooks(hooks: TaxonomyHooks): void {
+  taxonomyHooks = hooks;
 }
 
 export const useLibraryStore = defineStore('library', () => {
@@ -56,14 +50,6 @@ export const useLibraryStore = defineStore('library', () => {
   /** 骨架版本：换视图/骨架重载时自增，过期窗口响应据此丢弃 */
   let skeletonVersion = 0;
   const selection = ref<string[]>([]);
-  const folders = ref<FolderNode | null>(null);
-  const categories = ref<CategoryInfo[]>([]);
-  const tagList = ref<TagInfo[]>([]);
-  const trashTotal = ref(0);
-  // 侧栏智能条目计数（limit:1 只取 total）
-  const rootCount = ref(0);
-  const uncategorizedCount = ref(0);
-  const untaggedCount = ref(0);
   const library = ref<LibraryInfo | null>(null);
   // 网格卡片边长偏好（滑杆 120–280，齐行布局的目标行高）：
   // - 桌面端（Electron）：会话级、固定默认 160，不持久化；
@@ -141,28 +127,8 @@ export const useLibraryStore = defineStore('library', () => {
   /** 当前视图条目数（= 骨架长度；骨架未加载时为 0） */
   const total = computed(() => skeleton.value.length);
 
-  /** 扁平化的文件夹树（移动到文件夹等选择控件用），含根目录 */
-  const flatFolders = computed(() => {
-    const list: { path: string; label: string }[] = [{ path: '', label: '（根目录）' }];
-    const walk = (node: FolderNode, depth: number) => {
-      for (const child of node.children) {
-        list.push({ path: child.path, label: '　'.repeat(depth) + child.name });
-        walk(child, depth + 1);
-      }
-    };
-    if (folders.value) {
-      walk(folders.value, 0);
-    }
-    return list;
-  });
-
-  /** 扁平化的分类列表（添加到分类选择控件用） */
-  const categoryOptions = computed(() => categories.value.map((c) => ({ name: c.name })));
-
   // ---- 内部 ----
   const debouncedSkeletonReload = debounce(200);
-  const debouncedRefreshFolders = debounce(300);
-  const debouncedRefreshTaxonomy = debounce(300);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** 当前视图 + 查询条件的列表参数（不含分页）：骨架与视口窗口共用，保证两次查询次序逐位一致 */
@@ -194,7 +160,7 @@ export const useLibraryStore = defineStore('library', () => {
    * [web] writable 开启后解除只读（app/info.writable 驱动，web 端可上传/删除/修改） */
   const viewerMode = ref(false);
 
-  async function init() {
+  async function init(validators: ViewValidators) {
     const info = await api.appInfo();
     viewerMode.value = info.access === 'viewer' && !info.writable;
     library.value = await api.libraryInfo();
@@ -208,8 +174,8 @@ export const useLibraryStore = defineStore('library', () => {
     taskBacklog.value = null;
     indexProgress.value = null;
 
-    await Promise.all([refreshFolders(), refreshTaxonomy(), loadViewPrefs()]);
-    restoreView();
+    await loadViewPrefs();
+    restoreView(validators);
     applySortForView(view.value); // 恢复的视图应用其记忆的排序
     // 历史栈以恢复后的视图为起点
     viewHistory.value = [view.value];
@@ -231,7 +197,7 @@ export const useLibraryStore = defineStore('library', () => {
     return STORAGE_KEYS.lastView(library.value?.path ?? '');
   }
 
-  function restoreView() {
+  function restoreView(validators: ViewValidators) {
     // 恢复不了（无记忆/目标已删/数据损坏）一律回退全部素材：
     // 换库复用 init 时 view 残留上一库取值，任何 return 路径都必须显式重置
     const fallback: ViewState = { kind: 'all' };
@@ -241,19 +207,10 @@ export const useLibraryStore = defineStore('library', () => {
       return;
     }
     const valid =
-      (parsed.kind !== 'folder' || folderExists(parsed.path)) &&
-      (parsed.kind !== 'category' || categoryExists(parsed.name)) &&
-      (parsed.kind !== 'tag' || tagList.value.some((t) => t.name === parsed.name));
+      (parsed.kind !== 'folder' || validators.folderExists(parsed.path)) &&
+      (parsed.kind !== 'category' || validators.categoryExists(parsed.name)) &&
+      (parsed.kind !== 'tag' || validators.tagExists(parsed.name));
     view.value = valid ? parsed : fallback;
-  }
-
-  function folderExists(path: string): boolean {
-    const walk = (node: FolderNode): boolean => node.path === path || node.children.some(walk);
-    return folders.value ? walk(folders.value) : false;
-  }
-
-  function categoryExists(name: string): boolean {
-    return categories.value.some((c) => c.name === name);
   }
 
   /** 应用视图：持久化 + 应用记忆排序 + 清选择 + 重查列表（setView/goBack/correctView 的公共收尾） */
@@ -541,7 +498,7 @@ export const useLibraryStore = defineStore('library', () => {
       debouncedSkeletonReload(() => void reloadSkeleton());
     }
     if (taxonomyChanged) {
-      debouncedRefreshTaxonomy(() => void refreshTaxonomy());
+      taxonomyHooks?.refreshTaxonomy();
     }
   }
 
@@ -657,135 +614,6 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  // ---- 文件夹写操作 ----
-  async function folderCreate(parentPath: string, name: string) {
-    try {
-      await api.folderCreate(name, parentPath || undefined);
-      await refreshFolders();
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function folderRename(path: string, name: string) {
-    try {
-      await api.folderUpdate(path, { name });
-      await refreshFolders();
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function folderDelete(path: string) {
-    try {
-      await api.folderDelete(path);
-      await refreshFolders();
-      if (currentFolderPath.value === path || currentFolderPath.value?.startsWith(path + '/')) {
-        correctView({ kind: 'all' });
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function refreshFolders() {
-    try {
-      folders.value = await api.folderList();
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  // ---- 分类/标签 ----
-
-  async function refreshTaxonomy() {
-    try {
-      const [categoryList, tags, trash, root, uncategorized, untagged] = await Promise.all([
-        api.categoryList(),
-        api.tagList(),
-        api.itemList({ in_trash: true, limit: 1 }),
-        api.itemList({ folders: [''], folders_exact: true, limit: 1 }),
-        api.itemList({ without_categories: true, limit: 1 }),
-        api.itemList({ without_tags: true, limit: 1 }),
-      ]);
-      categories.value = categoryList;
-      tagList.value = tags;
-      trashTotal.value = Number(trash.total);
-      rootCount.value = Number(root.total);
-      uncategorizedCount.value = Number(uncategorized.total);
-      untaggedCount.value = Number(untagged.total);
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function categoryCreate(name: string) {
-    try {
-      await api.categoryCreate(name);
-      await refreshTaxonomy();
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function categoryRename(name: string, newName: string) {
-    try {
-      await api.categoryUpdate(name, newName);
-      await refreshTaxonomy();
-      // 当前视图正在该分类下 → 跟随新名字
-      if (view.value.kind === 'category' && view.value.name === name) {
-        correctView({ kind: 'category', name: newName });
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function categoryDelete(name: string) {
-    try {
-      await api.categoryDelete(name);
-      await refreshTaxonomy();
-      if (view.value.kind === 'category' && view.value.name === name) {
-        correctView({ kind: 'all' });
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function tagCreate(name: string) {
-    try {
-      await api.tagCreate(name);
-      await refreshTaxonomy();
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function tagRename(name: string, newName: string) {
-    try {
-      await api.tagUpdate(name, newName);
-      await refreshTaxonomy();
-      if (view.value.kind === 'tag' && view.value.name === name) {
-        correctView({ kind: 'tag', name: newName });
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function tagDelete(name: string) {
-    try {
-      await api.tagDelete(name);
-      await refreshTaxonomy();
-      if (view.value.kind === 'tag' && view.value.name === name) {
-        correctView({ kind: 'all' });
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
   /** 选中项详情补齐：加标签/分类需读现有值合并，批量选中（含视口外）时先按需拉取 */
   async function ensureSelectionDetails() {
     const missing = selection.value.filter((id) => !details.value.has(id));
@@ -809,7 +637,7 @@ export const useLibraryStore = defineStore('library', () => {
     await ensureSelectionDetails();
     const ids = selection.value.filter((id) => !(details.value.get(id)?.categories ?? []).includes(name));
     await batchUpdate(ids, { add_categories: [name] }, '已添加分类');
-    void refreshTaxonomy();
+    taxonomyHooks?.refreshTaxonomy();
   }
 
   /** 为全部选中项追加标签(去重,保留已有);完成后立即刷新标签计数,不等 SSE 防抖 */
@@ -817,7 +645,7 @@ export const useLibraryStore = defineStore('library', () => {
     await ensureSelectionDetails();
     const ids = selection.value.filter((id) => !(details.value.get(id)?.tags ?? []).includes(tag));
     await batchUpdate(ids, { add_tags: [tag] }, '已添加标签');
-    void refreshTaxonomy();
+    taxonomyHooks?.refreshTaxonomy();
   }
 
   /** 将全部选中项移动到目标文件夹(空字符串为根目录);已在目标文件夹的项跳过;完成后立即刷新文件夹树 */
@@ -825,7 +653,7 @@ export const useLibraryStore = defineStore('library', () => {
     await ensureSelectionDetails();
     const ids = selection.value.filter((id) => (details.value.get(id)?.folders?.[0] ?? '') !== path);
     await batchUpdate(ids, { folder_path: path }, '已移动');
-    void refreshFolders();
+    taxonomyHooks?.refreshFolders();
   }
 
   /** 批量设置选中项评分(多选面板与右键菜单共用) */
@@ -849,9 +677,9 @@ export const useLibraryStore = defineStore('library', () => {
 
   // ---- SSE ----
   // 事件与副作用的对应关系（不无条件全刷，后台事件爆发期不制造请求风暴）：
-  // - item.updated / items.updated：详情/骨架就地更新；标签/分类集合变化才刷分类计数
+  // - item.updated / items.updated：详情/骨架就地更新
   // - item.added / items.added / restored / trashed / removed：成员与计数以服务端查询为准 → 防抖重载骨架 + 刷分类计数
-  //   （items.added 为扫描导入的批量合并事件，避免逐条事件风暴）
+  //   （items.added 为扫描导入的批量合并事件，避免逐条事件风暴）；计数/文件夹树刷新经 TaxonomyHooks 转发 taxonomy store
   // - folder.changed：只刷文件夹树（目录结构变化的唯一信号）
   // - task.progress：只更新对应的后台任务指示
   function applyEvent(type: string, payload: unknown) {
@@ -871,7 +699,7 @@ export const useLibraryStore = defineStore('library', () => {
       case 'item.restored':
         // 新 item 的落点（成员/次序）只能以服务端查询为准：防抖重载骨架，视口窗口随后按需补齐
         debouncedSkeletonReload(() => void reloadSkeleton());
-        debouncedRefreshTaxonomy(() => void refreshTaxonomy());
+        taxonomyHooks?.refreshTaxonomy();
         break;
       case 'item.trashed':
       case 'item.removed': {
@@ -887,7 +715,7 @@ export const useLibraryStore = defineStore('library', () => {
         }
         selection.value = selection.value.filter((s) => s !== id);
         debouncedSkeletonReload(() => void reloadSkeleton());
-        debouncedRefreshTaxonomy(() => void refreshTaxonomy());
+        taxonomyHooks?.refreshTaxonomy();
         break;
       }
       case 'task.progress': {
@@ -903,20 +731,19 @@ export const useLibraryStore = defineStore('library', () => {
         break;
       }
       case 'folder.changed':
-        // 目录结构变化(本端操作/外部进程/对账兜底):重拉文件夹树;与骨架成员和分类/标签计数无关
-        debouncedRefreshFolders(() => void refreshFolders());
+        // 目录结构变化（本端操作/外部进程/对账兜底）：重拉文件夹树；与骨架成员和分类/标签计数无关
+        taxonomyHooks?.refreshFolders();
         break;
     }
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount, library, thumbSize, setUserThumbSize, searchText, toast, deleteScopePrompt, resolveDeleteScope, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
-    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, flatFolders, categoryOptions, hasActiveFilters,
-    init, setView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, library, thumbSize, setUserThumbSize, searchText, toast, deleteScopePrompt, resolveDeleteScope, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
+    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, hasActiveFilters,
+    init, setView, correctView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache,
-    folderCreate, folderRename, folderDelete, refreshFolders,
-    refreshTaxonomy, categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete, addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
+    addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
     showToast, applyEvent,
   };
 });

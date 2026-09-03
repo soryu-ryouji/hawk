@@ -142,6 +142,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/lan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权） */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnvelopeOfLanSettings"];
+                    };
+                };
+            };
+        };
+        /** @description 写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误 */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LanSettingsPutRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EnvelopeOfLanSettings"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/token": {
         parameters: {
             query?: never;
@@ -1541,6 +1601,10 @@ export interface components {
             status: string;
             data: null | components["schemas"]["ItemSkeletonResponse"];
         };
+        EnvelopeOfLanSettings: {
+            status: string;
+            data: null | components["schemas"]["LanSettings"];
+        };
         EnvelopeOfLibraryInfo: {
             status: string;
             data: null | components["schemas"]["LibraryInfo"];
@@ -1730,6 +1794,31 @@ export interface components {
             categories?: null | string[];
             annotation?: null | string;
             url?: null | string;
+        };
+        LanSettings: {
+            enabled: boolean;
+            /** Format: int32 */
+            port: number;
+            token: string;
+            /** @description 允许局域网 token 执行写操作（上传/删除/修改等）；关闭则一律只读（403 READ_ONLY） */
+            writable: boolean;
+            /** @description 拆分只读/可写 token：token 降为只读，write_token 具备写权限 */
+            separate_write_token: boolean;
+            /** @description 拆分模式下的可写 token */
+            write_token: string;
+            /** @description 局域网监听实况：是否已绑定 */
+            active: boolean;
+            /** @description 监听绑定失败原因（热重绑失败时暴露） */
+            error?: string;
+        };
+        LanSettingsPutRequest: {
+            enabled: boolean;
+            /** Format: int32 */
+            port: number;
+            token?: string;
+            writable: boolean;
+            separate_write_token?: boolean;
+            write_token?: string;
         };
         LibraryInfo: {
             name: string;

@@ -89,7 +89,7 @@ function resolveServer() {
   if (process.env.HAWK_DAEMON_EXE) {
     return { command: process.env.HAWK_DAEMON_EXE, args: [] };
   }
-  // 与 electron/main.cjs resolveServerCommand 同优先级：本机 target/release → target/<triple>/release → debug
+  // 与 electron/server.mjs resolveServerCommand 同优先级：本机 target/release → target/<triple>/release → debug
   const exe = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
   const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
   const targetDir = path.resolve(root, '..', 'hawk-daemon', 'target');

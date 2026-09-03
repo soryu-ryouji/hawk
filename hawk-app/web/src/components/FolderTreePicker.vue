@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { onClickOutside, useEventListener } from '@vueuse/core';
-import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 import type { FolderNode } from '../types';
 
 // Eagle 式文件夹树选择弹出层（检查器「文件夹」使用）：点击当前值弹出，
@@ -18,7 +18,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ pick: [path: string]; close: [] }>();
 
-const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const panelEl = ref<HTMLElement | null>(null);
 onClickOutside(
   panelEl,
@@ -51,7 +51,7 @@ function toggle(path: string) {
   expanded.value = next;
 }
 
-/** 展开过滤后的可见行（平铺渲染，与 store.flatFolders 同款思路） */
+/** 展开过滤后的可见行（平铺渲染，与 taxonomy.flatFolders 同款思路） */
 const rows = computed(() => {
   const out: { path: string; name: string; depth: number; hasChildren: boolean }[] = [];
   const walk = (children: FolderNode['children'], depth: number) => {
@@ -62,8 +62,8 @@ const rows = computed(() => {
       }
     }
   };
-  if (store.folders) {
-    walk(store.folders.children, 0);
+  if (taxonomy.folders) {
+    walk(taxonomy.folders.children, 0);
   }
   return out;
 });

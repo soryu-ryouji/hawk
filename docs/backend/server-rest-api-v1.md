@@ -43,6 +43,8 @@
 | GET  | `/api/v1/app/startup` | 启动状态与索引构建进度（就绪网关唯一放行端点） |
 | GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列 + 索引管道；SSE 的 `task.progress` 事件为同一快照的推送版） |
 | GET  | `/api/v1/app/token` | 发现连接 token（免鉴权，仅限扩展类客户端） |
+| GET  | `/api/v1/app/lan` | 读取局域网 web 查看配置与运行状态（admin 限定） |
+| PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
 
 ### startup
 
@@ -131,7 +133,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | exec_path | string | 后端可执行文件路径            |
 | access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看器 token，见 storage.md 的 `[web]` 配置） |
 | writable  | boolean | 当前 token 是否可执行写操作：admin 恒 true；viewer 取决于 `[web]` 的写权限配置（未开启写一律 false；开启且未拆分时 token 读写兼具；拆分时仅 write_token 为 true），保存即热生效 |
-| lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。设置面板保存 `[web]` 后轮询至此确认热生效/失败 |
+| lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。配置读写走 `app/lan`（PUT 内置收敛等待），此字段供状态展示 |
 
 ### health
 
@@ -157,6 +159,52 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 ```json
 { "status": "success", "data": "<random-token>" }
 ```
+
+### lan
+
+`GET /api/v1/app/lan`
+
+读取局域网 web 查看配置（`.hawk/config.toml` 的 `[web]` 段）与监听运行状态。**仅 admin 可用**：viewer（含可写）返回 403 `READ_ONLY`——响应含 token 字段，只读 viewer 拿到 write_token 即提权。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": {
+    "enabled": true,
+    "port": 27372,
+    "token": "<viewer-token>",
+    "writable": false,
+    "separate_write_token": false,
+    "write_token": "",
+    "active": true
+  }
+}
+```
+
+`active` 为监听实况，`error` 字段在绑定失败时携带原因。
+
+---
+
+`PUT /api/v1/app/lan`
+
+写回 `[web]` 配置并热重绑局域网监听：daemon 权威写配置（toml_edit 就地改键值，文件其余段与注释保留，原子写）→ 唤醒 supervisor 重绑 → 等待本轮收敛后返回。绑定失败（端口占用等）**自动回滚旧配置**并返回错误，不重启进程、不断 SSE。仅 admin 可用。
+
+#### 请求
+
+```json
+{
+  "enabled": true,
+  "port": 27372,
+  "token": "<viewer-token>",
+  "writable": false,
+  "separate_write_token": false,
+  "write_token": ""
+}
+```
+
+校验（`INVALID_PARAM`）：`enabled` 时 `token` 必填；`writable` 且 `separate_write_token` 时 `write_token` 必填；端口 1–65535。响应同 GET（收敛后的最新状态）。
 
 ## library
 

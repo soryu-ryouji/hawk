@@ -78,6 +78,30 @@ impl LibraryConfig {
     pub fn is_ignored(&self, rel: &str) -> bool {
         self.matcher.read().unwrap().is_ignored(rel)
     }
+
+    /// 写回 [web] 段并热更：toml_edit 就地改键值，保留文件其余段与注释。
+    /// 原子写（临时文件 + rename），成功后 reload 返回前后差异（调用方据此 wake LAN supervisor）
+    pub fn update_web(&self, web: &WebSettings) -> Result<ConfigChange, String> {
+        let file = &self.paths.config_file;
+        let text = std::fs::read_to_string(file).map_err(|e| format!("读取配置失败 {file}: {e}"))?;
+        let mut doc = text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("配置解析失败 {file}: {e}"))?;
+        // 索引赋值：已存在的键只换值（键上的注释装饰保留），缺失的键/表自动创建
+        doc["web"]["enabled"] = toml_edit::value(web.enabled);
+        doc["web"]["port"] = toml_edit::value(i64::from(web.port));
+        doc["web"]["token"] = toml_edit::value(web.token.as_deref().unwrap_or(""));
+        doc["web"]["writable"] = toml_edit::value(web.writable);
+        doc["web"]["separate_write_token"] = toml_edit::value(web.separate_write_token);
+        doc["web"]["write_token"] = toml_edit::value(web.write_token.as_deref().unwrap_or(""));
+        let tmp = format!("{file}.tmp");
+        std::fs::write(&tmp, doc.to_string()).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
+        if let Err(e) = std::fs::rename(&tmp, file) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("配置替换失败 {file}: {e}"));
+        }
+        Ok(self.reload())
+    }
 }
 
 /// 库首次打开时生成带注释的默认 config.toml（已存在则不覆盖）

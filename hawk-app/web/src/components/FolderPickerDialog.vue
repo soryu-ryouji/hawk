@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 
 defineProps<{ title: string }>();
 const emit = defineEmits<{ confirm: [path: string]; cancel: [] }>();
 
-const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const selected = ref('');
 </script>
 
@@ -15,7 +15,7 @@ const selected = ref('');
       <div class="dialog">
         <div class="title">{{ title }}</div>
         <select v-model="selected">
-          <option v-for="folder in store.flatFolders" :key="folder.path" :value="folder.path">
+          <option v-for="folder in taxonomy.flatFolders" :key="folder.path" :value="folder.path">
             {{ folder.label }}
           </option>
         </select>

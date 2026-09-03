@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 import { useLayout } from '../composables/useLayout';
 import { shell } from '../platform';
 import TagEditor from './TagEditor.vue';
@@ -14,6 +15,7 @@ import FolderTreePicker from './FolderTreePicker.vue';
 import type { ViewState } from '../types';
 
 const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const { touch } = useLayout();
 // 检查器只读的两个来源（信息结构与桌面版一致但全部静态展示，无编辑控件）：
 // - 触屏设备（iPad/手机网页，实际生效于 wide 布局的 iPad 横屏；narrow 下检查器隐藏）——触屏上编辑控件易误触；
@@ -423,7 +425,7 @@ function batchMoveFolder(path: string) {
           @keydown.enter="applyBatchTag"
         />
         <datalist id="batch-tag-suggestions">
-          <option v-for="t in store.tagList" :key="t.name" :value="t.name" />
+          <option v-for="t in taxonomy.tagList" :key="t.name" :value="t.name" />
         </datalist>
       </section>
 

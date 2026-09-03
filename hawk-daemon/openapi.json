@@ -79,6 +79,54 @@
         }
       }
     },
+    "/api/v1/app/lan": {
+      "get": {
+        "tags": [
+          "app"
+        ],
+        "description": "读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权）",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeOfLanSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "app"
+        ],
+        "description": "写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanSettingsPutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeOfLanSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/app/token": {
       "get": {
         "tags": [
@@ -1264,6 +1312,28 @@
           }
         }
       },
+      "EnvelopeOfLanSettings": {
+        "required": [
+          "status",
+          "data"
+        ],
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LanSettings"
+              }
+            ]
+          }
+        }
+      },
       "EnvelopeOfLibraryInfo": {
         "required": [
           "status",
@@ -2149,6 +2219,79 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "LanSettings": {
+        "required": [
+          "enabled",
+          "port",
+          "token",
+          "writable",
+          "separate_write_token",
+          "write_token",
+          "active"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "token": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "允许局域网 token 执行写操作（上传/删除/修改等）；关闭则一律只读（403 READ_ONLY）"
+          },
+          "separate_write_token": {
+            "type": "boolean",
+            "description": "拆分只读/可写 token：token 降为只读，write_token 具备写权限"
+          },
+          "write_token": {
+            "type": "string",
+            "description": "拆分模式下的可写 token"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "局域网监听实况：是否已绑定"
+          },
+          "error": {
+            "type": "string",
+            "description": "监听绑定失败原因（热重绑失败时暴露）"
+          }
+        }
+      },
+      "LanSettingsPutRequest": {
+        "required": [
+          "enabled",
+          "port",
+          "writable"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "token": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean"
+          },
+          "separate_write_token": {
+            "type": "boolean"
+          },
+          "write_token": {
+            "type": "string"
           }
         }
       },

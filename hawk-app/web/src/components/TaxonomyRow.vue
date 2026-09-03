@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useLibraryStore } from '../stores/library';
+import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
 import Icon from './Icon.vue';
 
@@ -17,6 +18,7 @@ const props = defineProps<{
 const emit = defineEmits<{ rename: [name: string] }>();
 
 const store = useLibraryStore();
+const taxonomy = useTaxonomyStore();
 const menu = useContextMenu();
 
 function onClick() {
@@ -38,7 +40,7 @@ function onContextMenu(e: MouseEvent) {
         danger: true,
         action: () => {
           if (window.confirm(`删除${kindLabel}「${props.name}」？全部素材的该${kindLabel}将被清除。`)) {
-            void (props.kind === 'category' ? store.categoryDelete(props.name) : store.tagDelete(props.name));
+            void (props.kind === 'category' ? taxonomy.categoryDelete(props.name) : taxonomy.tagDelete(props.name));
           }
         },
       },
