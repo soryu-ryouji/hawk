@@ -91,7 +91,6 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `openLibrary(path)` | 打开历史素材库（仅接受历史记录内的路径），换库就绪经 `onServerStarted` 通知 |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
 | `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
-| `copyImage(path)` | 预览右键「复制图片」：主进程 `nativeImage.createFromPath` + `clipboard.writeImage` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
 | `lanAddresses()` | 本机局域网 IPv4 地址列表（设置面板展示访问地址用；LAN 配置读写走 REST `GET/PUT /api/v1/app/lan`，不经 IPC） |
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
@@ -555,18 +554,23 @@ hawk-app/
 ├── package.json            # 全部依赖与脚本（单包，不做 workspaces）
 ├── electron-builder.yml
 ├── electron/
-│   ├── main.mjs            # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
-│   ├── server.mjs          # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
-│   ├── window.mjs          # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、关窗隐藏到托盘 + 系统托盘、退出标志
-│   ├── app-config.mjs      # 用户配置（userData/hawk-app.json）：最近素材库与历史记录、当前库根会话状态
-│   ├── updater.mjs         # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
-│   ├── lan.mjs             # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）
-│   ├── ipc.mjs             # 白名单 IPC 注册（换库/文件管理器/剪贴板/窗口控制/局域网地址/退出应用）
-│   ├── paths.mjs           # 共用路径（ESM 无 __dirname；应用图标单一来源）
-│   └── preload.cjs         # contextBridge 白名单通道（换库/文件管理器/剪贴板/拖拽路径/窗口控制/server 进度·就绪·错误事件/更新检查·下载·安装·进度/退出应用）+ webUtils
+│   ├── src/                # 主进程/preload 的 TS 源码（esbuild 打包到 out/，见 scripts/build-electron.mjs）
+│   │   ├── main.ts         # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
+│   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
+│   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、关窗隐藏到托盘 + 系统托盘、退出标志
+│   │   ├── app-config.ts   # 用户配置（userData/hawk-app.json）：最近素材库与历史记录、当前库根会话状态
+│   │   ├── updater.ts      # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
+│   │   ├── lan.ts          # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）
+│   │   ├── ipc.ts          # 白名单 IPC 注册（换库/文件管理器/剪贴板/窗口控制/局域网地址/退出应用）
+│   │   ├── paths.ts        # 共用路径（产物位于 out/，hawk-app 根上溯两级；应用图标单一来源）
+│   │   ├── preload.ts      # contextBridge 白名单通道（形状为 ipc-contract.HawkShell）+ webUtils
+│   │   └── ipc-contract.ts # IPC 契约：通道名常量 + HawkShell 接口（主进程/preload/web 三方对齐的单一定义）
+│   ├── out/                # esbuild 产物（main.mjs ESM + preload.cjs CJS 单文件，不入库；package.json main 指向 out/main.mjs）
+│   └── tsconfig.json       # 主进程源码类型检查（tsc --noEmit，随 npm run build 执行）
 ├── scripts/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
+│   ├── build-electron.mjs  # esbuild 打包主进程/preload TS 源码到 electron/out/（--watch 开发重建；dev.mjs 拉起）
 │   ├── build-server.mjs    # cargo build --release 产出指定 target 的 hawk-daemon 单文件
 │   ├── build-update.mjs    # 构建 hawk-update.exe（Windows 更新辅助，hawk-update/）到 resources/hawk-update/；非 Windows 自跳过
 │   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）；先 stamp 构建标识

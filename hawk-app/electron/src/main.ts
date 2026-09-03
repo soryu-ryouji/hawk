@@ -4,11 +4,11 @@
 // updater（应用更新）、lan（局域网地址）、ipc（白名单通道）。
 import { app, dialog } from 'electron';
 import fs from 'node:fs';
-import { createTray, createWindow, loadMainPage, setQuitting, showMainWindow } from './window.mjs';
-import { openLibraryAt, stopServer } from './server.mjs';
-import { readConfig } from './app-config.mjs';
-import { registerIpc } from './ipc.mjs';
-import { registerUpdaterIpc } from './updater.mjs';
+import { createTray, createWindow, loadMainPage, setQuitting, showMainWindow } from './window';
+import { openLibraryAt, stopServer } from './server';
+import { readConfig } from './app-config';
+import { registerIpc } from './ipc';
+import { registerUpdaterIpc } from './updater';
 
 // 单实例：托盘驻留期间再次启动（双击图标/快捷方式）应唤起已有窗口，而不是拉起第二个实例
 // （第二个实例会拉起第二套 hawk-daemon 进程争用同一素材库，引发索引与文件监听竞争）

@@ -11,3 +11,6 @@
 hawk-daemon/target/
 hawk-update/target/
 /tools/.tmp/
+
+# Electron 主进程/preload 的 esbuild 产物（electron/src 的 TS 源码构建生成）
+hawk-app/electron/out/

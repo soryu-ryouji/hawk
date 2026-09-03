@@ -37,6 +37,18 @@ const indexText = computed(() => {
 // 预览展示原图（缩略图是压缩过的 WebP）
 const imageUrl = computed(() => api.fileUrl(props.item.id));
 
+/** 复制图片本体到剪贴板：Web 标准 Clipboard API（Electron 44 已移除主进程 clipboard.writeImage，
+ *  渲染进程的 navigator.clipboard 是全端可用路径）；原图经 item/file 拉取，按原 MIME 写入 */
+async function copyImage() {
+  try {
+    const blob = await (await fetch(api.fileUrl(props.item.id))).blob();
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    store.showToast('已复制图片');
+  } catch {
+    store.showToast('复制图片失败');
+  }
+}
+
 // 右键菜单：打开所在文件夹 / 复制文件路径 / 复制图片 / 编辑图片 / 删除。
 // 浏览器（无 hawkShell）隐藏系统相关项；只读查看（viewer）隐藏全部写操作，无可用项时不弹菜单。
 function onMenu(e: MouseEvent) {
@@ -45,9 +57,9 @@ function onMenu(e: MouseEvent) {
       ? [
           { label: showInFileManagerLabel, action: () => void shell.showInFinder(props.item.paths[0]) },
           { label: '复制文件路径', action: () => void shell.copyPath(props.item.paths[0]) },
-          { label: '复制图片', action: () => void shell.copyImage(props.item.paths[0]) },
         ]
       : []),
+    { label: '复制图片', action: () => void copyImage() },
     // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口;viewer 下禁用
     ...(isRotatableImage(props.item.ext) && !store.viewerMode
       ? [{ label: '编辑图片…', action: () => preview.openEditor(props.item) }]

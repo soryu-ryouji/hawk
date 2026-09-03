@@ -30,7 +30,6 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   lanAddresses: async () => [],
   showInFinder: async () => {},
   copyPath: async () => {},
-  copyImage: async () => {},
   getPathForFile: () => '',
   minimizeWindow: async () => {},
   toggleMaximizeWindow: async () => false,

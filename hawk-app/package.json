@@ -11,7 +11,7 @@
     "url": "git+https://github.com/soryu-ryouji/hawk.git"
   },
   "type": "module",
-  "main": "electron/main.mjs",
+  "main": "electron/out/main.mjs",
   "scripts": {
     "gen:types": "node scripts/gen-types.mjs",
     "dev": "node scripts/dev.mjs",
@@ -23,8 +23,8 @@
     "test:mobile": "node scripts/test-mobile-web.mjs",
     "test:update": "node tools/test-update.mjs",
     "test:resources": "node tools/test-resources.mjs",
-    "pack": "npm run build && npm run build:server && npm run build:update && node scripts/pack.mjs",
-    "pack:dir": "npm run build && npm run build:server && npm run build:update && node scripts/pack.mjs --dir"
+    "pack": "npm run build && npm run build:electron && npm run build:server && npm run build:update && node scripts/pack.mjs",
+    "pack:dir": "npm run build && npm run build:electron && npm run build:server && npm run build:update && node scripts/pack.mjs --dir"
   },
   "dependencies": {
     "@vueuse/core": "^14.4.0",
@@ -32,9 +32,11 @@
     "vue": "^3.5.41"
   },
   "devDependencies": {
+    "@types/node": "^26.4.1",
     "@vitejs/plugin-vue": "^6.0.8",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "openapi-typescript": "^7.13.0",
     "playwright-core": "^1.57.0",
     "typescript": "^5.9.3",

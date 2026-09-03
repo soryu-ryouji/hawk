@@ -6,19 +6,41 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { ELECTRON_DIR } from './paths.mjs';
-import { getMainWindow, setQuitting } from './window.mjs';
+import { APP_DIR } from './paths';
+import { getMainWindow, setQuitting } from './window';
+import { IPC, type UpdateInfo, type UpdateProgress } from './ipc-contract';
 
 const UPDATE_REPO = 'soryu-ryouji/hawk';
+
+interface ReleaseAsset {
+  name: string;
+  browser_download_url: string;
+  size?: number;
+}
+
+interface Release {
+  tag_name: string;
+  name?: string | null;
+  body?: string | null;
+  html_url: string;
+  assets?: ReleaseAsset[];
+}
+
+interface PendingUpdate {
+  channel: 'stable' | 'nightly';
+  version: string;
+  asset: ReleaseAsset;
+}
+
 /** 上次检查发现且未安装的更新（下载/安装操作的对象；会话级状态，渲染层重启不丢失） */
-let pendingUpdate = null;
+let pendingUpdate: PendingUpdate | null = null;
 /** 已下载并校验通过的更新包路径 */
-let verifiedFile = null;
+let verifiedFile: string | null = null;
 
 /** 本机构建标识（build-info.json 随包分发，打包前由 scripts/stamp-build.mjs 写入；dev 无文件时 sha='dev'） */
-function readBuildInfo() {
+function readBuildInfo(): { sha: string } {
   try {
-    return JSON.parse(fs.readFileSync(path.join(ELECTRON_DIR, '..', 'build-info.json'), 'utf8'));
+    return JSON.parse(fs.readFileSync(path.join(APP_DIR, 'build-info.json'), 'utf8')) as { sha: string };
   } catch {
     return { sha: 'dev' };
   }
@@ -26,7 +48,7 @@ function readBuildInfo() {
 
 /** 按平台选 Release 资产（名称约定见 electron-builder.yml artifactName 与 release.yml：
  *  统一「产品-平台-架构」后缀，mac 由 CI 打包命名） */
-function pickAsset(assets) {
+function pickAsset(assets?: ReleaseAsset[]): ReleaseAsset | null {
   const want =
     process.platform === 'win32'
       ? 'hawk-windows-x64.zip'
@@ -37,13 +59,13 @@ function pickAsset(assets) {
 }
 
 /** 解析 `v1.2.3` 形式的 semver；无法解析返回 null */
-function parseSemver(tag) {
+function parseSemver(tag: string): number[] | null {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(tag));
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
 /** remote 是否比 local 新（major→minor→patch 逐位，首位不等即分出高低；local 缺失视为全新） */
-function semverNewer(remote, local) {
+function semverNewer(remote: number[], local: number[] | null): boolean {
   if (!local) {
     return true;
   }
@@ -57,7 +79,7 @@ function semverNewer(remote, local) {
   return false;
 }
 
-async function fetchRelease(channel) {
+async function fetchRelease(channel: 'stable' | 'nightly'): Promise<Release> {
   const url =
     channel === 'stable'
       ? `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`
@@ -72,13 +94,13 @@ async function fetchRelease(channel) {
   if (!res.ok) {
     throw new Error(`GitHub API 请求失败（HTTP ${res.status}）`);
   }
-  return res.json();
+  return (await res.json()) as Release;
 }
 
-export function registerUpdaterIpc() {
-  ipcMain.handle('hawk:app-version', () => ({ version: app.getVersion(), sha: readBuildInfo().sha }));
+export function registerUpdaterIpc(): void {
+  ipcMain.handle(IPC.appVersion, () => ({ version: app.getVersion(), sha: readBuildInfo().sha }));
 
-  ipcMain.handle('hawk:update-check', async (_event, channel) => {
+  ipcMain.handle(IPC.updateCheck, async (_event, channel: string): Promise<UpdateInfo | null> => {
     if (channel !== 'stable' && channel !== 'nightly') {
       throw new Error('未知更新通道');
     }
@@ -87,16 +109,15 @@ export function registerUpdaterIpc() {
     if (!asset) {
       throw new Error('当前平台暂无更新包');
     }
-    let version;
-    let available;
+    let version: string;
+    let available: boolean;
     if (channel === 'stable') {
       // stable：tag v* 与 app.getVersion() 比 semver（发版时需同步 bump package.json）
       const remote = parseSemver(release.tag_name);
       if (!remote) {
         throw new Error(`无法解析版本号：${release.tag_name}`);
       }
-      const local = parseSemver(app.getVersion());
-      available = semverNewer(remote, local);
+      available = semverNewer(remote, parseSemver(app.getVersion()));
       version = release.tag_name.replace(/^v/, '');
     } else {
       // nightly：滚动 tag 固定，比 Release 所指 commit 与本机构建 sha。
@@ -136,7 +157,7 @@ export function registerUpdaterIpc() {
 
   /** 下载上次检查到的更新包并强制 sha256 校验（边车 <artifact>.sha256 缺失即失败，不提供无校验的更新）。
    *  进度经 hawk:update-progress 事件推送，完成后 resolve */
-  ipcMain.handle('hawk:update-download', async () => {
+  ipcMain.handle(IPC.updateDownload, async (): Promise<void> => {
     if (!pendingUpdate) {
       throw new Error('请先检查更新');
     }
@@ -146,10 +167,10 @@ export function registerUpdaterIpc() {
     const dir = path.join(app.getPath('temp'), 'hawk-update');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, pendingUpdate.asset.name);
-    const sendProgress = (p) => getMainWindow()?.webContents.send('hawk:update-progress', p);
+    const sendProgress = (p: UpdateProgress): void => getMainWindow()?.webContents.send(IPC.updateProgress, p);
     sendProgress({ phase: 'downloading', received: 0, total: pendingUpdate.asset.size ?? 0 });
     const res = await fetch(pendingUpdate.asset.browser_download_url, { headers: { 'user-agent': 'hawk-app' } });
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       throw new Error(`下载失败（HTTP ${res.status}）`);
     }
     const total = Number(res.headers.get('content-length')) || pendingUpdate.asset.size || 0;
@@ -193,7 +214,7 @@ export function registerUpdaterIpc() {
 
   /** 重启并安装已校验的更新：成功后本进程退出（IPC 不再返回），由更新辅助程序接力（Windows）
    *  或平台替换脚本接力（macOS/Linux） */
-  ipcMain.handle('hawk:update-install', () => {
+  ipcMain.handle(IPC.updateInstall, (): void => {
     if (!verifiedFile || !fs.existsSync(verifiedFile)) {
       throw new Error('更新包尚未就绪');
     }
@@ -215,13 +236,13 @@ export function registerUpdaterIpc() {
 }
 
 /** shell 单引号转义（路径含空格/特殊字符时保持一个参数） */
-function shQuote(s) {
+function shQuote(s: string): string {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
 /** macOS：detached sh 脚本等旧进程退出 → 解压 zip → 替换 .app → 拉起新实例。
  *  解压/暂存目录与 .app 同目录（同卷，mv 原子）；app 内 fetch 下载无 quarantine 标记，不触发 Gatekeeper */
-function installMacUpdate(zip) {
+function installMacUpdate(zip: string): void {
   const bundle = path.dirname(path.dirname(path.dirname(process.execPath))); // hawk.app
   const parent = path.dirname(bundle);
   const staging = path.join(parent, '.hawk-update');
@@ -246,7 +267,7 @@ open ${shQuote(bundle)}
  *  hawk-update/）到更新临时目录后启动，由它等旧进程退出 → 解压 zip → 覆盖应用目录 → 拉起新实例。
  *  temp 副本运行：更新会覆盖应用目录内的 hawk-update.exe，运行中的自身无法被覆盖。
  *  全过程写更新目录 install.log，失败非零退出——不静默，留现场 */
-function installWindowsUpdate(zip) {
+function installWindowsUpdate(zip: string): void {
   const appDir = path.dirname(process.execPath);
   const dir = path.dirname(zip);
   const updaterSrc = path.join(process.resourcesPath, 'hawk-update', 'hawk-update.exe');

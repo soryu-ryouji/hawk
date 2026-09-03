@@ -1,4 +1,4 @@
-// 应用更新渲染层编排（Electron 桌面端；检查/下载/安装语义在主进程，见 main.cjs「应用更新」段）。
+// 应用更新渲染层编排（Electron 桌面端；检查/下载/安装语义在主进程，见 electron/src/updater.ts）。
 // - 模块级共享状态（同 useLayout 惯例）：设置面板「更新」分区与启动静默检查共用
 // - phase 状态机：idle → checking →（uptodate | available | error）→ downloading → ready
 // - 通道偏好存 localStorage；切换通道后旧检查结果作废，需重新检查

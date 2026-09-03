@@ -12,7 +12,7 @@ electronLanguages:
 directories:
   output: dist
 files:
-  - electron/**/*
+  - electron/out/**/*
   - web/dist/**/*
   # 窗口/托盘图标（512px 源图，运行时按平台重采样）
   - build/icon.png
