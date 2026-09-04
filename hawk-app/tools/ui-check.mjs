@@ -91,15 +91,9 @@ for (let i = 1; i <= 6; i++) {
 fs.writeFileSync(path.join(lib, '海报', 'cat.png'), png(2, 4, [0, 255, 0]));
 fs.writeFileSync(path.join(lib, '海报', 'logo.png'), png(8, 8, [0, 0, 255]));
 
-// 预设素材库配置，跳过目录选择框（按平台取 userData；跑完恢复原配置）
-// Electron userData 的平台差异：win %APPDATA%\%name% / mac ~/Library/Application Support/%name% /
-// linux $XDG_CONFIG_HOME（默认 ~/.config）/%name%；name 取 package.json 的 hawk-app
-const configDir =
-  process.platform === 'win32'
-    ? path.join(process.env.APPDATA, 'hawk-app')
-    : process.platform === 'darwin'
-      ? path.join(os.homedir(), 'Library', 'Application Support', 'hawk-app')
-      : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'hawk-app');
+// 预设素材库配置，跳过目录选择框（跑完恢复原配置）
+// userData 全平台统一为 ~/.config/hawk（main.ts 经 app.setPath 重定向，见 electron/src/paths.ts）
+const configDir = path.join(os.homedir(), '.config', 'hawk');
 fs.mkdirSync(configDir, { recursive: true });
 const configFile = path.join(configDir, 'hawk-app.json');
 const configBackup = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null;
