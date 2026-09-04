@@ -7,9 +7,9 @@ import { hasShell, shell } from '../platform';
 import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
 import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
+import LibraryDropdown from './LibraryDropdown.vue';
 import PromptDialog from './PromptDialog.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
-import type { MenuItem } from '../types';
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
@@ -29,30 +29,6 @@ const showCreateTag = ref(false);
 const showRenameTag = ref(false);
 const renameTarget = ref('');
 const showRenameCategory = ref(false);
-
-/**
- * 库名下拉：列出本机打开过的素材库（主进程记录，最近在前，当前库打勾，目录已删的置灰），
- * 底部「打开文件夹…」弹系统目录选择框加入新库。换库就绪经 hawk:server-started 事件驱动 App 原地重启数据。
- */
-async function onLibraryClick(e: MouseEvent) {
-  if (!hasShell) {
-    return;
-  }
-  const res = await shell.listLibraries();
-  const items: MenuItem[] = res.libraries.map((lib) => ({
-    label: lib.exists ? lib.name : `${lib.name}（已删除）`,
-    title: lib.path,
-    checked: lib.path === res.current,
-    disabled: !lib.exists,
-    action: () => {
-      if (lib.path !== res.current) {
-        void shell.openLibrary(lib.path);
-      }
-    },
-  }));
-  items.push({ separator: true, label: '' }, { label: '打开文件夹…', action: () => void shell.selectLibrary() });
-  menu.open(items, e);
-}
 
 function createRootFolder(name: string) {
   showCreateFolder.value = false;
@@ -182,17 +158,7 @@ function onCategoryContextMenu(e: MouseEvent) {
     <!-- 顶部拖拽条：侧栏色块通高到窗口上沿；macOS 原生红绿灯压在本条左侧；右端为侧栏开关 -->
     <div class="sidebar-head" @dblclick="onHeadDblClick">
       <!-- 触屏：库名上移到本条与开关同排，正文整体上移填充空位；桌面/macOS 保持库名在正文首行（避让红绿灯） -->
-      <button
-        v-if="hasShell"
-        class="library-name in-head"
-        :title="store.library?.path + '（点击切换素材库）'"
-        @click="onLibraryClick"
-        @dblclick.stop
-      >
-        <Icon name="library" />
-        <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
-        <Icon name="chevronDown" :size="12" />
-      </button>
+      <LibraryDropdown v-if="hasShell" class="in-head" />
       <div v-else class="library-name in-head static">
         <Icon name="library" />
         <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
@@ -202,11 +168,7 @@ function onCategoryContextMenu(e: MouseEvent) {
       </button>
     </div>
     <div class="sidebar-body">
-      <button v-if="hasShell" class="library-name in-body" :title="store.library?.path + '（点击切换素材库）'" @click="onLibraryClick">
-        <Icon name="library" />
-        <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
-        <Icon name="chevronDown" :size="12" />
-      </button>
+      <LibraryDropdown v-if="hasShell" class="in-body" />
       <div v-else class="library-name in-body static">
         <Icon name="library" />
         <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>

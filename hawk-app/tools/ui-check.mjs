@@ -193,6 +193,8 @@ try {
   check('网格渲染 10 个素材卡片', cardCount, 10);
   check('侧栏显示文件夹', await evaljs(`document.querySelector('.sidebar .tree')?.textContent?.includes('海报') ?? false`), true);
   check('侧栏入口', await evaljs(`document.querySelector('.sidebar')?.textContent?.includes('回收站') ?? false`), true);
+  // 库名按钮（LibraryDropdown）仅正文一处可见：触屏才移到顶条；多根组件丢父 scoped 时两处会同时显示
+  check('库名按钮仅正文一处可见', await evaljs(`[...document.querySelectorAll('.sidebar .library-name')].filter((el) => getComputedStyle(el).display !== 'none').length`), 1);
   check('位置标题为全部素材', await evaljs(`document.querySelector('.titlebar .title')?.textContent`), '全部素材');
   // 窗口控制 fixed 于窗口右上角；macOS 用系统原生红绿灯，不自绘
   check('窗口控制按钮（最小化/最大化/关闭）', await evaljs(`document.querySelectorAll('.win-controls .win-btn').length`), process.platform === 'darwin' ? 0 : 3);

@@ -96,3 +96,10 @@ export function listLibraries(): LibraryList {
       .map((p) => ({ path: p, name: path.basename(p), exists: fs.existsSync(p) })),
   };
 }
+
+/** 从历史中移除一条素材库记录（不动目录本身；当前库由 libraryRoot 会话标记，不受历史删减影响） */
+export function removeLibraryHistory(libPath: string): LibraryList {
+  const history = (readConfig().libraryHistory ?? []).filter((p) => p !== libPath);
+  writeConfig({ libraryHistory: history });
+  return listLibraries();
+}

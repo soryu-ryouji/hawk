@@ -3,7 +3,7 @@
 import { app, clipboard, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
-import { getLibraryRoot, listLibraries } from './app-config';
+import { getLibraryRoot, listLibraries, removeLibraryHistory } from './app-config';
 import { openLibraryAt, pickLibrary, getStartedConn } from './server';
 import { changeCacheParent, currentCacheParent } from './cache';
 import { lanAddresses } from './lan';
@@ -62,6 +62,14 @@ export function registerIpc(): void {
       dialog.showErrorBox('hawk-daemon 启动失败', String(error instanceof Error ? error.message : error));
       return false;
     }
+  });
+
+  ipcMain.handle(IPC.removeLibrary, (_event, libPath: unknown) => {
+    // 与 openLibrary 同规约：只接受历史记录内的路径
+    if (typeof libPath !== 'string' || !listLibraries().libraries.some((l) => l.path === libPath)) {
+      return listLibraries();
+    }
+    return removeLibraryHistory(libPath);
   });
 
   // 缓存目录（设置面板「存储」分区）：查询当前值 / 选目录 / 校验并迁移（内部停旧 server、搬迁、重启）

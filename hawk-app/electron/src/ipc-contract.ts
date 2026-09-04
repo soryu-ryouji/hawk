@@ -7,6 +7,7 @@ export const IPC = {
   selectLibrary: 'hawk:select-library',
   listLibraries: 'hawk:list-libraries',
   openLibrary: 'hawk:open-library',
+  removeLibrary: 'hawk:remove-library',
   copyPath: 'hawk:copy-path',
   lanAddresses: 'hawk:lan-addresses',
   quitApp: 'hawk:quit-app',
@@ -98,6 +99,8 @@ export interface HawkShell {
   listLibraries(): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 打开历史素材库（仅限历史记录内的路径） */
   openLibrary(path: string): Promise<boolean>;
+  /** 从历史记录移除一条素材库（不动目录本身），返回移除后的列表 */
+  removeLibrary(path: string): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 复制库内文件的绝对路径到剪贴板 */
   copyPath(relPath: string): Promise<void>;
   /** 本机局域网 IPv4 地址列表（设置面板展示用；LAN 配置读写走 REST app/lan） */

@@ -21,5 +21,10 @@ export function useContextMenu() {
     state.visible = false;
   }
 
-  return { state: readonly(state), open, close };
+  /** 原位替换菜单项（项内操作引起列表变化时用，如删除历史素材库记录后刷新，菜单不跳位） */
+  function setItems(items: MenuItem[]) {
+    state.items = items;
+  }
+
+  return { state: readonly(state), open, close, setItems };
 }
