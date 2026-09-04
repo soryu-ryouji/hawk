@@ -36,7 +36,7 @@ npm run pack:dir  # 同上但 --dir：只出未打包目录（win-unpacked / haw
 
 交叉编译其他平台的 server：`node scripts/build-server.mjs <RID>`（win-x64 / osx-arm64 / osx-x64 / linux-x64，别名映射 rust target），再单独执行 `node scripts/pack.mjs`。
 
-国内网络首次 pack 需镜像（下载过的会进 electron-builder 缓存，之后不再需要）：
+国内网络首次 npm install（electron 包二进制）与 pack（electron-builder 下载）需镜像；install.sh/install.ps1 已内置默认，手动构建时自行设置（下载过的会进缓存，之后不再需要）：
 
 ```bash
 export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/

@@ -27,6 +27,11 @@ foreach ($tool in @('node', 'npm', 'cargo')) {
     }
 }
 
+# Electron 包（npm install）与 electron-builder（pack）的二进制下载默认走 npmmirror（国内网络；
+# 用户已设置同名环境变量时尊重用户配置）
+if (-not $env:ELECTRON_MIRROR) { $env:ELECTRON_MIRROR = 'https://npmmirror.com/mirrors/electron/' }
+if (-not $env:ELECTRON_BUILDER_BINARIES_MIRROR) { $env:ELECTRON_BUILDER_BINARIES_MIRROR = 'https://npmmirror.com/mirrors/electron-builder-binaries/' }
+
 Push-Location $AppDir
 try {
     if (-not (Test-Path 'node_modules')) {

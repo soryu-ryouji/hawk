@@ -10,6 +10,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$REPO_ROOT/hawk-app"
 OUT_DIR="$REPO_ROOT/out"
 
+# Electron 包（npm install）与 electron-builder（pack）的二进制下载默认走 npmmirror（国内网络；
+# 用户已设置同名环境变量时尊重用户配置）
+export ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}"
+export ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://npmmirror.com/mirrors/electron-builder-binaries/}"
+
 for tool in node npm cargo; do
   command -v "$tool" >/dev/null 2>&1 || { echo "未找到 $tool，请先安装最新的 Node.js 与 Rust 工具链（https://rustup.rs/）"; exit 1; }
 done
