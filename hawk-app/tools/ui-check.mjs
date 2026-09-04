@@ -217,6 +217,8 @@ try {
   await evaljs(`[...document.querySelectorAll('.sidebar .section')].find((s) => s.textContent.includes('文件夹'))?.click()`);
   check('文件夹分区展开', await evaljs(`getComputedStyle(document.querySelector('.sidebar .tree')).display`) !== 'none', true);
   check('后退按钮初始禁用', await evaljs(`document.querySelector('.titlebar .bar-btn[title="后退"]')?.disabled ?? false`), true);
+  // 上传/刷新在 Electron 顶栏隐藏（拖拽导入 + 右键「刷新缓存（整库）」已覆盖）；仅浏览器/手机端显示
+  check('顶栏无上传/刷新按钮', await evaljs(`!!document.querySelector('.titlebar [title="导入文件"], .titlebar [title^="刷新缓存"]')`), false);
   const badge = await waitFor(async () => {
     const value = await evaljs(`document.querySelector('.sidebar .entry .count')?.textContent`);
     return value === '10' ? value : null;

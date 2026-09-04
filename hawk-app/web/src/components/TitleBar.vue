@@ -203,11 +203,12 @@ function onDblClick(e: MouseEvent) {
     <div class="spacer" />
 
     <div class="group right">
-      <!-- 上传（文件选择器）：拖拽之外的主入口，手机端（无拖拽）依额它导入；只读查看隐藏 -->
-      <button v-if="!store.viewerMode" class="bar-btn" title="导入文件" @click="openPicker">
+      <!-- 上传（文件选择器）：仅浏览器/手机端显示——Electron 桌面端有拖拽导入，只读查看不可写 -->
+      <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="导入文件" @click="openPicker">
         <Icon name="upload" :size="14" />
       </button>
       <input
+        v-if="!hasShell && !store.viewerMode"
         ref="pickerInput"
         type="file"
         multiple
@@ -215,7 +216,8 @@ function onDblClick(e: MouseEvent) {
         @change="onPicked"
       />
 
-      <button class="bar-btn" title="刷新缓存（重新扫描素材库）" @click="store.refreshLibrary()">
+      <!-- 刷新缓存：仅浏览器端显示——Electron 端走右键菜单「刷新缓存（整库）」，只读查看不可写 -->
+      <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="刷新缓存（重新扫描素材库）" @click="store.refreshLibrary()">
         <Icon name="refresh" :size="14" />
       </button>
 
