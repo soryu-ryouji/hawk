@@ -9,7 +9,7 @@ import Icon from './Icon.vue';
 const store = useLibraryStore();
 const { open: openMenu } = useContextMenu();
 
-/** 评分 chip：弹星级单选菜单（与原下拉同语义：精确匹配，全部 = 清除条件） */
+/** 评分 chip：弹星级单选菜单（锚点模式：从 chip 下方展开，不遮挡 chip；全部 = 清除条件） */
 function openRatingMenu(e: MouseEvent) {
   openMenu(
     [
@@ -25,6 +25,7 @@ function openRatingMenu(e: MouseEvent) {
       })),
     ],
     e,
+    e.currentTarget as HTMLElement,
   );
 }
 </script>

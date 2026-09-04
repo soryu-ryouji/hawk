@@ -30,13 +30,29 @@ watch(
     if (!visible) {
       return;
     }
-    pos.value = { x: state.x, y: state.y };
+    const anchor = state.anchor;
+    // 锚点模式（按钮触发的下拉）：先放锚点下方，量完尺寸再修正出屏；鼠标模式（右键）：从点击点展开
+    pos.value = anchor ? { x: anchor.left, y: anchor.bottom + 4 } : { x: state.x, y: state.y };
     await nextTick();
     const el = menuRef.value;
     if (!el) {
       return;
     }
     const rect = el.getBoundingClientRect();
+    if (anchor) {
+      // 水平：默认左对齐锚点左缘；右侧出屏改右对齐锚点右缘（顶栏右侧按钮场景）
+      let x = anchor.left;
+      if (x + rect.width > window.innerWidth) {
+        x = Math.max(0, anchor.right - rect.width);
+      }
+      // 垂直：下方空间不足翻到锚点上方
+      let y = anchor.bottom + 4;
+      if (y + rect.height > window.innerHeight) {
+        y = Math.max(0, anchor.top - rect.height - 4);
+      }
+      pos.value = { x, y };
+      return;
+    }
     if (state.x + rect.width > window.innerWidth) {
       pos.value = { ...pos.value, x: Math.max(0, state.x - rect.width) };
     }

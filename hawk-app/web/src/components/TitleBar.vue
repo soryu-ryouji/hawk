@@ -102,9 +102,9 @@ const currentSortLabel = computed(
   () => SORT_OPTIONS.find((o) => o.orderBy === store.query.orderBy && o.order === store.query.order)?.label ?? '',
 );
 
-/** 排序按钮：弹出二级菜单设置字段与方向（当前项打勾）；有自有设置时附「跟随父级/恢复默认」 */
+/** 排序按钮：弹出菜单设置字段与方向（锚点模式：从按钮下方展开，不遮挡按钮）；有自有设置时附「跟随父级/恢复默认」 */
 function openSortMenu(e: MouseEvent) {
-  openMenu(sortMenuItems(), e);
+  openMenu(sortMenuItems(), e, e.currentTarget as HTMLElement);
 }
 
 /** 排序菜单项（排序按钮使用） */
