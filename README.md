@@ -20,12 +20,15 @@
 ## 路线图
 
 - 1.0 版本
-  - 后端使用 Rust 实现，减小程序体积，提高资源吞吐效率和内存安全性（见 [hawk-daemon](docs/backend/server-rust.md)）
-  - 完成 Windows, MacOS 桌面客户端
-  - 完成 Chrome, Firefox, Safari 浏览器插件
-  - 完成 web 资源查看器：局域网内通过浏览器访问素材库（设置面板按库配置开关/端口/token，默认只读，可开启写权限后增删改与上传）；后续拓展 ios, android 查看器
+  - [x] 实现 hawp-daemon
+  - [x] 实现 Windows, MacOS, Linux 桌面客户端
+  - [x] 实现 web 资源查看器：局域网内通过浏览器访问素材库
+  - [x] 实现 Chrome 浏览器插件
 - 2.0 版本
-  - 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
+  - [ ] 实现 hawk remote 协议，支持广域网素材库查看
+  - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
+- 3.0 版本
+  - [ ] 实现 ios, android 等移动端 app
 
 ## 核心特性
 
