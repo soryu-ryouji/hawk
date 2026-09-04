@@ -1,9 +1,0 @@
-
-DevTools listening on ws://127.0.0.1:9222/devtools/browser/5fe0263e-5610-4be9-a67e-59f7d0d6fa9c
-(node:11371) UnhandledPromiseRejectionWarning: TypeError: Cannot read properties of null (reading 'address')
-    at loadMainPage (/Users/ryouji/Projects/Ryouji/hawk/hawk-app/electron/main.cjs:86:49)
-    at createWindow (/Users/ryouji/Projects/Ryouji/hawk/hawk-app/electron/main.cjs:106:3)
-    at /Users/ryouji/Projects/Ryouji/hawk/hawk-app/electron/main.cjs:164:3
-(Use `Electron --trace-warnings ...` to show where the warning was created)
-(node:11371) UnhandledPromiseRejectionWarning: Unhandled promise rejection. This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode). (rejection id: 2)
-/Users/ryouji/Projects/Ryouji/hawk/hawk-app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron exited with signal SIGTERM
