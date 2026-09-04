@@ -557,6 +557,7 @@ export interface paths {
         /**
          * 按范围刷新派生缓存（补缺失模式）：对范围内全部 item 派发修复任务——
          *     补缺失宽高（0 × 0）+ 生成缺失尺寸缩略图 + 提炼缺失调色板，不重建已有文件。
+         *     附带消失对账：范围内源文件已删除但索引残留的位置会被移除（watcher 漏事件的收敛入口）。
          *     用户遇到显示异常时的手动修复入口；异步执行立即返回，积压经 task.progress(thumbnail) 可见
          */
         post: operations["refresh_cache"];
@@ -907,6 +908,8 @@ export interface components {
             data?: {
                 /** @description 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计） */
                 dispatched: number;
+                /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
+                removed: number;
             };
             status: string;
         };
@@ -1195,6 +1198,8 @@ export interface components {
         RefreshCacheResponse: {
             /** @description 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计） */
             dispatched: number;
+            /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
+            removed: number;
         };
         /**
          * @description SSE 事件载荷注册表：键为 `event:` 帧的事件名，值为 `data:` 帧 JSON 载荷的结构。
