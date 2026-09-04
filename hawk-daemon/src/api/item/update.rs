@@ -4,7 +4,7 @@ use super::*;
 
 // ---------- update ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemUpdateRequest {
     id: String,
@@ -18,6 +18,14 @@ pub(crate) struct ItemUpdateRequest {
     url: Option<String>,
 }
 
+/// 元数据修改：改名/移动做真实文件操作后经流水线同步；tags/categories/star/annotation/url 直接写元数据
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/update",
+    tags = ["item"],
+    request_body = ItemUpdateRequest,
+    responses((status = 200, description = "OK", body = Envelope<ItemDto>))
+)]
 pub(crate) async fn item_update(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemUpdateRequest>,
@@ -120,7 +128,7 @@ pub(crate) async fn item_update(
 
 // ---------- batch_update ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemBatchUpdateRequest {
     ids: Vec<String>,
@@ -130,13 +138,21 @@ pub(crate) struct ItemBatchUpdateRequest {
     folder_path: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemBatchUpdateResponse {
     updated: usize,
     missing_ids: Vec<String>,
 }
 
+/// 批量更新：标签/分类并集追加，评分/文件夹设置；不存在的 id 记入 missing_ids 不整体失败
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/batch_update",
+    tags = ["item"],
+    request_body = ItemBatchUpdateRequest,
+    responses((status = 200, description = "OK", body = Envelope<ItemBatchUpdateResponse>))
+)]
 pub(crate) async fn item_batch_update(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemBatchUpdateRequest>,

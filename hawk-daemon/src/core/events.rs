@@ -43,7 +43,7 @@ impl EventBus {
 
 /// 后台任务进度快照(task.progress 事件与 app/status 端点共用)。
 /// phase/processed/total 仅 index 任务在扫描期间携带；非扫描期间省略（None）
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct TaskProgress {
     pub task: &'static str,
     pub pending: i32,

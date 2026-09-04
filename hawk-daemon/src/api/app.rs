@@ -4,19 +4,30 @@
 use crate::api::envelope::{ApiError, Envelope};
 use crate::api::{AccessLevel, SharedState};
 use axum::extract::{Extension, State};
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::Json;
 use serde::Serialize;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-pub fn routes() -> Router<SharedState> {
-    Router::new()
-        .route("/api/v1/app/startup", get(startup))
-        .route("/api/v1/app/status", get(status))
-        .route("/api/v1/app/info", get(info))
-        .route("/api/v1/app/token", get(token))
+pub fn routes() -> OpenApiRouter<SharedState> {
+    OpenApiRouter::new()
+        .routes(routes!(health))
+        .routes(routes!(startup))
+        .routes(routes!(status))
+        .routes(routes!(info))
+        .routes(routes!(token))
 }
 
 /// 就绪探活：无需 token。初始索引完成前返回 503
+#[utoipa::path(
+    get,
+    path = "/health",
+    tags = ["app"],
+    responses(
+        (status = 200, description = "就绪：纯文本 ok", content_type = "text/plain", body = String),
+        (status = 503, description = "初始索引构建中")
+    )
+)]
 pub async fn health(State(state): State<SharedState>) -> axum::response::Response {
     if state.startup.is_ready() {
         axum::response::IntoResponse::into_response("ok")
@@ -25,7 +36,7 @@ pub async fn health(State(state): State<SharedState>) -> axum::response::Respons
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct StartupInfo {
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,6 +50,12 @@ struct StartupInfo {
 }
 
 /// 启动状态：ready / starting（带进度）/ error（初始索引失败，message 为原因）
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/startup",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = Envelope<StartupInfo>))
+)]
 async fn startup(State(state): State<SharedState>) -> Json<Envelope<StartupInfo>> {
     let (is_ready, error, info) = state.startup.snapshot();
     let body = if let Some(message) = error {
@@ -69,13 +86,13 @@ async fn startup(State(state): State<SharedState>) -> Json<Envelope<StartupInfo>
     Json(Envelope::ok(body))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct TaskBacklog {
     pending: i32,
     active: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct IndexBacklog {
     pending: i32,
     active: i32,
@@ -87,13 +104,19 @@ struct IndexBacklog {
     total: Option<i32>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct TaskStatus {
     thumbnail: TaskBacklog,
     index: IndexBacklog,
 }
 
-/// 后台任务积压:轮询型客户端用(SSE 客户端订阅 task.progress 事件,两者同一份快照)
+/// 后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照）
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/status",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = Envelope<TaskStatus>))
+)]
 async fn status(State(state): State<SharedState>) -> Json<Envelope<TaskStatus>> {
     let (thumb_pending, thumb_active) = state.worker.backlog();
     let index = state.pipeline.index_progress();
@@ -112,7 +135,7 @@ async fn status(State(state): State<SharedState>) -> Json<Envelope<TaskStatus>> 
     }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct LanInfo {
     active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,7 +144,7 @@ struct LanInfo {
     error: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct AppInfo {
     version: &'static str,
     platform: &'static str,
@@ -135,6 +158,12 @@ struct AppInfo {
 
 /// 运行信息；access 级别由鉴权中间件写入请求扩展。lan 为局域网监听实况
 /// （设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/info",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = Envelope<AppInfo>))
+)]
 async fn info(
     State(state): State<SharedState>,
     Extension(access): Extension<AccessLevel>,
@@ -173,10 +202,16 @@ async fn info(
 /// Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
 /// 注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
 /// remote 模块的隧道端必须拒绝转发本端点并改写 Host（见 docs/backend/remote-protocol.md 数据面）
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/token",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = TokenResponse))
+)]
 async fn token(
     State(state): State<SharedState>,
     req: axum::extract::Request,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<TokenResponse>, ApiError> {
     // HTTP/1.1 请求行是 origin-form（无 authority），Host 以 Host 头为准
     let host = req
         .headers()
@@ -196,8 +231,15 @@ async fn token(
             "token discovery requires loopback host",
         ));
     }
-    Ok(Json(serde_json::json!({
-        "status": "success",
-        "data": state.settings.token
-    })))
+    Ok(Json(TokenResponse {
+        status: "success",
+        data: state.settings.token.clone(),
+    }))
+}
+
+/// token 发现端点响应（信封的 data 直接为 token 字符串）
+#[derive(Serialize, utoipa::ToSchema)]
+struct TokenResponse {
+    status: &'static str,
+    data: String,
 }

@@ -2,17 +2,25 @@
 //! 顺序铁律：先由流水线清理索引位置、元数据与缓存（缩略图/调色板），再物理删除。
 //! 先物理删除会让 watcher 的 Deleted 事件抢先摘除位置，导致元数据与缓存泄漏
 
-use crate::api::envelope::{success, ApiError};
+use crate::api::envelope::{success, ApiError, SuccessOnly};
 use crate::api::SharedState;
 use axum::extract::State;
-use axum::routing::post;
-use axum::{Json, Router};
+use axum::Json;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-pub fn routes() -> Router<SharedState> {
-    Router::new().route("/api/v1/trash/clear", post(trash_clear))
+pub fn routes() -> OpenApiRouter<SharedState> {
+    OpenApiRouter::new().routes(routes!(trash_clear))
 }
 
-async fn trash_clear(State(state): State<SharedState>) -> Result<Json<serde_json::Value>, ApiError> {
+/// 清空回收站：先由流水线清理索引位置、元数据与缓存，再物理删除
+#[utoipa::path(
+    post,
+    path = "/api/v1/trash/clear",
+    tags = ["trash"],
+    responses((status = 200, description = "OK", body = SuccessOnly))
+)]
+async fn trash_clear(State(state): State<SharedState>) -> Result<Json<SuccessOnly>, ApiError> {
     state.pipeline.submit_clear_trash().await.map_err(ApiError::internal)?;
 
     let entries = match std::fs::read_dir(&state.paths.trash_dir) {
@@ -31,5 +39,5 @@ async fn trash_clear(State(state): State<SharedState>) -> Result<Json<serde_json
             tracing::warn!("删除回收站内容失败 {}: {e}", path.display());
         }
     }
-    Ok(Json(success()))
+    Ok(success())
 }

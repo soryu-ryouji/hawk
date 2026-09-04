@@ -27,6 +27,44 @@ pub mod trash;
 pub mod view;
 pub mod web_dist;
 
+#[cfg(test)]
+mod contract_tests;
+
+
+/// 重建 OpenAPI 文档并序列化为 pretty JSON（LF 行尾）——/openapi/v1.json 与 --dump-openapi 共用
+pub fn build_openapi_json() -> String {
+    let (_router, mut doc) = api_router();
+    openapi::attach_extra_schemas(&mut doc);
+    doc.info.title = "hawk-daemon | v1".to_string();
+    doc.info.version = "1.0.0".to_string();
+    doc.servers = Some(vec![utoipa::openapi::Server::new("http://127.0.0.1:27371/")]);
+    let mut value = serde_json::to_value(&doc).expect("OpenAPI 文档序列化失败");
+    strip_schema_defaults(&mut value);
+    let mut json = serde_json::to_string_pretty(&value).expect("OpenAPI 文档序列化失败");
+    json.push('\n');
+    json
+}
+
+/// 剥离 schema 中的 default 关键字：utoipa 把 #[serde(default)] 输出为 default，
+/// 而 openapi-typescript 遇到 default 会把属性生成成必填（响应视角），
+/// 与请求体「可省略」的语义冲突。default 对契约校验只是注解，剥除无损
+fn strip_schema_defaults(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("default");
+            for v in map.values_mut() {
+                strip_schema_defaults(v);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for v in items {
+                strip_schema_defaults(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// 请求级扩展：当前 token 的访问级别，app/info 据此报告。
 /// Viewer 携带该 token 的写能力（[web] 的 writable/separate/write_token 共同决定，
 /// 每请求解析，配置热生效）
@@ -55,11 +93,10 @@ pub struct AppState {
 
 pub type SharedState = Arc<AppState>;
 
-/// 构建路由：中间件链 CORS → Auth → ReadyGate → Endpoints
-pub fn build_router(state: SharedState) -> axum::Router {
-    axum::Router::new()
-        .route("/health", axum::routing::get(app::health))
-        .route("/openapi/v1.json", axum::routing::get(openapi::openapi_schema))
+/// API 路由与 OpenAPI 文档的同一来源：OpenApiRouter 收集 #[utoipa::path] 标注的端点，
+/// split 出路由与文档（文档由 openapi.rs 固化服务于 /openapi/v1.json）
+pub fn api_router() -> (axum::Router<SharedState>, utoipa::openapi::OpenApi) {
+    utoipa_axum::router::OpenApiRouter::new()
         .merge(app::routes())
         .merge(lan::routes())
         .merge(library::routes())
@@ -69,6 +106,15 @@ pub fn build_router(state: SharedState) -> axum::Router {
         .merge(view::routes())
         .merge(trash::routes())
         .merge(events::routes())
+        .split_for_parts()
+}
+
+/// 构建路由：中间件链 CORS → Auth → ReadyGate → Endpoints
+pub fn build_router(state: SharedState) -> axum::Router {
+    let (api_routes, _doc) = api_router();
+    axum::Router::new()
+        .route("/openapi/v1.json", axum::routing::get(openapi::openapi_schema))
+        .merge(api_routes)
         .fallback(web_dist::serve)
         .with_state(state.clone())
         // 请求体上限放宽到 256MB（axum 默认 2MB）：item/upload 整文件上传与 item/replace 的

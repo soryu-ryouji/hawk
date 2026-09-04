@@ -58,10 +58,11 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/api/taxonomy.rs` | category/tag 八端点。list = 注册表 ∪ 全部 item 赋值并集（count 不含回收站）；名称校验在端点层，写全部 `submit_*` 给流水线执行 |
 | `src/api/view.rs` | view 三端点（preferences / preference PUT / DELETE）。偏好与索引/元数据无耦合，注册表自带锁，端点直接读写，**不经过索引流水线** |
 | `src/api/trash.rs` | `trash/clear`。顺序铁律：先 `submit_clear_trash` 清索引位置、元数据与缓存（缩略图/调色板），再物理删除 `.hawk/trash/` 内容——先物理删除会让 watcher 的 Deleted 事件抢先摘除位置，导致元数据与缓存泄漏 |
-| `src/api/events.rs` | SSE 订阅端点：`broadcast::Receiver` 转 `event:`/`data:` 帧；lagged（消费跟不上）或总线关闭即结束流，客户端重连后须以 `item/skeleton` + `folder/list` 全量对齐 |
-| `src/api/openapi.rs` | `/openapi/v1.json` 静态服务（`include_str!` 固化 `hawk-daemon/openapi.json`），schema 即契约，不随后端实现漂移 |
+| `src/api/events.rs` | SSE 订阅端点：`broadcast::Receiver` 转 `event:`/`data:` 帧；lagged（消费跟不上）或总线关闭即结束流，客户端重连后须以 `item/skeleton` + `folder/list` 全量对齐。同文件定义 `SseEvents` 事件载荷注册表（键=事件名，与 `ItemEvents` 常量一一对应，契约测试双向比对），经 `attach_extra_schemas` 注册进 OpenAPI components |
+| `src/api/openapi.rs` | OpenAPI 文档装配（`build_openapi_json`：OpenApiRouter 收集 + SSE 事件载荷等无端点引用 schema 的手工注册 + default 关键字剥除）与 `/openapi/v1.json` 服务（OnceLock 缓存）；schema 由代码生成并固化入库，同步性由契约测试校验 |
 | `src/api/web_dist.rs` | 局域网 web 查看的静态托管（fallback 挂载；`--web-dist` 传入时启用）：SPA 回退 `index.html`，`/assets/` 内容哈希资源 immutable 长缓存，其余 no-cache（防手机浏览器启发式缓存旧 HTML）；favicon 经 vite publicDir=build/ 落在 dist 根（icon.png，index.html 内 link rel=icon 引用），由本服务一并返回 |
-| `src/api/item.rs` | item 十四端点，逻辑最重，见下节 |
+| `src/api/item/` | item 十四端点，逻辑最重，按子域拆分（`mod.rs` 聚合路由与公共辅助；`query.rs` list/skeleton/detail/count；`add.rs` 路径导入与 URL 下载；`upload.rs` multipart 上传；`update.rs` update/batch_update；`delete.rs` 回收站进出；`file.rs` thumbnail/file/refresh_thumbnail；`replace.rs` 内容替换），见下节 |
+| `src/api/contract_tests.rs`（`#[cfg(test)]`） | OpenAPI 契约校验：schema 声明的端点全量归类（新增端点未归类即失败）、空库成功路径响应体经 jsonschema 校验（$ref 经 components 提升解析）、写端点校验路由存在（区分业务错误信封与 fallback 空 404） |
 
 ### core/ —— 与 HTTP 无关的领域核心
 
@@ -103,7 +104,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 - **清空回收站（do_clear_trash）**：摘除全部回收站位置并清理元数据 paths；内容在库内无其他引用时删除元数据与缩略图；物理删除由 API 层在其后完成
 - **进度上报**：`ScanReporter` 150ms 节流（阶段切换/总数变化强制发帧）写 StartupState（→ `/app/startup`）；`task.progress(index)` 500ms 节流 + 空闲转变化时补发清零帧
 
-### api/item.rs 详解
+### api/item/ 详解
 
 - **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影
 - **add**：`path`/`url`/`img_base64` 三选一取内容（url 经 ureq 30s 超时下载到内存，扩展名从 URL 推断、推断不出按内容嗅探；base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（`spawn_blocking`，不阻塞运行时线程；path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
@@ -179,7 +180,9 @@ trash/clear:   submit_clear_trash 清位置、清元数据 paths；库内无引�
 | 层 | 位置 | 说明 |
 | ---- | ---- | ---- |
 | 单元测试 | `cargo test`（各文件内联 `#[cfg(test)]`） | 纯函数与纯数据结构：颜色数学（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色 ~100%、双色各半、全透明→空、占比合计）、TOML 解析/序列化往返与转义、ignore 匹配、路径换算与回收站前缀、BLAKE3 标准向量、视图偏好校验 |
-| 端到端契约测试 | `tools/smoke.sh`（81 项断言） | 临时素材库 + curl 覆盖 HTTP API 全流程（鉴权、索引、过滤、颜色检索、缩略图、去重、文件夹、监听防抖、SSE、batch_update、回收站、重启哈希复用）。语言无关的契约测试，需先 `cargo build --release` |
+| 行为测试 | `src/core/pipeline/tests.rs`（`cargo test`） | 索引流水线全链路：upsert 幂等、扫描消失对账、移动的同一性继承（真实临时素材库，文件系统/元数据/索引全链路） |
+| OpenAPI 契约校验 | `src/api/contract_tests.rs`（`cargo test`） | 固化 openapi.json 与代码生成同步、端点全量归类、读/写端点成功路径响应体 JSON Schema 校验、SSE 事件名与载荷双向比对；CI rust job 随 `cargo test` 执行 |
+| 端到端冒烟 | `tools/smoke.sh` | 临时素材库 + curl 覆盖 HTTP API 全流程（鉴权、索引、过滤、颜色检索、缩略图、去重、文件夹、监听防抖、SSE、batch_update、回收站、重启哈希复用）。语言无关的行为契约测试，需先 `cargo build --release` |
 
 测试策略：契约级测试（HTTP/存储格式）优先于内部单元测试——行为对齐以 OpenAPI schema + `.hawk/` 存储格式 + SSE 事件契约为准。
 
@@ -188,7 +191,7 @@ trash/clear:   submit_clear_trash 清位置、清元数据 paths；库内无引�
 | 文件 | 说明 |
 | ---- | ---- |
 | `Cargo.toml` | 二进制名 `hawk-daemon`；release 配置 `lto = true` + `codegen-units = 1` + `panic = "abort"` + `strip = true`（单文件 ~9MB） |
-| `openapi.json` | 契约 schema（`include_str!` 固化），变更后直接编辑该文件，见 server-rust.md「OpenAPI schema」节 |
+| `openapi.json` | 契约 schema（代码生成的固化产物，同步由契约测试校验），见 server-rust.md「OpenAPI schema」节 |
 | `tools/bench-*.py` | 性能压测（启动/入库/图像管线/大库全链路），输出带 git SHA 的 RESULT 行，基线见 server-rust.md |
 
 ## 排查指引

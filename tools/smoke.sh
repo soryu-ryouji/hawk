@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# hawk-daemon 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程（契约测试）。
+# hawk-daemon 端到端冒烟测试：临时素材库 + curl 覆盖主要 API 流程（行为契约测试）。
+# schema 与实现的一致性校验由 hawk-daemon 内联契约测试承担（src/api/contract_tests.rs，cargo test）。
 # 用法: tools/smoke.sh（需先 cargo build --release）
 #
 # Windows Git Bash 注意：curl 是原生 Windows 程序，argv 中的中文会被 MSYS2

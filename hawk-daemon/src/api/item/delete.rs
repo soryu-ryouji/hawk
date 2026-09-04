@@ -4,17 +4,25 @@ use super::*;
 
 // ---------- delete / restore ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemIdRequest {
     id: String,
     path: Option<String>,
 }
 
+/// 移入回收站（保留目录结构，冲突加 ` (n)` 后缀）；不带 path 为卡片级操作（回收全部库内位置）
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/delete",
+    tags = ["item"],
+    request_body = ItemIdRequest,
+    responses((status = 200, description = "OK", body = SuccessOnly))
+)]
 pub(crate) async fn item_delete(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemIdRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<SuccessOnly>, ApiError> {
     // 不带 path = 卡片级删除：回收全部库内位置。同内容多路径 item（重复导入同名/异名文件）
     // 只回收一个位置会让卡片残留在网格，用户感知为「删除不生效」；带 path = 单位置删除
     let locs = if let Some(path) = req.path.as_deref() {
@@ -37,13 +45,21 @@ pub(crate) async fn item_delete(
         std::fs::rename(&source_abs, &trash_abs).map_err(|e| ApiError::internal(format!("移入回收站失败: {e}")))?;
         state.pipeline.submit_move(source_abs, trash_abs).await.map_err(ApiError::internal)?;
     }
-    Ok(Json(success()))
+    Ok(success())
 }
 
+/// 从回收站恢复（按原路径放回；同名冲突的位置跳过留在回收站，全部冲突才报 FILE_EXISTS）
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/restore",
+    tags = ["item"],
+    request_body = ItemIdRequest,
+    responses((status = 200, description = "OK", body = SuccessOnly))
+)]
 pub(crate) async fn item_restore(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemIdRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<SuccessOnly>, ApiError> {
     // 与 delete 对称：不带 path 恢复全部回收站位置；同名冲突的位置跳过留在回收站，
     // 全部冲突才报 FILE_EXISTS（部分恢复不整体回滚）
     let locs = if let Some(path) = req.path.as_deref() {
@@ -77,5 +93,5 @@ pub(crate) async fn item_restore(
     if restored == 0 {
         return Err(ApiError::file_exists(first_conflict.unwrap_or_default()));
     }
-    Ok(Json(success()))
+    Ok(success())
 }

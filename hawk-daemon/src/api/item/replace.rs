@@ -4,7 +4,7 @@ use super::*;
 
 // ---------- replace ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemReplaceRequest {
     id: String,
@@ -13,8 +13,16 @@ pub(crate) struct ItemReplaceRequest {
 }
 
 /// 内容替换(item/replace):客户端编辑(旋转/裁切等)后的新内容提交存储层。
-/// 哈希变化 → id 漂移,元数据继承迁移/事件/缩略图重建由索引流水线闭环。
-/// 写回时保留原文件的修改时间（修正性编辑不改变素材的时序位置）
+/// 内容必须可识别且**格式与文件扩展名一致**（扩展名与内容错位会破坏类型推断与预览）；
+/// 哈希相同则幂等直接返回当前投影；写回保留原 mtime（修正性编辑不改变素材的时序位置）；
+/// `submit_upsert` 触发 id 漂移闭环（元数据继承迁移/事件/缩略图重建）
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/replace",
+    tags = ["item"],
+    request_body = ItemReplaceRequest,
+    responses((status = 200, description = "OK", body = Envelope<ItemDto>))
+)]
 pub(crate) async fn item_replace(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemReplaceRequest>,

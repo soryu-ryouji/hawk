@@ -20,8 +20,7 @@ hawk 前后端完全解耦，通过 HTTP API 通信。桌面版中 Electron 只�
 │                 hawk-daemon (Rust)                          │
 │  ┌───────────┐  ┌───────────┐  ┌───────────────────┐  │
 │  │ Watcher   │  │ Hash      │  │ Thumbnail         │  │
-│  │(notify)   │  │(blake3)    │  │ (image+libwebp)   │  │
-│  │ Watcher)  │  │           │  │                   │  │
+│  │ (notify)  │  │ (blake3)  │  │ (image+libwebp)   │  │
 │  └───────────┘  └───────────┘  └───────────────────┘  │
 │  ┌────────────────────────┐                             │
 │  │ In-Memory Index/Search │                             │
@@ -52,7 +51,7 @@ Web 前端不依赖 Electron IPC，只通过 REST API 通信。
 
 **3. API 契约先行**
 
-REST API 由 OpenAPI schema 定义（后端从代码生成），TypeScript 类型从 schema 生成，前后端不允许手写对接口。
+REST API 由代码生成 OpenAPI schema（utoipa：`#[utoipa::path]` 标注端点、DTO derive `ToSchema`，路由与文档同一来源），固化于 `hawk-daemon/openapi.json`（改 API 后 `cargo run -- --dump-openapi > openapi.json` 重新固化，契约测试校验同步），TypeScript 类型从 schema 生成（`npm run gen:types`），前后端不允许手写对接口。
 
 **4. 编辑计算归客户端，server 归存储与管理**
 
@@ -99,9 +98,11 @@ Electron 退出
 
 ```text
 hawk/
-├── hawk-daemon/  ← Rust 后端（桌面版与服务器版共用）
-├── hawk-update/  ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
-├── hawk-app/        ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
-├── hawk-remote/  ← Rust 远程访问客户端（可选进程，见 docs/backend/remote-access.md，规划中）
-└── docs/            ← 设计文档
+├── hawk-daemon/             ← Rust 后端（桌面版与服务器版共用）
+├── hawk-update/             ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
+├── hawk-app/                ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
+├── hawk-browser-extension/  ← 浏览器插件（Chrome/Firefox，WXT）
+├── hawk-remote/             ← Rust 远程访问客户端（可选进程，见 docs/backend/remote-access.md，规划中）
+├── tools/                   ← 仓库级脚本（构建/安装/冒烟/性能压测）
+└── docs/                    ← 设计文档
 ```

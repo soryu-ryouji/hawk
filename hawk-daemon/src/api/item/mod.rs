@@ -12,11 +12,11 @@ mod upload;
 use crate::api::envelope::{ApiError, Envelope};
 use crate::api::SharedState;
 use crate::core::index::LocationSnapshot;
-use axum::routing::{get, post};
-use axum::Router;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 // ---------- 子模块共用导入面（各文件 `use super::*` 即可取到） ----------
-pub(crate) use crate::api::envelope::{success, JsonBody};
+pub(crate) use crate::api::envelope::{success, JsonBody, SuccessOnly};
 pub(crate) use crate::core::content_hash;
 pub(crate) use crate::core::fs_util;
 pub(crate) use crate::core::item::{ItemDto, ItemQuery, ItemSkeletonDto};
@@ -27,29 +27,31 @@ pub(crate) use axum::response::Response;
 pub(crate) use axum::Json;
 pub(crate) use serde::{Deserialize, Serialize};
 
-pub fn routes() -> Router<SharedState> {
-    Router::new()
-        .route("/api/v1/item/list", post(query::item_list))
-        .route("/api/v1/item/skeleton", post(query::item_skeleton))
-        .route("/api/v1/item/detail", get(query::item_detail))
-        .route("/api/v1/item/count", get(query::item_count))
-        .route("/api/v1/item/add", post(add::item_add))
-        .route("/api/v1/item/upload", post(upload::item_upload))
-        .route("/api/v1/item/update", post(update::item_update))
-        .route("/api/v1/item/batch_update", post(update::item_batch_update))
-        .route("/api/v1/item/delete", post(delete::item_delete))
-        .route("/api/v1/item/restore", post(delete::item_restore))
-        .route("/api/v1/item/thumbnail", get(file::item_thumbnail))
-        .route("/api/v1/item/file", get(file::item_file))
-        .route("/api/v1/item/refresh_thumbnail", post(file::item_refresh_thumbnail))
-        .route("/api/v1/item/replace", post(replace::item_replace))
+pub fn routes() -> OpenApiRouter<SharedState> {
+    OpenApiRouter::new()
+        .routes(routes!(query::item_list))
+        .routes(routes!(query::item_skeleton))
+        .routes(routes!(query::item_detail))
+        .routes(routes!(query::item_count))
+        .routes(routes!(add::item_add))
+        .routes(routes!(upload::item_upload))
+        .routes(routes!(update::item_update))
+        .routes(routes!(update::item_batch_update))
+        .routes(routes!(delete::item_delete))
+        .routes(routes!(delete::item_restore))
+        .routes(routes!(file::item_thumbnail))
+        .routes(routes!(file::item_file))
+        .routes(routes!(file::item_refresh_thumbnail))
+        .routes(routes!(replace::item_replace))
 }
 
 // ---------- 公共类型与辅助 ----------
 
 /// id 查询参数（detail/file 共用）
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct IdQuery {
+    /// item id（内容 BLAKE3 哈希 hex）
     pub(crate) id: String,
 }
 

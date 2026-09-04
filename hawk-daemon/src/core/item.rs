@@ -152,7 +152,7 @@ impl Item {
 }
 
 /// API 的调色板颜色项
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct PaletteColorDto {
     /// # 前缀小写 hex，如 "#344441"
     pub color: String,
@@ -161,7 +161,7 @@ pub struct PaletteColorDto {
 }
 
 /// API 的 Item 对象（snake_case）
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ItemDto {
     pub id: String,
     pub name: String,
@@ -183,7 +183,7 @@ pub struct ItemDto {
 }
 
 /// 网格骨架：虚拟布局所需的最低限度信息（ItemDto 的同序轻量投影）
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct ItemSkeletonDto {
     pub id: String,
     pub width: i32,

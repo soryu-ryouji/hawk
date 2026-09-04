@@ -40,7 +40,7 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 ```bash
 cd hawk-daemon
 cargo build --release          # 产物 target/release/hawk-daemon(.exe)
-cargo test                     # 单元测试（纯函数：路径/颜色/TOML/ignore 匹配/BLAKE3 向量/调色板）
+cargo test                     # 单元测试（纯函数）+ 流水线行为测试（pipeline/tests.rs）+ OpenAPI 契约校验（api/contract_tests.rs）
 ```
 
 运行协议：
@@ -52,7 +52,7 @@ HAWK_TOKEN=<token> hawk-daemon --library <素材库路径> --port 27371 [--web-d
 ## 测试
 
 ```bash
-# 端到端冒烟（仓库根 tools/smoke.sh，契约测试；需先 cargo build --release）
+# 端到端冒烟（仓库根 tools/smoke.sh，行为契约测试；需先 cargo build --release）
 bash tools/smoke.sh
 ```
 

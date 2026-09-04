@@ -100,14 +100,15 @@ impl ApiError {
 }
 
 /// 统一成功信封；data 为空时省略该字段
-#[derive(Serialize)]
-pub struct Envelope<T: Serialize> {
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct Envelope<T: Serialize + utoipa::ToSchema> {
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(inline = false)]
     pub data: Option<T>,
 }
 
-impl<T: Serialize> Envelope<T> {
+impl<T: Serialize + utoipa::ToSchema> Envelope<T> {
     pub fn ok(data: T) -> Envelope<T> {
         Envelope {
             status: "success",
@@ -117,8 +118,14 @@ impl<T: Serialize> Envelope<T> {
 }
 
 /// 无 data 的成功响应：`{"status":"success"}`
-pub fn success() -> serde_json::Value {
-    serde_json::json!({ "status": "success" })
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SuccessOnly {
+    pub status: &'static str,
+}
+
+/// 无 data 的成功响应：`{"status":"success"}`
+pub fn success() -> axum::Json<SuccessOnly> {
+    axum::Json(SuccessOnly { status: "success" })
 }
 
 impl IntoResponse for ApiError {

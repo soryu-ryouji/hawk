@@ -4,11 +4,26 @@ use super::*;
 
 // ---------- thumbnail / file / refresh_thumbnail ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct ThumbnailQuery {
+    /// item id（内容 BLAKE3 哈希 hex）
     id: String,
 }
 
+/// 缩略图：单一尺寸 1024 的 webp 缓存，Cache-Control immutable。
+/// 未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ 直接回源原图（200，后台入队生成缓存）；
+/// 不可渲染格式（tiff 等）生成中 404（经 item.updated 重建后可用）
+#[utoipa::path(
+    get,
+    path = "/api/v1/item/thumbnail",
+    tags = ["item"],
+    params(ThumbnailQuery),
+    responses(
+        (status = 200, description = "缩略图（webp）或回源原图（Content-Type 按源格式）", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 404, description = "不可渲染格式，生成中")
+    )
+)]
 pub(crate) async fn item_thumbnail(
     State(state): State<SharedState>,
     Query(q): Query<ThumbnailQuery>,
@@ -42,6 +57,14 @@ pub(crate) async fn item_thumbnail(
     Err(ApiError::item_not_found(format!("thumbnail {}", q.id)))
 }
 
+/// 主位置（优先库内）原图二进制：流式返回，Content-Type 按扩展名 mime_guess，Cache-Control immutable
+#[utoipa::path(
+    get,
+    path = "/api/v1/item/file",
+    tags = ["item"],
+    params(IdQuery),
+    responses((status = 200, description = "原图二进制", content_type = "application/octet-stream", body = Vec<u8>))
+)]
 pub(crate) async fn item_file(State(state): State<SharedState>, Query(q): Query<IdQuery>) -> Result<Response, ApiError> {
     let file = state
         .index
@@ -85,16 +108,24 @@ async fn serve_file(file: String, content_type: String, immutable: bool) -> Resu
     Ok(builder.body(axum::body::Body::from_stream(stream)).unwrap())
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemRefreshThumbnailRequest {
     id: String,
 }
 
+/// 强制重建缩略图（取可读主位置；完成后经 item.updated 通知前端重建 <img>）
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/refresh_thumbnail",
+    tags = ["item"],
+    request_body = ItemRefreshThumbnailRequest,
+    responses((status = 200, description = "OK", body = SuccessOnly))
+)]
 pub(crate) async fn item_refresh_thumbnail(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemRefreshThumbnailRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<SuccessOnly>, ApiError> {
     let source = state
         .index
         .main_source_abs(&req.id, &state.paths)
@@ -102,5 +133,5 @@ pub(crate) async fn item_refresh_thumbnail(
     // 手动强制重建：走 worker 任务（强制重建全部尺寸 + 补宽高/调色板），
     // 完成后经 item.updated 通知前端重建 <img>；直接调 generate 不回写宽高也不发事件
     state.worker.enqueue_force_rebuild(&req.id, &source);
-    Ok(Json(success()))
+    Ok(success())
 }

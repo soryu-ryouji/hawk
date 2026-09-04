@@ -5,7 +5,7 @@ use crate::core::color_math;
 
 // ---------- list / skeleton / detail / count ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case", default)]
 pub(crate) struct ItemListRequest {
     ids: Option<Vec<String>>,
@@ -59,7 +59,7 @@ impl Default for ItemListRequest {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemListResponse {
     items: Vec<ItemDto>,
@@ -69,7 +69,7 @@ pub(crate) struct ItemListResponse {
     limit: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemSkeletonResponse {
     items: Vec<ItemSkeletonDto>,
@@ -111,6 +111,14 @@ fn build_query(req: ItemListRequest) -> Result<ItemQuery, ApiError> {
     })
 }
 
+/// 分页查询：全过滤条件 AND 组合，主键同值按 id 打破平局，次序与 skeleton 逐位一致
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/list",
+    tags = ["item"],
+    request_body = ItemListRequest,
+    responses((status = 200, description = "OK", body = Envelope<ItemListResponse>))
+)]
 pub(crate) async fn item_list(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemListRequest>,
@@ -127,6 +135,14 @@ pub(crate) async fn item_list(
     })))
 }
 
+/// 骨架查询：与 list 同查询同排序，返回轻量骨架（虚拟网格布局依据）
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/skeleton",
+    tags = ["item"],
+    request_body = ItemListRequest,
+    responses((status = 200, description = "OK", body = Envelope<ItemSkeletonResponse>))
+)]
 pub(crate) async fn item_skeleton(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemListRequest>,
@@ -150,6 +166,14 @@ fn dispatch_dim_heal<'a>(state: &SharedState, items: impl Iterator<Item = (&'a s
     }
 }
 
+/// 单 item 详情（锁内投影）
+#[utoipa::path(
+    get,
+    path = "/api/v1/item/detail",
+    tags = ["item"],
+    params(IdQuery),
+    responses((status = 200, description = "OK", body = Envelope<ItemDto>))
+)]
 pub(crate) async fn item_detail(
     State(state): State<SharedState>,
     Query(q): Query<IdQuery>,
@@ -161,6 +185,13 @@ pub(crate) async fn item_detail(
     Ok(Json(Envelope::ok(dto)))
 }
 
+/// 库内 item 总数（不含回收站）
+#[utoipa::path(
+    get,
+    path = "/api/v1/item/count",
+    tags = ["item"],
+    responses((status = 200, description = "OK", body = Envelope<usize>))
+)]
 pub(crate) async fn item_count(State(state): State<SharedState>) -> Json<Envelope<usize>> {
     Json(Envelope::ok(state.index.count()))
 }

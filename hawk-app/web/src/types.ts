@@ -7,8 +7,9 @@ export type { LibraryHistoryItem, UpdateInfo, UpdateProgress };
 // 契约类型一律从生成的 schema 取，不另写
 export type Item = components['schemas']['ItemDto'];
 export type FolderNode = components['schemas']['FolderNode'];
-export type CategoryInfo = components['schemas']['CategoryInfo'];
-export type TagInfo = components['schemas']['TagInfo'];
+// 分类与标签在后端同为 TaxonInfo（扁平名字 + 计数），导出两个业务语义名
+export type CategoryInfo = components['schemas']['TaxonInfo'];
+export type TagInfo = components['schemas']['TaxonInfo'];
 export type LibraryInfo = components['schemas']['LibraryInfo'];
 export type ItemListRequest = components['schemas']['ItemListRequest'];
 export type ItemListResult = components['schemas']['ItemListResponse'];

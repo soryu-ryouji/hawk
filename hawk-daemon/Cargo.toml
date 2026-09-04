@@ -33,9 +33,14 @@ filetime = "0.2.29"
 percent-encoding = "2.3.2"
 ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
 async-stream = "0.3.6"
+utoipa = { version = "5.5.0", features = ["axum_extras"] }
+utoipa-axum = "0.2.0"
 
 [profile.release]
 lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[dev-dependencies]
+jsonschema = "0.53.0"

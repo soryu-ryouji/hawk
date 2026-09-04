@@ -13,11 +13,12 @@ use super::envelope::{codes, ApiError, Envelope};
 use super::{AccessLevel, SharedState};
 use crate::core::config::WebSettings;
 use axum::extract::{Extension, State};
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 /// 排空在途连接的上限：超时强杀（局域网查看器可自行重连，无零中断要求）
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
@@ -142,11 +143,11 @@ impl LanSupervisor {
 // 配置由 daemon 权威读写（toml_edit 保留注释），保存即热重绑：写配置 → reload → wake →
 // 等待本轮收敛（epoch），绑定失败回滚旧配置。不再经 Electron 主进程手写 TOML + 轮询 app/info。
 
-pub fn routes() -> Router<SharedState> {
-    Router::new().route("/api/v1/app/lan", get(get_lan).put(put_lan))
+pub fn routes() -> OpenApiRouter<SharedState> {
+    OpenApiRouter::new().routes(routes!(get_lan, put_lan))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct LanSettingsDto {
     enabled: bool,
     port: u16,
@@ -188,6 +189,13 @@ fn require_admin(access: &AccessLevel) -> Result<(), ApiError> {
     }
 }
 
+/// 读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权）
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/lan",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = Envelope<LanSettingsDto>))
+)]
 async fn get_lan(
     State(state): State<SharedState>,
     Extension(access): Extension<AccessLevel>,
@@ -196,7 +204,7 @@ async fn get_lan(
     Ok(Json(Envelope::ok(lan_dto(&state))))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct PutLanBody {
     enabled: bool,
     port: u16,
@@ -248,6 +256,14 @@ async fn wait_converged(state: &SharedState, web: &WebSettings, epoch0: u64) -> 
     }
 }
 
+/// 写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误
+#[utoipa::path(
+    put,
+    path = "/api/v1/app/lan",
+    tags = ["app"],
+    request_body = PutLanBody,
+    responses((status = 200, description = "OK", body = Envelope<LanSettingsDto>))
+)]
 async fn put_lan(
     State(state): State<SharedState>,
     Extension(access): Extension<AccessLevel>,

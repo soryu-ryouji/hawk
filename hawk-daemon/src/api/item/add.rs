@@ -4,7 +4,7 @@ use super::*;
 
 // ---------- add ----------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemAddRequest {
     path: Option<String>,
@@ -22,7 +22,7 @@ pub(crate) struct ItemAddRequest {
     skip_existing: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemAddResponse {
     pub(crate) item: ItemDto,
@@ -32,6 +32,15 @@ pub(crate) struct ItemAddResponse {
     pub(crate) skipped: bool,
 }
 
+/// 路径导入 / URL 下载 / base64 入库（三选一取内容）。目标已存在报 FILE_EXISTS；
+/// skip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/add",
+    tags = ["item"],
+    request_body = ItemAddRequest,
+    responses((status = 200, description = "OK", body = Envelope<ItemAddResponse>))
+)]
 pub(crate) async fn item_add(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemAddRequest>,

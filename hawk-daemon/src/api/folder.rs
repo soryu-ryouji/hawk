@@ -1,58 +1,75 @@
 //! folder 端点。folder 即素材库中的真实目录。操作直接作用于文件系统，索引由文件监听/流水线同步。
 
-use crate::api::envelope::{success, ApiError, Envelope};
+use crate::api::envelope::{success, ApiError, Envelope, SuccessOnly};
 use crate::api::SharedState;
 use crate::core::events::REASON_EXTERNAL;
 use crate::core::fs_util;
 use crate::core::index::ItemIndex;
 use crate::core::paths::{unix_ms, LibraryPaths};
 use axum::extract::State;
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Json;
 use serde::Serialize;
 use std::sync::Arc;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
-pub fn routes() -> Router<SharedState> {
-    Router::new()
-        .route("/api/v1/folder/list", get(folder_list))
-        .route("/api/v1/folder/create", post(folder_create))
-        .route("/api/v1/folder/update", post(folder_update))
-        .route("/api/v1/folder/delete", post(folder_delete))
-        .route("/api/v1/folder/restore", post(folder_restore))
+pub fn routes() -> OpenApiRouter<SharedState> {
+    OpenApiRouter::new()
+        .routes(routes!(folder_list))
+        .routes(routes!(folder_create))
+        .routes(routes!(folder_update))
+        .routes(routes!(folder_delete))
+        .routes(routes!(folder_restore))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct FolderNode {
     path: String,
     name: String,
+    /// 子目录（自引用；no_recursion 生成 $ref 切断内联递归）
+    #[schema(no_recursion)]
     children: Vec<FolderNode>,
     modification_time: i64,
     count: usize,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, utoipa::ToSchema)]
 struct FolderCreateRequest {
     name: String,
     parent_path: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, utoipa::ToSchema)]
 struct FolderUpdateRequest {
     path: String,
     name: Option<String>,
     parent_path: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, utoipa::ToSchema)]
 struct FolderPathRequest {
     path: String,
 }
 
-/// 返回完整文件夹树（节点字段 path/name/children/modification_time/count）
+/// 完整文件夹树（实时从文件系统构建，排除 .hawk 与被 ignore 目录；count 含祖先目录）
+#[utoipa::path(
+    get,
+    path = "/api/v1/folder/list",
+    tags = ["folder"],
+    responses((status = 200, description = "OK", body = Envelope<FolderNode>))
+)]
 async fn folder_list(State(state): State<SharedState>) -> Json<Envelope<FolderNode>> {
     Json(Envelope::ok(build_tree(&state.paths, &state.config, &state.index)))
 }
 
+/// 新建目录（目标已存在报 FILE_EXISTS）；目录结构变化经 folder.changed 广播
+#[utoipa::path(
+    post,
+    path = "/api/v1/folder/create",
+    tags = ["folder"],
+    request_body = FolderCreateRequest,
+    responses((status = 200, description = "OK", body = Envelope<FolderNode>))
+)]
 async fn folder_create(
     State(state): State<SharedState>,
     Json(req): Json<FolderCreateRequest>,
@@ -77,6 +94,14 @@ async fn folder_create(
     ))))
 }
 
+/// 重命名/移动目录（禁止移入自身子目录；级联迁移经 DirMoveJob 由流水线执行）
+#[utoipa::path(
+    post,
+    path = "/api/v1/folder/update",
+    tags = ["folder"],
+    request_body = FolderUpdateRequest,
+    responses((status = 200, description = "OK", body = Envelope<FolderNode>))
+)]
 async fn folder_update(
     State(state): State<SharedState>,
     Json(req): Json<FolderUpdateRequest>,
@@ -133,10 +158,17 @@ async fn folder_update(
 }
 
 /// 删除:整体移入 .hawk/trash/(保留目录结构)
+#[utoipa::path(
+    post,
+    path = "/api/v1/folder/delete",
+    tags = ["folder"],
+    request_body = FolderPathRequest,
+    responses((status = 200, description = "OK", body = SuccessOnly))
+)]
 async fn folder_delete(
     State(state): State<SharedState>,
     Json(req): Json<FolderPathRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<SuccessOnly>, ApiError> {
     if !LibraryPaths::is_valid_library_path(Some(&req.path)) {
         return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", req.path)));
     }
@@ -153,14 +185,21 @@ async fn folder_delete(
         .submit_dir_move(dir_abs, trash_abs)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(success()))
+    Ok(success())
 }
 
 /// 恢复：按原路径放回，被占用时报 FILE_EXISTS
+#[utoipa::path(
+    post,
+    path = "/api/v1/folder/restore",
+    tags = ["folder"],
+    request_body = FolderPathRequest,
+    responses((status = 200, description = "OK", body = SuccessOnly))
+)]
 async fn folder_restore(
     State(state): State<SharedState>,
     Json(req): Json<FolderPathRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<SuccessOnly>, ApiError> {
     if !LibraryPaths::is_valid_library_path(Some(&req.path)) {
         return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", req.path)));
     }
@@ -179,7 +218,7 @@ async fn folder_restore(
         .submit_dir_move(trash_abs, target_abs)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(success()))
+    Ok(success())
 }
 
 /// 实时从文件系统构建文件夹树（排除 .hawk 与被 ignore 的目录），附库内 item 计数

@@ -1,731 +1,2035 @@
 {
-  "openapi": "3.1.1",
+  "components": {
+    "schemas": {
+      "AppInfo": {
+        "properties": {
+          "access": {
+            "type": "string"
+          },
+          "exec_path": {
+            "type": "string"
+          },
+          "lan": {
+            "$ref": "#/components/schemas/LanInfo"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "writable": {
+            "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "platform",
+          "exec_path",
+          "access",
+          "writable",
+          "lan"
+        ],
+        "type": "object"
+      },
+      "CategoryCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CategoryNameRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CategoryUpdateRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "new_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "new_name"
+        ],
+        "type": "object"
+      },
+      "Envelope_AppInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "access": {
+                "type": "string"
+              },
+              "exec_path": {
+                "type": "string"
+              },
+              "lan": {
+                "$ref": "#/components/schemas/LanInfo"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "writable": {
+                "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "version",
+              "platform",
+              "exec_path",
+              "access",
+              "writable",
+              "lan"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_FolderNode": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "children": {
+                "description": "子目录（自引用；no_recursion 生成 $ref 切断内联递归）",
+                "items": {
+                  "$ref": "#/components/schemas/FolderNode"
+                },
+                "type": "array"
+              },
+              "count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "modification_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "name",
+              "children",
+              "modification_time",
+              "count"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_HashMap_String_ViewSortDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "additionalProperties": {
+              "properties": {
+                "order": {
+                  "type": "string"
+                },
+                "order_by": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "order_by",
+                "order"
+              ],
+              "type": "object"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemAddResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "already_existed": {
+                "type": "boolean"
+              },
+              "item": {
+                "$ref": "#/components/schemas/ItemDto"
+              },
+              "skipped": {
+                "description": "内容已存在且按 skip_existing 跳过：未写入文件、未追加路径（already_existed 旧语义仍保留：\n已写入并关联到既有条目）",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "item",
+              "already_existed",
+              "skipped"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemBatchUpdateResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "missing_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "updated",
+              "missing_ids"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "API 的 Item 对象（snake_case）",
+            "properties": {
+              "annotation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "categories": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "ext": {
+                "type": "string"
+              },
+              "folders": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "height": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "modification_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "palette": {
+                "items": {
+                  "$ref": "#/components/schemas/PaletteColorDto"
+                },
+                "type": "array"
+              },
+              "paths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "size": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "star": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "width": {
+                "format": "int32",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "ext",
+              "width",
+              "height",
+              "size",
+              "tags",
+              "categories",
+              "paths",
+              "folders",
+              "star",
+              "modification_time",
+              "palette"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemListResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/ItemDto"
+                },
+                "type": "array"
+              },
+              "limit": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "offset": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total_size": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "items",
+              "total",
+              "total_size",
+              "offset",
+              "limit"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemSkeletonResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/ItemSkeletonDto"
+                },
+                "type": "array"
+              },
+              "total_size": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "items",
+              "total_size"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanSettingsDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "active": {
+                "description": "运行状态（热重绑实况）：active=监听中，error=绑定失败原因",
+                "type": "boolean"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "port": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "separate_write_token": {
+                "type": "boolean"
+              },
+              "token": {
+                "type": "string"
+              },
+              "writable": {
+                "type": "boolean"
+              },
+              "write_token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "port",
+              "token",
+              "writable",
+              "separate_write_token",
+              "write_token",
+              "active"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LibraryInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "application_version": {
+                "type": "string"
+              },
+              "modification_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "path",
+              "modification_time",
+              "application_version"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_RefreshCacheResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "dispatched": {
+                "description": "实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计）",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dispatched"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_StartupInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "phase": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processed": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string"
+              },
+              "total": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_TaskStatus": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "index": {
+                "$ref": "#/components/schemas/IndexBacklog"
+              },
+              "thumbnail": {
+                "$ref": "#/components/schemas/TaskBacklog"
+              }
+            },
+            "required": [
+              "thumbnail",
+              "index"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_Vec_TaxonInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "items": {
+              "properties": {
+                "count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "count"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_usize": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "FolderChangedPayload": {
+        "description": "reason 目前恒为 external，客户端应忽略取值（结构为将来预留）",
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "FolderCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parent_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "FolderNode": {
+        "properties": {
+          "children": {
+            "description": "子目录（自引用；no_recursion 生成 $ref 切断内联递归）",
+            "items": {
+              "$ref": "#/components/schemas/FolderNode"
+            },
+            "type": "array"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "modification_time": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "children",
+          "modification_time",
+          "count"
+        ],
+        "type": "object"
+      },
+      "FolderPathRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "FolderUpdateRequest": {
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "IndexBacklog": {
+        "properties": {
+          "active": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "pending": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "total": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "pending",
+          "active"
+        ],
+        "type": "object"
+      },
+      "ItemAddRequest": {
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "img_base64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skip_existing": {
+            "description": "内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true",
+            "type": "boolean"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "website": {
+            "description": "来源网页(收集场景:图片所在的页面地址),记录为 Item.url;与下载用的 url 区分",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ItemAddResponse": {
+        "properties": {
+          "already_existed": {
+            "type": "boolean"
+          },
+          "item": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "skipped": {
+            "description": "内容已存在且按 skip_existing 跳过：未写入文件、未追加路径（already_existed 旧语义仍保留：\n已写入并关联到既有条目）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "item",
+          "already_existed",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "ItemBatchUpdateRequest": {
+        "properties": {
+          "add_categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "add_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "star": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "ItemBatchUpdateResponse": {
+        "properties": {
+          "missing_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated",
+          "missing_ids"
+        ],
+        "type": "object"
+      },
+      "ItemDto": {
+        "description": "API 的 Item 对象（snake_case）",
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ext": {
+            "type": "string"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "height": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "modification_time": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "palette": {
+            "items": {
+              "$ref": "#/components/schemas/PaletteColorDto"
+            },
+            "type": "array"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "star": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "ext",
+          "width",
+          "height",
+          "size",
+          "tags",
+          "categories",
+          "paths",
+          "folders",
+          "star",
+          "modification_time",
+          "palette"
+        ],
+        "type": "object"
+      },
+      "ItemIdPayload": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemIdRequest": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemListRequest": {
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "categories_match": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exclude_categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "exclude_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "ext": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folders_exact": {
+            "type": "boolean"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "in_trash": {
+            "type": "boolean"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "order": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "star": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "without_categories": {
+            "type": "boolean"
+          },
+          "without_tags": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ItemListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_size": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "total_size",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ItemRefreshThumbnailRequest": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemReplaceRequest": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "img_base64": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "img_base64"
+        ],
+        "type": "object"
+      },
+      "ItemSkeletonDto": {
+        "description": "网格骨架：虚拟布局所需的最低限度信息（ItemDto 的同序轻量投影）",
+        "properties": {
+          "height": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "star": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "width": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "width",
+          "height",
+          "star"
+        ],
+        "type": "object"
+      },
+      "ItemSkeletonResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemSkeletonDto"
+            },
+            "type": "array"
+          },
+          "total_size": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_size"
+        ],
+        "type": "object"
+      },
+      "ItemUpdateRequest": {
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "star": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemUploadForm": {
+        "description": "multipart 表单描述（仅用于 OpenAPI；实现为流式 Multipart 提取）",
+        "properties": {
+          "file": {
+            "description": "文件内容（必需；文件名只取末段防跨目录，扩展名决定类型）",
+            "format": "binary",
+            "type": "string"
+          },
+          "folder_path": {
+            "description": "目标文件夹（库内相对路径，缺省库根；不存在自动创建）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "文件名覆盖（不含扩展名；默认取 file 文件名）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skip_existing": {
+            "description": "内容已在库内（不含回收站）时跳过",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
+      "ItemsAddedPayload": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "ItemsUpdatedPayload": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "LanInfo": {
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "type": "object"
+      },
+      "LanSettingsDto": {
+        "properties": {
+          "active": {
+            "description": "运行状态（热重绑实况）：active=监听中，error=绑定失败原因",
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "separate_write_token": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean"
+          },
+          "write_token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "port",
+          "token",
+          "writable",
+          "separate_write_token",
+          "write_token",
+          "active"
+        ],
+        "type": "object"
+      },
+      "LibraryInfo": {
+        "properties": {
+          "application_version": {
+            "type": "string"
+          },
+          "modification_time": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "modification_time",
+          "application_version"
+        ],
+        "type": "object"
+      },
+      "PaletteColorDto": {
+        "description": "API 的调色板颜色项",
+        "properties": {
+          "color": {
+            "description": "# 前缀小写 hex，如 \"#344441\"",
+            "type": "string"
+          },
+          "percentage": {
+            "description": "像素覆盖占比（0–100，1 位小数）",
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "percentage"
+        ],
+        "type": "object"
+      },
+      "PutLanBody": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "separate_write_token": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "writable": {
+            "type": "boolean"
+          },
+          "write_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "enabled",
+          "port",
+          "writable"
+        ],
+        "type": "object"
+      },
+      "RefreshCacheRequest": {
+        "properties": {
+          "type": {
+            "description": "folder | category | tag | library",
+            "type": "string"
+          },
+          "value": {
+            "description": "folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RefreshCacheResponse": {
+        "properties": {
+          "dispatched": {
+            "description": "实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计）",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dispatched"
+        ],
+        "type": "object"
+      },
+      "SseEvents": {
+        "description": "SSE 事件载荷注册表：键为 `event:` 帧的事件名，值为 `data:` 帧 JSON 载荷的结构。\n与 core::taxonomy::ItemEvents 常量一一对应（契约测试双向比对）",
+        "properties": {
+          "folder.changed": {
+            "$ref": "#/components/schemas/FolderChangedPayload"
+          },
+          "item.added": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "item.removed": {
+            "$ref": "#/components/schemas/ItemIdPayload"
+          },
+          "item.restored": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "item.trashed": {
+            "$ref": "#/components/schemas/ItemIdPayload"
+          },
+          "item.updated": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "items.added": {
+            "$ref": "#/components/schemas/ItemsAddedPayload",
+            "description": "批量入库（扫描导入）合并事件，与单条 item.added 互斥；客户端按「有新增」信号重载骨架"
+          },
+          "items.updated": {
+            "$ref": "#/components/schemas/ItemsUpdatedPayload",
+            "description": "item.updated 的批量变体（调色板批量回写等）"
+          },
+          "task.progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          }
+        },
+        "required": [
+          "item.added",
+          "items.added",
+          "item.updated",
+          "items.updated",
+          "item.trashed",
+          "item.restored",
+          "item.removed",
+          "folder.changed",
+          "task.progress"
+        ],
+        "type": "object"
+      },
+      "StartupInfo": {
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "total": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "SuccessOnly": {
+        "description": "无 data 的成功响应：`{\"status\":\"success\"}`",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "TaskBacklog": {
+        "properties": {
+          "active": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "pending": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending",
+          "active"
+        ],
+        "type": "object"
+      },
+      "TaskProgress": {
+        "description": "后台任务进度快照(task.progress 事件与 app/status 端点共用)。\nphase/processed/total 仅 index 任务在扫描期间携带；非扫描期间省略（None）",
+        "properties": {
+          "active": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "pending": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "task": {
+            "type": "string"
+          },
+          "total": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "pending",
+          "active"
+        ],
+        "type": "object"
+      },
+      "TaskStatus": {
+        "properties": {
+          "index": {
+            "$ref": "#/components/schemas/IndexBacklog"
+          },
+          "thumbnail": {
+            "$ref": "#/components/schemas/TaskBacklog"
+          }
+        },
+        "required": [
+          "thumbnail",
+          "index"
+        ],
+        "type": "object"
+      },
+      "TaxonInfo": {
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "count"
+        ],
+        "type": "object"
+      },
+      "TokenResponse": {
+        "description": "token 发现端点响应（信封的 data 直接为 token 字符串）",
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ],
+        "type": "object"
+      },
+      "ViewPreferencePutRequest": {
+        "properties": {
+          "order": {
+            "type": "string"
+          },
+          "order_by": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "order_by",
+          "order"
+        ],
+        "type": "object"
+      },
+      "ViewSortDto": {
+        "properties": {
+          "order": {
+            "type": "string"
+          },
+          "order_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_by",
+          "order"
+        ],
+        "type": "object"
+      }
+    }
+  },
   "info": {
+    "contact": {
+      "email": "juha7kukkonen@gmail.com",
+      "name": "Juha Kukkonen"
+    },
+    "description": "Utoipa's axum bindings for seamless integration for the two",
+    "license": {
+      "identifier": "MIT OR Apache-2.0",
+      "name": "MIT OR Apache-2.0"
+    },
     "title": "hawk-daemon | v1",
     "version": "1.0.0"
   },
-  "servers": [
-    {
-      "url": "http://127.0.0.1:27371/"
-    }
-  ],
+  "openapi": "3.1.0",
   "paths": {
-    "/health": {
-      "get": {
-        "tags": [
-          "app"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/app/startup": {
-      "get": {
-        "tags": [
-          "app"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfStartupInfo"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/app/status": {
-      "get": {
-        "tags": [
-          "app"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfTaskStatus"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/app/info": {
       "get": {
-        "tags": [
-          "app"
-        ],
+        "operationId": "info",
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfAppInfo"
+                  "$ref": "#/components/schemas/Envelope_AppInfo"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
+        },
+        "summary": "运行信息；access 级别由鉴权中间件写入请求扩展。lan 为局域网监听实况\n（设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）",
+        "tags": [
+          "app"
+        ]
       }
     },
     "/api/v1/app/lan": {
       "get": {
-        "tags": [
-          "app"
-        ],
-        "description": "读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权）",
+        "operationId": "get_lan",
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfLanSettings"
+                  "$ref": "#/components/schemas/Envelope_LanSettingsDto"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
-      },
-      "put": {
+        },
+        "summary": "读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权）",
         "tags": [
           "app"
-        ],
-        "description": "写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误",
+        ]
+      },
+      "put": {
+        "operationId": "put_lan",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LanSettingsPutRequest"
+                "$ref": "#/components/schemas/PutLanBody"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfLanSettings"
+                  "$ref": "#/components/schemas/Envelope_LanSettingsDto"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
+        },
+        "summary": "写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/startup": {
+      "get": {
+        "operationId": "startup",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_StartupInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "启动状态：ready / starting（带进度）/ error（初始索引失败，message 为原因）",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/status": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_TaskStatus"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照）",
+        "tags": [
+          "app"
+        ]
       }
     },
     "/api/v1/app/token": {
       "get": {
+        "operationId": "token",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Token 发现：浏览器插件零配置接入。\n安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；\nHost 限定环回地址（防 DNS rebinding 伪装同源读取）。\n注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——\nremote 模块的隧道端必须拒绝转发本端点并改写 Host（见 docs/backend/remote-protocol.md 数据面）",
         "tags": [
           "app"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/library/info": {
-      "get": {
-        "tags": [
-          "library"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfLibraryInfo"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/library/reindex": {
-      "post": {
-        "tags": [
-          "library"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/library/rescan": {
-      "post": {
-        "tags": [
-          "library"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/library/refresh_cache": {
-      "post": {
-        "tags": [
-          "library"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LibraryRefreshCacheRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfLibraryRefreshCacheResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/folder/list": {
-      "get": {
-        "tags": [
-          "folder"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfFolderNode"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/folder/create": {
-      "post": {
-        "tags": [
-          "folder"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FolderCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfFolderNode"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/folder/update": {
-      "post": {
-        "tags": [
-          "folder"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FolderUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfFolderNode"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/folder/delete": {
-      "post": {
-        "tags": [
-          "folder"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FolderPathRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/folder/restore": {
-      "post": {
-        "tags": [
-          "folder"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FolderPathRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/item/list": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "$ref": "#/components/schemas/ItemListRequest"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfItemListResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/item/skeleton": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "$ref": "#/components/schemas/ItemListRequest"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfItemSkeletonResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/item/detail": {
-      "get": {
-        "tags": [
-          "item"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfItemDto"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/item/count": {
-      "get": {
-        "tags": [
-          "item"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfint"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/item/add": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemAddRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/update": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/batch_update": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemBatchUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/delete": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemIdRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/restore": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemIdRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/replace": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemReplaceRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/thumbnail": {
-      "get": {
-        "tags": [
-          "item"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/file": {
-      "get": {
-        "tags": [
-          "item"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      }
-    },
-    "/api/v1/item/refresh_thumbnail": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ItemRefreshThumbnailRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/trash/clear": {
-      "post": {
-        "tags": [
-          "trash"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/category/list": {
-      "get": {
-        "tags": [
-          "category"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfCategoryInfo[]"
-                }
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/v1/category/create": {
       "post": {
-        "tags": [
-          "category"
-        ],
+        "operationId": "category_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -738,52 +2042,25 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
+                  "$ref": "#/components/schemas/SuccessOnly"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
-      }
-    },
-    "/api/v1/category/update": {
-      "post": {
+        },
+        "summary": "创建分类（注册表写入由索引流水线执行）",
         "tags": [
           "category"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CategoryUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/v1/category/delete": {
       "post": {
-        "tags": [
-          "category"
-        ],
+        "operationId": "category_delete",
         "requestBody": {
           "content": {
             "application/json": {
@@ -796,47 +2073,793 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
+                  "$ref": "#/components/schemas/SuccessOnly"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
+        },
+        "summary": "删除分类（级联清除全部 item 的分类赋值）",
+        "tags": [
+          "category"
+        ]
       }
     },
-    "/api/v1/tag/list": {
+    "/api/v1/category/list": {
       "get": {
+        "operationId": "category_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_Vec_TaxonInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "分类列表 = 注册表 ∪ 全部 item 赋值并集；count 为库内（不含回收站）item 数",
         "tags": [
-          "tag"
+          "category"
+        ]
+      }
+    },
+    "/api/v1/category/update": {
+      "post": {
+        "operationId": "category_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "重命名分类（级联迁移全部 item 的分类赋值）",
+        "tags": [
+          "category"
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "operationId": "events",
+        "parameters": [
+          {
+            "description": "访问 token（EventSource 无法设置请求头）",
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "text/event-stream 长连接"
+          }
+        },
+        "summary": "SSE 事件订阅：素材库变更推送。帧格式 `event: <事件名>` + `data: <JSON 载荷>`；\n全部事件名与载荷结构见 SseEvents（键即事件名）。\n消费跟不上（lagged）或总线关闭即断开；重连后须以 item/skeleton + folder/list 全量对齐",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/v1/folder/create": {
+      "post": {
+        "operationId": "folder_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfTagInfo[]"
+                  "$ref": "#/components/schemas/Envelope_FolderNode"
                 }
               }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "新建目录（目标已存在报 FILE_EXISTS）；目录结构变化经 folder.changed 广播",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/delete": {
+      "post": {
+        "operationId": "folder_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除:整体移入 .hawk/trash/(保留目录结构)",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/list": {
+      "get": {
+        "operationId": "folder_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_FolderNode"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "完整文件夹树（实时从文件系统构建，排除 .hawk 与被 ignore 目录；count 含祖先目录）",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/restore": {
+      "post": {
+        "operationId": "folder_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "恢复：按原路径放回，被占用时报 FILE_EXISTS",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/update": {
+      "post": {
+        "operationId": "folder_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_FolderNode"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "重命名/移动目录（禁止移入自身子目录；级联迁移经 DirMoveJob 由流水线执行）",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/item/add": {
+      "post": {
+        "operationId": "item_add",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAddRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemAddResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "路径导入 / URL 下载 / base64 入库（三选一取内容）。目标已存在报 FILE_EXISTS；\nskip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/batch_update": {
+      "post": {
+        "operationId": "item_batch_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemBatchUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemBatchUpdateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "批量更新：标签/分类并集追加，评分/文件夹设置；不存在的 id 记入 missing_ids 不整体失败",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/count": {
+      "get": {
+        "operationId": "item_count",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_usize"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "库内 item 总数（不含回收站）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/delete": {
+      "post": {
+        "operationId": "item_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemIdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "移入回收站（保留目录结构，冲突加 ` (n)` 后缀）；不带 path 为卡片级操作（回收全部库内位置）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/detail": {
+      "get": {
+        "operationId": "item_detail",
+        "parameters": [
+          {
+            "description": "item id（内容 BLAKE3 哈希 hex）",
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
-        }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "单 item 详情（锁内投影）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/file": {
+      "get": {
+        "operationId": "item_file",
+        "parameters": [
+          {
+            "description": "item id（内容 BLAKE3 哈希 hex）",
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "原图二进制"
+          }
+        },
+        "summary": "主位置（优先库内）原图二进制：流式返回，Content-Type 按扩展名 mime_guess，Cache-Control immutable",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/list": {
+      "post": {
+        "operationId": "item_list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "分页查询：全过滤条件 AND 组合，主键同值按 id 打破平局，次序与 skeleton 逐位一致",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/refresh_thumbnail": {
+      "post": {
+        "operationId": "item_refresh_thumbnail",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemRefreshThumbnailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "强制重建缩略图（取可读主位置；完成后经 item.updated 通知前端重建 <img>）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/replace": {
+      "post": {
+        "operationId": "item_replace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "内容替换(item/replace):客户端编辑(旋转/裁切等)后的新内容提交存储层。\n内容必须可识别且**格式与文件扩展名一致**（扩展名与内容错位会破坏类型推断与预览）；\n哈希相同则幂等直接返回当前投影；写回保留原 mtime（修正性编辑不改变素材的时序位置）；\n`submit_upsert` 触发 id 漂移闭环（元数据继承迁移/事件/缩略图重建）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/restore": {
+      "post": {
+        "operationId": "item_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemIdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "从回收站恢复（按原路径放回；同名冲突的位置跳过留在回收站，全部冲突才报 FILE_EXISTS）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/skeleton": {
+      "post": {
+        "operationId": "item_skeleton",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemSkeletonResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "骨架查询：与 list 同查询同排序，返回轻量骨架（虚拟网格布局依据）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/thumbnail": {
+      "get": {
+        "operationId": "item_thumbnail",
+        "parameters": [
+          {
+            "description": "item id（内容 BLAKE3 哈希 hex）",
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "缩略图（webp）或回源原图（Content-Type 按源格式）"
+          },
+          "404": {
+            "description": "不可渲染格式，生成中"
+          }
+        },
+        "summary": "缩略图：单一尺寸 1024 的 webp 缓存，Cache-Control immutable。\n未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ 直接回源原图（200，后台入队生成缓存）；\n不可渲染格式（tiff 等）生成中 404（经 item.updated 重建后可用）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/update": {
+      "post": {
+        "operationId": "item_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "元数据修改：改名/移动做真实文件操作后经流水线同步；tags/categories/star/annotation/url 直接写元数据",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/upload": {
+      "post": {
+        "operationId": "item_upload",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemUploadForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemAddResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "multipart/form-data 上传：浏览器无文件路径可引用（拖拽/文件选择器拿到的是内容），\n经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/\nskip_existing（可选，内容已在库内时跳过）。\n写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/library/info": {
+      "get": {
+        "operationId": "library_info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LibraryInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "库信息：显示名取 config 的 name，缺省目录名",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/refresh_cache": {
+      "post": {
+        "operationId": "refresh_cache",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshCacheRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RefreshCacheResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "按范围刷新派生缓存（补缺失模式）：对范围内全部 item 派发修复任务——\n补缺失宽高（0 × 0）+ 生成缺失尺寸缩略图 + 提炼缺失调色板，不重建已有文件。\n用户遇到显示异常时的手动修复入口；异步执行立即返回，积压经 task.progress(thumbnail) 可见",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/reindex": {
+      "post": {
+        "operationId": "reindex",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全量重建索引：重算全部哈希，异步执行，立即返回",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/rescan": {
+      "post": {
+        "operationId": "rescan",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "刷新缓存：忽略快照强制遍历全部文件做复用判定（不读文件内容）。异步执行，立即返回",
+        "tags": [
+          "library"
+        ]
       }
     },
     "/api/v1/tag/create": {
       "post": {
-        "tags": [
-          "tag"
-        ],
+        "operationId": "tag_create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TagCreateRequest"
+                "$ref": "#/components/schemas/CategoryCreateRequest"
               }
             }
           },
@@ -844,57 +2867,30 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
+                  "$ref": "#/components/schemas/SuccessOnly"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
-      }
-    },
-    "/api/v1/tag/update": {
-      "post": {
+        },
+        "summary": "创建标签（注册表写入由索引流水线执行）",
         "tags": [
           "tag"
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TagUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/v1/tag/delete": {
       "post": {
-        "tags": [
-          "tag"
-        ],
+        "operationId": "tag_delete",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TagNameRequest"
+                "$ref": "#/components/schemas/CategoryNameRequest"
               }
             }
           },
@@ -902,42 +2898,128 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
+                  "$ref": "#/components/schemas/SuccessOnly"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
+        },
+        "summary": "删除标签（级联清除全部 item 的标签赋值）",
+        "tags": [
+          "tag"
+        ]
       }
     },
-    "/api/v1/view/preferences": {
+    "/api/v1/tag/list": {
       "get": {
-        "tags": [
-          "view"
-        ],
+        "operationId": "tag_list",
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfDictionaryOfstringAndViewSort"
+                  "$ref": "#/components/schemas/Envelope_Vec_TaxonInfo"
                 }
               }
-            }
+            },
+            "description": "OK"
           }
-        }
+        },
+        "summary": "标签列表 = 注册表 ∪ 赋值并集；count 为库内（不含回收站）item 数",
+        "tags": [
+          "tag"
+        ]
+      }
+    },
+    "/api/v1/tag/update": {
+      "post": {
+        "operationId": "tag_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "重命名标签（级联迁移全部 item 的标签赋值）",
+        "tags": [
+          "tag"
+        ]
+      }
+    },
+    "/api/v1/trash/clear": {
+      "post": {
+        "operationId": "trash_clear",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "清空回收站：先由流水线清理索引位置、元数据与缓存，再物理删除",
+        "tags": [
+          "trash"
+        ]
       }
     },
     "/api/v1/view/preference": {
-      "put": {
+      "delete": {
+        "operationId": "preference_delete",
+        "parameters": [
+          {
+            "description": "视图作用域：folder:<路径>（\"\" 为库根）/category:<名>/tag:<名>",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除一条视图偏好（不存在则无动作）",
         "tags": [
           "view"
-        ],
+        ]
+      },
+      "put": {
+        "operationId": "preference_put",
         "requestBody": {
           "content": {
             "application/json": {
@@ -950,1600 +3032,71 @@
         },
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
+                  "$ref": "#/components/schemas/SuccessOnly"
                 }
               }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "view"
-        ],
-        "parameters": [
-          {
-            "name": "scope",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnvelopeOfObject"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/item/upload": {
-      "post": {
-        "tags": [
-          "item"
-        ],
-        "summary": "上传素材（multipart/form-data）",
-        "description": "浏览器端无文件路径可引用（拖拽/文件选择器拿到的是内容），经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）。写权限：admin 恒可用；viewer 需 [web].writable。",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "file"
-                ],
-                "properties": {
-                  "file": {
-                    "type": "string",
-                    "format": "binary"
-                  },
-                  "folder_path": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "skip_existing": {
-                    "type": "string",
-                    "description": "传 \"true\" 时内容已在库内则跳过"
-                  }
-                },
-                "description": "浏览器端无文件路径可引用（拖拽/文件选择器拿到的是内容），经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name / skip_existing（可选）。写权限：viewer 需 [web].writable。"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
+            },
             "description": "OK"
           }
-        }
+        },
+        "summary": "写一条视图偏好（覆盖写；scope 与排序值经校验规范化）",
+        "tags": [
+          "view"
+        ]
+      }
+    },
+    "/api/v1/view/preferences": {
+      "get": {
+        "operationId": "preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_HashMap_String_ViewSortDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全部视图偏好（scope → 排序）",
+        "tags": [
+          "view"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "就绪：纯文本 ok"
+          },
+          "503": {
+            "description": "初始索引构建中"
+          }
+        },
+        "summary": "就绪探活：无需 token。初始索引完成前返回 503",
+        "tags": [
+          "app"
+        ]
       }
     }
   },
-  "components": {
-    "schemas": {
-      "AppInfo": {
-        "required": [
-          "version",
-          "platform",
-          "exec_path",
-          "access",
-          "lan",
-          "writable"
-        ],
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "string"
-          },
-          "platform": {
-            "type": "string"
-          },
-          "exec_path": {
-            "type": "string"
-          },
-          "access": {
-            "type": "string"
-          },
-          "lan": {
-            "type": "object",
-            "required": [
-              "active"
-            ],
-            "properties": {
-              "active": {
-                "type": "boolean"
-              },
-              "port": {
-                "type": "integer",
-                "format": "int32"
-              },
-              "error": {
-                "type": "string"
-              }
-            }
-          },
-          "writable": {
-            "type": "boolean",
-            "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable（局域网写权限开关）"
-          }
-        }
-      },
-      "CategoryCreateRequest": {
-        "required": [
-          "name"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "CategoryInfo": {
-        "required": [
-          "name",
-          "count"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "count": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "CategoryNameRequest": {
-        "required": [
-          "name"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "CategoryUpdateRequest": {
-        "required": [
-          "name",
-          "new_name"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "new_name": {
-            "type": "string"
-          }
-        }
-      },
-      "EnvelopeOfAppInfo": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AppInfo"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfCategoryInfo[]": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/CategoryInfo"
-            }
-          }
-        }
-      },
-      "EnvelopeOfDictionaryOfstringAndViewSort": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "type": [
-              "null",
-              "object"
-            ],
-            "additionalProperties": {
-              "$ref": "#/components/schemas/ViewSort"
-            }
-          }
-        }
-      },
-      "EnvelopeOfFolderNode": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/FolderNode"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfint": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "EnvelopeOfItemDto": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ItemDto"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfItemListResponse": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ItemListResponse"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfItemSkeletonResponse": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ItemSkeletonResponse"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfLanSettings": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/LanSettings"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfLibraryInfo": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/LibraryInfo"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfObject": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {}
-        }
-      },
-      "LibraryRefreshCacheRequest": {
-        "required": [
-          "type"
-        ],
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "folder",
-              "category",
-              "tag",
-              "library"
-            ]
-          },
-          "value": {
-            "type": "string",
-            "description": "folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略"
-          }
-        }
-      },
-      "LibraryRefreshCacheResponse": {
-        "required": [
-          "dispatched"
-        ],
-        "type": "object",
-        "properties": {
-          "dispatched": {
-            "type": "integer",
-            "description": "实际入队的修复任务数",
-            "format": "int32"
-          }
-        }
-      },
-      "EnvelopeOfLibraryRefreshCacheResponse": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "$ref": "#/components/schemas/LibraryRefreshCacheResponse"
-          }
-        }
-      },
-      "EnvelopeOfStartupInfo": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/StartupInfo"
-              }
-            ]
-          }
-        }
-      },
-      "EnvelopeOfTagInfo[]": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/TagInfo"
-            }
-          }
-        }
-      },
-      "EnvelopeOfTaskStatus": {
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "data": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/TaskStatus"
-              }
-            ]
-          }
-        }
-      },
-      "FolderCreateRequest": {
-        "required": [
-          "name",
-          "parent_path"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "parent_path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "FolderNode": {
-        "required": [
-          "path",
-          "name",
-          "children",
-          "modification_time",
-          "count"
-        ],
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "children": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FolderNode"
-            }
-          },
-          "modification_time": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "count": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "FolderPathRequest": {
-        "required": [
-          "path"
-        ],
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string"
-          }
-        }
-      },
-      "FolderUpdateRequest": {
-        "required": [
-          "path",
-          "name",
-          "parent_path"
-        ],
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "name": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "parent_path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "IndexBacklog": {
-        "required": [
-          "pending",
-          "active",
-          "phase",
-          "processed",
-          "total"
-        ],
-        "type": "object",
-        "properties": {
-          "pending": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "active": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "phase": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "processed": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "total": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "ItemAddRequest": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "url": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "img_base64": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "name": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "folder_path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "tags": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "categories": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "annotation": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "website": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "skip_existing": {
-            "type": "boolean",
-            "description": "内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true",
-            "default": false
-          }
-        }
-      },
-      "ItemBatchUpdateRequest": {
-        "required": [
-          "ids"
-        ],
-        "type": "object",
-        "properties": {
-          "ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "add_tags": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "add_categories": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "star": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "folder_path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "ItemDto": {
-        "required": [
-          "id",
-          "name",
-          "ext",
-          "paths",
-          "folders"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "ext": {
-            "type": "string"
-          },
-          "width": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "height": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "size": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "url": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "categories": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "paths": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "folders": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "star": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "annotation": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "modification_time": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "palette": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PaletteColorDto"
-            }
-          }
-        }
-      },
-      "ItemIdRequest": {
-        "required": [
-          "id",
-          "path"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "ItemListRequest": {
-        "type": "object",
-        "properties": {
-          "ids": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "keywords": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "tags": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "star": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "folders": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "folders_exact": {
-            "type": "boolean"
-          },
-          "categories": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "categories_match": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "exclude_categories": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "exclude_tags": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "without_categories": {
-            "type": "boolean"
-          },
-          "without_tags": {
-            "type": "boolean"
-          },
-          "ext": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "annotation": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "url": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "color": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "in_trash": {
-            "type": "boolean"
-          },
-          "order_by": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "order": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "offset": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "limit": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "ItemListResponse": {
-        "required": [
-          "items",
-          "total",
-          "total_size",
-          "offset",
-          "limit"
-        ],
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ItemDto"
-            }
-          },
-          "total": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "total_size": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "offset": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "limit": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "ItemRefreshThumbnailRequest": {
-        "required": [
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          }
-        }
-      },
-      "ItemReplaceRequest": {
-        "required": [
-          "id",
-          "img_base64"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "img_base64": {
-            "type": "string"
-          }
-        }
-      },
-      "ItemSkeletonDto": {
-        "required": [
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "width": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "height": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "star": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "ItemSkeletonResponse": {
-        "required": [
-          "items",
-          "total_size"
-        ],
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ItemSkeletonDto"
-            }
-          },
-          "total_size": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          }
-        }
-      },
-      "ItemUpdateRequest": {
-        "required": [
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "name": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "tags": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "folder_path": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "star": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "categories": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "annotation": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "url": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "LanSettings": {
-        "required": [
-          "enabled",
-          "port",
-          "token",
-          "writable",
-          "separate_write_token",
-          "write_token",
-          "active"
-        ],
-        "type": "object",
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "port": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "token": {
-            "type": "string"
-          },
-          "writable": {
-            "type": "boolean",
-            "description": "允许局域网 token 执行写操作（上传/删除/修改等）；关闭则一律只读（403 READ_ONLY）"
-          },
-          "separate_write_token": {
-            "type": "boolean",
-            "description": "拆分只读/可写 token：token 降为只读，write_token 具备写权限"
-          },
-          "write_token": {
-            "type": "string",
-            "description": "拆分模式下的可写 token"
-          },
-          "active": {
-            "type": "boolean",
-            "description": "局域网监听实况：是否已绑定"
-          },
-          "error": {
-            "type": "string",
-            "description": "监听绑定失败原因（热重绑失败时暴露）"
-          }
-        }
-      },
-      "LanSettingsPutRequest": {
-        "required": [
-          "enabled",
-          "port",
-          "writable"
-        ],
-        "type": "object",
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "port": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "token": {
-            "type": "string"
-          },
-          "writable": {
-            "type": "boolean"
-          },
-          "separate_write_token": {
-            "type": "boolean"
-          },
-          "write_token": {
-            "type": "string"
-          }
-        }
-      },
-      "LibraryInfo": {
-        "required": [
-          "name",
-          "path",
-          "modification_time",
-          "application_version"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "modification_time": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "application_version": {
-            "type": "string"
-          }
-        }
-      },
-      "PaletteColorDto": {
-        "required": [
-          "color"
-        ],
-        "type": "object",
-        "properties": {
-          "color": {
-            "type": "string"
-          },
-          "percentage": {
-            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
-            "type": [
-              "number",
-              "string"
-            ],
-            "format": "float"
-          }
-        }
-      },
-      "StartupInfo": {
-        "required": [
-          "status",
-          "phase",
-          "processed",
-          "total",
-          "message"
-        ],
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string"
-          },
-          "phase": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "processed": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "total": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "message": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
-      },
-      "TagCreateRequest": {
-        "required": [
-          "name"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "TagInfo": {
-        "required": [
-          "name",
-          "count"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "count": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "TagNameRequest": {
-        "required": [
-          "name"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          }
-        }
-      },
-      "TagUpdateRequest": {
-        "required": [
-          "name",
-          "new_name"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "new_name": {
-            "type": "string"
-          }
-        }
-      },
-      "TaskBacklog": {
-        "required": [
-          "pending",
-          "active"
-        ],
-        "type": "object",
-        "properties": {
-          "pending": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "active": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
-      "TaskStatus": {
-        "required": [
-          "thumbnail",
-          "index"
-        ],
-        "type": "object",
-        "properties": {
-          "thumbnail": {
-            "$ref": "#/components/schemas/TaskBacklog"
-          },
-          "index": {
-            "$ref": "#/components/schemas/IndexBacklog"
-          }
-        }
-      },
-      "ViewPreferencePutRequest": {
-        "required": [
-          "scope",
-          "order_by",
-          "order"
-        ],
-        "type": "object",
-        "properties": {
-          "scope": {
-            "type": "string"
-          },
-          "order_by": {
-            "type": "string"
-          },
-          "order": {
-            "type": "string"
-          }
-        }
-      },
-      "ViewSort": {
-        "required": [
-          "order_by",
-          "order"
-        ],
-        "type": "object",
-        "properties": {
-          "order_by": {
-            "type": "string"
-          },
-          "order": {
-            "type": "string"
-          }
-        }
-      }
-    }
-  },
-  "tags": [
+  "servers": [
     {
-      "name": "app"
-    },
-    {
-      "name": "library"
-    },
-    {
-      "name": "folder"
-    },
-    {
-      "name": "item"
-    },
-    {
-      "name": "trash"
-    },
-    {
-      "name": "category"
-    },
-    {
-      "name": "tag"
-    },
-    {
-      "name": "view"
+      "url": "http://127.0.0.1:27371/"
     }
   ]
 }

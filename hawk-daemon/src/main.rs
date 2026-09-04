@@ -28,6 +28,13 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
+    // --dump-openapi：打印代码生成的 OpenAPI schema 到 stdout 后退出（openapi.json 的固化来源；
+    // 契约测试校验二者同步，改 API 后用 `cargo run -- --dump-openapi > openapi.json` 更新）
+    if std::env::args().any(|a| a == "--dump-openapi") {
+        print!("{}", api::build_openapi_json());
+        return;
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

@@ -89,6 +89,13 @@ jobs:
       - run: node scripts/build-electron.mjs
       - run: node scripts/build-server.mjs
 
+      # OpenAPI → TS 类型同步校验：openapi.json 变更必须重新生成 schema.d.ts 一并提交，
+      # 否则前端类型与契约静默漂移（gen-types 依赖上一步的 daemon 产物）
+      - name: Check generated types in sync
+        run: |
+          node scripts/gen-types.mjs
+          git diff --exit-code web/src/api/schema.d.ts
+
       # 打包完整性冒烟：--dir 产出未压缩目录即可验证 files/extraResources 齐全（含 electron/out 主进程）
       - name: Pack smoke (dir)
         run: node scripts/pack.mjs --dir --publish never

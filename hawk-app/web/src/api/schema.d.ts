@@ -4,109 +4,6 @@
  */
 
 export interface paths {
-    "/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/app/startup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfStartupInfo"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/app/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfTaskStatus"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/app/info": {
         parameters: {
             query?: never;
@@ -114,26 +11,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfAppInfo"];
-                    };
-                };
-            };
-        };
+        /**
+         * 运行信息；access 级别由鉴权中间件写入请求扩展。lan 为局域网监听实况
+         *     （设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）
+         */
+        get: operations["info"];
         put?: never;
         post?: never;
         delete?: never;
@@ -149,52 +31,44 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description 读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权） */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfLanSettings"];
-                    };
-                };
-            };
+        /** 读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权） */
+        get: operations["get_lan"];
+        /** 写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误 */
+        put: operations["put_lan"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/startup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-        /** @description 写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误 */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["LanSettingsPutRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfLanSettings"];
-                    };
-                };
-            };
+        /** 启动状态：ready / starting（带进度）/ error（初始索引失败，message 为原因） */
+        get: operations["startup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
+        /** 后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照） */
+        get: operations["status"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -209,910 +83,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library/info": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfLibraryInfo"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library/reindex": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library/rescan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/library/refresh_cache": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["LibraryRefreshCacheRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfLibraryRefreshCacheResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folder/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfFolderNode"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folder/create": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["FolderCreateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfFolderNode"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folder/update": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["FolderUpdateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfFolderNode"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folder/delete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["FolderPathRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/folder/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["FolderPathRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": null | components["schemas"]["ItemListRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfItemListResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/skeleton": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": null | components["schemas"]["ItemListRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfItemSkeletonResponse"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/detail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query: {
-                    id: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfItemDto"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/count": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfint"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/add": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ItemAddRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/update": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ItemUpdateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/batch_update": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ItemBatchUpdateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/delete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ItemIdRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ItemIdRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/replace": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ItemReplaceRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/thumbnail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query: {
-                    id: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query: {
-                    id: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/refresh_thumbnail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ItemRefreshThumbnailRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/trash/clear": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/category/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfCategoryInfo[]"];
-                    };
-                };
-            };
-        };
+        /**
+         * Token 发现：浏览器插件零配置接入。
+         *     安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；
+         *     Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
+         *     注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
+         *     remote 模块的隧道端必须拒绝转发本端点并改写 Host（见 docs/backend/remote-protocol.md 数据面）
+         */
+        get: operations["token"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1130,69 +108,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["CategoryCreateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/category/update": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["CategoryUpdateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
+        /** 创建分类（注册表写入由索引流水线执行） */
+        post: operations["category_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1208,63 +125,23 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["CategoryNameRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
+        /** 删除分类（级联清除全部 item 的分类赋值） */
+        post: operations["category_delete"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tag/list": {
+    "/api/v1/category/list": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfTagInfo[]"];
-                    };
-                };
-            };
-        };
+        /** 分类列表 = 注册表 ∪ 全部 item 赋值并集；count 为库内（不含回收站）item 数 */
+        get: operations["category_list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1273,7 +150,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tag/create": {
+    "/api/v1/category/update": {
         parameters: {
             query?: never;
             header?: never;
@@ -1282,141 +159,27 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["TagCreateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
+        /** 重命名分类（级联迁移全部 item 的分类赋值） */
+        post: operations["category_update"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tag/update": {
+    "/api/v1/events": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["TagUpdateRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tag/delete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["TagNameRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/view/preferences": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfDictionaryOfstringAndViewSort"];
-                    };
-                };
-            };
-        };
+        /**
+         * SSE 事件订阅：素材库变更推送。帧格式 `event: <事件名>` + `data: <JSON 载荷>`；
+         *     全部事件名与载荷结构见 SseEvents（键即事件名）。
+         *     消费跟不上（lagged）或总线关闭即断开；重连后须以 item/skeleton + folder/list 全量对齐
+         */
+        get: operations["events"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1425,7 +188,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/view/preference": {
+    "/api/v1/folder/create": {
         parameters: {
             query?: never;
             header?: never;
@@ -1433,53 +196,311 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["ViewPreferencePutRequest"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
+        put?: never;
+        /** 新建目录（目标已存在报 FILE_EXISTS）；目录结构变化经 folder.changed 广播 */
+        post: operations["folder_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/folder/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
+        get?: never;
+        put?: never;
+        /** 删除:整体移入 .hawk/trash/(保留目录结构) */
+        post: operations["folder_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/folder/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 完整文件夹树（实时从文件系统构建，排除 .hawk 与被 ignore 目录；count 含祖先目录） */
+        get: operations["folder_list"];
+        put?: never;
         post?: never;
-        delete: {
-            parameters: {
-                query: {
-                    scope: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["EnvelopeOfObject"];
-                    };
-                };
-            };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/folder/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
+        get?: never;
+        put?: never;
+        /** 恢复：按原路径放回，被占用时报 FILE_EXISTS */
+        post: operations["folder_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/folder/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重命名/移动目录（禁止移入自身子目录；级联迁移经 DirMoveJob 由流水线执行） */
+        post: operations["folder_update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 路径导入 / URL 下载 / base64 入库（三选一取内容）。目标已存在报 FILE_EXISTS；
+         *     skip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）
+         */
+        post: operations["item_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/batch_update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量更新：标签/分类并集追加，评分/文件夹设置；不存在的 id 记入 missing_ids 不整体失败 */
+        post: operations["item_batch_update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 库内 item 总数（不含回收站） */
+        get: operations["item_count"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 移入回收站（保留目录结构，冲突加 ` (n)` 后缀）；不带 path 为卡片级操作（回收全部库内位置） */
+        post: operations["item_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 单 item 详情（锁内投影） */
+        get: operations["item_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 主位置（优先库内）原图二进制：流式返回，Content-Type 按扩展名 mime_guess，Cache-Control immutable */
+        get: operations["item_file"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 分页查询：全过滤条件 AND 组合，主键同值按 id 打破平局，次序与 skeleton 逐位一致 */
+        post: operations["item_list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/refresh_thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 强制重建缩略图（取可读主位置；完成后经 item.updated 通知前端重建 <img>） */
+        post: operations["item_refresh_thumbnail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 内容替换(item/replace):客户端编辑(旋转/裁切等)后的新内容提交存储层。
+         *     内容必须可识别且**格式与文件扩展名一致**（扩展名与内容错位会破坏类型推断与预览）；
+         *     哈希相同则幂等直接返回当前投影；写回保留原 mtime（修正性编辑不改变素材的时序位置）；
+         *     `submit_upsert` 触发 id 漂移闭环（元数据继承迁移/事件/缩略图重建）
+         */
+        post: operations["item_replace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从回收站恢复（按原路径放回；同名冲突的位置跳过留在回收站，全部冲突才报 FILE_EXISTS） */
+        post: operations["item_restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/skeleton": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 骨架查询：与 list 同查询同排序，返回轻量骨架（虚拟网格布局依据） */
+        post: operations["item_skeleton"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/thumbnail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 缩略图：单一尺寸 1024 的 webp 缓存，Cache-Control immutable。
+         *     未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ 直接回源原图（200，后台入队生成缓存）；
+         *     不可渲染格式（tiff 等）生成中 404（经 item.updated 重建后可用）
+         */
+        get: operations["item_thumbnail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/item/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 元数据修改：改名/移动做真实文件操作后经流水线同步；tags/categories/star/annotation/url 直接写元数据 */
+        post: operations["item_update"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1495,38 +516,221 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 上传素材（multipart/form-data）
-         * @description 浏览器端无文件路径可引用（拖拽/文件选择器拿到的是内容），经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）。写权限：admin 恒可用；viewer 需 [web].writable。
+         * multipart/form-data 上传：浏览器无文件路径可引用（拖拽/文件选择器拿到的是内容），
+         *     经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/
+         *     skip_existing（可选，内容已在库内时跳过）。
+         *     写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）
          */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "multipart/form-data": {
-                        /** Format: binary */
-                        file: string;
-                        folder_path?: string;
-                        name?: string;
-                        /** @description 传 "true" 时内容已在库内则跳过 */
-                        skip_existing?: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
+        post: operations["item_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
+        /** 库信息：显示名取 config 的 name，缺省目录名 */
+        get: operations["library_info"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/refresh_cache": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 按范围刷新派生缓存（补缺失模式）：对范围内全部 item 派发修复任务——
+         *     补缺失宽高（0 × 0）+ 生成缺失尺寸缩略图 + 提炼缺失调色板，不重建已有文件。
+         *     用户遇到显示异常时的手动修复入口；异步执行立即返回，积压经 task.progress(thumbnail) 可见
+         */
+        post: operations["refresh_cache"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 全量重建索引：重算全部哈希，异步执行，立即返回 */
+        post: operations["reindex"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/rescan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 刷新缓存：忽略快照强制遍历全部文件做复用判定（不读文件内容）。异步执行，立即返回 */
+        post: operations["rescan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tag/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 创建标签（注册表写入由索引流水线执行） */
+        post: operations["tag_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tag/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 删除标签（级联清除全部 item 的标签赋值） */
+        post: operations["tag_delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tag/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 标签列表 = 注册表 ∪ 赋值并集；count 为库内（不含回收站）item 数 */
+        get: operations["tag_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tag/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重命名标签（级联迁移全部 item 的标签赋值） */
+        post: operations["tag_update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trash/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 清空回收站：先由流水线清理索引位置、元数据与缓存，再物理删除 */
+        post: operations["trash_clear"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/view/preference": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 写一条视图偏好（覆盖写；scope 与排序值经校验规范化） */
+        put: operations["preference_put"];
+        post?: never;
+        /** 删除一条视图偏好（不存在则无动作） */
+        delete: operations["preference_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/view/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部视图偏好（scope → 排序） */
+        get: operations["preferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 就绪探活：无需 token。初始索引完成前返回 503 */
+        get: operations["health"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1538,26 +742,19 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         AppInfo: {
-            version: string;
-            platform: string;
-            exec_path: string;
             access: string;
-            lan: {
-                active: boolean;
-                /** Format: int32 */
-                port?: number;
-                error?: string;
-            };
-            /** @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable（局域网写权限开关） */
+            exec_path: string;
+            lan: components["schemas"]["LanInfo"];
+            platform: string;
+            version: string;
+            /**
+             * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
+             *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）
+             */
             writable: boolean;
         };
         CategoryCreateRequest: {
             name: string;
-        };
-        CategoryInfo: {
-            name: string;
-            /** Format: int32 */
-            count: number | string;
         };
         CategoryNameRequest: {
             name: string;
@@ -1566,314 +763,504 @@ export interface components {
             name: string;
             new_name: string;
         };
-        EnvelopeOfAppInfo: {
-            status: string;
-            data: null | components["schemas"]["AppInfo"];
-        };
-        "EnvelopeOfCategoryInfo[]": {
-            status: string;
-            data: null | components["schemas"]["CategoryInfo"][];
-        };
-        EnvelopeOfDictionaryOfstringAndViewSort: {
-            status: string;
-            data: null | {
-                [key: string]: components["schemas"]["ViewSort"];
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_AppInfo: {
+            data?: {
+                access: string;
+                exec_path: string;
+                lan: components["schemas"]["LanInfo"];
+                platform: string;
+                version: string;
+                /**
+                 * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
+                 *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）
+                 */
+                writable: boolean;
             };
-        };
-        EnvelopeOfFolderNode: {
             status: string;
-            data: null | components["schemas"]["FolderNode"];
         };
-        EnvelopeOfint: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_FolderNode: {
+            data?: {
+                /** @description 子目录（自引用；no_recursion 生成 $ref 切断内联递归） */
+                children: components["schemas"]["FolderNode"][];
+                count: number;
+                /** Format: int64 */
+                modification_time: number;
+                name: string;
+                path: string;
+            };
             status: string;
-            /** Format: int32 */
-            data: number | string;
         };
-        EnvelopeOfItemDto: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_HashMap_String_ViewSortDto: {
+            data?: {
+                [key: string]: {
+                    order: string;
+                    order_by: string;
+                };
+            };
             status: string;
-            data: null | components["schemas"]["ItemDto"];
         };
-        EnvelopeOfItemListResponse: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_ItemAddResponse: {
+            data?: {
+                already_existed: boolean;
+                item: components["schemas"]["ItemDto"];
+                /**
+                 * @description 内容已存在且按 skip_existing 跳过：未写入文件、未追加路径（already_existed 旧语义仍保留：
+                 *     已写入并关联到既有条目）
+                 */
+                skipped: boolean;
+            };
             status: string;
-            data: null | components["schemas"]["ItemListResponse"];
         };
-        EnvelopeOfItemSkeletonResponse: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_ItemBatchUpdateResponse: {
+            data?: {
+                missing_ids: string[];
+                updated: number;
+            };
             status: string;
-            data: null | components["schemas"]["ItemSkeletonResponse"];
         };
-        EnvelopeOfLanSettings: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_ItemDto: {
+            /** @description API 的 Item 对象（snake_case） */
+            data?: {
+                annotation?: string | null;
+                categories: string[];
+                ext: string;
+                folders: string[];
+                /** Format: int32 */
+                height: number;
+                id: string;
+                /** Format: int64 */
+                modification_time: number;
+                name: string;
+                palette: components["schemas"]["PaletteColorDto"][];
+                paths: string[];
+                /** Format: int64 */
+                size: number;
+                /** Format: int32 */
+                star: number;
+                tags: string[];
+                url?: string | null;
+                /** Format: int32 */
+                width: number;
+            };
             status: string;
-            data: null | components["schemas"]["LanSettings"];
         };
-        EnvelopeOfLibraryInfo: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_ItemListResponse: {
+            data?: {
+                items: components["schemas"]["ItemDto"][];
+                /** Format: int32 */
+                limit: number;
+                /** Format: int32 */
+                offset: number;
+                total: number;
+                /** Format: int64 */
+                total_size: number;
+            };
             status: string;
-            data: null | components["schemas"]["LibraryInfo"];
         };
-        EnvelopeOfObject: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_ItemSkeletonResponse: {
+            data?: {
+                items: components["schemas"]["ItemSkeletonDto"][];
+                /** Format: int64 */
+                total_size: number;
+            };
             status: string;
-            data: unknown;
         };
-        LibraryRefreshCacheRequest: {
-            /** @enum {string} */
-            type: "folder" | "category" | "tag" | "library";
-            /** @description folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略 */
-            value?: string;
-        };
-        LibraryRefreshCacheResponse: {
-            /**
-             * Format: int32
-             * @description 实际入队的修复任务数
-             */
-            dispatched: number;
-        };
-        EnvelopeOfLibraryRefreshCacheResponse: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanSettingsDto: {
+            data?: {
+                /** @description 运行状态（热重绑实况）：active=监听中，error=绑定失败原因 */
+                active: boolean;
+                enabled: boolean;
+                error?: string | null;
+                /** Format: int32 */
+                port: number;
+                separate_write_token: boolean;
+                token: string;
+                writable: boolean;
+                write_token: string;
+            };
             status: string;
-            data: components["schemas"]["LibraryRefreshCacheResponse"];
         };
-        EnvelopeOfStartupInfo: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LibraryInfo: {
+            data?: {
+                application_version: string;
+                /** Format: int64 */
+                modification_time: number;
+                name: string;
+                path: string;
+            };
             status: string;
-            data: null | components["schemas"]["StartupInfo"];
         };
-        "EnvelopeOfTagInfo[]": {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_RefreshCacheResponse: {
+            data?: {
+                /** @description 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计） */
+                dispatched: number;
+            };
             status: string;
-            data: null | components["schemas"]["TagInfo"][];
         };
-        EnvelopeOfTaskStatus: {
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_StartupInfo: {
+            data?: {
+                message?: string | null;
+                phase?: string | null;
+                /** Format: int32 */
+                processed?: number | null;
+                status: string;
+                /** Format: int32 */
+                total?: number | null;
+            };
             status: string;
-            data: null | components["schemas"]["TaskStatus"];
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_TaskStatus: {
+            data?: {
+                index: components["schemas"]["IndexBacklog"];
+                thumbnail: components["schemas"]["TaskBacklog"];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_Vec_TaxonInfo: {
+            data?: {
+                count: number;
+                name: string;
+            }[];
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_usize: {
+            data?: number;
+            status: string;
+        };
+        /** @description reason 目前恒为 external，客户端应忽略取值（结构为将来预留） */
+        FolderChangedPayload: {
+            reason: string;
         };
         FolderCreateRequest: {
             name: string;
-            parent_path: null | string;
+            parent_path?: string | null;
         };
         FolderNode: {
-            path: string;
-            name: string;
+            /** @description 子目录（自引用；no_recursion 生成 $ref 切断内联递归） */
             children: components["schemas"]["FolderNode"][];
+            count: number;
             /** Format: int64 */
-            modification_time: number | string;
-            /** Format: int32 */
-            count: number | string;
+            modification_time: number;
+            name: string;
+            path: string;
         };
         FolderPathRequest: {
             path: string;
         };
         FolderUpdateRequest: {
+            name?: string | null;
+            parent_path?: string | null;
             path: string;
-            name: null | string;
-            parent_path: null | string;
         };
         IndexBacklog: {
             /** Format: int32 */
-            pending: number | string;
+            active: number;
             /** Format: int32 */
-            active: number | string;
-            phase: null | string;
+            pending: number;
+            phase?: string | null;
             /** Format: int32 */
-            processed: null | number | string;
+            processed?: number | null;
             /** Format: int32 */
-            total: null | number | string;
+            total?: number | null;
         };
         ItemAddRequest: {
-            path?: null | string;
-            url?: null | string;
-            img_base64?: null | string;
-            name?: null | string;
-            folder_path?: null | string;
-            tags?: null | string[];
-            categories?: null | string[];
-            annotation?: null | string;
-            website?: null | string;
+            annotation?: string | null;
+            categories?: string[] | null;
+            folder_path?: string | null;
+            img_base64?: string | null;
+            name?: string | null;
+            path?: string | null;
+            /** @description 内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true */
+            skip_existing?: boolean;
+            tags?: string[] | null;
+            url?: string | null;
+            /** @description 来源网页(收集场景:图片所在的页面地址),记录为 Item.url;与下载用的 url 区分 */
+            website?: string | null;
+        };
+        ItemAddResponse: {
+            already_existed: boolean;
+            item: components["schemas"]["ItemDto"];
             /**
-             * @description 内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true
-             * @default false
+             * @description 内容已存在且按 skip_existing 跳过：未写入文件、未追加路径（already_existed 旧语义仍保留：
+             *     已写入并关联到既有条目）
              */
-            skip_existing: boolean;
+            skipped: boolean;
         };
         ItemBatchUpdateRequest: {
+            add_categories?: string[] | null;
+            add_tags?: string[] | null;
+            folder_path?: string | null;
             ids: string[];
-            add_tags?: null | string[];
-            add_categories?: null | string[];
             /** Format: int32 */
-            star?: null | number | string;
-            folder_path?: null | string;
+            star?: number | null;
         };
+        ItemBatchUpdateResponse: {
+            missing_ids: string[];
+            updated: number;
+        };
+        /** @description API 的 Item 对象（snake_case） */
         ItemDto: {
-            id: string;
-            name: string;
+            annotation?: string | null;
+            categories: string[];
             ext: string;
-            /** Format: int32 */
-            width?: number | string;
-            /** Format: int32 */
-            height?: number | string;
-            /** Format: int64 */
-            size?: number | string;
-            url?: null | string;
-            tags?: string[];
-            categories?: string[];
-            paths: string[];
             folders: string[];
             /** Format: int32 */
-            star?: number | string;
-            annotation?: null | string;
+            height: number;
+            id: string;
             /** Format: int64 */
-            modification_time?: number | string;
-            palette?: components["schemas"]["PaletteColorDto"][];
+            modification_time: number;
+            name: string;
+            palette: components["schemas"]["PaletteColorDto"][];
+            paths: string[];
+            /** Format: int64 */
+            size: number;
+            /** Format: int32 */
+            star: number;
+            tags: string[];
+            url?: string | null;
+            /** Format: int32 */
+            width: number;
+        };
+        ItemIdPayload: {
+            id: string;
         };
         ItemIdRequest: {
             id: string;
-            path: null | string;
+            path?: string | null;
         };
         ItemListRequest: {
-            ids?: null | string[];
-            keywords?: null | string[];
-            tags?: null | string[];
-            /** Format: int32 */
-            star?: null | number | string;
-            folders?: null | string[];
+            annotation?: string | null;
+            categories?: string[] | null;
+            categories_match?: string | null;
+            color?: string | null;
+            exclude_categories?: string[] | null;
+            exclude_tags?: string[] | null;
+            ext?: string | null;
+            folders?: string[] | null;
             folders_exact?: boolean;
-            categories?: null | string[];
-            categories_match?: null | string;
-            exclude_categories?: null | string[];
-            exclude_tags?: null | string[];
+            ids?: string[] | null;
+            in_trash?: boolean;
+            keywords?: string[] | null;
+            /** Format: int32 */
+            limit?: number;
+            /** Format: int32 */
+            offset?: number;
+            order?: string | null;
+            order_by?: string | null;
+            /** Format: int32 */
+            star?: number | null;
+            tags?: string[] | null;
+            url?: string | null;
             without_categories?: boolean;
             without_tags?: boolean;
-            ext?: null | string;
-            annotation?: null | string;
-            url?: null | string;
-            color?: null | string;
-            in_trash?: boolean;
-            order_by?: null | string;
-            order?: null | string;
-            /** Format: int32 */
-            offset?: number | string;
-            /** Format: int32 */
-            limit?: number | string;
         };
         ItemListResponse: {
             items: components["schemas"]["ItemDto"][];
             /** Format: int32 */
-            total: number | string;
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            total: number;
             /** Format: int64 */
-            total_size: number | string;
-            /** Format: int32 */
-            offset: number | string;
-            /** Format: int32 */
-            limit: number | string;
+            total_size: number;
         };
         ItemRefreshThumbnailRequest: {
             id: string;
         };
         ItemReplaceRequest: {
             id: string;
-            path?: null | string;
             img_base64: string;
+            path?: string | null;
         };
+        /** @description 网格骨架：虚拟布局所需的最低限度信息（ItemDto 的同序轻量投影） */
         ItemSkeletonDto: {
+            /** Format: int32 */
+            height: number;
             id: string;
             /** Format: int32 */
-            width?: number | string;
+            star: number;
             /** Format: int32 */
-            height?: number | string;
-            /** Format: int32 */
-            star?: number | string;
+            width: number;
         };
         ItemSkeletonResponse: {
             items: components["schemas"]["ItemSkeletonDto"][];
             /** Format: int64 */
-            total_size: number | string;
+            total_size: number;
         };
         ItemUpdateRequest: {
+            annotation?: string | null;
+            categories?: string[] | null;
+            folder_path?: string | null;
             id: string;
-            path?: null | string;
-            name?: null | string;
-            tags?: null | string[];
-            folder_path?: null | string;
+            name?: string | null;
+            path?: string | null;
             /** Format: int32 */
-            star?: null | number | string;
-            categories?: null | string[];
-            annotation?: null | string;
-            url?: null | string;
+            star?: number | null;
+            tags?: string[] | null;
+            url?: string | null;
         };
-        LanSettings: {
-            enabled: boolean;
-            /** Format: int32 */
-            port: number;
-            token: string;
-            /** @description 允许局域网 token 执行写操作（上传/删除/修改等）；关闭则一律只读（403 READ_ONLY） */
-            writable: boolean;
-            /** @description 拆分只读/可写 token：token 降为只读，write_token 具备写权限 */
-            separate_write_token: boolean;
-            /** @description 拆分模式下的可写 token */
-            write_token: string;
-            /** @description 局域网监听实况：是否已绑定 */
+        /** @description multipart 表单描述（仅用于 OpenAPI；实现为流式 Multipart 提取） */
+        ItemUploadForm: {
+            /**
+             * Format: binary
+             * @description 文件内容（必需；文件名只取末段防跨目录，扩展名决定类型）
+             */
+            file: string;
+            /** @description 目标文件夹（库内相对路径，缺省库根；不存在自动创建） */
+            folder_path?: string | null;
+            /** @description 文件名覆盖（不含扩展名；默认取 file 文件名） */
+            name?: string | null;
+            /** @description 内容已在库内（不含回收站）时跳过 */
+            skip_existing?: boolean | null;
+        };
+        ItemsAddedPayload: {
+            ids: string[];
+        };
+        ItemsUpdatedPayload: {
+            items: components["schemas"]["ItemDto"][];
+        };
+        LanInfo: {
             active: boolean;
-            /** @description 监听绑定失败原因（热重绑失败时暴露） */
-            error?: string;
+            error?: string | null;
+            /** Format: int32 */
+            port?: number | null;
         };
-        LanSettingsPutRequest: {
+        LanSettingsDto: {
+            /** @description 运行状态（热重绑实况）：active=监听中，error=绑定失败原因 */
+            active: boolean;
             enabled: boolean;
+            error?: string | null;
             /** Format: int32 */
             port: number;
-            token?: string;
+            separate_write_token: boolean;
+            token: string;
             writable: boolean;
-            separate_write_token?: boolean;
-            write_token?: string;
+            write_token: string;
         };
         LibraryInfo: {
+            application_version: string;
+            /** Format: int64 */
+            modification_time: number;
             name: string;
             path: string;
-            /** Format: int64 */
-            modification_time: number | string;
-            application_version: string;
         };
+        /** @description API 的调色板颜色项 */
         PaletteColorDto: {
+            /** @description # 前缀小写 hex，如 "#344441" */
             color: string;
-            /** Format: float */
-            percentage?: number | string;
+            /**
+             * Format: float
+             * @description 像素覆盖占比（0–100，1 位小数）
+             */
+            percentage: number;
+        };
+        PutLanBody: {
+            enabled: boolean;
+            /** Format: int32 */
+            port: number;
+            separate_write_token?: boolean;
+            token?: string | null;
+            writable: boolean;
+            write_token?: string | null;
+        };
+        RefreshCacheRequest: {
+            /** @description folder | category | tag | library */
+            type: string;
+            /** @description folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略 */
+            value?: string | null;
+        };
+        RefreshCacheResponse: {
+            /** @description 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计） */
+            dispatched: number;
+        };
+        /**
+         * @description SSE 事件载荷注册表：键为 `event:` 帧的事件名，值为 `data:` 帧 JSON 载荷的结构。
+         *     与 core::taxonomy::ItemEvents 常量一一对应（契约测试双向比对）
+         */
+        SseEvents: {
+            "folder.changed": components["schemas"]["FolderChangedPayload"];
+            "item.added": components["schemas"]["ItemDto"];
+            "item.removed": components["schemas"]["ItemIdPayload"];
+            "item.restored": components["schemas"]["ItemDto"];
+            "item.trashed": components["schemas"]["ItemIdPayload"];
+            "item.updated": components["schemas"]["ItemDto"];
+            /** @description 批量入库（扫描导入）合并事件，与单条 item.added 互斥；客户端按「有新增」信号重载骨架 */
+            "items.added": components["schemas"]["ItemsAddedPayload"];
+            /** @description item.updated 的批量变体（调色板批量回写等） */
+            "items.updated": components["schemas"]["ItemsUpdatedPayload"];
+            "task.progress": components["schemas"]["TaskProgress"];
         };
         StartupInfo: {
+            message?: string | null;
+            phase?: string | null;
+            /** Format: int32 */
+            processed?: number | null;
             status: string;
-            phase: null | string;
             /** Format: int32 */
-            processed: null | number | string;
-            /** Format: int32 */
-            total: null | number | string;
-            message: null | string;
+            total?: number | null;
         };
-        TagCreateRequest: {
-            name: string;
-        };
-        TagInfo: {
-            name: string;
-            /** Format: int32 */
-            count: number | string;
-        };
-        TagNameRequest: {
-            name: string;
-        };
-        TagUpdateRequest: {
-            name: string;
-            new_name: string;
+        /** @description 无 data 的成功响应：`{"status":"success"}` */
+        SuccessOnly: {
+            status: string;
         };
         TaskBacklog: {
             /** Format: int32 */
-            pending: number | string;
+            active: number;
             /** Format: int32 */
-            active: number | string;
+            pending: number;
+        };
+        /**
+         * @description 后台任务进度快照(task.progress 事件与 app/status 端点共用)。
+         *     phase/processed/total 仅 index 任务在扫描期间携带；非扫描期间省略（None）
+         */
+        TaskProgress: {
+            /** Format: int32 */
+            active: number;
+            /** Format: int32 */
+            pending: number;
+            phase?: string | null;
+            /** Format: int32 */
+            processed?: number | null;
+            task: string;
+            /** Format: int32 */
+            total?: number | null;
         };
         TaskStatus: {
-            thumbnail: components["schemas"]["TaskBacklog"];
             index: components["schemas"]["IndexBacklog"];
+            thumbnail: components["schemas"]["TaskBacklog"];
+        };
+        TaxonInfo: {
+            count: number;
+            name: string;
+        };
+        /** @description token 发现端点响应（信封的 data 直接为 token 字符串） */
+        TokenResponse: {
+            data: string;
+            status: string;
         };
         ViewPreferencePutRequest: {
+            order: string;
+            order_by: string;
             scope: string;
-            order_by: string;
-            order: string;
         };
-        ViewSort: {
-            order_by: string;
+        ViewSortDto: {
             order: string;
+            order_by: string;
         };
     };
     responses: never;
@@ -1883,4 +1270,986 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    info: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_AppInfo"];
+                };
+            };
+        };
+    };
+    get_lan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanSettingsDto"];
+                };
+            };
+        };
+    };
+    put_lan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutLanBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanSettingsDto"];
+                };
+            };
+        };
+    };
+    startup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_StartupInfo"];
+                };
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_TaskStatus"];
+                };
+            };
+        };
+    };
+    token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+        };
+    };
+    category_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    category_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryNameRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    category_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_Vec_TaxonInfo"];
+                };
+            };
+        };
+    };
+    category_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    events: {
+        parameters: {
+            query: {
+                /** @description 访问 token（EventSource 无法设置请求头） */
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream 长连接 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+        };
+    };
+    folder_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_FolderNode"];
+                };
+            };
+        };
+    };
+    folder_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderPathRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    folder_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_FolderNode"];
+                };
+            };
+        };
+    };
+    folder_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderPathRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    folder_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_FolderNode"];
+                };
+            };
+        };
+    };
+    item_add: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemAddRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemAddResponse"];
+                };
+            };
+        };
+    };
+    item_batch_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemBatchUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemBatchUpdateResponse"];
+                };
+            };
+        };
+    };
+    item_count: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_usize"];
+                };
+            };
+        };
+    };
+    item_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemIdRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    item_detail: {
+        parameters: {
+            query: {
+                /** @description item id（内容 BLAKE3 哈希 hex） */
+                id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemDto"];
+                };
+            };
+        };
+    };
+    item_file: {
+        parameters: {
+            query: {
+                /** @description item id（内容 BLAKE3 哈希 hex） */
+                id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原图二进制 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+        };
+    };
+    item_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemListRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemListResponse"];
+                };
+            };
+        };
+    };
+    item_refresh_thumbnail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemRefreshThumbnailRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    item_replace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemReplaceRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemDto"];
+                };
+            };
+        };
+    };
+    item_restore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemIdRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    item_skeleton: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemListRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemSkeletonResponse"];
+                };
+            };
+        };
+    };
+    item_thumbnail: {
+        parameters: {
+            query: {
+                /** @description item id（内容 BLAKE3 哈希 hex） */
+                id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 缩略图（webp）或回源原图（Content-Type 按源格式） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+            /** @description 不可渲染格式，生成中 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    item_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemDto"];
+                };
+            };
+        };
+    };
+    item_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["ItemUploadForm"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemAddResponse"];
+                };
+            };
+        };
+    };
+    library_info: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LibraryInfo"];
+                };
+            };
+        };
+    };
+    refresh_cache: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshCacheRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_RefreshCacheResponse"];
+                };
+            };
+        };
+    };
+    reindex: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    rescan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    tag_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    tag_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryNameRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    tag_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_Vec_TaxonInfo"];
+                };
+            };
+        };
+    };
+    tag_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    trash_clear: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    preference_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ViewPreferencePutRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    preference_delete: {
+        parameters: {
+            query: {
+                /** @description 视图作用域：folder:<路径>（"" 为库根）/category:<名>/tag:<名> */
+                scope: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_HashMap_String_ViewSortDto"];
+                };
+            };
+        };
+    };
+    health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 就绪：纯文本 ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description 初始索引构建中 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+}

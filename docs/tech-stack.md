@@ -28,6 +28,6 @@ Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），�
 
 ## 契约：OpenAPI
 
-- OpenAPI schema 固化于 `hawk-daemon/openapi.json`，由后端静态服务（`/openapi/v1.json`）
-- TypeScript 类型从 schema 生成（如 openapi-typescript）
-- CI 校验 schema 与代码一致，防止前后端漂移
+- OpenAPI schema 由后端代码生成（utoipa：`#[utoipa::path]` + `ToSchema` derive，路由即文档），固化于 `hawk-daemon/openapi.json`（`cargo run -- --dump-openapi` 重新生成）
+- 固化文件与代码的同步由契约测试保证（`cargo test`：`api/contract_tests.rs` 的 `openapi_json_in_sync`）；同时校验全部端点的真实响应符合 schema、SSE 事件名与 `SseEvents` 双向一致
+- TypeScript 类型从 schema 生成（openapi-typescript，`npm run gen:types`）；CI 校验生成产物与仓库同步

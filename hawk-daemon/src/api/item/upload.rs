@@ -4,10 +4,32 @@ use super::*;
 
 // ---------- upload（web 端内容上传） ----------
 
+/// multipart 表单描述（仅用于 OpenAPI；实现为流式 Multipart 提取）
+#[allow(dead_code)]
+#[derive(utoipa::ToSchema)]
+struct ItemUploadForm {
+    /// 文件内容（必需；文件名只取末段防跨目录，扩展名决定类型）
+    #[schema(value_type = String, format = Binary)]
+    file: Vec<u8>,
+    /// 目标文件夹（库内相对路径，缺省库根；不存在自动创建）
+    folder_path: Option<String>,
+    /// 文件名覆盖（不含扩展名；默认取 file 文件名）
+    name: Option<String>,
+    /// 内容已在库内（不含回收站）时跳过
+    skip_existing: Option<bool>,
+}
+
 /// multipart/form-data 上传：浏览器无文件路径可引用（拖拽/文件选择器拿到的是内容），
 /// 经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/
 /// skip_existing（可选，内容已在库内时跳过）。
 /// 写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/upload",
+    tags = ["item"],
+    request_body(content = ItemUploadForm, content_type = "multipart/form-data"),
+    responses((status = 200, description = "OK", body = Envelope<ItemAddResponse>))
+)]
 pub(crate) async fn item_upload(
     State(state): State<SharedState>,
     mut multipart: axum::extract::Multipart,
