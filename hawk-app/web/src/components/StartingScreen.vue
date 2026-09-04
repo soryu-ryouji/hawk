@@ -14,6 +14,7 @@ const LABELS: Record<string, string> = {
   hash: '正在计算文件哈希…',
   apply: '正在更新索引…',
   sync: '正在同步素材信息…',
+  migrate: '正在迁移缓存…',
   done: '即将完成…',
 };
 </script>

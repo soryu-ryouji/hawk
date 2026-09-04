@@ -15,6 +15,9 @@ export const IPC = {
   updateDownload: 'hawk:update-download',
   updateInstall: 'hawk:update-install',
   showInFinder: 'hawk:show-in-finder',
+  cacheDirGet: 'hawk:cache-dir-get',
+  cacheDirPick: 'hawk:cache-dir-pick',
+  cacheDirChange: 'hawk:cache-dir-change',
   winMinimize: 'hawk:win-minimize',
   winMaximizeToggle: 'hawk:win-maximize-toggle',
   winClose: 'hawk:win-close',
@@ -85,6 +88,12 @@ export interface HawkShell {
   lanAddresses(): Promise<string[]>;
   /** 在系统文件管理器中显示库内文件（相对路径） */
   showInFinder(relPath: string): Promise<void>;
+  /** 当前缓存父目录（isDefault=true 表示系统默认路径） */
+  getCacheDir(): Promise<{ current: string; isDefault: boolean }>;
+  /** 弹目录选择框选新缓存父目录（取消返回 null） */
+  pickCacheDir(): Promise<string | null>;
+  /** 迁移缓存父目录（整体搬迁：先复制后删除；server 重启，就绪经 onServerStarted）。返回错误文案或 null */
+  changeCacheDir(path: string): Promise<string | null>;
   /** 拖拽导入时取文件绝对路径（Electron webUtils） */
   getPathForFile(file: File): string;
   minimizeWindow(): Promise<void>;

@@ -25,6 +25,9 @@ pub struct LibraryPaths {
     pub categories_file: String,
     pub tags_file: String,
     pub view_file: String,
+    /// 缓存目录（缩略图与 index.db 所在）：默认 <系统缓存>/hawk/cache/<库名>_<哈希>，
+    /// 可经 --cache-parent 指定全局父目录（桌面端设置面板配置）
+    pub cache_dir: String,
 }
 
 impl LibraryPaths {
@@ -33,12 +36,14 @@ impl LibraryPaths {
 }
 
 impl LibraryPaths {
-    /// cache_dir 参数覆盖（仅供测试指向临时目录），null 时用库外系统缓存目录
-    pub fn new(root: &str, cache_dir: Option<String>) -> LibraryPaths {
+    /// cache_parent：缓存父目录覆盖（--cache-parent / 测试指向临时目录）；
+    /// None 时用系统缓存目录下的 hawk/cache。库缓存子目录 <库名>_<路径哈希16位> 在其下拼接
+    pub fn new(root: &str, cache_parent: Option<String>) -> LibraryPaths {
         let root = full_path(root);
         let hawk_dir = join_path(&root, HAWK_DIR_NAME);
         let metadata_dir = join_path(&hawk_dir, "metadata");
-        let cache_dir = cache_dir.unwrap_or_else(|| default_cache_dir(&root));
+        let parent = cache_parent.unwrap_or_else(default_cache_parent_hawk);
+        let cache_dir = join_path(&parent, &cache_dir_name(&root));
         let thumbnails_dir = join_path(&cache_dir, "thumbnails");
         let trash_dir = join_path(&hawk_dir, TRASH_DIR_NAME);
         let config_file = join_path(&hawk_dir, "config.toml");
@@ -57,7 +62,20 @@ impl LibraryPaths {
             categories_file,
             tags_file,
             view_file,
+            cache_dir,
         }
+    }
+
+    /// 缓存目录与库根不得互相包含（缓存放进库内会被扫描/监听污染索引；库嵌进缓存目录同理）。
+    /// 返回 None 表示位置合法；Some(原因) 供启动期拒绝
+    pub fn cache_location_error(&self) -> Option<String> {
+        if self.cache_dir == self.root || self.cache_dir.starts_with(&format!("{}/", self.root)) {
+            return Some("缓存目录不能位于素材库内".to_string());
+        }
+        if self.root.starts_with(&format!("{}/", self.cache_dir)) {
+            return Some("素材库不能位于缓存目录内".to_string());
+        }
+        None
     }
 
     /// 创建 .hawk/ 目录结构，并生成排除 trash 的 .gitignore（缺失的排除项会补上）
@@ -278,11 +296,12 @@ fn default_cache_parent() -> String {
     }
 }
 
-/// 缓存子目录名：库文件夹名_路径哈希前16位（小写十六进制）
-fn default_cache_dir(root: &str) -> String {
-    join_path(&join_path(&default_cache_parent(), "hawk/cache"), &cache_dir_name(root))
+/// 默认缓存父目录（<系统缓存>/hawk/cache）：默认行为与历史版本一致，既有用户缓存路径不变
+fn default_cache_parent_hawk() -> String {
+    join_path(&default_cache_parent(), "hawk/cache")
 }
 
+/// 缓存子目录名：库文件夹名_路径哈希前16位（小写十六进制）
 fn cache_dir_name(root: &str) -> String {
     format!("{}_{}", library_label(root), library_key(root))
 }
@@ -324,6 +343,31 @@ pub fn library_key(root: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_parent_override_and_location_check() {
+        // 默认：系统缓存目录下的 hawk/cache/<库名>_<哈希>（与历史版本一致）
+        let paths = LibraryPaths::new("/data/library", None);
+        assert!(paths.cache_dir.contains("hawk/cache/library_"));
+        assert!(paths.cache_location_error().is_none());
+
+        // 父目录覆盖：库子目录在其下拼接
+        let paths = LibraryPaths::new("/data/library", Some("/fast/cache".to_string()));
+        assert!(paths.cache_dir.starts_with("/fast/cache/library_"));
+        assert_eq!(paths.thumbnails_dir, format!("{}/thumbnails", paths.cache_dir));
+        assert_eq!(paths.index_db_file, format!("{}/index.db", paths.cache_dir));
+        assert!(paths.cache_location_error().is_none());
+
+        // 互斥：缓存父目录落在库内 → 拼接后的库缓存子目录也在库内，拒绝
+        let bad = LibraryPaths::new("/data/library", Some("/data/library/cache".to_string()));
+        assert!(bad.cache_location_error().is_some());
+        // 库根直接作父目录同样拒绝（拼接后仍在库内）
+        let bad = LibraryPaths::new("/data/library", Some("/data/library".to_string()));
+        assert!(bad.cache_location_error().is_some());
+        // 缓存在库的同级、库在缓存的同级均合法（斜杠边界前缀比较）
+        let ok = LibraryPaths::new("/data/cache/library", Some("/data/cache".to_string()));
+        assert!(ok.cache_location_error().is_none());
+    }
 
     #[test]
     fn relative_roundtrip() {

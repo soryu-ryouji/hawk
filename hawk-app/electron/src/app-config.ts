@@ -7,6 +7,8 @@ import type { LibraryHistoryItem } from './ipc-contract';
 interface AppConfig {
   libraryPath?: string;
   libraryHistory?: string[];
+  /** 全局缓存父目录（所有库共用，子目录按库名+哈希区分）；未设置时用系统缓存目录 */
+  cacheParent?: string;
 }
 
 export interface LibraryList {

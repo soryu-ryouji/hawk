@@ -17,13 +17,14 @@ import { hasShell } from '../platform';
 import Icon from './Icon.vue';
 import SettingsAppearance from './SettingsAppearance.vue';
 import SettingsLan from './SettingsLan.vue';
+import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
 import SettingsConnection from './SettingsConnection.vue';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
-/** 当前分区：外观 / 局域网（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
-const section = ref<'appearance' | 'lan' | 'update' | 'connection'>('appearance');
+/** 当前分区：外观 / 局域网（Electron）/ 存储（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
+const section = ref<'appearance' | 'lan' | 'storage' | 'update' | 'connection'>('appearance');
 /** 错误条（各分区经 v-model:error 写入；LAN 分区的读取/校验/保存错误） */
 const error = ref<string | null>(null);
 
@@ -111,6 +112,14 @@ async function save() {
             <button
               v-if="hasShell"
               class="nav-item"
+              :class="{ active: section === 'storage' }"
+              @click="section = 'storage'"
+            >
+              存储
+            </button>
+            <button
+              v-if="hasShell"
+              class="nav-item"
               :class="{ active: section === 'update' }"
               @click="section = 'update'"
             >
@@ -129,6 +138,7 @@ async function save() {
           <!-- 分区保活挂载（v-show）：LAN 字段编辑与更新下载进度切分区不丢；web 端不挂载 LAN/更新 -->
           <SettingsAppearance v-show="section === 'appearance'" />
           <SettingsLan v-if="hasShell" v-show="section === 'lan'" ref="lanPane" v-model:error="error" />
+          <SettingsStorage v-if="hasShell" v-show="section === 'storage'" />
           <SettingsUpdate v-if="hasShell" v-show="section === 'update'" />
           <SettingsConnection v-if="!hasShell" v-show="section === 'connection'" @logout="emit('logout')" />
         </div>

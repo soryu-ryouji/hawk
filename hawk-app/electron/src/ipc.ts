@@ -5,6 +5,7 @@ import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getLibraryRoot, listLibraries } from './app-config';
 import { openLibraryAt, pickLibrary, getStartedConn } from './server';
+import { changeCacheParent, currentCacheParent } from './cache';
 import { lanAddresses } from './lan';
 import { IPC } from './ipc-contract';
 
@@ -61,6 +62,26 @@ export function registerIpc(): void {
       dialog.showErrorBox('hawk-daemon 启动失败', String(error instanceof Error ? error.message : error));
       return false;
     }
+  });
+
+  // 缓存目录（设置面板「存储」分区）：查询当前值 / 选目录 / 校验并迁移（内部停旧 server、搬迁、重启）
+  ipcMain.handle(IPC.cacheDirGet, () => currentCacheParent());
+  ipcMain.handle(IPC.cacheDirPick, async () => {
+    const win = getMainWindow();
+    if (!win) {
+      return null;
+    }
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择缓存目录',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle(IPC.cacheDirChange, async (_event, dir: unknown) => {
+    if (typeof dir !== 'string') {
+      return '非法目录';
+    }
+    return changeCacheParent(dir);
   });
 
   ipcMain.handle(IPC.lanAddresses, () => lanAddresses());

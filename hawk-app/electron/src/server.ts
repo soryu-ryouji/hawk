@@ -104,12 +104,21 @@ function webDistDir(): string {
  */
 function startServer(libPath: string, address: string, token: string): ServerHandle {
   const { command, args } = resolveServerCommand();
+  // 全局缓存父目录（设置面板「存储」配置；未配置用系统默认）
+  const cacheParent = readConfig().cacheParent;
+  const spawnArgs = [
+    ...args,
+    '--library', libPath,
+    '--port', String(new URL(address).port),
+    '--web-dist', webDistDir(),
+    ...(cacheParent ? ['--cache-parent', cacheParent] : []),
+  ];
   // 闭包级标志：有意停止（换库/应用设置重启）时抑制 exit 广播——旧子进程终止可能晚于
   // 新 server 的拉起，全局标志会被新一轮复位，造成误报异常退出
   let intentionalExit = false;
   const child = spawn(
     command,
-    [...args, '--library', libPath, '--port', String(new URL(address).port), '--web-dist', webDistDir()],
+    spawnArgs,
     {
       env: { ...process.env, HAWK_TOKEN: token },
       stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错

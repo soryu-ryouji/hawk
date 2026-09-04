@@ -10,6 +10,8 @@ pub struct Settings {
     pub token: String,
     /// 周期对账扫描间隔（秒），0 关闭。文件监听可能静默丢事件，周期扫描保证最终一致
     pub rescan_interval_seconds: u64,
+    /// 全局缓存父目录（桌面端设置面板配置，主进程经 --cache-parent 传入）；None 用系统缓存目录
+    pub cache_parent: Option<String>,
     /// 局域网 web 查看托管的前端静态文件目录（Electron 传入 web/dist）；不存在则不托管
     pub web_dist: Option<String>,
 }
@@ -19,6 +21,7 @@ impl Settings {
         let mut library = std::env::var("HAWK_LIBRARY").ok();
         let mut port = std::env::var("HAWK_PORT").ok().and_then(|v| v.parse::<u16>().ok());
         let mut web_dist = std::env::var("HAWK_WEB_DIST").ok();
+        let mut cache_parent = std::env::var("HAWK_CACHE_PARENT").ok();
         let token = std::env::var("HAWK_TOKEN").ok();
 
         let args: Vec<String> = std::env::args().collect();
@@ -35,6 +38,10 @@ impl Settings {
                 }
                 "--web-dist" if i + 1 < args.len() => {
                     web_dist = Some(args[i + 1].clone());
+                    i += 1;
+                }
+                "--cache-parent" if i + 1 < args.len() => {
+                    cache_parent = Some(args[i + 1].clone());
                     i += 1;
                 }
                 _ => {}
@@ -73,6 +80,7 @@ impl Settings {
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(60),
+            cache_parent,
             web_dist,
         }
     }

@@ -46,7 +46,12 @@ async fn main() {
     let port = resolve_port(settings.port);
 
     // ---------- 服务构建 ----------
-    let paths = LibraryPaths::new(&settings.library_root, None);
+    let paths = LibraryPaths::new(&settings.library_root, settings.cache_parent.clone());
+    // 缓存位置底线校验（主进程传参错误/手工参数场景；桌面端设置面板已先做用户友好校验）
+    if let Some(reason) = paths.cache_location_error() {
+        eprintln!("缓存目录位置非法: {reason}（库: {}，缓存: {}）", paths.root, paths.cache_dir);
+        std::process::exit(2);
+    }
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
     let db = Arc::new(IndexDb::open(&paths.index_db_file));

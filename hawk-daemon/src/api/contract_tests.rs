@@ -142,6 +142,7 @@ fn test_app(name: &str) -> TestApp {
         port: 0,
         token: TOKEN.to_string(),
         rescan_interval_seconds: 0, // 关闭周期对账：测试只断言显式驱动的行为
+        cache_parent: None,
         web_dist: None,
     };
     let pipeline = IndexPipeline::new(
