@@ -11,6 +11,8 @@ export const IPC = {
   lanAddresses: 'hawk:lan-addresses',
   quitApp: 'hawk:quit-app',
   appVersion: 'hawk:app-version',
+  updateChannelGet: 'hawk:update-channel-get',
+  updateChannelSet: 'hawk:update-channel-set',
   updateCheck: 'hawk:update-check',
   updateDownload: 'hawk:update-download',
   updateCancel: 'hawk:update-cancel',
@@ -41,9 +43,12 @@ export interface LibraryHistoryItem {
   exists: boolean;
 }
 
+/** 更新通道：stable=正式版（semver 比对）/ nightly=滚动版（构建 sha 比对） */
+export type UpdateChannel = 'stable' | 'nightly';
+
 /** 应用更新信息（主进程查询 GitHub Releases 的结果） */
 export interface UpdateInfo {
-  channel: 'stable' | 'nightly';
+  channel: UpdateChannel;
   /** stable：版本号（无 v 前缀）；nightly：目标 commit 短 sha */
   version: string;
   /** Release 说明（nightly 为触发提交信息） */
@@ -112,7 +117,11 @@ export interface HawkShell {
   /** 当前应用版本与构建 sha（sha='dev' 表示无构建标识，如开发态） */
   getAppVersion(): Promise<{ version: string; sha: string }>;
   /** 检查更新（stable=latest 正式版比 semver；nightly=滚动预发布比构建 sha）；无更新返回 null */
-  checkUpdate(channel: 'stable' | 'nightly'): Promise<UpdateInfo | null>;
+  checkUpdate(channel: UpdateChannel): Promise<UpdateInfo | null>;
+  /** 当前更新通道偏好（主进程 config.toml 持久化；未设置回退 stable） */
+  getUpdateChannel(): Promise<UpdateChannel>;
+  /** 保存更新通道偏好（config.toml） */
+  setUpdateChannel(channel: UpdateChannel): Promise<void>;
   /** 下载并校验上次检查到的更新（进度经 onUpdateProgress 推送；已就绪时幂等） */
   downloadUpdate(): Promise<void>;
   /** 取消进行中的下载（清半成品；无下载在跑时为空操作） */

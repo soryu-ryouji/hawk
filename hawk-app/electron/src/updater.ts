@@ -7,6 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { APP_DIR } from './paths';
+import { getUpdateChannel, setUpdateChannel } from './app-config';
 import { getMainWindow, setQuitting } from './window';
 import { IPC, UPDATE_CANCELLED, type UpdateInfo, type UpdateProgress } from './ipc-contract';
 
@@ -117,6 +118,15 @@ async function fetchRelease(channel: 'stable' | 'nightly'): Promise<Release> {
 
 export function registerUpdaterIpc(): void {
   ipcMain.handle(IPC.appVersion, () => ({ version: app.getVersion(), sha: readBuildInfo().sha }));
+
+  // 更新通道偏好（config.toml 持久化，主进程为唯一事实来源；渲染层经 IPC 读写）
+  ipcMain.handle(IPC.updateChannelGet, () => getUpdateChannel());
+  ipcMain.handle(IPC.updateChannelSet, (_event, channel: string) => {
+    if (channel !== 'stable' && channel !== 'nightly') {
+      throw new Error('未知更新通道');
+    }
+    setUpdateChannel(channel);
+  });
 
   ipcMain.handle(IPC.updateCheck, async (_event, channel: string): Promise<UpdateInfo | null> => {
     if (channel !== 'stable' && channel !== 'nightly') {

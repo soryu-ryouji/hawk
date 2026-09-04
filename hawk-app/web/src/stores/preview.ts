@@ -17,7 +17,7 @@ export const usePreviewStore = defineStore('preview', () => {
   const previewId = ref<string | null>(null);
 
   // 预览关闭按钮显隐偏好（设置面板外观分区开关，所有端即时生效）：默认显示；
-  // localStorage 记忆（web 与 Electron 均持久，同 panelWidths/updateChannel 的全局键）
+  // localStorage 记忆（web 与 Electron 均持久，同 panelWidths 的全局键）
   const hidePreviewClose = ref(loadText(STORAGE_KEYS.hidePreviewClose) === '1');
 
   function setHidePreviewClose(on: boolean) {

@@ -1,17 +1,21 @@
 // 应用更新渲染层编排（Electron 桌面端；检查/下载/安装语义在主进程，见 electron/src/updater.ts）。
 // - 模块级共享状态（同 useLayout 惯例）：设置面板「更新」分区与启动静默检查共用
 // - phase 状态机：idle → checking →（uptodate | available | error）→ downloading → ready
-// - 通道偏好存 localStorage；切换通道后旧检查结果作废，需重新检查
+// - 通道偏好存主进程 config.toml（IPC 读写，主进程为唯一事实源）；切换通道后旧检查结果作废，需重新检查
 // - 静默检查（启动后延迟一次，App.vue 触发）：发现新版本 toast 一次，按 通道@版本 去重
 import { ref } from 'vue';
 import { hasShell, shell } from '../platform';
 import { loadText, saveText, STORAGE_KEYS } from '../persist';
 import { useLibraryStore } from '../stores/library';
-import { UPDATE_CANCELLED, type UpdateInfo, type UpdateProgress } from '../types';
+import { UPDATE_CANCELLED, type UpdateChannel, type UpdateInfo, type UpdateProgress } from '../types';
 
 export type UpdaterPhase = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'ready' | 'error';
 
-const channel = ref<'stable' | 'nightly'>(loadText(STORAGE_KEYS.updateChannel) === 'nightly' ? 'nightly' : 'stable');
+const channel = ref<UpdateChannel>('stable');
+/** 通道偏好加载完成信号（check 前等待，避免启动竞态按默认 stable 误检） */
+let channelReady: Promise<void> = Promise.resolve();
+/** 用户是否已手动切过通道（切换先于偏好加载完成时，加载结果不得覆盖内存态） */
+let channelTouched = false;
 const phase = ref<UpdaterPhase>('idle');
 const update = ref<UpdateInfo | null>(null);
 const error = ref<string | null>(null);
@@ -19,6 +23,11 @@ const progress = ref<{ received: number; total: number } | null>(null);
 const verifying = ref(false);
 
 if (hasShell) {
+  channelReady = shell.getUpdateChannel().then((c) => {
+    if (!channelTouched) {
+      channel.value = c;
+    }
+  });
   shell.onUpdateProgress((p: UpdateProgress) => {
     if (p.phase === 'downloading') {
       phase.value = 'downloading';
@@ -32,13 +41,17 @@ if (hasShell) {
   });
 }
 
-/** 切换更新通道并持久化；旧检查结果作废 */
-function setChannel(next: 'stable' | 'nightly') {
+/** 切换更新通道并持久化到主进程 config.toml；旧检查结果作废 */
+function setChannel(next: UpdateChannel) {
   if (next === channel.value) {
     return;
   }
+  channelTouched = true;
   channel.value = next;
-  saveText(STORAGE_KEYS.updateChannel, next);
+  if (hasShell) {
+    // 写失败静默（同旧 localStorage 行为）：内存态已生效，重启后按上次持久化值
+    shell.setUpdateChannel(next).catch(() => {});
+  }
   phase.value = 'idle';
   update.value = null;
   error.value = null;
@@ -51,6 +64,7 @@ async function check(silent = false): Promise<UpdateInfo | null> {
   if (!hasShell || phase.value === 'checking' || phase.value === 'downloading') {
     return null;
   }
+  await channelReady; // 偏好加载完成再查，杜绝启动瞬间按默认 stable 误检
   phase.value = 'checking';
   error.value = null;
   try {

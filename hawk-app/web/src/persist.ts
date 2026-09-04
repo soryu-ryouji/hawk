@@ -12,8 +12,6 @@ export const STORAGE_KEYS = {
   lastView: (libPath: string) => `hawk:lastView:${libPath}`,
   /** 局域网查看 token（纯字符串），按 api host 隔离；无记忆时为空串 */
   token: (host: string) => `hawk:token:${host}`,
-  /** 更新通道偏好（'stable' | 'nightly'，纯字符串）；损坏/缺失回退 stable */
-  updateChannel: 'hawk:updateChannel',
   /** 预览模式隐藏关闭按钮（'1' | '0' 纯字符串，设置面板外观分区开关）；缺失/损坏回退 '0'（显示） */
   hidePreviewClose: 'hawk:hidePreviewClose',
   /** 已 toast 提示过的更新标识 `${channel}@${version}`（纯字符串）；同一版本只提示一次 */
