@@ -225,14 +225,14 @@ try {
     }
     if (titlebar) {
       check(
-        !titlebar.error && titlebar.moreVisible && titlebar.searchBtnVisible && titlebar.searchBoxHidden &&
-          titlebar.sortHidden && titlebar.filterHidden && titlebar.menuOpened && titlebar.hasFilterItem &&
-          titlebar.hasSortItem && titlebar.searchOverlayOpened && titlebar.searchInputFocused && titlebar.searchOverlayClosed,
-        '窄屏顶栏入口（排序筛选菜单/搜索退化）',
-        titlebar.error ? titlebar.message : `menu=${titlebar.menuOpened} searchOverlay=${titlebar.searchOverlayOpened}`,
+        !titlebar.error && titlebar.sortVisible && titlebar.filterVisible && titlebar.searchBtnVisible && titlebar.searchBoxHidden &&
+          titlebar.sortMenuOpened && titlebar.hasSortItem && titlebar.filterBarOpened &&
+          titlebar.searchOverlayOpened && titlebar.searchInputFocused && titlebar.searchOverlayClosed,
+        '窄屏顶栏入口（排序/筛选直出 + 搜索退化）',
+        titlebar.error ? titlebar.message : `sort=${titlebar.sortVisible} filter=${titlebar.filterVisible} searchOverlay=${titlebar.searchOverlayOpened}`,
       );
     } else if (sawApp) {
-      check(false, '窄屏顶栏入口（排序筛选菜单/搜索退化）', '探针未执行');
+      check(false, '窄屏顶栏入口（排序/筛选直出 + 搜索退化）', '探针未执行');
     }
     if (preview) {
       check(!preview.error && preview.overlay, '双击打开预览');

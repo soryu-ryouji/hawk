@@ -107,23 +107,7 @@ function openSortMenu(e: MouseEvent) {
   openMenu(sortMenuItems(), e);
 }
 
-/** 窄屏溢出菜单：筛选工具列开关 + 全部排序项 + 重置项（排序/筛选按钮在窄屏隐藏） */
-function openMoreMenu(e: MouseEvent) {
-  openMenu(
-    [
-      {
-        label: '筛选工具列',
-        checked: store.filterBarVisible || store.hasActiveFilters,
-        action: () => store.toggleFilterBar(),
-      },
-      { separator: true, label: '' },
-      ...sortMenuItems(),
-    ],
-    e,
-  );
-}
-
-/** 排序菜单项（宽屏排序按钮与窄屏溢出菜单共用） */
+/** 排序菜单项（排序按钮使用） */
 function sortMenuItems(): MenuItem[] {
   const items: MenuItem[] = SORT_OPTIONS.map((o) => ({
     label: o.label,
@@ -243,11 +227,6 @@ function onDblClick(e: MouseEvent) {
 
       <button class="bar-btn" title="设置" @click="emit('open-settings')">
         <Icon name="settings" :size="14" />
-      </button>
-
-      <!-- 窄屏（手机竖屏等）：顶栏放不下排序/筛选按钮，收敛为一个溢出菜单（filterbar 本体放行显示） -->
-      <button v-if="narrow" class="bar-btn more-btn" title="排序与筛选" @click="openMoreMenu">
-        <Icon name="sliders" :size="14" />
       </button>
     </div>
 

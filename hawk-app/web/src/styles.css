@@ -228,12 +228,9 @@ body.col-resizing {
   display: none;
 }
 
-/* 窄屏顶栏减负（390px 手机实测内容 ~540px 会横向溢出，搜索/设置被顶出屏外）：
-   排序/筛选按钮/选中计数/搜索框整体隐藏——排序与筛选收敛进顶栏右端「排序与筛选」溢出菜单
-   （sliders 图标），搜索退化为搜索按钮（点开浮层输入，见 TitleBar.vue），filterbar 本体放行显示。
+/* 窄屏顶栏减负（390px 手机实测）：选中计数/搜索框隐藏——搜索退化为搜索按钮（点开浮层输入，
+   见 TitleBar.vue）；排序/筛选按钮与宽屏一致直出（图标统一 filter / arrowUpDown）。
    面包屑只显示当前层级（TitleBar 内 narrow 分支渲染），祖先层级经侧栏抽屉导航 */
-.app.mobile .sort-btn,
-.app.mobile .filter-btn,
 .app.mobile .titlebar .search-box,
 /* 选中计数（.selected-count，勿用 .selected——与网格卡片选中态同名会连卡片一起隐藏） */
 .app.mobile .selected-count {

@@ -26,31 +26,36 @@ const GRID_SRC = `(() => ({
   scrollWidth: document.documentElement.scrollWidth,
 }))()`;
 
-// 窄屏顶栏：排序/筛选/搜索框应隐藏；「排序与筛选」溢出菜单与搜索浮层可用
+// 窄屏顶栏：排序/筛选按钮与宽屏一致直出（图标统一）；搜索框退化为按钮 + 浮层
 const TITLEBAR_SRC = `(async () => {
   const visible = (el) => !!el && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0;
   const raf2 = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   try {
-    const more = document.querySelector('.titlebar .more-btn');
+    const sortBtn = document.querySelector('.titlebar .sort-btn');
+    const filterBtn = document.querySelector('.titlebar .filter-btn');
     const searchBtn = document.querySelector('.titlebar .mobile-search-btn');
     const base = {
-      moreVisible: visible(more),
+      sortVisible: visible(sortBtn),
+      filterVisible: visible(filterBtn),
       searchBtnVisible: visible(searchBtn),
       searchBoxHidden: !visible(document.querySelector('.titlebar .search-box')),
-      sortHidden: !visible(document.querySelector('.titlebar .sort-btn')),
-      filterHidden: !visible(document.querySelector('.titlebar .filter-btn')),
     };
-    if (!base.moreVisible || !base.searchBtnVisible) return base;
+    if (!base.sortVisible || !base.filterVisible || !base.searchBtnVisible) return base;
 
-    // 「排序与筛选」溢出菜单：含筛选开关与排序项
-    more.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    // 排序按钮：点出排序菜单（含排序项），点遮罩关闭
+    sortBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await raf2();
     const menu = document.querySelector('.mask .menu');
-    const menuText = menu?.textContent ?? '';
-    base.menuOpened = !!menu;
-    base.hasFilterItem = menuText.includes('筛选工具列');
-    base.hasSortItem = menuText.includes('修改时间');
+    base.sortMenuOpened = !!menu;
+    base.hasSortItem = (menu?.textContent ?? '').includes('修改时间');
     document.querySelector('.mask')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await raf2();
+
+    // 筛选按钮：开关筛选工具列（开 → 关还原）
+    filterBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await raf2();
+    base.filterBarOpened = !!document.querySelector('.filterbar');
+    filterBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await raf2();
 
     // 搜索浮层：按钮点开 → 输入框出现并聚焦 → 点遮罩关闭
