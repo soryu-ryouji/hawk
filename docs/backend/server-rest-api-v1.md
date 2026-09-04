@@ -21,7 +21,7 @@
 }
 ```
 
-错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer token 访问写端点，403；见 storage.md 的 `[web]` 写权限/token 拆分配置）
+错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer token 访问写端点，403；见 storage.md 的 `[web]` 写权限/token 拆分配置）、`UNAUTHORIZED`（token 缺失或无效，401）、`NOT_READY`（初始索引构建中，503；唯一放行端点为 `app/startup`）
 
 ### ID 规范
 

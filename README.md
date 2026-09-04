@@ -55,7 +55,7 @@ POST http://localhost:27371/api/v1/item/list
 { "keywords": ["logo"], "tags": ["品牌"], "star": 5 }
 
 # 获取缩略图
-GET http://localhost:27371/api/v1/item/thumbnail?id=abc123&size=256
+GET http://localhost:27371/api/v1/item/thumbnail?id=abc123
 
 # 更新标签
 POST http://localhost:27371/api/v1/item/update
