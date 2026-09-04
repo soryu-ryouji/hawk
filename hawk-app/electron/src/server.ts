@@ -43,7 +43,9 @@ function resolveServerCommand(): { command: string; args: string[] } {
       'linux-x64': 'x86_64-unknown-linux-gnu',
     };
     const targetDir = path.join(APP_DIR, '..', 'hawk-daemon', 'target');
-    // 兼容两种 cargo 产物位置：本机直建 target/release 与 --target 交叉建 target/<triple>/release
+    // 兼容两种 cargo 产物位置：本机直建 target/release 与 --target 交叉建 target/<triple>/release。
+    // 多个产物并存时按 mtime 取最新（与 scripts/gen-types.mjs 同策略）——固定优先级会
+    // 在交叉产物过期时静默用旧 daemon，与 gen-types 选中的二进制版本不一致
     const candidates = [
       ...(RUST_TARGET[`${process.platform}-${process.arch}`]
         ? [path.join(targetDir, RUST_TARGET[`${process.platform}-${process.arch}`], 'release')]
@@ -51,11 +53,12 @@ function resolveServerCommand(): { command: string; args: string[] } {
       path.join(targetDir, 'release'),
       path.join(targetDir, 'debug'),
     ];
-    for (const dir of candidates) {
-      const bin = path.join(dir, exe);
-      if (fs.existsSync(bin)) {
-        return { command: bin, args: [] };
-      }
+    const existing = candidates
+      .map((dir) => path.join(dir, exe))
+      .filter((bin) => fs.existsSync(bin))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    if (existing.length > 0) {
+      return { command: existing[0], args: [] };
     }
     throw new Error('未找到 hawk-daemon 构建产物，请先 cargo build --release（hawk-daemon/）');
   }
