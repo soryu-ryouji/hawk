@@ -9,7 +9,6 @@ license = "AGPL-3.0-only"
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
