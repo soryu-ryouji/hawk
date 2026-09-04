@@ -92,10 +92,14 @@ fs.writeFileSync(path.join(lib, '海报', 'cat.png'), png(2, 4, [0, 255, 0]));
 fs.writeFileSync(path.join(lib, '海报', 'logo.png'), png(8, 8, [0, 0, 255]));
 
 // 预设素材库配置，跳过目录选择框（按平台取 userData；跑完恢复原配置）
+// Electron userData 的平台差异：win %APPDATA%\%name% / mac ~/Library/Application Support/%name% /
+// linux $XDG_CONFIG_HOME（默认 ~/.config）/%name%；name 取 package.json 的 hawk-app
 const configDir =
   process.platform === 'win32'
     ? path.join(process.env.APPDATA, 'hawk-app')
-    : path.join(os.homedir(), 'Library', 'Application Support', 'hawk-app');
+    : process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Application Support', 'hawk-app')
+      : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'hawk-app');
 fs.mkdirSync(configDir, { recursive: true });
 const configFile = path.join(configDir, 'hawk-app.json');
 const configBackup = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null;
@@ -118,12 +122,23 @@ try {
   await waitFor(async () => (await fetch('http://localhost:5173/').catch(() => null))?.ok, 60_000);
 
   const electronBin = require('electron');
-  electron = spawn(electronBin, ['.', '--remote-debugging-port=9222'], {
-    cwd: root,
-    stdio: 'ignore',
-    // 对账间隔缩短到 3s：监听静默丢事件时自检也能快速收敛
-    env: { ...process.env, HAWK_RESCAN_INTERVAL: '3' },
-  });
+  electron = spawn(
+    electronBin,
+    [
+      '.',
+      '--remote-debugging-port=9222',
+      // Ubuntu ≥24.04（GitHub runner）经 AppArmor 限制非特权 user namespace，npm 安装的 electron
+      // 又没有 setuid 的 chrome-sandbox 助手，不关沙箱会启动即退（CDP 端点永远不出现）
+      ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
+    ],
+    {
+      cwd: root,
+      // 启动失败（沙箱/缺动态库）时让报错直接进日志，而不是只剩一句「等待超时」
+      stdio: 'inherit',
+      // 对账间隔缩短到 3s：监听静默丢事件时自检也能快速收敛
+      env: { ...process.env, HAWK_RESCAN_INTERVAL: '3' },
+    },
+  );
 
   // ---------- 连接 CDP ----------
 
