@@ -4,10 +4,26 @@
 import { computed, onMounted, ref } from 'vue';
 import { shell } from '../platform';
 import { useUpdater } from '../composables/useUpdater';
+import SelectBox from './SelectBox.vue';
+import type { UpdateChannel } from '../types';
 
 const updater = useUpdater();
 const appVersion = ref('');
 const buildSha = ref('');
+
+const channelOptions: { value: UpdateChannel; label: string }[] = [
+  { value: 'stable', label: '稳定版' },
+  { value: 'nightly', label: '滚动版' },
+  { value: 'off', label: '不检查更新' },
+];
+
+/** 各通道的说明文案（与下拉选项一一对应） */
+const channelHints: Record<UpdateChannel, string> = {
+  stable: '正式发布版本，稳定优先',
+  nightly: '包含最新改动，稳定性不作保证，开发人员专用',
+  off: '不联网检查更新，可到 GitHub Releases 手动下载',
+};
+const channelHint = computed(() => channelHints[updater.channel.value]);
 
 /** 下载百分比（total 未知时为 null，UI 显示已下载字节数） */
 const downloadPct = computed(() => {
@@ -39,29 +55,25 @@ onMounted(() => {
 
     <div class="field column">
       <span class="field-label">更新通道</span>
-      <div class="channel-row">
-        <label class="radio">
-          <input type="radio" value="stable" :checked="updater.channel.value === 'stable'" @change="updater.setChannel('stable')" />
-          稳定版
-        </label>
-        <label class="radio">
-          <input type="radio" value="nightly" :checked="updater.channel.value === 'nightly'" @change="updater.setChannel('nightly')" />
-          滚动版
-        </label>
-      </div>
-      <p class="hint">滚动包含最新改动，稳定性不作保证，开发人员专用</p>
+      <SelectBox
+        :model-value="updater.channel.value"
+        :options="channelOptions"
+        @update:model-value="updater.setChannel($event as UpdateChannel)"
+      />
+      <p class="hint">{{ channelHint }}</p>
     </div>
 
     <div class="field column">
       <span class="field-label">检查更新</span>
       <div class="update-status">
         <template v-if="updater.phase.value === 'checking'">正在检查…</template>
-        <template v-else-if="updater.phase.value === 'uptodate'">已是最新（{{ updater.channel.value === 'nightly' ? 'nightly' : '稳定版' }}）</template>
         <template v-else-if="updater.update.value">
           发现新版本
           {{ updater.update.value.channel === 'nightly' ? `nightly ${updater.update.value.version}` : `v${updater.update.value.version}` }}
           <a :href="updater.update.value.url" target="_blank" rel="noreferrer">发布说明</a>
         </template>
+        <template v-else-if="updater.channel.value === 'off'">已关闭更新检查</template>
+        <template v-else-if="updater.phase.value === 'uptodate'">已是最新（{{ updater.channel.value === 'nightly' ? 'nightly' : '稳定版' }}）</template>
         <template v-else>未检查</template>
         <p v-if="updater.error.value" class="field-error">{{ updater.error.value }}</p>
       </div>
@@ -88,7 +100,12 @@ onMounted(() => {
 
       <div class="update-actions">
         <button
-          :disabled="updater.phase.value === 'checking' || updater.phase.value === 'downloading' || updater.phase.value === 'ready'"
+          :disabled="
+            updater.channel.value === 'off' ||
+            updater.phase.value === 'checking' ||
+            updater.phase.value === 'downloading' ||
+            updater.phase.value === 'ready'
+          "
           @click="void updater.check()"
         >
           检查更新
@@ -123,18 +140,6 @@ onMounted(() => {
 
 .update-current {
   color: var(--fg-1);
-}
-
-.channel-row {
-  display: flex;
-  gap: 16px;
-}
-
-.radio {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--fg-0);
 }
 
 .update-status {

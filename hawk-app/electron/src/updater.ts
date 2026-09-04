@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import { APP_DIR } from './paths';
 import { getUpdateChannel, setUpdateChannel } from './app-config';
 import { getMainWindow, setQuitting } from './window';
-import { IPC, UPDATE_CANCELLED, type UpdateInfo, type UpdateProgress } from './ipc-contract';
+import { IPC, UPDATE_CANCELLED, type CheckableChannel, type UpdateInfo, type UpdateProgress } from './ipc-contract';
 
 const UPDATE_REPO = 'soryu-ryouji/hawk';
 
@@ -28,7 +28,7 @@ interface Release {
 }
 
 interface PendingUpdate {
-  channel: 'stable' | 'nightly';
+  channel: CheckableChannel;
   version: string;
   asset: ReleaseAsset;
 }
@@ -98,7 +98,7 @@ function semverNewer(remote: number[], local: number[] | null): boolean {
   return false;
 }
 
-async function fetchRelease(channel: 'stable' | 'nightly'): Promise<Release> {
+async function fetchRelease(channel: CheckableChannel): Promise<Release> {
   const url =
     channel === 'stable'
       ? `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`

@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useTaxonomyStore } from '../stores/taxonomy';
+import SelectBox from './SelectBox.vue';
 
 defineProps<{ title: string }>();
 const emit = defineEmits<{ confirm: [path: string]; cancel: [] }>();
 
 const taxonomy = useTaxonomyStore();
 const selected = ref('');
+const folderOptions = computed(() =>
+  taxonomy.flatFolders.map((f) => ({ value: f.path, label: f.label })),
+);
 </script>
 
 <template>
@@ -14,11 +18,7 @@ const selected = ref('');
     <div class="mask" @click.self="emit('cancel')">
       <div class="dialog">
         <div class="title">{{ title }}</div>
-        <select v-model="selected">
-          <option v-for="folder in taxonomy.flatFolders" :key="folder.path" :value="folder.path">
-            {{ folder.label }}
-          </option>
-        </select>
+        <SelectBox v-model="selected" :options="folderOptions" placeholder="选择文件夹" />
         <div class="actions">
           <button @click="emit('cancel')">取消</button>
           <button class="primary" @click="emit('confirm', selected)">确定</button>
@@ -52,10 +52,6 @@ const selected = ref('');
 
 .title {
   font-weight: 600;
-}
-
-.dialog select {
-  padding: 6px 8px;
 }
 
 .actions {

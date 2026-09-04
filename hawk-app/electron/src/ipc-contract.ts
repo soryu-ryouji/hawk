@@ -43,12 +43,16 @@ export interface LibraryHistoryItem {
   exists: boolean;
 }
 
-/** 更新通道：stable=正式版（semver 比对）/ nightly=滚动版（构建 sha 比对） */
-export type UpdateChannel = 'stable' | 'nightly';
+/** 更新通道（偏好枚举，config.toml 持久化）：stable=正式版（semver 比对）/
+ *  nightly=滚动版（构建 sha 比对）/ off=不检查更新 */
+export type UpdateChannel = 'stable' | 'nightly' | 'off';
+
+/** 可发起检查的通道（偏好的子集：off 只是不检查，不是可查询的 Release 线） */
+export type CheckableChannel = Exclude<UpdateChannel, 'off'>;
 
 /** 应用更新信息（主进程查询 GitHub Releases 的结果） */
 export interface UpdateInfo {
-  channel: UpdateChannel;
+  channel: CheckableChannel;
   /** stable：版本号（无 v 前缀）；nightly：目标 commit 短 sha */
   version: string;
   /** Release 说明（nightly 为触发提交信息） */
@@ -117,8 +121,8 @@ export interface HawkShell {
   /** 当前应用版本与构建 sha（sha='dev' 表示无构建标识，如开发态） */
   getAppVersion(): Promise<{ version: string; sha: string }>;
   /** 检查更新（stable=latest 正式版比 semver；nightly=滚动预发布比构建 sha）；无更新返回 null */
-  checkUpdate(channel: UpdateChannel): Promise<UpdateInfo | null>;
-  /** 当前更新通道偏好（主进程 config.toml 持久化；未设置回退 stable） */
+  checkUpdate(channel: CheckableChannel): Promise<UpdateInfo | null>;
+  /** 当前更新通道偏好（主进程 config.toml 持久化；未设置回退默认值） */
   getUpdateChannel(): Promise<UpdateChannel>;
   /** 保存更新通道偏好（config.toml） */
   setUpdateChannel(channel: UpdateChannel): Promise<void>;

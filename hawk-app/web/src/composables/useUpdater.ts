@@ -1,7 +1,8 @@
 // 应用更新渲染层编排（Electron 桌面端；检查/下载/安装语义在主进程，见 electron/src/updater.ts）。
 // - 模块级共享状态（同 useLayout 惯例）：设置面板「更新」分区与启动静默检查共用
 // - phase 状态机：idle → checking →（uptodate | available | error）→ downloading → ready
-// - 通道偏好存主进程 config.toml（IPC 读写，主进程为唯一事实源）；切换通道后旧检查结果作废，需重新检查
+// - 通道偏好三态（stable/nightly/off）存主进程 config.toml（IPC 读写，主进程为唯一事实源）；
+//   off 时不发起任何检查（静默检查跳过、设置面板禁用检查按钮）；切换通道后旧检查结果作废，需重新检查
 // - 静默检查（启动后延迟一次，App.vue 触发）：发现新版本 toast 一次，按 通道@版本 去重
 import { ref } from 'vue';
 import { hasShell, shell } from '../platform';
@@ -61,7 +62,7 @@ function setChannel(next: UpdateChannel) {
 
 /** 检查当前通道更新。silent=true 供启动静默检查：失败静默，发现新版本 toast（同一版本只提示一次） */
 async function check(silent = false): Promise<UpdateInfo | null> {
-  if (!hasShell || phase.value === 'checking' || phase.value === 'downloading') {
+  if (!hasShell || channel.value === 'off' || phase.value === 'checking' || phase.value === 'downloading') {
     return null;
   }
   await channelReady; // 偏好加载完成再查，杜绝启动瞬间按默认 stable 误检
