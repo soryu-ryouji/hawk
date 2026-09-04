@@ -46,10 +46,10 @@ onMounted(() => {
         </label>
         <label class="radio">
           <input type="radio" value="nightly" :checked="updater.channel.value === 'nightly'" @change="updater.setChannel('nightly')" />
-          每日构建（nightly）
+          滚动版
         </label>
       </div>
-      <p class="hint">稳定版跟随 GitHub 正式发布；每日构建滚动包含最新改动（feat/fix 提交后更新），稳定性不作保证。</p>
+      <p class="hint">滚动包含最新改动，稳定性不作保证，开发人员专用</p>
     </div>
 
     <div class="field column">
