@@ -17,7 +17,11 @@ const candidates = [
   path.join(root, '..', 'hawk-daemon', 'target', 'release', exe),
   path.join(root, '..', 'hawk-daemon', 'target', 'debug', exe),
 ];
-const bin = candidates.find((p) => fs.existsSync(p));
+// 本机直建与 --target 交叉建两种产物位置可能同时存在（版本不一），取 mtime 最新者——
+// 固定优先级会在交叉产物过期时静默用旧 schema 生成类型
+const bin = candidates
+  .filter((p) => fs.existsSync(p))
+  .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
 if (!bin) {
   console.error('未找到 hawk-daemon 构建产物，请先 cargo build（release 或 debug）');
   process.exit(1);
