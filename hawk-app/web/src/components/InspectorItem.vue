@@ -440,7 +440,10 @@ function searchColor(color: string) {
   white-space: nowrap;
 }
 
+@media (hover: hover) {
+
 .folder-value:hover {
   border-color: var(--accent);
+}
 }
 </style>

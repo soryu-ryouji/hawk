@@ -132,9 +132,12 @@ function pick(path: string) {
   white-space: nowrap;
 }
 
+@media (hover: hover) {
+
 .root-row:hover,
 .node:hover {
   background: var(--bg-2);
+}
 }
 
 .root-row.active,

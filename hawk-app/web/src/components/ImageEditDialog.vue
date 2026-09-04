@@ -157,9 +157,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
   padding: 4px 10px;
 }
 
+@media (hover: hover) {
+
 .bar-btn:hover:not(:disabled) {
   color: #fff;
   background: transparent;
+}
 }
 
 .bar-btn:disabled {
@@ -193,9 +196,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
   font-size: 28px;
 }
 
+@media (hover: hover) {
+
 .close:hover {
   color: #fff;
   background: transparent;
+}
 }
 
 .confirm-mask {

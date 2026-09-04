@@ -344,9 +344,12 @@ function onDblClick(e: MouseEvent) {
   color: var(--fg-1);
 }
 
+@media (hover: hover) {
+
 .bar-btn:hover {
   background: var(--bg-3);
   color: var(--fg-0);
+}
 }
 
 .bar-btn:disabled {
@@ -386,9 +389,12 @@ function onDblClick(e: MouseEvent) {
   white-space: nowrap;
 }
 
+@media (hover: hover) {
+
 .crumb:hover {
   background: var(--bg-3);
   color: var(--fg-0);
+}
 }
 
 .crumb.current {

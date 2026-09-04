@@ -220,9 +220,12 @@ async function save() {
   padding: 6px 10px;
 }
 
+@media (hover: hover) {
+
 .nav-item:hover {
   background: var(--bg-3);
   color: var(--fg-0);
+}
 }
 
 .nav-item.active {

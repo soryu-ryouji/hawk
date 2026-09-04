@@ -69,8 +69,11 @@ function onContextMenu(e: MouseEvent) {
   overflow: hidden;
 }
 
+@media (hover: hover) {
+
 .tax-row:hover {
   background: var(--bg-2);
+}
 }
 
 .tax-row.active {

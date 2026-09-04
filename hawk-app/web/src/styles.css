@@ -1,4 +1,4 @@
-/* 深色主题变量与全局样式（组件样式一律 <style scoped>，此处只放变量与 reset） */
+/* 深色主题变量与全局样式（组件样式一律 style scoped，此处只放变量与 reset） */
 :root {
   --bg-0: #1e1e1e; /* 主区 */
   --bg-1: #252526; /* 侧栏 */
@@ -33,6 +33,8 @@ body {
   /* 禁用双击缩放：iPad Safari 双击侧栏/图片会缩放页面（锚点在点击处），
      缩放级别累积不回弹，视觉上表现为面板忽宽忽窄。保留滚动与双指缩放 */
   touch-action: manipulation;
+  /* 去除 iOS/Android 点按瞬时的灰色高亮块（应用自带 active/selected 态，原生闪灰只剩视觉噪音） */
+  -webkit-tap-highlight-color: transparent;
 }
 
 input,
@@ -69,8 +71,11 @@ button {
   padding: 4px 12px;
 }
 
+@media (hover: hover) {
+
 button:hover {
   background: var(--bg-3);
+}
 }
 
 button.danger {
@@ -102,8 +107,10 @@ body.dialog-open .inspector-head {
 }
 
 /* 悬停变亮：提示当前落在滚动条上、可以拖动 */
+@media (hover: hover) {
 ::-webkit-scrollbar-thumb:hover {
   background: #4a4a4f;
+}
 }
 
 /* 布局骨架（Eagle 式）：左右栏通高不被顶栏隔断，顶栏只覆盖中间内容区。
@@ -146,7 +153,13 @@ body.dialog-open .inspector-head {
   z-index: 20;
 }
 
-.col-resize-handle:hover,
+@media (hover: hover) {
+  .col-resize-handle:hover {
+    background: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+}
+
+/* 拖拽中态不是 hover 态 */
 .col-resize-handle.active {
   background: color-mix(in srgb, var(--accent) 40%, transparent);
 }

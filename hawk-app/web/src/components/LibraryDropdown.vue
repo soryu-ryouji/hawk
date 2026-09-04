@@ -194,8 +194,11 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
+@media (hover: hover) {
+
 .lib-item:hover {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
 }
 
 .lib-item.disabled {
@@ -228,12 +231,18 @@ onBeforeUnmount(() => {
   visibility: hidden;
 }
 
+@media (hover: hover) {
+
 .lib-item:hover .remove {
   visibility: visible;
 }
+}
+
+@media (hover: hover) {
 
 .lib-item .remove:hover {
   color: var(--danger);
+}
 }
 
 .separator {

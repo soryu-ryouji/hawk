@@ -71,8 +71,11 @@ function openRatingMenu(e: MouseEvent) {
   font-size: 12px;
 }
 
+@media (hover: hover) {
+
 .chip:hover {
   color: var(--fg-0);
+}
 }
 
 /* 条件激活的 chip 高亮（评分已定值/颜色筛选中） */
@@ -94,8 +97,11 @@ function openRatingMenu(e: MouseEvent) {
   color: var(--fg-1);
 }
 
+@media (hover: hover) {
+
 .color-chip .clear:hover {
   color: var(--danger);
   background: transparent;
+}
 }
 </style>

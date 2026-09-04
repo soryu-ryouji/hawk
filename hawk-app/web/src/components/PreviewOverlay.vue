@@ -289,9 +289,12 @@ function pointInImage(px: number, py: number): boolean {
   text-align: center;
 }
 
+@media (hover: hover) {
+
 .close:hover {
   color: #fff;
   background: transparent;
+}
 }
 
 .pager {
@@ -313,9 +316,12 @@ function pointInImage(px: number, py: number): boolean {
   padding: 2px 10px;
 }
 
+@media (hover: hover) {
+
 .page-btn:hover {
   color: #fff;
   background: transparent;
+}
 }
 
 .page-index {

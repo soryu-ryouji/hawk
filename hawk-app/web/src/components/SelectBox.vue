@@ -193,8 +193,10 @@ onBeforeUnmount(() => {
 }
 
 /* 输入类控件 hover 不变色（覆盖全局 button:hover），聚焦/展开才亮 accent 边框 */
+@media (hover: hover) {
 .trigger:hover {
   background: var(--bg-2);
+}
 }
 
 .trigger:focus,
@@ -256,7 +258,13 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
-.option:hover,
+@media (hover: hover) {
+  .option:hover {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+}
+
+/* 键盘高亮（↑↓ 导航）不是 hover 态，触屏外接键盘也要生效 */
 .option.active {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }

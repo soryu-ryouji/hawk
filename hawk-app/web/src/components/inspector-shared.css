@@ -1,4 +1,4 @@
-/* 检查器共享样式（Inspector 壳与分区子组件经 <style src> 引入，非 scoped）。
+/* 检查器共享样式（Inspector 壳与分区子组件经 style src 引入，非 scoped）。
    全部选择器以 .inspector-scope 为前缀（壳的 aside 挂载该 class），不污染外部。 */
 
 .inspector-scope .fields {
@@ -90,9 +90,12 @@
   color: var(--fg-1);
 }
 
+@media (hover: hover) {
+
 .inspector-scope .chip .remove:hover {
   color: var(--danger);
   background: transparent;
+}
 }
 
 .inspector-scope .add {
@@ -114,10 +117,13 @@
   cursor: pointer;
 }
 
+@media (hover: hover) {
+
 .inspector-scope .jump:hover {
   color: var(--accent);
   background: transparent;
   text-decoration: underline;
+}
 }
 
 .inspector-scope .info {
@@ -158,11 +164,17 @@
   color: var(--fg-1);
 }
 
+@media (hover: hover) {
+
 .inspector-scope .finder:hover {
   color: var(--accent);
   background: transparent;
 }
+}
+
+@media (hover: hover) {
 
 .inspector-scope .danger-btn:hover {
   color: var(--danger);
+}
 }

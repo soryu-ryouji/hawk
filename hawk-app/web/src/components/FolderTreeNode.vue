@@ -175,8 +175,11 @@ function onDrop(e: DragEvent) {
   overflow: hidden;
 }
 
+@media (hover: hover) {
+
 .node:hover {
   background: var(--bg-2);
+}
 }
 
 .node.active {

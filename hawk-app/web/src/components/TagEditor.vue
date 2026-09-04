@@ -99,9 +99,12 @@ function jumpTo(tag: string) {
   color: var(--fg-1);
 }
 
+@media (hover: hover) {
+
 .remove:hover {
   color: var(--danger);
   background: transparent;
+}
 }
 
 /* 点击标签跳转到对应标签视图（Inspector 信息导航） */
@@ -114,10 +117,13 @@ function jumpTo(tag: string) {
   cursor: pointer;
 }
 
+@media (hover: hover) {
+
 .jump:hover {
   color: var(--accent);
   background: transparent;
   text-decoration: underline;
+}
 }
 
 .add {

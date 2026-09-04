@@ -347,8 +347,11 @@ function onCategoryContextMenu(e: MouseEvent) {
   -webkit-app-region: no-drag;
 }
 
+@media (hover: hover) {
+
 .panel-toggle:hover {
   background: var(--bg-3);
+}
 }
 
 .sidebar-body {
@@ -391,8 +394,11 @@ body.touch .library-name.in-body {
   display: none;
 }
 
+@media (hover: hover) {
+
 .library-name:hover {
   background: var(--bg-2);
+}
 }
 
 .library-name.static {
@@ -438,9 +444,12 @@ body.touch .library-name.in-body {
   line-height: 1.2;
 }
 
+@media (hover: hover) {
+
 .add:hover {
   color: var(--accent);
   background: transparent;
+}
 }
 
 .entry {
@@ -451,8 +460,11 @@ body.touch .library-name.in-body {
   cursor: pointer;
 }
 
+@media (hover: hover) {
+
 .entry:hover {
   background: var(--bg-2);
+}
 }
 
 .entry.active {
