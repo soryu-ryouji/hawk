@@ -296,7 +296,7 @@ meta 文字」的布局 bug（该坑在注释中已被记录过）。
      `skeletonVersion` 过期响应丢弃、`ensureWindow` 区间补数、`reloadSkeleton` 的
      dirty 合并循环。
 3. 不追求覆盖率数字；只测「纯函数 + 决策逻辑」，不测模板渲染。
-4. CI（`.github/workflows/release.yml`）的 build 步骤追加 `npm run test:unit`（可选，实现者评估）。
+4. CI（`.github/workflows/ci.yml`）的 build 步骤追加 `npm run test:unit`（可选，实现者评估）。
 
 ### 验收标准
 

@@ -7,7 +7,7 @@
 <p align="center">对标 Eagle 的开源图片素材管理工具</p>
 
 <p align="center">
-  <a href="https://github.com/soryu-ryouji/hawk/actions/workflows/release.yml"><img src="https://github.com/soryu-ryouji/hawk/actions/workflows/release.yml/badge.svg" alt="release"></a>
+  <a href="https://github.com/soryu-ryouji/hawk/actions/workflows/ci.yml"><img src="https://github.com/soryu-ryouji/hawk/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="https://github.com/soryu-ryouji/hawk/releases/latest"><img src="https://img.shields.io/github/v/release/soryu-ryouji/hawk" alt="release version"></a>
   <a href="https://github.com/soryu-ryouji/hawk/releases/tag/nightly"><img src="https://img.shields.io/badge/nightly-滚动预发布-orange" alt="nightly"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="license"></a>
@@ -82,7 +82,7 @@ cd hawk
 ```
 
 首次运行自动安装 npm 依赖并完成全量构建（前端 + Rust 后端 + electron-builder，约几分钟）。
-开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；发版流程见 [docs/release.md](docs/release.md)（CI 定义在 [release.yml](.github/workflows/release.yml)）。
+开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；发版流程见 [docs/release.md](docs/release.md)（CI 定义在 [ci.yml](.github/workflows/ci.yml)）。
 
 ## 文档
 

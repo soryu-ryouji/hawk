@@ -1,6 +1,6 @@
 # 发布流程
 
-hawk 的桌面端发布全部由 CI（[release.yml](../.github/workflows/release.yml)）驱动，双通道分发：**stable**（正式 `v*` Release）与 **nightly**（main 分支滚动预发布）。客户端内置自动更新（见 [hawk-app 设计 → 应用自动更新](frontend/hawk-app.md)），发布即对存量用户可见。
+hawk 的桌面端发布全部由 CI（[ci.yml](../.github/workflows/ci.yml)）驱动，双通道分发：**stable**（正式 `v*` Release）与 **nightly**（main 分支滚动预发布）。发布与质量门禁同处一条流水线：`rust`/`desktop` 检查全绿后构建与发布 job 才会启动，检查失败则整链跳过——发布物永远来自通过测试的代码。客户端内置自动更新（见 [hawk-app 设计 → 应用自动更新](frontend/hawk-app.md)），发布即对存量用户可见。
 
 ## 触发条件一览
 
@@ -40,8 +40,9 @@ git commit -am "release: v0.2.0
 git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台产物
 ```
 
-**push 后 CI 自动接管**（三个构建 job 全并行 + publish 汇流）：
+**push 后 CI 自动接管**（门禁 → 三个构建 job 全并行 + publish 汇流）：
 
+0. 门禁：rust 单测 + desktop 全链检查（构建/单测/打包冒烟/UI 端到端）全绿才进入构建，否则整链跳过
 1. windows job 守卫：提交首行解析版本号，与 package.json 不一致或 tag 已存在 → 立即失败（下游 publish 一并跳过）
 2. 构建层全并行：windows（web 与 cargo 并行 → `hawk-windows-x64.zip` + 边车，正式版 mx=9 最小体积）∥ mac 双架构 matrix 两腿（`hawk-mac-<arch>.zip` + 边车）∥ linux（`hawk-linux-x64.AppImage` + 边车），各自上传 Artifacts
 3. publish 汇流 job（ubuntu，构建全成功后才跑）：下载全部 Artifacts → 正式版以 `tag_name: v0.2.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）；nightly 则轮转重建。任一平台构建失败则不发布（全有或全无，不会出现只有部分平台产物的半成品 Release）
@@ -56,7 +57,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 
 ## nightly（全自动，无需操作）
 
-main 分支出现 `feat` / `fix` 开头的提交即触发（`concurrency` 串行，避免滚动覆盖竞争）。
+main 分支出现 `feat` / `fix` 开头的提交即触发（先过质量门禁；同分支 `concurrency` 互斥，新推送会取消在跑的旧 run，nightly 永远取最新 commit）。
 
 三个构建 job 全并行产出 Artifacts，publish 汇流 job 删除旧 `nightly` Release 与 tag → 重建（name = `Nightly <sha7>`，body = 触发提交信息 + 末尾注入完整 sha 注释，prerelease）→ 附全部平台产物
 

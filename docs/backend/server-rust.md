@@ -9,7 +9,7 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 ## 状态
 
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
-  CI（`release.yml`）全部使用本实现
+  CI（`ci.yml`）全部使用本实现
 - **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描 runner 线程：并行哈希+单次解码产出派生+结果回流消费循环穿插应用/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
   调色板（median-cut）、SQLite 派生缓存（schema v1）
 - **设计与实现要点**：

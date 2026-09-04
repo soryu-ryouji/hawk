@@ -1,31 +1,117 @@
-# CI 发版：
-# - main 分支提交信息以 release: 开头：正式 Release（版本号取自提交首行并与 package.json 校验，
+# 单流水线：质量门禁 + 发版。检查（rust/desktop）与构建/发布经 needs 串联——
+# 检查全绿后才进入构建，任一检查失败则发布整链跳过，nightly/stable 永远来自通过测试的代码。
+#
+# 触发与行为：
+# - push(main) / PR：rust daemon 单测 + desktop 完整复现本机构建链
+#   （web/主进程/后端构建 → 双 tsc → vitest → 打包冒烟 → UI 端到端自检）
+# - push(main) 且提交信息以 release 开头：正式 Release（版本号取自提交首行并与 package.json 校验，
 #   tag+Release 由 action-gh-release 的 tag_name 直接创建——GITHUB_TOKEN 创建的 tag 不会触发
 #   其他 workflow，不能用「先建 tag 再触发构建」的链式设计）
-# - main 分支提交信息以 feat/fix 开头（conventional commits）：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
-# - 手动触发：只构建上传 Artifacts，不创建 Release
+# - push(main) 且提交信息以 feat/fix 开头（conventional commits）：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
+# - workflow_dispatch：只构建上传 Artifacts，不创建 Release
+#
 # 压缩级别按构建类型分流：正式版（release 提交）mx=9 最小体积；nightly/手动 mx=5 快速出包
 # （mx=9 压缩耗时翻倍只换 ~10-20MB 体积；下载走 GitHub CDN，仅正式版在意最小体积）
 # Windows 产物为 zip（解压即用，全 64 位，无 NSIS 启动壳）；mac 双架构 matrix 并行构建。
-name: release
+name: ci
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
+# GITHUB_TOKEN 最小权限：检查/构建 job 只需读；建 Release、删 nightly tag 由 publish job 单独提权
 permissions:
-  contents: write
+  contents: read
 
-# nightly 滚动覆盖同一 Release，串行执行避免并发竞争
+# 同分支（PR 同号）新推送取消在跑的旧 run：nightly 只关心最新 commit，过期 run 纯属浪费。
+# release 提交例外：发版构建不被后续推送打断（tag 守卫已保证幂等，中途取消只会白跑一次全量构建）
 concurrency:
-  group: release
-  cancel-in-progress: false
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.event.head_commit.message, 'release') }}
 
 jobs:
+  # ---- 质量门禁 ----
+
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hawk-daemon
+
+      - run: cargo test
+        working-directory: hawk-daemon
+
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: hawk-app
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hawk-daemon
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: hawk-app/package-lock.json
+
+      - run: npm ci
+
+      # electron 发行包与 electron-builder 工具（7zip 等）缓存：免每次 ~100MB 下载
+      - name: Cache electron & builder tools
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: tools-linux-x64-${{ hashFiles('hawk-app/package-lock.json') }}
+
+      # web 构建（vue-tsc + 主进程 tsc + vite）与单元测试
+      - run: npm run build
+      - run: npm run test:unit
+
+      # 主进程/preload 与 daemon 构建（pack 与 ui-check 的产物来源）
+      - run: node scripts/build-electron.mjs
+      - run: node scripts/build-server.mjs
+
+      # 打包完整性冒烟：--dir 产出未压缩目录即可验证 files/extraResources 齐全（含 electron/out 主进程）
+      - name: Pack smoke (dir)
+        run: node scripts/pack.mjs --dir --publish never
+
+      # UI 端到端自检（真实启动 vite + electron + daemon，CDP 断言；ubuntu 无显示器走 xvfb）
+      - name: UI check (xvfb)
+        run: xvfb-run -a node tools/ui-check.mjs
+
+      # UI 自检失败时留存截图与诊断产物（ui-check 输出目录），排查 DOM 断言失败用
+      - name: Upload UI check artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-check-artifacts
+          path: hawk-app/tools/.tmp
+          if-no-files-found: ignore
+
+  # ---- 发布构建（检查全绿 + 发布条件满足才跑；手动触发不受提交前缀限制）----
+
   windows:
+    needs: [rust, desktop]
     runs-on: windows-latest
+    timeout-minutes: 45
     # 手动 / main 上 release、feat、fix 开头的提交
     outputs:
       release_tag: ${{ steps.release.outputs.tag }}
@@ -152,7 +238,9 @@ jobs:
   # Linux AppImage：与 windows job 同构（构建 + Artifacts，发布统一走 publish 汇流）；
   # ubuntu-latest 即 x64，cargo/electron 均原生目标无需交叉
   linux:
+    needs: [rust, desktop]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     if: >-
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.event.head_commit.message, 'release') ||
@@ -229,6 +317,7 @@ jobs:
   # macOS app：标准 runner 已是 arm64（macos-latest），x64 由交叉打包产出；双架构 matrix 并行
   # GitHub 只能上传单文件，因此 .app 目录打 zip 发布（VS Code/Slack 同款方式）
   macos:
+    needs: [rust, desktop]
     strategy:
       fail-fast: false
       matrix:
@@ -236,6 +325,7 @@ jobs:
           - { arch: arm64, rid: osx-arm64, rust-target: aarch64-apple-darwin, outdir: mac-arm64 }
           - { arch: x64, rid: osx-x64, rust-target: x86_64-apple-darwin, outdir: mac }
     runs-on: macos-latest
+    timeout-minutes: 45
     if: >-
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.event.head_commit.message, 'release') ||
@@ -325,6 +415,9 @@ jobs:
   publish:
     needs: [windows, linux, macos]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
     if: >-
       github.event_name == 'push' &&
       (startsWith(github.event.head_commit.message, 'release') ||

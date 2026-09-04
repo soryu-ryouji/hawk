@@ -47,8 +47,8 @@ export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-b
 
 ## CI 发版
 
-`.github/workflows/release.yml`（windows runner，mx=9 压缩）：
+`.github/workflows/ci.yml`（质量门禁全绿后才构建发布；正式版 mx=9 压缩，nightly/手动 mx=5）：
 
-- 推 `v*` tag：正式 Release 附 hawk.exe：`git tag v1.0.0 && git push origin v1.0.0`
+- main 分支提交信息以 `release` 开头：正式 Release（首行版本号须与 package.json 一致，CI 守卫校验）
 - main 分支提交信息以 `feat`/`fix` 开头（conventional commits）：滚动覆盖 `nightly` 预发布（PR 合并想触发请用 squash merge）
 - Actions 页手动触发：只传 Artifacts，用于验证流程
