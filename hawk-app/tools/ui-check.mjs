@@ -99,10 +99,12 @@ const configDir =
 fs.mkdirSync(configDir, { recursive: true });
 const configFile = path.join(configDir, 'hawk-app.json');
 const configBackup = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null;
-// 任何退出路径（含 spawn 失败导致的进程崩溃）都恢复原配置
+// 任何退出路径（含 spawn 失败导致的进程崩溃）都恢复原配置；原本无配置则删除本次写入，不残留
 process.on('exit', () => {
   if (configBackup !== null) {
     fs.writeFileSync(configFile, configBackup);
+  } else {
+    fs.rmSync(configFile, { force: true });
   }
 });
 fs.writeFileSync(configFile, JSON.stringify({ libraryPath: lib }));
@@ -248,11 +250,13 @@ try {
   // ---- 预览浮层：空格展开原图、滚轮缩放、双击复位、预览内 ←→ 切换 ----
   await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('big.'))?.click()`);
   await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }))`);
-  const overlayReady = await waitFor(async () => evaljs(`!!document.querySelector('.overlay .image')`), 5_000);
+  // carousel 结构（scale=1）：track-row 三段为 前|当前|后，中间子元素恒为当前图
+  const curImg = `.overlay .track-row > *:nth-child(2)`;
+  const overlayReady = await waitFor(async () => evaljs(`!!document.querySelector('${curImg}')`), 5_000);
   check('空格展开预览浮层', overlayReady, true);
-  check('预览使用原图端点', await evaljs(`document.querySelector('.overlay .image').src.includes('/api/v1/item/file')`), true);
+  check('预览使用原图端点', await evaljs(`document.querySelector('${curImg}').src.includes('/api/v1/item/file')`), true);
   const naturalWidth = await waitFor(async () => {
-    const w = await evaljs(`document.querySelector('.overlay .image').naturalWidth`);
+    const w = await evaljs(`document.querySelector('${curImg}').naturalWidth`);
     return w > 0 ? w : null;
   }, 10_000);
   check('预览加载原图（1600px，非 1024 缩略图）', naturalWidth, 1600);
@@ -260,8 +264,9 @@ try {
   await evaljs(`document.querySelector('.overlay').dispatchEvent(new WheelEvent('wheel', { deltaY: -240, clientX: 720, clientY: 450, bubbles: true, cancelable: true }))`);
   const transform = await evaljs(`document.querySelector('.overlay .image').style.transform`);
   check('滚轮放大（scale > 1）', Number(transform.match(/scale\(([\d.]+)\)/)?.[1]) > 1, true);
-  await evaljs(`document.querySelector('.overlay .image').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
-  check('双击复位缩放', await evaljs(`document.querySelector('.overlay .image').style.transform.includes('scale(1)')`), true);
+  // dblclick 绑定在手势层（.gesture）；复位后平移层（v-if scale>1）卸载、carousel 轨道回归
+  await evaljs(`document.querySelector('.overlay .gesture').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  check('双击复位缩放', await evaljs(`document.querySelector('.overlay .image') === null && !!document.querySelector('.overlay .track-row')`), true);
 
   const caption0 = await evaljs(`document.querySelector('.overlay .page-index')?.textContent ?? ''`);
   await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }))`);
@@ -283,6 +288,17 @@ try {
 
   await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
   check('Esc 关闭预览', await evaljs(`!document.querySelector('.overlay')`), true);
+
+  // ---- 设置面板：打开 → 分区导航 → 局域网分区（子组件保活挂载）→ 关闭 ----
+  await evaljs(`document.querySelector('.titlebar [title="设置"]')?.click()`);
+  check('设置面板打开', await waitFor(async () => evaljs(`!!document.querySelector('.dialog .nav')`), 5_000), true);
+  await evaljs(`[...document.querySelectorAll('.dialog .nav-item')].find((b) => b.textContent.includes('局域网'))?.click()`);
+  check('局域网分区渲染（v-show 切换）', await waitFor(async () => {
+    const el = await evaljs(`[...document.querySelectorAll('.pane')].find((p) => p.textContent.includes('启用局域网'))`);
+    return el ? true : null;
+  }, 5_000), true);
+  await evaljs(`document.querySelector('.dialog-head .icon-btn')?.click()`);
+  check('关闭设置面板', await evaljs(`!document.querySelector('.dialog')`), true);
 
   // ---- 图片编辑窗口：右键「编辑图片…」打开、旋转预览、脏退出三选确认 ----
   // 编辑窗口与预览浮层同为 body 级 .overlay,以 z-index 220 区分
@@ -326,7 +342,7 @@ try {
   await evaljs(`document.querySelector('.card').click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.inspector .fields')`), 5_000);
   check('选中后检查器出现', await evaljs(`!!document.querySelector('.inspector .name-input')`), true);
-  check('标题栏选中计数', await evaljs(`document.querySelector('.titlebar .selected')?.textContent?.includes('已选 1 项') ?? false`), true);
+  check('标题栏选中计数', await evaljs(`document.querySelector('.titlebar .selected-count')?.textContent?.includes('已选 1 项') ?? false`), true);
   await screenshot('ui-inspector.png');
 
   // 点星评分 → 卡片出现评分角标
@@ -532,7 +548,7 @@ try {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   const categoryCreated = await waitFor(async () => {
-    const found = await evaljs(`[...document.querySelectorAll('.sidebar .cat-name')].some((n) => n.textContent.trim() === '灵感')`);
+    const found = await evaljs(`[...document.querySelectorAll('.sidebar .tax-name')].some((n) => n.textContent.trim() === '灵感')`);
     return found ? true : null;
   }, 5_000);
   check('侧栏新建空分类', categoryCreated, true);
@@ -562,7 +578,7 @@ try {
   check('添加到分类生效（服务端）', assignOk, true);
 
   // 分类视图
-  await evaljs(`[...document.querySelectorAll('.sidebar .cat-row')].find((r) => r.dataset.name === '灵感')?.click()`);
+  await evaljs(`[...document.querySelectorAll('.sidebar .tax-row')].find((r) => r.dataset.name === '灵感')?.click()`);
   const catViewCount = await waitFor(async () => {
     const n = await evaljs(`document.querySelectorAll('.card').length`);
     return n === 1 ? n : null;
@@ -570,7 +586,7 @@ try {
   check('分类视图过滤', catViewCount, 1);
 
   // 分类重命名（PromptDialog）：赋值跟随、视图跟随
-  await evaljs(`[...document.querySelectorAll('.sidebar .cat-row')].find((r) => r.dataset.name === '灵感')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
+  await evaljs(`[...document.querySelectorAll('.sidebar .tax-row')].find((r) => r.dataset.name === '灵感')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
   await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent === '重命名')?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.dialog input')`), 5_000);
@@ -588,11 +604,11 @@ try {
     return detail?.categories?.includes('灵感库') ? true : null;
   }, 5_000);
   check('分类重命名跟随（服务端）', renameOk, true);
-  check('重命名后视图跟随', await evaljs(`document.querySelector('.sidebar .cat-row.active .cat-name')?.textContent?.trim() ?? ''`), '灵感库');
+  check('重命名后视图跟随', await evaljs(`document.querySelector('.sidebar .tax-row.active .tax-name')?.textContent?.trim() ?? ''`), '灵感库');
 
   // 删除分类（覆写 confirm）→ 赋值清除、视图回全部
   await evaljs(`window.confirm = () => true`);
-  await evaljs(`[...document.querySelectorAll('.sidebar .cat-row')].find((r) => r.dataset.name === '灵感库')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
+  await evaljs(`[...document.querySelectorAll('.sidebar .tax-row')].find((r) => r.dataset.name === '灵感库')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
   await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent.includes('删除分类'))?.click()`);
   const deleteOk = await waitFor(async () => {
@@ -602,7 +618,12 @@ try {
     return detail && (detail.categories ?? []).length === 0 ? true : null;
   }, 5_000);
   check('删除分类清除赋值（服务端）', deleteOk, true);
-  check('删除后视图回全部素材', await evaljs(`document.querySelector('.titlebar .title')?.textContent`), '全部素材');
+  // 删除是异步 action（api → refreshTaxonomy → correctView），等视图收敛
+  const backToAll = await waitFor(async () => {
+    const t = await evaljs(`document.querySelector('.titlebar .title')?.textContent`);
+    return t === '全部素材' ? t : null;
+  }, 5_000);
+  check('删除后视图回全部素材', backToAll, '全部素材');
 
   // 新建空标签 + 重命名跟随
   await evaljs(`[...document.querySelectorAll('.sidebar .section')].find((s) => s.textContent.includes('标签'))?.querySelector('.add')?.click()`);
@@ -615,13 +636,13 @@ try {
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   })()`);
   const tagCreated = await waitFor(async () => {
-    const found = await evaljs(`[...document.querySelectorAll('.sidebar .tag-row')].some((r) => r.textContent.includes('预创建'))`);
+    const found = await evaljs(`[...document.querySelectorAll('.sidebar .tax-row')].some((r) => r.textContent.includes('预创建'))`);
     return found ? true : null;
   }, 5_000);
   check('侧栏新建空标签', tagCreated, true);
 
   // 重命名「测试标签」→「已测试」，item 跟随（用 item/list 验证，不依赖具体 item 身份）
-  await evaljs(`[...document.querySelectorAll('.sidebar .tag-row')].find((r) => r.textContent.includes('测试标签'))?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
+  await evaljs(`[...document.querySelectorAll('.sidebar .tax-row')].find((r) => r.textContent.includes('测试标签'))?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
   await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent === '重命名')?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.dialog input')`), 5_000);
