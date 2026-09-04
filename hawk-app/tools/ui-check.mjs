@@ -478,7 +478,15 @@ try {
   await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('sunset.'))?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
   await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent.includes('移动到文件夹'))?.click()`);
-  await waitFor(async () => evaljs(`!!document.querySelector('.dialog .trigger')`), 5_000);
+  const folderDialogShown = await waitFor(async () => evaljs(`!!document.querySelector('.dialog .trigger')`), 5_000).catch(async () => {
+    // 诊断：区分「菜单项没点中/菜单残留」「对话框开了但 trigger 缺失」「别的对话框残留」
+    const menuText = await evaljs(`document.querySelector('.menu')?.textContent ?? null`);
+    const dialog = await evaljs(`document.querySelector('.dialog')?.textContent?.slice(0, 60) ?? null`);
+    const pickerState = await evaljs(`document.querySelectorAll('.dialog .trigger, .dialog input, .dialog select').length`);
+    console.log(`  [诊断] menu=${JSON.stringify(menuText)} dialog=${JSON.stringify(dialog)} 控件数=${pickerState}`);
+    return null;
+  });
+  check('移动到文件夹对话框打开', folderDialogShown, true);
   // SelectBox 自绘下拉：点触发框展开浮层，再点目标选项（原生 select 的 value/change 注入不再适用）
   await evaljs(`document.querySelector('.dialog .trigger')?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.list .option')`), 5_000);
