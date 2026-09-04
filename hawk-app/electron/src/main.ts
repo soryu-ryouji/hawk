@@ -6,9 +6,13 @@ import { app, dialog } from 'electron';
 import fs from 'node:fs';
 import { createTray, createWindow, loadMainPage, setQuitting, showMainWindow } from './window';
 import { openLibraryAt, stopServer } from './server';
-import { readConfig } from './app-config';
+import { migrateLegacyConfig, readConfig } from './app-config';
 import { registerIpc } from './ipc';
 import { registerUpdaterIpc } from './updater';
+import { USER_DATA_DIR } from './paths';
+
+// 全局配置目录全平台统一为 ~/.config/hawk（须在 app ready 前重定向）
+app.setPath('userData', USER_DATA_DIR);
 
 // 单实例：托盘驻留期间再次启动（双击图标/快捷方式）应唤起已有窗口，而不是拉起第二个实例
 // （第二个实例会拉起第二套 hawk-daemon 进程争用同一素材库，引发索引与文件监听竞争）
@@ -19,6 +23,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.whenReady().then(async () => {
+  migrateLegacyConfig();
   registerIpc();
   registerUpdaterIpc();
   createWindow();
