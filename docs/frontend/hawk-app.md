@@ -567,7 +567,7 @@ hawk-app/
 │   │   ├── main.ts         # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
 │   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
 │   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、关窗隐藏到托盘 + 系统托盘、退出标志
-│   │   ├── app-config.ts   # 用户配置（~/.config/hawk/hawk-app.json，全平台统一）：最近素材库与历史记录、缓存父目录、当前库根会话状态；旧平台默认位置的一次性迁移
+│   │   ├── app-config.ts   # 用户配置（~/.config/hawk/hawk-app.json，全平台统一）：最近素材库与历史记录、缓存父目录、当前库根会话状态
 │   │   ├── updater.ts      # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
 │   │   ├── lan.ts          # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）
 │   │   ├── ipc.ts          # 白名单 IPC 注册（换库/文件管理器/剪贴板/窗口控制/局域网地址/退出应用）

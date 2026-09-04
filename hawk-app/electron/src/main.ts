@@ -6,7 +6,7 @@ import { app, dialog } from 'electron';
 import fs from 'node:fs';
 import { createTray, createWindow, loadMainPage, setQuitting, showMainWindow } from './window';
 import { openLibraryAt, stopServer } from './server';
-import { migrateLegacyConfig, readConfig } from './app-config';
+import { readConfig } from './app-config';
 import { registerIpc } from './ipc';
 import { registerUpdaterIpc } from './updater';
 import { USER_DATA_DIR } from './paths';
@@ -23,7 +23,6 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.whenReady().then(async () => {
-  migrateLegacyConfig();
   registerIpc();
   registerUpdaterIpc();
   createWindow();
