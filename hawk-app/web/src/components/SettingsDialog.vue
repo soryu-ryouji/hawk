@@ -1,10 +1,9 @@
 <script setup lang="ts">
-// 设置面板：左侧导航（外观/局域网）+ 右侧内容的两栏结构（窄屏折叠为顶部横向页签；无 shell 的
-// 移动端只有「外观」一个分区，导航不渲染）。
-// - 缩略图尺寸滑杆：实时生效，所有端可用（含局域网浏览器触屏端）。
-// - 局域网查看（仅 Electron）：开关/端口/token/本机地址，按库隔离存于 .hawk/config.toml 的 [web] 段；
-//   读写直连 daemon REST（GET/PUT /api/v1/app/lan，admin 限定），保存 = daemon 写配置并热重绑监听
-//  （不重启进程），绑定失败 daemon 侧自动回滚并返回错误；本机地址列表仍经 preload（主进程网卡信息）。
+// 设置面板壳：左侧导航 + 右侧分区（子组件）的两栏结构（窄屏折叠为顶部横向页签）。
+// 分区实现各自独立：SettingsAppearance（外观，实时生效）/ SettingsLan（局域网，仅 Electron，
+// 状态自管 + 暴露 save 给 footer 委托调用）/ SettingsUpdate（更新，仅 Electron）/
+// SettingsConnection（连接，仅局域网 web 端）。分区切换用 v-show 保活：LAN 编辑中字段与
+// 更新下载进度在切换分区后不丢。
 // 交互要点：
 // - 遮罩「按下与抬起都落在遮罩上」才关闭：在端口输入框里拖动选择文本、拖动滑杆时滑出面板松开，
 //   click 事件落在 mousedown/mouseup 目标的共同祖先（遮罩）上，按 click.self 判定会误关面板丢失未保存
@@ -12,79 +11,32 @@
 // - Esc 关闭（捕获阶段拦截并阻断全局快捷键；IME 组合态已被 main.ts 更早的捕获监听拦下）。
 // - 打开期间挂 body.dialog-open 挂起窗口拖拽区（同 ContextMenu 的 body.menu-open）：Electron 的
 //   -webkit-app-region: drag 由 OS 命中测试优先消费，不禁用的话点遮罩盖住的标题栏会变成拖动窗口。
-// - 端口为纯文本输入（type=number 的原生步进按钮易误触且样式不可控），合法性就地为红色边框 +
-//   提示文案，保存时拦截。
-import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { useClipboard, useEventListener } from '@vueuse/core';
-import { useLibraryStore } from '../stores/library';
-import { usePreviewStore } from '../stores/preview';
-import { hasShell, shell } from '../platform';
-import { useUpdater } from '../composables/useUpdater';
-import { api } from '../api/endpoints';
-import { errorText } from '../stores/util';
+import { onMounted, onUnmounted, ref } from 'vue';
+import { useEventListener } from '@vueuse/core';
+import { hasShell } from '../platform';
 import Icon from './Icon.vue';
+import SettingsAppearance from './SettingsAppearance.vue';
+import SettingsLan from './SettingsLan.vue';
+import SettingsUpdate from './SettingsUpdate.vue';
+import SettingsConnection from './SettingsConnection.vue';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
-const store = useLibraryStore();
-const preview = usePreviewStore();
-const loading = ref(true);
-const saving = ref(false);
-const error = ref<string | null>(null);
-const enabled = ref(false);
-const port = ref('27372');
-const token = ref('');
-const writable = ref(false);
-const separate = ref(false);
-const writeToken = ref('');
-const addresses = ref<string[]>([]);
-const { copy: copyText } = useClipboard({ legacy: true });
-
 /** 当前分区：外观 / 局域网（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
 const section = ref<'appearance' | 'lan' | 'update' | 'connection'>('appearance');
+/** 错误条（各分区经 v-model:error 写入；LAN 分区的读取/校验/保存错误） */
+const error = ref<string | null>(null);
 
-// ---- 更新分区（仅 Electron）：通道切换 + 检查/下载/安装（状态机见 useUpdater） ----
-const updater = useUpdater();
-const appVersion = ref('');
-const buildSha = ref('');
-
-/** 下载百分比（total 未知时为 null，UI 显示已下载字节数） */
-const downloadPct = computed(() => {
-  const p = updater.progress.value;
-  return p && p.total > 0 ? Math.floor((p.received / p.total) * 100) : null;
-});
-
-function formatMB(bytes: number): string {
-  return `${(bytes / (1 << 20)).toFixed(1)} MB`;
+/** LAN 分区实例（v-show 保活，footer 保存按钮委托其 save；外观/更新分区无保存语义） */
+const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
+/** footer 按钮禁用：LAN 分区加载/保存中 */
+function lanBusy(): boolean {
+  return lanPane.value?.busy() ?? false;
 }
 
-onMounted(async () => {
+onMounted(() => {
   document.body.classList.add('dialog-open');
-  if (!hasShell) {
-    // 浏览器触屏端：无局域网设置可加载（滑杆段实时生效，无需加载态）
-    loading.value = false;
-    return;
-  }
-  try {
-    const s = await api.appLan();
-    enabled.value = s.enabled;
-    port.value = String(s.port);
-    token.value = s.token;
-    writable.value = s.writable;
-    separate.value = s.separate_write_token;
-    writeToken.value = s.write_token;
-    addresses.value = await shell.lanAddresses();
-    void shell.getAppVersion().then((v) => {
-      appVersion.value = v.version;
-      buildSha.value = v.sha;
-    });
-  } catch (e) {
-    error.value = `读取设置失败：${errorText(e)}`;
-  } finally {
-    loading.value = false;
-  }
 });
-
 onUnmounted(() => {
   document.body.classList.remove('dialog-open');
 });
@@ -117,93 +69,16 @@ useEventListener(
   { capture: true },
 );
 
-// ---- 端口校验：纯数字且 1–65535；不合法就地标红提示，保存拦截 ----
-const portValid = computed(() => /^\d+$/.test(port.value.trim()) && Number(port.value) >= 1 && Number(port.value) <= 65535);
-const PORT_ERROR = '端口须为 1–65535 之间的数字';
-
-/** 保存用的端口值：合法取解析值；未启用局域网时输入框不可见，静默回退默认端口 */
-function portValue() {
-  return portValid.value ? Number(port.value.trim()) : 27372;
-}
-
-/** 生成随机 token（32 字节 hex） */
-function randomToken() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function regenerateToken() {
-  token.value = randomToken();
-}
-
-function regenerateWriteToken() {
-  writeToken.value = randomToken();
-}
-
-/** 切换拆分模式：开启且可写 token 为空时自动签发一个 */
-function toggleSeparate(on: boolean) {
-  separate.value = on;
-  if (on && !writeToken.value.trim()) {
-    writeToken.value = randomToken();
-  }
-}
-
-/** 复制文本并给全局 toast 反馈（token/访问地址，发给手机侧粘贴用） */
-function copy(value: string) {
-  void copyText(value);
-  store.showToast('已复制到剪贴板');
-}
-
-/** 缩略图尺寸步进（滑杆 ± 按钮）：用户显式设置，写入偏好 */
-function stepThumb(delta: number) {
-  store.setUserThumbSize(store.thumbSize + delta);
-}
-
-/** 滑杆输入：用户显式设置（不复用动态默认的写入路径，避免被持久化逻辑混淆） */
-function onThumbInput(e: Event) {
-  store.setUserThumbSize(Number((e.target as HTMLInputElement).value));
-}
-
-/** 预览关闭按钮开关（外观分区，即时生效）：写入偏好并记忆 */
-function onHidePreviewClose(e: Event) {
-  preview.setHidePreviewClose((e.target as HTMLInputElement).checked);
-}
-
+/** 保存：委托 LAN 分区（设置面板唯一有保存语义的分区）；失败切到局域网分区暴露错误字段 */
 async function save() {
-  if (saving.value) {
+  if (!lanPane.value) {
     return;
   }
-  if (enabled.value && !token.value.trim()) {
-    error.value = '启用局域网查看需要填写访问 token';
-    return;
-  }
-  if (enabled.value && writable.value && separate.value && !writeToken.value.trim()) {
-    error.value = '拆分只读/可写 token 需要填写可写 token';
-    return;
-  }
-  if (enabled.value && !portValid.value) {
-    error.value = PORT_ERROR;
-    section.value = 'lan';
-    return;
-  }
-  saving.value = true;
-  error.value = null;
-  try {
-    await api.saveAppLan({
-      enabled: enabled.value,
-      port: portValue(),
-      token: token.value.trim(),
-      writable: writable.value,
-      separate_write_token: separate.value,
-      write_token: writeToken.value.trim(),
-    });
-    // 成功：LAN 监听已热重绑（daemon 侧确认收敛，失败已自动回滚），关闭本对话框
+  const ok = await lanPane.value.save();
+  if (ok) {
     emit('close');
-  } catch (e) {
-    error.value = `应用失败：${errorText(e)}`;
-  } finally {
-    saving.value = false;
+  } else if (section.value !== 'lan') {
+    section.value = 'lan';
   }
 }
 </script>
@@ -220,7 +95,7 @@ async function save() {
         </header>
 
         <div class="dialog-main">
-          <!-- 左侧导航：桌面（外观/局域网）与局域网 web 端（外观/连接）均为双分区；窄屏折叠为顶部横向页签 -->
+          <!-- 左侧导航：桌面（外观/局域网/更新）与局域网 web 端（外观/连接）；窄屏折叠为顶部横向页签 -->
           <nav class="nav">
             <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">
               外观
@@ -251,256 +126,25 @@ async function save() {
             </button>
           </nav>
 
-          <!-- 外观：所有端可用 -->
-          <div v-if="section === 'appearance'" class="pane">
-            <div class="field">
-              <span class="field-label">缩略图尺寸</span>
-              <span class="slider-val">{{ store.thumbSize }}</span>
-            </div>
-            <div class="slider-row">
-              <button title="缩小" @click="stepThumb(-8)">−</button>
-              <input
-                :value="store.thumbSize"
-                type="range"
-                min="120"
-                max="280"
-                step="8"
-                @input="onThumbInput"
-              />
-              <button title="放大" @click="stepThumb(8)">＋</button>
-            </div>
-
-            <div class="switch-row">
-              <div>
-                <div class="switch-label">预览模式隐藏关闭按钮</div>
-                <p class="hint">开启后全屏预览不显示右上角 ×；仍可用 Esc、双击或触屏下拉手势关闭。</p>
-              </div>
-              <label class="switch" title="预览模式隐藏关闭按钮">
-                <input type="checkbox" :checked="preview.hidePreviewClose" @change="onHidePreviewClose" />
-                <span class="track" />
-              </label>
-            </div>
-          </div>
-
-          <!-- 局域网：依赖 Electron preload 通道，浏览器 web 端导航不渲染该项 -->
-          <div v-else-if="section === 'lan'" class="pane">
-            <div class="switch-row">
-              <div>
-                <div class="switch-label">启用局域网 web 查看</div>
-                <p class="hint">同一局域网的设备可用浏览器只读浏览本素材库。</p>
-              </div>
-              <label class="switch" title="启用局域网 web 查看">
-                <input v-model="enabled" type="checkbox" />
-                <span class="track" />
-              </label>
-            </div>
-
-            <div v-if="loading" class="hint">读取设置中…</div>
-            <template v-else>
-              <!-- 未启用时收起细节字段，减少噪音 -->
-              <div v-show="enabled" class="lan-detail">
-                <div class="switch-row">
-                  <div>
-                    <div class="switch-label">允许修改素材库</div>
-                    <p class="hint">开启后查看端可上传、删除、修改素材；请谨慎签发可写 token。</p>
-                  </div>
-                  <label class="switch" title="允许局域网查看端执行写操作">
-                    <input v-model="writable" type="checkbox" />
-                    <span class="track" />
-                  </label>
-                </div>
-
-                <!-- token 模式：二合一（单 token 读写）/拆分（只读 token + 可写 token），
-                     类似双频 WiFi 的合频/分频；仅写权限开启后有意义 -->
-                <div v-if="writable" class="switch-row">
-                  <div>
-                    <div class="switch-label">拆分只读与可写 token</div>
-                    <p class="hint">关闭时访问 token 兼具读写权限；开启后访问 token 仅可浏览，修改需另签发可写 token。</p>
-                  </div>
-                  <label class="switch" title="拆分只读 token 与可写 token">
-                    <input
-                      :checked="separate"
-                      type="checkbox"
-                      @change="toggleSeparate(($event.target as HTMLInputElement).checked)"
-                    />
-                    <span class="track" />
-                  </label>
-                </div>
-
-                <div class="field column">
-                  <span class="field-label">端口</span>
-                  <input
-                    v-model="port"
-                    class="port-input"
-                    :class="{ invalid: !portValid }"
-                    type="text"
-                    inputmode="numeric"
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder="1 – 65535"
-                  />
-                  <p v-if="!portValid" class="field-error">{{ PORT_ERROR }}</p>
-                </div>
-
-                <div class="field column">
-                  <span class="field-label">访问 token{{ separate ? '（只读）' : '' }}</span>
-                  <div class="token-row">
-                    <input v-model="token" type="text" autocomplete="off" spellcheck="false" />
-                    <button class="icon-btn" title="复制 token" @click="copy(token)">
-                      <Icon name="copy" :size="13" />
-                    </button>
-                    <button title="重新生成随机 token" @click="regenerateToken">重新生成</button>
-                  </div>
-                </div>
-
-                <div v-if="separate" class="field column">
-                  <span class="field-label">可写 token</span>
-                  <div class="token-row">
-                    <input v-model="writeToken" type="text" autocomplete="off" spellcheck="false" />
-                    <button class="icon-btn" title="复制可写 token" @click="copy(writeToken)">
-                      <Icon name="copy" :size="13" />
-                    </button>
-                    <button title="重新生成随机 token" @click="regenerateWriteToken">重新生成</button>
-                  </div>
-                </div>
-
-                <div class="field column">
-                  <span class="field-label">访问地址</span>
-                  <ul class="addrs">
-                    <li v-for="ip in addresses" :key="ip">
-                      <a
-                        :href="portValid ? `http://${ip}:${port.trim()}` : undefined"
-                      target="_blank"
-                      rel="noreferrer"
-                      >http://{{ ip }}:{{ port }}</a
-                      >
-                      <button
-                        class="icon-btn"
-                        :disabled="!portValid"
-                        title="复制地址"
-                        @click="copy(`http://${ip}:${port.trim()}`)"
-                      >
-                        <Icon name="copy" :size="13" />
-                      </button>
-                    </li>
-                    <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
-                  </ul>
-                  <p class="hint">
-                    在浏览器打开地址并输入访问 token 即可查看；首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。
-                  </p>
-                </div>
-              </div>
-            </template>
-          </div>
-
-          <!-- 更新（仅 Electron）：通道（稳定版/每日构建）+ 检查/下载/重启安装 -->
-          <div v-else-if="section === 'update'" class="pane">
-            <div class="field">
-              <span class="field-label">当前版本</span>
-              <!-- 开发态显示「开发版」：package.json 保持下个发布版本，不追加 dev 后缀（避免发版前忘改回） -->
-              <span class="update-current">{{
-                !buildSha ? '…' : buildSha === 'dev' ? '开发版' : `v${appVersion} · ${buildSha.slice(0, 7)}`
-              }}</span>
-            </div>
-
-            <div class="field column">
-              <span class="field-label">更新通道</span>
-              <div class="channel-row">
-                <label class="radio">
-                  <input type="radio" value="stable" :checked="updater.channel.value === 'stable'" @change="updater.setChannel('stable')" />
-                  稳定版
-                </label>
-                <label class="radio">
-                  <input type="radio" value="nightly" :checked="updater.channel.value === 'nightly'" @change="updater.setChannel('nightly')" />
-                  每日构建（nightly）
-                </label>
-              </div>
-              <p class="hint">稳定版跟随 GitHub 正式发布；每日构建滚动包含最新改动（feat/fix 提交后更新），稳定性不作保证。</p>
-            </div>
-
-            <div class="field column">
-              <span class="field-label">检查更新</span>
-              <div class="update-status">
-                <template v-if="updater.phase.value === 'checking'">正在检查…</template>
-                <template v-else-if="updater.phase.value === 'uptodate'">已是最新（{{ updater.channel.value === 'nightly' ? 'nightly' : '稳定版' }}）</template>
-                <template v-else-if="updater.update.value">
-                  发现新版本
-                  {{ updater.update.value.channel === 'nightly' ? `nightly ${updater.update.value.version}` : `v${updater.update.value.version}` }}
-                  <a :href="updater.update.value.url" target="_blank" rel="noreferrer">发布说明</a>
-                </template>
-                <template v-else>未检查</template>
-                <p v-if="updater.error.value" class="field-error">{{ updater.error.value }}</p>
-              </div>
-
-              <!-- 下载进度 -->
-              <div v-if="updater.phase.value === 'downloading'" class="update-progress">
-                <div class="update-progress-bar">
-                  <div
-                    class="update-progress-fill"
-                    :style="{ width: downloadPct !== null ? `${downloadPct}%` : '100%' }"
-                    :class="{ indeterminate: downloadPct === null }"
-                  />
-                </div>
-                <span class="update-progress-text">
-                  {{
-                    updater.verifying.value
-                      ? '校验中…'
-                      : updater.progress.value
-                        ? `${formatMB(updater.progress.value.received)} / ${updater.progress.value.total > 0 ? formatMB(updater.progress.value.total) : '…'}`
-                        : '准备下载…'
-                  }}
-                </span>
-              </div>
-
-              <div class="update-actions">
-                <button
-                  :disabled="updater.phase.value === 'checking' || updater.phase.value === 'downloading' || updater.phase.value === 'ready'"
-                  @click="void updater.check()"
-                >
-                  检查更新
-                </button>
-                <button
-                  v-if="updater.phase.value === 'available'"
-                  class="primary"
-                  @click="void updater.download()"
-                >
-                  下载并安装
-                </button>
-                <button v-if="updater.phase.value === 'ready'" class="primary" @click="void updater.install()">
-                  重启并安装
-                </button>
-              </div>
-              <p v-if="updater.phase.value === 'ready'" class="hint">重启后自动完成安装；已打开的局域网查看页在重启后刷新即可。</p>
-            </div>
-          </div>
-
-          <!-- 连接（仅局域网 web 端）：当前访问级别 + token 注销（换身份重新输入） -->
-          <div v-else-if="section === 'connection'" class="pane">
-            <div class="field">
-              <span class="field-label">访问级别</span>
-              <span>{{ store.viewerMode ? '只读' : '可读写' }}</span>
-            </div>
-            <p class="hint">
-              本浏览器已记住当前 token；切换只读/可写身份时注销后重新输入另一个 token 即可。
-            </p>
-            <div class="actions-left">
-              <button class="danger" @click="emit('logout')">注销 token</button>
-            </div>
-          </div>
+          <!-- 分区保活挂载（v-show）：LAN 字段编辑与更新下载进度切分区不丢；web 端不挂载 LAN/更新 -->
+          <SettingsAppearance v-show="section === 'appearance'" />
+          <SettingsLan v-if="hasShell" v-show="section === 'lan'" ref="lanPane" v-model:error="error" />
+          <SettingsUpdate v-if="hasShell" v-show="section === 'update'" />
+          <SettingsConnection v-if="!hasShell" v-show="section === 'connection'" @logout="emit('logout')" />
         </div>
 
         <div v-if="error" class="dialog-error">{{ error }}</div>
 
         <footer class="actions">
-          <button :disabled="saving || loading" @click="emit('close')">{{ hasShell ? '取消' : '关闭' }}</button>
-          <button v-if="hasShell" class="primary" :disabled="saving || loading" @click="save">
-            {{ saving ? '保存中…' : '保存' }}
-          </button>
+          <button :disabled="lanBusy()" @click="emit('close')">{{ hasShell ? '取消' : '关闭' }}</button>
+          <button v-if="hasShell" class="primary" :disabled="lanBusy()" @click="save">保存</button>
         </footer>
       </div>
     </div>
   </Teleport>
 </template>
+
+<style src="./settings-shared.css"></style>
 
 <style scoped>
 .mask {
@@ -577,277 +221,11 @@ async function save() {
   font-weight: 600;
 }
 
-.pane {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-/* ---- 局域网开关行 ---- */
-.switch-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.switch-label {
-  color: var(--fg-0);
-}
-
-.hint {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--fg-1);
-}
-
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 34px;
-  height: 20px;
-  flex: none;
-  margin-top: 1px;
-}
-
-.switch input {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  border: none;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.switch .track {
-  position: absolute;
-  inset: 0;
-  border-radius: 10px;
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  transition: background 0.15s, border-color 0.15s;
-  pointer-events: none;
-}
-
-.switch .track::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--fg-1);
-  transition: transform 0.15s, background 0.15s;
-}
-
-.switch input:checked + .track {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.switch input:checked + .track::after {
-  transform: translateX(14px);
-  background: #fff;
-}
-
-.switch input:focus-visible + .track {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-/* ---- 字段：标签置顶的块状排布 ---- */
-.lan-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  margin-top: 4px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.field {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.field.column {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-}
-
-.field-label {
-  color: var(--fg-0);
-}
-
-.port-input.invalid {
-  border-color: var(--danger);
-}
-
-.field-error {
-  margin: 0;
-  font-size: 12px;
-  color: var(--danger);
-}
-
-.token-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.token-row input {
-  flex: 1;
-  min-width: 0;
-  padding: 5px 8px;
-  font-family: monospace;
-  font-size: 12px;
-}
-
-.addrs {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.addrs li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.addrs a {
-  color: var(--accent);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  flex: none;
-  color: var(--fg-1);
-}
-
-/* ---- 缩略图滑杆 ---- */
-.slider-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.slider-row input[type='range'] {
-  flex: 1;
-  padding: 0;
-  border: none;
-  background: transparent;
-}
-
-.slider-val {
-  margin-left: auto;
-  color: var(--fg-1);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---- 更新分区 ---- */
-.update-current {
-  color: var(--fg-1);
-}
-
-.channel-row {
-  display: flex;
-  gap: 16px;
-}
-
-.radio {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--fg-0);
-}
-
-.update-status {
-  font-size: 13px;
-  color: var(--fg-1);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.update-status a {
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.update-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.update-progress-bar {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--bg-3);
-  overflow: hidden;
-}
-
-.update-progress-fill {
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-}
-
-.update-progress-fill.indeterminate {
-  width: 40%;
-  animation: update-indeterminate 1.1s ease-in-out infinite;
-}
-
-@keyframes update-indeterminate {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(250%);
-  }
-}
-
-.update-progress-text {
-  font-size: 12px;
-  color: var(--fg-1);
-  font-variant-numeric: tabular-nums;
-}
-
-.update-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 4px;
-}
-
 .dialog-error {
   padding: 8px 16px;
   border-top: 1px solid var(--border);
   color: var(--danger);
   font-size: 12px;
-}
-
-.actions-left {
-  display: flex;
-  margin-top: 8px;
 }
 
 .actions {

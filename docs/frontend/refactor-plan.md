@@ -17,7 +17,7 @@
 | P5 hawkShell 散点 | ✅ platform.ts 收敛 + no-op 壳 | `web/src/platform.ts` |
 | P6 localStorage 键散落 | ✅ persist.ts STORAGE_KEYS 注册表 | `web/src/persist.ts` |
 | P7 主进程手写 TOML | ✅ LAN 配置读写下沉 daemon（`GET/PUT /api/v1/app/lan`，toml_edit 保留注释），主进程手写解析已删除 | `hawk-daemon/src/api/lan.rs` |
-| P8 大组件观察项 | 维持观察 | — |
+| P8 大组件观察项 | ✅ 已拆（SettingsDialog 按分区子组件、Inspector 按选中态） | — |
 
 P1 补记：taxonomy 拆分未采用本文档方案 B 的「返回值 + 组件层编排」，而是用 `registerTaxonomyHooks`
 模块级钩子（taxonomy 创建时注册防抖刷新回调，主 store 经钩子转发、不反向 import）解决了预言中的
@@ -47,7 +47,7 @@ P1 补记：taxonomy 拆分未采用本文档方案 B 的「返回值 + 组件�
 | P5 | `window.hawkShell` 散点判断 44 处 / 16 文件 | 低 | 多个组件/composables | 阶段 1 |
 | P6 | localStorage 键散落四处，无集中登记 | 低 | `App.vue`、`client.ts`、`library.ts` | 阶段 1 |
 | P7 | 主进程手写 TOML 文本解析（已知妥协） | 低 | `electron/main.cjs` | 可选，随时 |
-| P8 | 大组件观察项（暂不动） | 观察 | `Inspector.vue` 721 行、`SettingsDialog.vue` 696 行、`Sidebar.vue` 614 行 | — |
+| P8 | 大组件观察项 | ✅ 已拆 | `Inspector.vue`、`SettingsDialog.vue`（Sidebar 481 行已收敛，维持） | — |
 
 ---
 
