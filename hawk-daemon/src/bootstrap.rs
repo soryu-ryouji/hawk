@@ -1,5 +1,6 @@
 //! 进程组装与启动编排（main 只留入口职责，组件复杂度收敛于此）。
-//! 组件图按依赖分层构造（存储底座 → 索引流水线 → 派生服务 → LAN），构造顺序即 Services 声明顺序。
+//! 组件图即 api::AppState（单一共享状态对象，axum 生态惯例），按依赖分层构造
+//! （存储底座 → 索引流水线 → 派生服务 → LAN），构造顺序与 AppState 字段分组一致。
 //! 启动模型：axum serve 先拉起监听，随后装配索引流水线——内存索引由元数据缓存
 //! （SQLite 快路径/TOML 回退）注水，就绪不再等待全库扫描；
 //! 停机期间的文件增删改由监听实时事件 + 后台对账扫描收敛。
@@ -24,47 +25,10 @@ use crate::settings::Settings;
 use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
 
-/// 组件图：字段按依赖分层分组，构造顺序与声明一致（见 build_services 的分段注释）
-struct Services {
-    // ---- 存储底座：路径布局 / 库配置 / 元数据存取（TOML 权威 + SQLite 缓存） ----
-    paths: LibraryPaths,
-    config: Arc<LibraryConfig>,
-    startup: Arc<StartupState>,
-    // ---- 索引流水线（单写者）：内存索引 + 事件总线 + 消费循环 ----
-    index: Arc<ItemIndex>,
-    bus: EventBus,
-    pipeline: IndexPipeline,
-    // ---- 分类与视图偏好 ----
-    categories: Arc<CategoryRegistry>,
-    tags: Arc<TagRegistry>,
-    prefs: Arc<ViewPreferences>,
-    // ---- 缩略图派生：服务 + 后台 worker（结果经队列回流流水线） ----
-    thumbs: ThumbnailService,
-    worker: Arc<ThumbnailWorker>,
-    // ---- LAN 监听 supervisor（期望态收敛：配置变更经 watcher 唤醒重绑） ----
-    lan: Arc<api::lan::LanSupervisor>,
-}
-
 /// 进程入口：组装组件图 → 先监听（startup 端点可答 starting）→ 装配索引流水线 → 就绪 → 保活至退出信号
 pub async fn run(settings: Settings) {
     let port = resolve_port(settings.port);
-    let services = build_services(&settings);
-
-    let state: SharedState = Arc::new(api::AppState {
-        settings: settings.clone(),
-        paths: services.paths.clone(),
-        config: services.config.clone(),
-        startup: services.startup.clone(),
-        index: services.index.clone(),
-        bus: services.bus.clone(),
-        pipeline: services.pipeline.clone(),
-        thumbs: services.thumbs.clone(),
-        prefs: services.prefs.clone(),
-        categories: services.categories.clone(),
-        tags: services.tags.clone(),
-        worker: services.worker.clone(),
-        lan: services.lan.clone(),
-    });
+    let state = build_state(settings);
 
     // ---------- 先监听 ----------
     let local_listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
@@ -83,18 +47,18 @@ pub async fn run(settings: Settings) {
             tracing::error!("本地监听退出: {e}");
         }
     });
-    let lan_task = tokio::spawn(services.lan.clone().run(state.clone()));
+    let lan_task = tokio::spawn(state.lan.clone().run(state.clone()));
 
     // ---------- 随后装配索引流水线（HTTP 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
-    services.pipeline.start();
-    let watcher = start_watcher(&services);
-    services.startup.mark_ready();
+    state.pipeline.start();
+    let watcher = start_watcher(&state);
+    state.startup.mark_ready();
     tracing::info!("hawk-daemon 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
 
     // 全库对账扫描转后台：完成前停机期间的删除/新增短暂残留（watcher 实时事件已覆盖运行期变更），
     // 失败不置启动错误——周期对账（默认 60s）兜底重试
     {
-        let pipeline = services.pipeline.clone();
+        let pipeline = state.pipeline.clone();
         tokio::spawn(async move {
             if let Err(e) = pipeline.run_scan(false).await {
                 tracing::error!("后台对账扫描失败（周期对账将重试）: {e}");
@@ -105,7 +69,7 @@ pub async fn run(settings: Settings) {
     tracing::info!(
         "hawk-daemon 监听 http://127.0.0.1:{}，素材库: {}",
         local_addr.port(),
-        settings.library_root
+        state.settings.library_root
     );
 
     // 保持进程存活直至退出信号
@@ -115,9 +79,9 @@ pub async fn run(settings: Settings) {
     let _ = lan_task;
 }
 
-/// 组件图组装：分段顺序即 Services 字段顺序；db/store/scanner/migrator 是构造中间件
-/// （分别由 pipeline/JobCtx 持有），不进组件图
-fn build_services(settings: &Settings) -> Services {
+/// 组件图组装（→ api::AppState，组合根）：分段顺序即依赖顺序；
+/// db/store/scanner/migrator 是构造中间件（由 pipeline/JobCtx 持有），不进组件图
+fn build_state(settings: Settings) -> SharedState {
     // ---- 存储底座 ----
     let paths = LibraryPaths::new(&settings.library_root, settings.cache_parent.clone());
     // 缓存位置底线校验（主进程传参错误/手工参数场景；桌面端设置面板已先做用户友好校验）
@@ -173,31 +137,33 @@ fn build_services(settings: &Settings) -> Services {
     // ---- LAN 监听 supervisor：期望态收敛（首轮回合即按配置绑定，变更由 watcher 唤醒重绑） ----
     let lan = api::lan::LanSupervisor::new();
 
-    Services {
+    // 组件图落位：字段分组见 AppState 定义处注释
+    Arc::new(api::AppState {
+        settings,
         paths,
         config,
         startup,
         index,
         bus,
         pipeline,
-        categories,
-        tags,
-        prefs,
         thumbs,
         worker,
+        prefs,
+        categories,
+        tags,
         lan,
-    }
+    })
 }
 
 /// 文件/配置监听接线：变更按类别分发（流水线任务 / 配置热更 / 视图偏好重读 / LAN 重绑）。
 /// 返回的 watcher 由调用方持有保活
-fn start_watcher(services: &Services) -> Arc<LibraryWatcher> {
+fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
     use crate::core::events::REASON_EXTERNAL;
-    let watcher = LibraryWatcher::new(services.paths.clone(), {
-        let pipeline = services.pipeline.clone();
-        let config = services.config.clone();
-        let prefs = services.prefs.clone();
-        let lan = services.lan.clone();
+    let watcher = LibraryWatcher::new(state.paths.clone(), {
+        let pipeline = state.pipeline.clone();
+        let config = state.config.clone();
+        let prefs = state.prefs.clone();
+        let lan = state.lan.clone();
         Arc::new(move |event| match event {
             WatcherEvent::FileUpsert(abs) => pipeline.notify_upsert(abs),
             WatcherEvent::Deleted(abs) => pipeline.notify_deleted(abs),

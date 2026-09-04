@@ -43,7 +43,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | 文件 | 职责 |
 | ---- | ---- |
 | `src/main.rs` | 进程入口（薄壳，~30 行）：`Cli::parse_args` → `--dump-openapi` 分流（打印 schema 后退出）→ tracing 初始化 → `bootstrap::run`。组装与启动编排全部在 bootstrap |
-| `src/bootstrap.rs` | 组件图组装与启动编排：`Services` 按依赖分层分组（存储底座 paths/config/startup → 索引流水线 index/bus/pipeline → 分类与视图偏好 → 缩略图 thumbs/worker → LAN supervisor；db/store/scanner/migrator 是构造中间件不进组件图），`build_services` 分段构造（worker.attach 回流接线须在 start 前）；`run` 按序执行：`resolve_port` 试绑 27371（占用回退动态分配）→ `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore 变化 → 强制重扫；[web] 变化 → LAN 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
+| `src/bootstrap.rs` | 组件图组装与启动编排（组合根）：`build_state` 直接构造 `api::AppState`（单一共享状态对象，按依赖分层分段：存储底座 → 索引流水线 → 分类与视图偏好 → 缩略图 → LAN；db/store/scanner/migrator 是构造中间件不进组件图；worker.attach 回流接线须在 start 前）；`run` 按序执行：`resolve_port` 试绑 27371（占用回退动态分配）→ `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore 变化 → 强制重扫；[web] 变化 → LAN 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
 | `src/settings.rs` | 启动设置（解析层/配置层分离）：`Cli` 用 clap derive 声明全部 CLI（`--library`/`--port`/`--web-dist`/`--cache-parent`/`--dump-openapi`，每项支持同名 `HAWK_*` env 回退、CLI 优先，未知参数/非法值报错 exit 2，`--dump-openapi` 豁免 library 必填）；`Settings::from_cli` 承接业务校验（库目录为空/不存在 exit 2）与 env-only 参数——token 只走 `HAWK_TOKEN`（避免出现在进程列表，未传入时生成随机值并打印 stdout），`HAWK_RESCAN_INTERVAL` 对账间隔（默认 60s，0 关闭） |
 
 ### api/ —— HTTP 层

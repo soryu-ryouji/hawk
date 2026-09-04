@@ -76,17 +76,21 @@ pub enum AccessLevel {
 
 pub struct AppState {
     pub settings: Settings,
+    // ---- 存储底座：路径布局 / 库配置 / 启动进度 ----
     pub paths: LibraryPaths,
     pub config: Arc<LibraryConfig>,
     pub startup: Arc<StartupState>,
+    // ---- 索引流水线（单写者）：内存索引 + 事件总线 + 消费循环 ----
     pub index: Arc<ItemIndex>,
     pub bus: EventBus,
     pub pipeline: IndexPipeline,
+    // ---- 缩略图派生：服务 + 后台 worker（结果经队列回流流水线） ----
     pub thumbs: ThumbnailService,
+    pub worker: Arc<ThumbnailWorker>,
+    // ---- 分类与视图偏好 ----
     pub prefs: Arc<ViewPreferences>,
     pub categories: Arc<CategoryRegistry>,
     pub tags: Arc<TagRegistry>,
-    pub worker: Arc<ThumbnailWorker>,
     /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
     pub lan: Arc<lan::LanSupervisor>,
 }
