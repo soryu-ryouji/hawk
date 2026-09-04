@@ -1,15 +1,21 @@
-// 一键开发：先构建主进程/preload（esbuild watch 持续重建），启动 vite，等 5173 就绪后拉起 electron
-// （server 由 electron 主进程拉起）。主进程 TS 改动由 watch 重建，重开 electron 生效。
+// 一键开发：esbuild 首轮构建主进程/preload → 启动 vite → 等 5173 就绪后拉起 electron
+// （server 由 electron 主进程拉起）。electron/src 改动 → 自动重建 → 自动重启 electron。
+import * as esbuild from 'esbuild';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ELECTRON_BUILD_COMMON, ELECTRON_BUILDS } from './electron-build-config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 
-// 主进程/preload 构建（watch 模式后台常驻；electron 退出时随本进程一起回收）
-const electronBuild = spawn('node', ['scripts/build-electron.mjs', '--watch'], { cwd: root, stdio: 'inherit' });
+// 主进程/preload 的 esbuild context（首轮构建 + watch 重建共用）
+const contexts = await Promise.all(
+  ELECTRON_BUILDS.map((c) => esbuild.context({ ...ELECTRON_BUILD_COMMON, ...c, absWorkingDir: root })),
+);
+await Promise.all(contexts.map((ctx) => ctx.rebuild()));
 
 const vite = spawn('npm', ['run', 'dev:web'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
 
@@ -27,27 +33,45 @@ for (;;) {
   await new Promise((r) => setTimeout(r, 300));
 }
 
-// 等 esbuild 首轮产物落盘（watch 模式 rebuild 完成即开始监听，产物存在即可拉起 electron）
-{
-  const fs = await import('node:fs');
-  const mainOut = path.join(root, 'electron', 'out', 'main.mjs');
-  const buildDeadline = Date.now() + 30_000;
-  while (!fs.existsSync(mainOut)) {
-    if (Date.now() > buildDeadline) {
-      console.error('electron 主进程构建超时（electron/out/main.mjs 未生成）');
-      vite.kill();
-      electronBuild.kill();
-      process.exit(1);
+const electronBin = require('electron');
+
+let app = null;
+/** 为重启而杀的标志：electron exit 时据此区分「重建重启」与「用户退出」（托盘退出/Cmd+Q） */
+let restarting = false;
+
+function spawnApp() {
+  app = spawn(electronBin, ['.'], { cwd: root, stdio: 'inherit', env: process.env });
+  app.on('exit', (code) => {
+    if (restarting) {
+      restarting = false;
+      spawnApp();
+      return;
     }
-    await new Promise((r) => setTimeout(r, 100));
-  }
+    vite.kill();
+    void Promise.all(contexts.map((ctx) => ctx.dispose()));
+    process.exit(code ?? 0);
+  });
 }
 
-const electronBin = require('electron');
-const app = spawn(electronBin, ['.'], { cwd: root, stdio: 'inherit', env: process.env });
+spawnApp();
 
-app.on('exit', (code) => {
-  vite.kill();
-  electronBuild.kill();
-  process.exit(code ?? 0);
+// electron/src 改动 → 防抖重建 → 重启 electron（首轮 spawnApp 前的重建不重启：app 尚未拉起）
+let rebuildTimer;
+fs.watch(path.join(root, 'electron', 'src'), { recursive: true }, () => {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(async () => {
+    try {
+      await Promise.all(contexts.map((ctx) => ctx.rebuild()));
+    } catch (e) {
+      // 重建失败（编辑中间态的语法错误等）：不重启，等下一次改动
+      console.error(`[dev] 主进程/preload 重建失败: ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    if (!app || app.killed) {
+      return;
+    }
+    console.log('[dev] 主进程/preload 已重建，重启 electron…');
+    restarting = true;
+    app.kill();
+  }, 200);
 });
