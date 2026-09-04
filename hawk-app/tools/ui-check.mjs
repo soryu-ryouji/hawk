@@ -466,7 +466,12 @@ try {
     return detail?.tags?.includes('测试标签') ? true : null;
   }, 5_000);
   check('右键添加标签生效（服务端）', tagOk, true);
-  check('检查器标签 chip 显示', await evaljs(`[...document.querySelectorAll('.inspector .chip')].some((c) => c.textContent.includes('测试标签'))`), true);
+  // chip 渲染依赖检查器数据刷新（晚于服务端确认），轮询收敛
+  const chipShown = await waitFor(async () => {
+    const ok = await evaljs(`[...document.querySelectorAll('.inspector .chip')].some((c) => c.textContent.includes('测试标签'))`);
+    return ok ? true : null;
+  }, 5_000).catch(() => false);
+  check('检查器标签 chip 显示', chipShown, true);
 
   // ---- 右键 → 移动到文件夹（明确选根目录的 sunset，保证结果确定） ----
   await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('sunset.'))?.click()`);
@@ -623,7 +628,13 @@ try {
     return detail?.categories?.includes('灵感库') ? true : null;
   }, 5_000);
   check('分类重命名跟随（服务端）', renameOk, true);
-  check('重命名后视图跟随', await evaljs(`document.querySelector('.sidebar .tax-row.active .tax-name')?.textContent?.trim() ?? ''`), '灵感库');
+  // 视图跟随晚于服务端确认（rename action 内部 refreshTaxonomy 异步重渲染），轮询收敛；
+  // 也作为后续删除步骤的同步点（按新名 灵感库 找侧栏行）
+  const viewFollows = await waitFor(async () => {
+    const t = await evaljs(`document.querySelector('.sidebar .tax-row.active .tax-name')?.textContent?.trim() ?? ''`);
+    return t === '灵感库' ? t : null;
+  }, 10_000).catch(() => '');
+  check('重命名后视图跟随', viewFollows, '灵感库');
 
   // 删除分类（覆写 confirm）→ 赋值清除、视图回全部
   await evaljs(`window.confirm = () => true`);
