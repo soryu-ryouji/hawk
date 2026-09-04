@@ -253,13 +253,17 @@ try {
   check('齐行：宽高比跟随原图（2×4 ≈ 0.5）', Math.abs(layout.cat - 0.5) < 0.05, true);
   check('齐行：方形图宽高相等', Math.abs(layout.logo - 1) < 0.05, true);
 
-  // 缩略图真实加载（自然宽度 > 0）
-  await new Promise((r) => setTimeout(r, 2000));
-  check(
-    '缩略图加载成功',
-    await evaljs(`[...document.querySelectorAll('.card img')].every((i) => i.naturalWidth > 0)`),
-    true,
-  );
+  // 缩略图真实加载（自然宽度 > 0）；共享 runner 上首次索引/缩略图生成远超 2s，轮询等待而非固定 sleep
+  const thumbsLoaded = await waitFor(async () => {
+    const ok = await evaljs(`[...document.querySelectorAll('.card img')].every((i) => i.naturalWidth > 0)`);
+    return ok ? true : null;
+  }, 30_000).catch(async () => {
+    // 诊断：complete=false 是仍在加载（生成慢）；complete=true 且 naturalWidth=0 是端点报错
+    const state = await evaljs(`[...document.querySelectorAll('.card img')].filter((i) => i.naturalWidth === 0).map((i) => ({ id: i.src.match(/id=([0-9a-f]+)/)?.[1] ?? '', complete: i.complete }))`);
+    console.log('  [诊断] 未就绪缩略图:', JSON.stringify(state));
+    return false;
+  });
+  check('缩略图加载成功', thumbsLoaded, true);
   await screenshot('ui-grid.png');
 
   // ---- 预览浮层：空格展开原图、滚轮缩放、双击复位、预览内 ←→ 切换 ----
