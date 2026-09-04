@@ -113,7 +113,7 @@ jobs:
         env:
           HAWK_SHA: ${{ github.sha }}
 
-      # web 构建与 cargo 无共享状态，并行跑：vite/vue-tsc 藏进 cargo 的耗时里
+      # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
       # （build-update.mjs 非 Windows 平台自跳过；当前仅 win job 需要）
       - name: Build web & native (parallel)
         shell: bash
@@ -121,6 +121,7 @@ jobs:
           node scripts/build-server.mjs &
           node scripts/build-update.mjs &
           npm run build &
+          node scripts/build-electron.mjs &
           wait
 
       - name: Pack
@@ -199,11 +200,12 @@ jobs:
         env:
           HAWK_SHA: ${{ github.sha }}
 
-      # web 构建与 cargo 无共享状态，并行跑：vite/vue-tsc 藏进 cargo 的耗时里
+      # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
       - name: Build web & daemon (parallel)
         run: |
           node scripts/build-server.mjs &
           npm run build &
+          node scripts/build-electron.mjs &
           wait
 
       - name: Pack
@@ -284,8 +286,10 @@ jobs:
         env:
           HAWK_SHA: ${{ github.sha }}
 
-      - name: Build web
-        run: npm run build
+      - name: Build web & main process
+        run: |
+          npm run build
+          node scripts/build-electron.mjs
 
       # 前后端都构建到目标架构（electron-builder 直接下载对应 electron 产物；rust 同机跨 target 编译）
       # 输出目录：arm64 → dist/mac-arm64；x64 是 mac 默认架构 → dist/mac（无后缀）
