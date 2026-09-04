@@ -43,4 +43,4 @@ panic = "abort"
 strip = true
 
 [dev-dependencies]
-jsonschema = "0.53.0"
+jsonschema = { version = "0.53.0", default-features = false }
