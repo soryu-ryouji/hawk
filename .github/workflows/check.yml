@@ -1,0 +1,71 @@
+# 质量门禁：push 到 main 与 PR 时跑全量检查（release.yml 只管发版构建，本文件是第一道防线）。
+# rust job：daemon 单测；desktop job：完整复现本机构建链
+# （web/主进程/后端构建 → 双 tsc → vitest → 打包冒烟 → UI 端到端自检）。
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hawk-daemon
+
+      - run: cargo test
+        working-directory: hawk-daemon
+
+  desktop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hawk-app
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: hawk-daemon
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: hawk-app/package-lock.json
+
+      - run: npm ci
+
+      # electron 发行包与 electron-builder 工具（7zip 等）缓存：免每次 ~100MB 下载
+      - name: Cache electron & builder tools
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: tools-linux-x64-${{ hashFiles('hawk-app/package-lock.json') }}
+
+      # web 构建（vue-tsc + 主进程 tsc + vite）与单元测试
+      - run: npm run build
+      - run: npm run test:unit
+
+      # 主进程/preload 与 daemon 构建（pack 与 ui-check 的产物来源）
+      - run: node scripts/build-electron.mjs
+      - run: node scripts/build-server.mjs
+
+      # 打包完整性冒烟：--dir 产出未压缩目录即可验证 files/extraResources 齐全（含 electron/out 主进程）
+      - name: Pack smoke (dir)
+        run: node scripts/pack.mjs --dir --publish never
+
+      # UI 端到端自检（真实启动 vite + electron + daemon，CDP 断言；ubuntu 无显示器走 xvfb）
+      - name: UI check (xvfb)
+        run: xvfb-run -a node tools/ui-check.mjs
