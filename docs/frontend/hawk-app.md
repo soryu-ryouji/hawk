@@ -103,8 +103,9 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message }`（页面内错误屏呈现）；返回退订函数 |
 | `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的隐藏到托盘） |
 | `getAppVersion()` | 当前应用版本与构建 sha（`{ version, sha }`；sha 来自打包时写入的 `build-info.json`，开发态为 `'dev'`） |
-| `checkUpdate(channel)` | 检查更新（`'stable'`=GitHub latest 正式版比 semver；`'nightly'`=滚动预发布比构建 sha）；有更新返回 `UpdateInfo`，无更新返回 null；查询/比较逻辑在主进程（GitHub Releases API，无自建服务） |
-| `downloadUpdate()` | 下载上次检查到的更新包并强制 sha256 校验（Release 附带 `<artifact>.sha256` 边车，缺失即失败不提供无校验更新）；进度经 `onUpdateProgress` 推送 |
+| `checkUpdate(channel)` | 检查更新（`'stable'`=GitHub latest 正式版比 semver；`'nightly'`=滚动预发布比构建 sha）；有更新返回 `UpdateInfo`，无更新返回 null；查询/比较逻辑在主进程（GitHub Releases API，无自建服务）。发现更新时先查磁盘缓存：暂存目录已有同包（sha256 边车比对一致，如「下完未装就退出」）则 `UpdateInfo.downloaded=true`，可跳过下载直接安装 |
+| `downloadUpdate()` | 下载上次检查到的更新包并强制 sha256 校验（Release 附带 `<artifact>.sha256` 边车，缺失即失败不提供无校验更新）；进度经 `onUpdateProgress` 推送；已就绪时幂等直接返回。任何失败（含取消）不留半成品文件 |
+| `cancelUpdate()` | 取消进行中的下载（AbortController 中断流读取 + 清半成品）；无下载在跑时为空操作。download 侧以 `UPDATE_CANCELLED` 哨兵错误收尾，渲染层识别后静默回 available（非错误态） |
 | `installUpdate()` | 重启并安装已校验的更新（成功后应用退出，IPC 不再返回）：Linux AppImage 同目录拷贝后原子改名覆盖自身 + relaunch；macOS 由 detached sh 脚本接力；Windows 由更新辅助程序 hawk-update.exe 接力（实现见仓库根 `hawk-update/`） |
 | `onUpdateProgress(cb)` | 订阅更新包下载进度：`{ phase: 'downloading', received, total } \| { phase: 'verifying' } \| { phase: 'ready' }`；返回退订函数 |
 
@@ -187,7 +188,7 @@ web/
     │   ├── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
     │   ├── useZoomPan.ts      # 预览手势引擎：滚轮不动点缩放/双击（触屏按 300ms 两次点按自判，iOS 不产 dblclick）/单指平移与滑动切换/双指捏合/下拉关闭状态机（语义矩阵见头注释）
     │   ├── useLayout.ts       # 布局/触屏判定：narrow=matchMedia ≤1200px（同步 body.mobile，三栏最小健康宽度见布局章节），touch=(pointer: coarse) 或 maxTouchPoints>0（同步 body.touch，iPad「请求桌面网站」下 pointer 不命中需 maxTouchPoints 兜底）；narrow 驱动布局差异（抽屉侧栏/点按开预览/顶栏减负），touch 驱动触屏手势（下拉关闭；预览关闭 × 仅在 touch+narrow 隐藏，见 PreviewOverlay 行）；设备能力判断走 platform.ts
-    │   ├── useUpdater.ts      # 应用更新渲染层状态机（Electron）：通道偏好/检查/下载/安装编排，启动静默检查（发现新版本按 通道@版本 toast 一次）；语义在主进程
+    │   ├── useUpdater.ts      # 应用更新渲染层状态机（Electron）：通道偏好/检查/下载（可取消）/安装编排，启动静默检查（发现新版本按 通道@版本 toast 一次）；语义在主进程
     │   └── useStartup.ts      # 启动状态机：server-started/error/progress 事件（Electron IPC）或浏览器轮询 /app startup，就绪计数驱动 App (re)boot
     ├── components/
     │   ├── TitleBar.vue
@@ -443,7 +444,7 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网/存储/更新；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（LAN 字段编辑与更新下载进度切分区不丢），web 端不挂载局域网/存储/更新分区；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（保存按钮委托 `SettingsLan` 的 save，校验失败自动切到局域网分区） |
 | `SettingsAppearance.vue` | — | — | 外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，均经 store.setUserThumbSize——web 端由此记住偏好并停止跟随动态默认）+ 预览关闭按钮开关（preview.setHidePreviewClose 即时生效并 localStorage 记忆，全端持久）；无保存语义 |
 | `SettingsLan.vue` | — | — | 局域网分区（仅 Electron）：开关 + 「允许修改素材库」+ token 拆分开关（separate_write_token + write_token，开启且为空时自动签发）+ 端口（纯文本输入，实时校验红框 + 提示，未启用时收起字段）+ token（monospace + 复制/重新生成）+ 本机地址列表（链接 + 逐行复制）；状态自管（打开时 `api.appLan()` 加载），读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启、SSE 不断），PUT 内置收敛等待，绑定失败自动回滚并报错；本机地址经 `shell.lanAddresses()`；经 `defineExpose({ save, busy })` 供壳的 footer 委托 |
-| `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道单选（稳定版/nightly，存 `hawk:updateChannel`）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换）、重启并安装（应用退出后主进程替换脚本接力） |
+| `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道单选（稳定版/nightly，存 `hawk:updateChannel`）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
 | `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读/可读写，store.viewerMode）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
@@ -553,8 +554,9 @@ Electron 端内置「检查更新 → 下载（sha256 校验）→ 重启替换�
 
 - **双通道**：`stable` = `releases/latest`（正式 `v*` tag，与 `app.getVersion()` 比 semver，发版流程与版本策略见上节）；`nightly` = `releases/tags/nightly`（滚动预发布，比 Release 所指 commit 与本机构建 sha——Release 的 `target_commitish` 是分支名不可用，CI 在 body 末尾注入 `<!-- hawk-nightly-sha: <sha> -->` HTML 注释供解析，旧版退化为 Release 名 `Nightly <短sha>` 前缀匹配）。通道偏好存 localStorage（`hawk:updateChannel`），切换后旧检查结果作废需重查；局域网 web 端无更新功能（刷新即得宿主新前端）
 - **校验**：CI 为每个产物生成 `<artifact>.sha256` 边车随 Release 上传；主进程下载后强制比对，缺失即报错引导手动下载——不提供无校验的更新。因此**边车机制上线的首个发布之后，更新功能才可用**（存量发布无边车）
+- **取消与复用**：下载可中途取消（AbortController 中断，半成品即时清理，回「发现新版本」态可直接重下）；检查发现更新时先在暂存目录查磁盘缓存——资产名不含版本（stable 固定名 / nightly 滚动 tag），「同版本」只能靠 sha256 边车比对判定，哈希一致即同一个包（覆盖「下完未装就退出」场景），命中则跳过下载直接可安装
 - **替换**（运行中文件被锁，不能自我替换）：Linux AppImage 同目录拷贝 + 原子改名覆盖自身（旧挂载来自旧 inode 不受影响）+ `app.relaunch()`；macOS 由 detached sh 脚本接力（等旧进程 pid 退出 → 解压 zip → 替换 `.app` → 拉起新实例 → 自清理；解压/暂存与 `.app` 同目录同卷 mv 原子，需对安装位置有写权限；app 内 fetch 下载无 quarantine 标记，不触发 Gatekeeper）；Windows 由随包分发的更新辅助程序接力（Rust 单文件 `hawk-update.exe`，源码在仓库根 `hawk-update/`，经 `win.extraResources` 进产物）：主进程把它复制到更新临时目录后启动（temp 副本运行，避免应用目录内同名文件被更新时占用自身），它用 OpenProcess+WaitForSingleObject 等旧进程退出（校验进程名防 PID 复用误等）→ 解压 → 递归覆盖（单文件带重试窗口）→ 拉起新实例 → 自清理，全程写更新目录 `install.log`、失败非零退出——曾用 PowerShell 脚本做同一件事，执行策略/PSModulePath 污染等环境差异导致静默失败（「点安装没反应」且现场无迹可循），故换确定性行为的专用程序
-- **UI**：设置面板「更新」分区（仅 Electron）：当前版本（v + 短 sha）、通道单选、检查/下载（进度条，total 未知时不定态动画）/重启安装；启动后主界面就绪延迟 8s 静默检查（每会话一次），发现新版本 toast 提示一次（`hawk:lastUpdateNotice` 按 通道@版本 去重，避免每次启动重复打扰）。渲染层状态机在 `composables/useUpdater.ts`（idle → checking → uptodate/available/error → downloading → ready），检查/下载/安装语义全部在主进程「应用更新」段，渲染层只做编排
+- **UI**：设置面板「更新」分区（仅 Electron）：当前版本（v + 短 sha）、通道单选、检查/下载（进度条，total 未知时不定态动画；下载中可取消）/重启安装（缓存命中时检查完直接出现）；启动后主界面就绪延迟 8s 静默检查（每会话一次），发现新版本 toast 提示一次（`hawk:lastUpdateNotice` 按 通道@版本 去重，避免每次启动重复打扰）。渲染层状态机在 `composables/useUpdater.ts`（idle → checking → uptodate/available/error → downloading → ready），检查/下载/安装语义全部在主进程「应用更新」段，渲染层只做编排
 
 ## 目录结构
 

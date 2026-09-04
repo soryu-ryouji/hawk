@@ -7,7 +7,7 @@ import { ref } from 'vue';
 import { hasShell, shell } from '../platform';
 import { loadText, saveText, STORAGE_KEYS } from '../persist';
 import { useLibraryStore } from '../stores/library';
-import type { UpdateInfo, UpdateProgress } from '../types';
+import { UPDATE_CANCELLED, type UpdateInfo, type UpdateProgress } from '../types';
 
 export type UpdaterPhase = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'ready' | 'error';
 
@@ -61,7 +61,8 @@ async function check(silent = false): Promise<UpdateInfo | null> {
       return null;
     }
     update.value = info;
-    phase.value = 'available';
+    // 磁盘缓存命中（同版本已下载校验通过，如「下完未装就退出」）：跳过下载直接可安装
+    phase.value = info.downloaded ? 'ready' : 'available';
     if (silent) {
       const id = `${info.channel}@${info.version}`;
       if (loadText(STORAGE_KEYS.lastUpdateNotice) !== id) {
@@ -93,8 +94,34 @@ async function download() {
       phase.value = 'ready';
     }
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // 用户取消不是错误：cancel() 已切回 available，此处只兜底时序竞态
+    if (msg.includes(UPDATE_CANCELLED)) {
+      if (phase.value === 'downloading') {
+        phase.value = 'available';
+      }
+      progress.value = null;
+      verifying.value = false;
+      return;
+    }
     phase.value = 'error';
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = msg;
+  }
+}
+
+/** 取消进行中的下载（主进程 abort 并清半成品）；回 available 可直接重新下载 */
+async function cancel() {
+  if (phase.value !== 'downloading') {
+    return;
+  }
+  // 先切态：download() await 链的 ready 兜底（resolve 时 phase==='downloading'）就不会误触发
+  phase.value = 'available';
+  progress.value = null;
+  verifying.value = false;
+  try {
+    await shell.cancelUpdate();
+  } catch {
+    // 与下载自然结束的竞态：忽略
   }
 }
 
@@ -125,5 +152,5 @@ export function startupAutoCheck() {
 }
 
 export function useUpdater() {
-  return { channel, phase, update, error, progress, verifying, setChannel, check, download, install };
+  return { channel, phase, update, error, progress, verifying, setChannel, check, download, cancel, install };
 }

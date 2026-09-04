@@ -21,6 +21,7 @@ const shell: HawkShell = {
   getAppVersion: () => ipcRenderer.invoke(IPC.appVersion),
   checkUpdate: (channel) => ipcRenderer.invoke(IPC.updateCheck, channel),
   downloadUpdate: () => ipcRenderer.invoke(IPC.updateDownload),
+  cancelUpdate: () => ipcRenderer.invoke(IPC.updateCancel),
   installUpdate: () => ipcRenderer.invoke(IPC.updateInstall),
   showInFinder: (relPath) => ipcRenderer.invoke(IPC.showInFinder, relPath),
   getCacheDir: () => ipcRenderer.invoke(IPC.cacheDirGet),

@@ -100,11 +100,14 @@ onMounted(() => {
         >
           下载并安装
         </button>
+        <button v-if="updater.phase.value === 'downloading'" @click="void updater.cancel()">取消下载</button>
         <button v-if="updater.phase.value === 'ready'" class="primary" @click="void updater.install()">
           重启并安装
         </button>
       </div>
-      <p v-if="updater.phase.value === 'ready'" class="hint">重启后自动完成安装；已打开的局域网查看页在重启后刷新即可。</p>
+      <p v-if="updater.phase.value === 'ready'" class="hint">
+        安装包已下载。重启后自动完成安装；已打开的局域网查看页在重启后刷新即可。
+      </p>
     </div>
   </div>
 </template>

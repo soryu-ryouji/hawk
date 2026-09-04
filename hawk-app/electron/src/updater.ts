@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { APP_DIR } from './paths';
 import { getMainWindow, setQuitting } from './window';
-import { IPC, type UpdateInfo, type UpdateProgress } from './ipc-contract';
+import { IPC, UPDATE_CANCELLED, type UpdateInfo, type UpdateProgress } from './ipc-contract';
 
 const UPDATE_REPO = 'soryu-ryouji/hawk';
 
@@ -36,6 +36,24 @@ interface PendingUpdate {
 let pendingUpdate: PendingUpdate | null = null;
 /** 已下载并校验通过的更新包路径 */
 let verifiedFile: string | null = null;
+/** 进行中下载的取消开关（updateCancel 触发；无下载在跑为 null） */
+let downloadAbort: AbortController | null = null;
+
+/** 更新包暂存目录（系统 temp 下；被 OS 清理只是缓存不命中，不影响正确性） */
+function updateDir(): string {
+  return path.join(app.getPath('temp'), 'hawk-update');
+}
+
+/** 拉 Release 边车 <artifact>.sha256 与本地文件比对：一致=同一个包；边车缺失抛错（不提供无校验的更新） */
+async function matchesSidecar(file: string, downloadUrl: string): Promise<boolean> {
+  const sumRes = await fetch(`${downloadUrl}.sha256`, { headers: { 'user-agent': 'hawk-app' } });
+  if (!sumRes.ok) {
+    throw new Error('发布包缺少 sha256 校验文件，请到 GitHub 手动下载更新');
+  }
+  const expected = (await sumRes.text()).trim().toLowerCase();
+  const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  return actual === expected;
+}
 
 /** 本机构建标识（build-info.json 随包分发，打包前由 scripts/stamp-build.mjs 写入；dev 无文件时 sha='dev'） */
 function readBuildInfo(): { sha: string } {
@@ -145,6 +163,18 @@ export function registerUpdaterIpc(): void {
     }
     pendingUpdate = { channel, version, asset };
     verifiedFile = null;
+    // 磁盘缓存命中免重下：资产名不含版本（stable 固定名/nightly 滚动 tag），「同版本」只能靠
+    // sha256 边车比对判定——哈希一致即同一个包（覆盖「下完未装就退出」场景）；边车不可达按未命中处理
+    const cached = path.join(updateDir(), asset.name);
+    if (fs.existsSync(cached)) {
+      try {
+        if (await matchesSidecar(cached, asset.browser_download_url)) {
+          verifiedFile = cached;
+        }
+      } catch {
+        // 边车拉取失败：按未命中走正常下载
+      }
+    }
     return {
       channel,
       version,
@@ -152,11 +182,12 @@ export function registerUpdaterIpc(): void {
       url: release.html_url,
       assetName: asset.name,
       size: asset.size ?? 0,
+      downloaded: verifiedFile !== null,
     };
   });
 
   /** 下载上次检查到的更新包并强制 sha256 校验（边车 <artifact>.sha256 缺失即失败，不提供无校验的更新）。
-   *  进度经 hawk:update-progress 事件推送，完成后 resolve */
+   *  进度经 hawk:update-progress 事件推送，完成后 resolve；可经 updateCancel 中止 */
   ipcMain.handle(IPC.updateDownload, async (): Promise<void> => {
     if (!pendingUpdate) {
       throw new Error('请先检查更新');
@@ -164,52 +195,69 @@ export function registerUpdaterIpc(): void {
     if (verifiedFile && fs.existsSync(verifiedFile)) {
       return; // 已就绪，重复点击幂等
     }
-    const dir = path.join(app.getPath('temp'), 'hawk-update');
+    const dir = updateDir();
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, pendingUpdate.asset.name);
     const sendProgress = (p: UpdateProgress): void => getMainWindow()?.webContents.send(IPC.updateProgress, p);
     sendProgress({ phase: 'downloading', received: 0, total: pendingUpdate.asset.size ?? 0 });
-    const res = await fetch(pendingUpdate.asset.browser_download_url, { headers: { 'user-agent': 'hawk-app' } });
-    if (!res.ok || !res.body) {
-      throw new Error(`下载失败（HTTP ${res.status}）`);
-    }
-    const total = Number(res.headers.get('content-length')) || pendingUpdate.asset.size || 0;
-    const reader = res.body.getReader();
-    const out = fs.openSync(file, 'w');
-    let received = 0;
-    let lastPct = -1;
-    let lastSent = 0;
+    const abort = new AbortController();
+    downloadAbort = abort;
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        fs.writeSync(out, value);
-        received += value.byteLength;
-        // 节流：百分比变化或每 256KB 发一次，避免大包刷屏 IPC
-        const pct = total > 0 ? Math.floor((received * 100) / total) : -1;
-        if (pct !== lastPct || received - lastSent >= 262144) {
-          lastPct = pct;
-          lastSent = received;
-          sendProgress({ phase: 'downloading', received, total });
-        }
+      const res = await fetch(pendingUpdate.asset.browser_download_url, {
+        headers: { 'user-agent': 'hawk-app' },
+        signal: abort.signal,
+      });
+      if (!res.ok || !res.body) {
+        throw new Error(`下载失败（HTTP ${res.status}）`);
       }
+      const total = Number(res.headers.get('content-length')) || pendingUpdate.asset.size || 0;
+      const reader = res.body.getReader();
+      const out = fs.openSync(file, 'w');
+      let received = 0;
+      let lastPct = -1;
+      let lastSent = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          fs.writeSync(out, value);
+          received += value.byteLength;
+          // 节流：百分比变化或每 256KB 发一次，避免大包刷屏 IPC
+          const pct = total > 0 ? Math.floor((received * 100) / total) : -1;
+          if (pct !== lastPct || received - lastSent >= 262144) {
+            lastPct = pct;
+            lastSent = received;
+            sendProgress({ phase: 'downloading', received, total });
+          }
+        }
+      } finally {
+        fs.closeSync(out);
+      }
+      sendProgress({ phase: 'verifying' });
+      if (!(await matchesSidecar(file, pendingUpdate.asset.browser_download_url))) {
+        throw new Error('更新包校验失败（sha256 不匹配）');
+      }
+      verifiedFile = file;
+      sendProgress({ phase: 'ready' });
+    } catch (error) {
+      // 任何失败（下载中断/校验不过/用户取消）都不留半成品：残留文件哈希必不匹配，删了不占磁盘
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        // 清理失败（文件被临时占用等）：下次下载截断重写、缓存判定也会挡下，不掩盖原始错误
+      }
+      // 用户取消不是错误：抛哨兵，渲染层识别后静默回 available
+      throw abort.signal.aborted ? new Error(UPDATE_CANCELLED) : error;
     } finally {
-      fs.closeSync(out);
+      downloadAbort = null;
     }
-    sendProgress({ phase: 'verifying' });
-    const sumRes = await fetch(`${pendingUpdate.asset.browser_download_url}.sha256`, { headers: { 'user-agent': 'hawk-app' } });
-    if (!sumRes.ok) {
-      throw new Error('发布包缺少 sha256 校验文件，请到 GitHub 手动下载更新');
-    }
-    const expected = (await sumRes.text()).trim().toLowerCase();
-    const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-    if (actual !== expected) {
-      throw new Error('更新包校验失败（sha256 不匹配）');
-    }
-    verifiedFile = file;
-    sendProgress({ phase: 'ready' });
+  });
+
+  /** 取消进行中的下载（abort 由 updateDownload 的 catch 收尾）；无下载在跑时为空操作 */
+  ipcMain.handle(IPC.updateCancel, (): void => {
+    downloadAbort?.abort();
   });
 
   /** 重启并安装已校验的更新：成功后本进程退出（IPC 不再返回），由更新辅助程序接力（Windows）

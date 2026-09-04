@@ -3,6 +3,7 @@ import type { HawkShell, LibraryHistoryItem, UpdateInfo, UpdateProgress } from '
 
 // IPC 契约类型从 electron/src/ipc-contract.ts 单一定义处 re-export（三处对齐改一处）
 export type { LibraryHistoryItem, UpdateInfo, UpdateProgress };
+export { UPDATE_CANCELLED } from '../../electron/src/ipc-contract';
 
 // 契约类型一律从生成的 schema 取，不另写
 export type Item = components['schemas']['ItemDto'];

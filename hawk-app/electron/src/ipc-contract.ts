@@ -13,6 +13,7 @@ export const IPC = {
   appVersion: 'hawk:app-version',
   updateCheck: 'hawk:update-check',
   updateDownload: 'hawk:update-download',
+  updateCancel: 'hawk:update-cancel',
   updateInstall: 'hawk:update-install',
   showInFinder: 'hawk:show-in-finder',
   cacheDirGet: 'hawk:cache-dir-get',
@@ -52,7 +53,13 @@ export interface UpdateInfo {
   assetName: string;
   /** 更新包字节数（未知为 0） */
   size: number;
+  /** 安装包已在本地且 sha256 校验通过（磁盘缓存命中）：可跳过下载直接安装 */
+  downloaded: boolean;
 }
+
+/** 用户取消下载的哨兵错误消息（渲染层识别后静默回 available，不进 error 态；
+ *  哨兵惯例同 useStartup 的 'UNAUTHORIZED'） */
+export const UPDATE_CANCELLED = 'UPDATE_CANCELLED';
 
 /** 更新包下载进度事件 */
 export type UpdateProgress =
@@ -108,6 +115,8 @@ export interface HawkShell {
   checkUpdate(channel: 'stable' | 'nightly'): Promise<UpdateInfo | null>;
   /** 下载并校验上次检查到的更新（进度经 onUpdateProgress 推送；已就绪时幂等） */
   downloadUpdate(): Promise<void>;
+  /** 取消进行中的下载（清半成品；无下载在跑时为空操作） */
+  cancelUpdate(): Promise<void>;
   /** 重启并安装已下载的更新（成功后应用退出，不再返回） */
   installUpdate(): Promise<void>;
   /** 订阅更新包下载进度，返回退订函数 */
