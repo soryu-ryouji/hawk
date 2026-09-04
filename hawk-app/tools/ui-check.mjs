@@ -474,13 +474,11 @@ try {
   await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('sunset.'))?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 200, clientY: 200 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
   await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent.includes('移动到文件夹'))?.click()`);
-  await waitFor(async () => evaljs(`!!document.querySelector('.dialog select')`), 5_000);
-  await evaljs(`(() => {
-    const select = document.querySelector('.dialog select');
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
-    setter.call(select, '海报');
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-  })()`);
+  await waitFor(async () => evaljs(`!!document.querySelector('.dialog .trigger')`), 5_000);
+  // SelectBox 自绘下拉：点触发框展开浮层，再点目标选项（原生 select 的 value/change 注入不再适用）
+  await evaljs(`document.querySelector('.dialog .trigger')?.click()`);
+  await waitFor(async () => evaljs(`!!document.querySelector('.list .option')`), 5_000);
+  await evaljs(`[...document.querySelectorAll('.list .option')].find((o) => o.textContent.includes('海报'))?.click()`);
   await evaljs(`[...document.querySelectorAll('.dialog .actions button')].find((b) => b.textContent === '确定')?.click()`);
   const moveTarget = await evaljs(`document.querySelector('.inspector .name-input')?.value ?? ''`);
   const moveOk = await waitFor(async () => {
