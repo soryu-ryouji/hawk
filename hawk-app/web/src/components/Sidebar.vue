@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
@@ -10,6 +10,7 @@ import FolderTreeNode from './FolderTreeNode.vue';
 import LibraryDropdown from './LibraryDropdown.vue';
 import PromptDialog from './PromptDialog.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
+import type { FolderNode } from '../types';
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
@@ -17,6 +18,31 @@ const menu = useContextMenu();
 
 // 三个分区的折叠态（点分区标题收起/展开，v-show 保留树节点内部的展开/编辑状态）
 const collapsed = reactive({ folder: false, category: false, tag: false });
+
+// ---- 底栏筛选框（Eagle 式）：按小写子串过滤文件夹树/分类/标签；树侧的祖先链处理在 FolderTreeNode ----
+const navFilter = ref('');
+const navKeyword = computed(() => navFilter.value.trim().toLowerCase());
+
+const filteredCategories = computed(() =>
+  navKeyword.value
+    ? taxonomy.categories.filter((c) => c.name.toLowerCase().includes(navKeyword.value))
+    : taxonomy.categories,
+);
+const filteredTags = computed(() =>
+  navKeyword.value
+    ? taxonomy.tagList.filter((t) => t.name.toLowerCase().includes(navKeyword.value))
+    : taxonomy.tagList,
+);
+
+/** 文件夹树是否存在匹配（空态提示用；树节点的可见性判断在 FolderTreeNode 内） */
+const hasFolderMatch = computed(() => {
+  const walk = (nodes: FolderNode[]): boolean =>
+    nodes.some((n) => n.name.toLowerCase().includes(navKeyword.value) || walk(n.children));
+  return walk(taxonomy.folders?.children ?? []);
+});
+const noNavMatch = computed(
+  () => !!navKeyword.value && !hasFolderMatch.value && !filteredCategories.value.length && !filteredTags.value.length,
+);
 
 /** 顶部拖拽条双击切换最大化（与 TitleBar 一致；条内无交互控件，无需排除判断） */
 function onHeadDblClick() {
@@ -212,7 +238,7 @@ function onCategoryContextMenu(e: MouseEvent) {
         <button v-if="!store.viewerMode" class="add" title="新建文件夹" @click.stop="showCreateFolder = true">＋</button>
       </div>
       <div v-show="!collapsed.folder" class="tree" @contextmenu.prevent="onTreeContextMenu">
-        <FolderTreeNode v-for="node in taxonomy.folders?.children ?? []" :key="node.path" :node="node" :depth="0" />
+        <FolderTreeNode v-for="node in taxonomy.folders?.children ?? []" :key="node.path" :node="node" :depth="0" :filter="navKeyword" />
       </div>
 
       <div class="section" @click="collapsed.category = !collapsed.category">
@@ -232,7 +258,7 @@ function onCategoryContextMenu(e: MouseEvent) {
         @drop="onTreeDrop('category', $event)"
       >
         <TaxonomyRow
-          v-for="category in taxonomy.categories"
+          v-for="category in filteredCategories"
           :key="category.name"
           kind="category"
           :name="category.name"
@@ -259,7 +285,7 @@ function onCategoryContextMenu(e: MouseEvent) {
         @drop="onTreeDrop('tag', $event)"
       >
         <TaxonomyRow
-          v-for="tag in taxonomy.tagList"
+          v-for="tag in filteredTags"
           :key="tag.name"
           kind="tag"
           :name="tag.name"
@@ -270,6 +296,13 @@ function onCategoryContextMenu(e: MouseEvent) {
         />
       </div>
 
+      <div v-if="noNavMatch" class="nav-filter-empty">无匹配项</div>
+    </div>
+
+    <!-- 底栏筛选框：固定在侧栏底部，不随分区列表滚动；清空沿用 type=search 的原生 ×（与顶栏搜索框一致） -->
+    <div class="nav-filter">
+      <Icon name="filter" :size="12" />
+      <input v-model="navFilter" type="search" placeholder="筛选" />
     </div>
   </aside>
 
@@ -440,6 +473,47 @@ body.touch .library-name.in-body {
 .count {
   font-size: 11px;
   color: var(--fg-1);
+}
+
+/* ---- 底栏筛选框：Eagle 式，固定在侧栏底部 ---- */
+.nav-filter {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 8px 8px;
+  padding: 0 8px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-2);
+  color: var(--fg-1);
+}
+
+.nav-filter:focus-within {
+  border-color: var(--accent);
+}
+
+.nav-filter input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-0);
+  font-size: 12px;
+}
+
+/* 保持输入框在聚焦时不重复 accent 边框（全局 input:focus 规则） */
+.nav-filter input:focus {
+  border-color: transparent;
+}
+
+.nav-filter-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--fg-1);
+  text-align: center;
 }
 
 </style>

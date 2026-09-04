@@ -744,6 +744,42 @@ try {
   // 主进程素材库记忆：应用配置（TOML）应已写入当前库路径
   const cfg = toml.parse(fs.readFileSync(configFile, 'utf8'));
   check('素材库路径已持久化', cfg.libraryPath === lib, true);
+
+  // ---- 侧栏底栏筛选框：过滤文件夹/分类/标签（Eagle 式） ----
+  await evaljs(`(() => {
+    const input = document.querySelector('.nav-filter input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '海报');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await waitFor(async () => {
+    const tree = await evaljs(`document.querySelector('.sidebar .tree')?.textContent ?? ''`);
+    return tree.includes('海报') && !tree.includes('图标') ? true : null;
+  }, 5_000);
+  check('侧栏筛选：文件夹树只留匹配项', true, true);
+  check(
+    '侧栏筛选：标签区同时过滤',
+    await evaljs(`!(document.querySelector('.sidebar .tags')?.textContent ?? '').includes('测试标签')`),
+    true,
+  );
+  // 三分区均无匹配时空态提示
+  await evaljs(`(() => {
+    const input = document.querySelector('.nav-filter input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '不存在的名字');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await waitFor(async () => evaljs(`!!document.querySelector('.sidebar .nav-filter-empty')`), 5_000);
+  check('侧栏筛选：无匹配空态', true, true);
+  // 清空后全部恢复（原生 search × 之外的代码路径：直接置空）
+  await evaljs(`(() => {
+    const input = document.querySelector('.nav-filter input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await waitFor(async () => evaljs(`(document.querySelector('.sidebar .tree')?.textContent ?? '').includes('图标') ? true : null`), 5_000);
+  check('侧栏筛选清空后恢复', true, true);
   await screenshot('ui-trash.png');
 
   console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

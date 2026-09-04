@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { Directive } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
@@ -14,7 +14,7 @@ const vFocus: Directive<HTMLElement> = {
   },
 };
 
-const props = defineProps<{ node: FolderNode; depth: number }>();
+const props = defineProps<{ node: FolderNode; depth: number; filter?: string }>();
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
@@ -23,6 +23,20 @@ const menu = useContextMenu();
 const expanded = ref(props.depth < 1);
 const editing = ref<false | 'rename' | 'create'>(false);
 const editText = ref('');
+
+// ---- 侧栏筛选（底栏筛选框输入的关键词，调用方已转小写）：----
+// 匹配节点与其祖先可见（祖先仅作上下文）；含匹配后代的节点强制展开，保证匹配链可达
+function subtreeMatches(node: FolderNode): boolean {
+  const kw = props.filter ?? '';
+  return node.name.toLowerCase().includes(kw) || node.children.some(subtreeMatches);
+}
+
+const visible = computed(() => !props.filter || subtreeMatches(props.node));
+const forcedExpand = computed(() => !!props.filter && props.node.children.some(subtreeMatches));
+/** 展开箭头：筛选态下只有含匹配后代时才出现（否则点开是空链） */
+const hasVisibleChildren = computed(() =>
+  props.filter ? props.node.children.some(subtreeMatches) : props.node.children.length > 0,
+);
 
 function isActive() {
   return store.view.kind === 'folder' && store.view.path === props.node.path;
@@ -98,7 +112,7 @@ function onDrop(e: DragEvent) {
 </script>
 
 <template>
-  <div>
+  <div v-if="visible">
     <div
       class="node"
       :class="{ active: isActive(), 'drop-target': dropDepth > 0 }"
@@ -111,9 +125,9 @@ function onDrop(e: DragEvent) {
       @drop="onDrop"
     >
       <span
-        v-if="node.children.length > 0"
+        v-if="hasVisibleChildren"
         class="arrow"
-        :class="{ expanded }"
+        :class="{ expanded: expanded || forcedExpand }"
         @click.stop="expanded = !expanded"
         >▸</span
       >
@@ -145,8 +159,8 @@ function onDrop(e: DragEvent) {
       />
     </div>
 
-    <template v-if="expanded">
-      <FolderTreeNode v-for="child in node.children" :key="child.path" :node="child" :depth="depth + 1" />
+    <template v-if="expanded || forcedExpand">
+      <FolderTreeNode v-for="child in node.children" :key="child.path" :node="child" :depth="depth + 1" :filter="filter" />
     </template>
   </div>
 </template>
