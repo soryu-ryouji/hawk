@@ -700,6 +700,7 @@ export const useLibraryStore = defineStore('library', () => {
         // 新 item 的落点（成员/次序）只能以服务端查询为准：防抖重载骨架，视口窗口随后按需补齐
         debouncedSkeletonReload(() => void reloadSkeleton());
         taxonomyHooks?.refreshTaxonomy();
+        taxonomyHooks?.refreshFolders(); // 文件增删改变目录计数（含「全部素材」徽章）
         break;
       case 'item.trashed':
       case 'item.removed': {
@@ -716,6 +717,7 @@ export const useLibraryStore = defineStore('library', () => {
         selection.value = selection.value.filter((s) => s !== id);
         debouncedSkeletonReload(() => void reloadSkeleton());
         taxonomyHooks?.refreshTaxonomy();
+        taxonomyHooks?.refreshFolders();
         break;
       }
       case 'task.progress': {
