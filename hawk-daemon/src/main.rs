@@ -28,9 +28,10 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
+    let cli = settings::Cli::parse_args();
     // --dump-openapi：打印代码生成的 OpenAPI schema 到 stdout 后退出（openapi.json 的固化来源；
     // 契约测试校验二者同步，改 API 后用 `cargo run -- --dump-openapi > openapi.json` 更新）
-    if std::env::args().any(|a| a == "--dump-openapi") {
+    if cli.dump_openapi {
         print!("{}", api::build_openapi_json());
         return;
     }
@@ -42,7 +43,7 @@ async fn main() {
         )
         .init();
 
-    let settings = Settings::from_args();
+    let settings = Settings::from_cli(cli);
     let port = resolve_port(settings.port);
 
     // ---------- 服务构建 ----------

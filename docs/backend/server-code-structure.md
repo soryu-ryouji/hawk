@@ -42,8 +42,8 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 
 | 文件 | 职责 |
 | ---- | ---- |
-| `src/main.rs` | 组装与启动（按执行顺序）：`Settings::from_args` 解析参数 → `resolve_port` 试绑 27371（占用回退动态分配）→ 构建全部单例 → `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `worker.attach(index, store, pipeline.sender())`（worker 回流接线，须在 start 前）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore 变化 → 强制重扫；[web] 变化 → LAN supervisor 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
-| `src/settings.rs` | 启动设置：`--library` / `--port` / `--web-dist` 与 `HAWK_*` 环境变量解析；库目录不存在 exit(2)；token 未传入时生成随机值并打印 stdout（开发场景）；`HAWK_RESCAN_INTERVAL` 周期对账间隔（默认 60s，0 关闭） |
+| `src/main.rs` | 组装与启动（按执行顺序）：`Cli::parse_args`（clap 解析，`--dump-openapi` 打印 schema 后退出）→ `Settings::from_cli` 业务校验 → `resolve_port` 试绑 27371（占用回退动态分配）→ 构建全部单例 → `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `worker.attach(index, store, pipeline.sender())`（worker 回流接线，须在 start 前）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore 变化 → 强制重扫；[web] 变化 → LAN supervisor 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
+| `src/settings.rs` | 启动设置（解析层/配置层分离）：`Cli` 用 clap derive 声明全部 CLI（`--library`/`--port`/`--web-dist`/`--cache-parent`/`--dump-openapi`，每项支持同名 `HAWK_*` env 回退、CLI 优先，未知参数/非法值报错 exit 2，`--dump-openapi` 豁免 library 必填）；`Settings::from_cli` 承接业务校验（库目录为空/不存在 exit 2）与 env-only 参数——token 只走 `HAWK_TOKEN`（避免出现在进程列表，未传入时生成随机值并打印 stdout），`HAWK_RESCAN_INTERVAL` 对账间隔（默认 60s，0 关闭） |
 
 ### api/ —— HTTP 层
 

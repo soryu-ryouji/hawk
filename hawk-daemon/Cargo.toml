@@ -16,6 +16,7 @@ serde_json = "1"
 toml = "0.8"
 toml_edit = "0.22"
 blake3 = "1"
+clap = { version = "4", features = ["derive", "env"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 notify = "8"
 image = "0.25"
