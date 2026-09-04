@@ -23,6 +23,7 @@ export const IPC = {
   serverProgress: 'hawk:server-progress',
   serverRestarting: 'hawk:server-restarting',
   serverStarted: 'hawk:server-started',
+  serverConn: 'hawk:server-conn',
   serverError: 'hawk:server-error',
   updateProgress: 'hawk:update-progress',
 } as const;
@@ -102,8 +103,11 @@ export interface HawkShell {
   installUpdate(): Promise<void>;
   /** 订阅更新包下载进度，返回退订函数 */
   onUpdateProgress(cb: (p: UpdateProgress) => void): () => void;
-  /** 订阅 server 就绪（携带新地址与 token，需重配 API 并重启数据），返回退订函数 */
+  /** 订阅 server 就绪（携带新地址与 token，需重配 API 并重启数据），返回退订函数。
+   *  事件只发一次：页面（重）加载晚于就绪时会丢失，须与 getServerConn 拉取配合 */
   onServerStarted(cb: (conn: ServerConn) => void): () => void;
+  /** 拉取当前已就绪的 server 连接（未就绪返回 null）：页面加载晚于 server 就绪的竞态兜底 */
+  getServerConn(): Promise<ServerConn | null>;
   /** 订阅 server 启动/运行失败，返回退订函数 */
   onServerError(cb: (error: { message: string }) => void): () => void;
   /** 订阅 server 即将重启（旧 server 已停，应立即切启动屏），返回退订函数 */

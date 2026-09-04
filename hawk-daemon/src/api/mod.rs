@@ -85,6 +85,17 @@ pub fn build_router(state: SharedState) -> axum::Router {
 async fn cors(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
     use axum::http::header;
     let is_token_discovery = req.uri().path() == "/api/v1/app/token";
+    // 预检短路：OPTIONS 不携带凭据、不执行任何操作，直接 204 + 放开头（跨源 dev 前端
+    // （localhost:5173 → 127.0.0.1）带 Authorization 头的请求全靠预检放行；token 校验仍在真实请求上执行）
+    if req.method() == axum::http::Method::OPTIONS && !is_token_discovery {
+        let mut resp = axum::response::Response::new(axum::body::Body::empty());
+        *resp.status_mut() = axum::http::StatusCode::NO_CONTENT;
+        let headers = resp.headers_mut();
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, "*".parse().unwrap());
+        headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
+        return resp;
+    }
     let mut resp = next.run(req).await;
     if !is_token_discovery {
         let headers = resp.headers_mut();

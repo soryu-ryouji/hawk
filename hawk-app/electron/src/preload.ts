@@ -29,6 +29,7 @@ const shell: HawkShell = {
   closeWindow: () => ipcRenderer.invoke(IPC.winClose),
   onUpdateProgress: (cb) => subscribe(IPC.updateProgress, cb),
   onServerStarted: (cb) => subscribe(IPC.serverStarted, cb),
+  getServerConn: () => ipcRenderer.invoke(IPC.serverConn),
   onServerError: (cb) => subscribe(IPC.serverError, cb),
   onServerRestarting: (cb) => subscribe(IPC.serverRestarting, cb),
   onServerProgress: (cb) => subscribe(IPC.serverProgress, cb),

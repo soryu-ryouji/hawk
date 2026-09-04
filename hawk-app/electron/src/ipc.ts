@@ -4,7 +4,7 @@ import { app, clipboard, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getLibraryRoot, listLibraries } from './app-config';
-import { openLibraryAt, pickLibrary } from './server';
+import { openLibraryAt, pickLibrary, getStartedConn } from './server';
 import { lanAddresses } from './lan';
 import { IPC } from './ipc-contract';
 
@@ -64,6 +64,9 @@ export function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.lanAddresses, () => lanAddresses());
+
+  // 当前已就绪的 server 连接（未就绪 null）：页面（重）加载晚于 server-started 事件时的竞态兜底
+  ipcMain.handle(IPC.serverConn, () => getStartedConn());
 
   ipcMain.handle(IPC.showInFinder, (_event, relPath: unknown) => {
     const abs = resolveLibraryPath(relPath);

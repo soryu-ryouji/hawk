@@ -75,10 +75,24 @@ export function useStartup() {
     shell.onServerError(({ message }) => {
       failed.value = message;
     });
-    // server 重启会换新地址/token（轮询端口即变）：先重配连接再计就绪
-    shell.onServerStarted((conn) => {
+    // server 重启会换新地址/token（轮询端口即变）：先重配连接再计就绪。
+    // 事件与拉取双通道去重：onServerStarted 只发一次，页面（重）加载晚于就绪时会丢，
+    // 故挂载时同时经 getServerConn 拉取——同连接只 boot 一次
+    let bootedKey: string | null = null;
+    const onConn = (conn: { address: string; token: string }) => {
+      const key = `${conn.address}|${conn.token}`;
+      if (bootedKey === key) {
+        return;
+      }
+      bootedKey = key;
       configureApi({ api: conn.address, token: conn.token });
       readyCount.value++;
+    };
+    shell.onServerStarted(onConn);
+    void shell.getServerConn().then((conn) => {
+      if (conn) {
+        onConn(conn);
+      }
     });
   });
   onUnmounted(() => stopPolling());

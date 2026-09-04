@@ -41,6 +41,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   installUpdate: async () => {},
   onUpdateProgress: () => () => {},
   onServerStarted: () => () => {},
+  getServerConn: async () => null,
   onServerError: () => () => {},
   onServerRestarting: () => () => {},
   onServerProgress: () => () => {},

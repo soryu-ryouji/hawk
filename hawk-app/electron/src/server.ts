@@ -21,6 +21,13 @@ export interface ServerHandle {
 }
 
 let server: ServerHandle | null = null;
+/** 已就绪 server 的连接参数（ready 时写入，停服/换库时清空）；页面加载晚于就绪时事件会丢，
+ *  渲染进程经 hawk:server-conn 主动拉取兜底 */
+let startedConn: { address: string; token: string } | null = null;
+
+export function getStartedConn(): { address: string; token: string } | null {
+  return startedConn;
+}
 
 function resolveServerCommand(): { command: string; args: string[] } {
   if (process.env.HAWK_DAEMON_EXE) {
@@ -156,6 +163,7 @@ function startServer(libPath: string, address: string, token: string): ServerHan
       clearInterval(poll);
       clearInterval(watchdog);
       if (state.status === 'ready') {
+        startedConn = { address, token };
         getMainWindow()?.webContents.send(IPC.serverStarted, { address, token });
       } else {
         fail(state.message || 'hawk-daemon 初始索引构建失败');
@@ -176,6 +184,7 @@ function startServer(libPath: string, address: string, token: string): ServerHan
 }
 
 export function stopServer(): void {
+  startedConn = null;
   if (server) {
     server.markStopped();
     if (!server.child.killed) {
@@ -203,6 +212,7 @@ async function switchLibrary(libPath: string, address: string, token: string): P
   // 前端立刻切启动屏：旧 server 已停、新 server 未 ready 的窗口期，
   // 主界面所有 API 已失效（假死），不能在 ready 后才切（hawk:server-restarting）
   getMainWindow()?.webContents.send(IPC.serverRestarting);
+  startedConn = null;
   stopServer();
   // 记住当前库并维护历史（最近使用在前、去重、上限 10）：换库下拉经 hawk:list-libraries 直达
   const history = [libPath, ...(readConfig().libraryHistory ?? []).filter((p) => p !== libPath)].slice(0, 10);
