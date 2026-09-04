@@ -107,8 +107,8 @@ struct TestApp {
     state: SharedState,
 }
 
-fn test_app() -> TestApp {
-    let base = std::env::temp_dir().join(format!("hawk-contract-test-{}", std::process::id()));
+fn test_app(name: &str) -> TestApp {
+    let base = std::env::temp_dir().join(format!("hawk-contract-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let root = base.join("library");
     let cache = base.join("cache");
@@ -343,7 +343,7 @@ fn openapi_endpoints_all_classified() {
 /// 成功路径：空库真实调用返回 200，响应体符合 200 schema
 #[tokio::test]
 async fn success_cases_match_schema() {
-    let app = test_app();
+    let app = test_app("success");
     let spec = spec();
     for (method, uri, body) in SUCCESS_CASES {
         let body = body.map(|s| serde_json::from_str(s).unwrap());
@@ -354,7 +354,7 @@ async fn success_cases_match_schema() {
 /// 写端点剧本：准备真实 item 后按依赖顺序调用全部写端点，校验 200 与响应 schema
 #[tokio::test]
 async fn write_endpoints_match_schema() {
-    let app = test_app();
+    let app = test_app("write");
     let spec = spec();
     let id = app.add_test_item("a.png", [200, 30, 30]).await;
 
@@ -436,7 +436,7 @@ async fn write_endpoints_match_schema() {
 /// 缺参数/实体不存在等业务拒绝是 JSON 错误信封；路由缺失（fallback 空 404）不是
 #[tokio::test]
 async fn route_only_endpoints_exist() {
-    let app = test_app();
+    let app = test_app("route");
     for (method, path) in ROUTE_ONLY {
         let body = matches!(*method, "POST" | "PUT" | "DELETE").then_some("{}");
         let (status, bytes) = call(&app.router, method, path, body.map(str::as_bytes).map(|b| ("application/json", b.to_vec()))).await;
@@ -483,7 +483,7 @@ async fn sse_events_match_schema() {
     );
 
     // 真实捕获：订阅总线 → 入库新文件 → item.added 载荷过 schema
-    let app = test_app();
+    let app = test_app("sse");
     let mut rx = app.state.bus.subscribe();
     app.add_test_item("sse.png", [30, 30, 200]).await;
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
