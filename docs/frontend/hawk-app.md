@@ -45,7 +45,7 @@ Eagle 主窗口的关键特征：
 
 ```text
 Electron 主进程启动
-  → 读用户配置（~/.config/hawk/hawk-app.json）取最近素材库；无/失效 → 加载应用页（无连接参数，页面内进 SetupScreen）
+  → 读用户配置（~/.config/hawk/config.toml）取最近素材库；无/失效 → 加载应用页（无连接参数，页面内进 SetupScreen）
   → 预选空闲环回端口（net.listen(0)）+ 生成随机 token，创建 BrowserWindow（show:false）
   → 立即加载应用页并注入 hash（开发：localhost:5173/#api=...&token=...；打包：file://index.html#...）——
     端口/token 先生成、页面先行，server 后台拉起；窗口内容单页生命周期，无二次导航，杜绝切换白屏
@@ -65,7 +65,7 @@ Electron 主进程启动
   → 杀掉子进程（含异常退出路径，防止孤儿进程）
 ```
 
-启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。换库（引导页选库、侧栏库名下拉选历史库）与应用设置重启 server 不再重载页面——主进程停旧 server 的同时发 `hawk:server-restarting`，渲染进程立即切启动屏（旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效，必须此时就切）；`hawk:server-started` 带新地址/token 到达后原地重配 API、重启数据（store.init 会清掉上一库的会话状态：查询条件/选择/预览/进度指示；视图经 restoreView 恢复或回退全部素材，+SSE 重连）。历史库由主进程记录（`~/.config/hawk/hawk-app.json` 的 `libraryHistory`，最近使用在前、去重、上限 10），侧栏库名下拉列出（当前库打勾、已删除的置灰），底部「打开文件夹…」弹系统目录选择框。
+启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。换库（引导页选库、侧栏库名下拉选历史库）与应用设置重启 server 不再重载页面——主进程停旧 server 的同时发 `hawk:server-restarting`，渲染进程立即切启动屏（旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效，必须此时就切）；`hawk:server-started` 带新地址/token 到达后原地重配 API、重启数据（store.init 会清掉上一库的会话状态：查询条件/选择/预览/进度指示；视图经 restoreView 恢复或回退全部素材，+SSE 重连）。历史库由主进程记录（`~/.config/hawk/config.toml` 的 `libraryHistory`，最近使用在前、去重、上限 10），侧栏库名下拉列出（当前库打勾、已删除的置灰），底部「打开文件夹…」弹系统目录选择框。
 
 握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。
 
@@ -87,14 +87,14 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | 通道 | 用途 |
 | ---- | ---- |
 | `selectLibrary()` | 选新素材库：弹系统目录选择框 → 主进程杀掉旧 server 用新库重启（进历史记录） |
-| `listLibraries()` | 本机打开过的素材库历史：`{ current, libraries: [{ path, name, exists }] }`（最近在前；主进程读 `hawk-app.json` 的 `libraryHistory` 并校验目录存在性） |
+| `listLibraries()` | 本机打开过的素材库历史：`{ current, libraries: [{ path, name, exists }] }`（最近在前；主进程读 `config.toml` 的 `libraryHistory` 并校验目录存在性） |
 | `openLibrary(path)` | 打开历史素材库（仅接受历史记录内的路径），换库就绪经 `onServerStarted` 通知 |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
 | `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
 | `lanAddresses()` | 本机局域网 IPv4 地址列表（设置面板展示访问地址用；LAN 配置读写走 REST `GET/PUT /api/v1/app/lan`，不经 IPC） |
 | `getCacheDir()` | 当前缓存父目录（`{ current, isDefault }`；设置面板「存储」分区） |
-| `pickCacheDir()` / `changeCacheDir(path)` | 缓存父目录迁移：选目录 → 校验（缓存不得落在库内；目标须为空或不存在）→ 停 server → 整体搬迁（先复制后删除，主进程代发 `migrate` 进度帧）→ 写 `hawk-app.json` 的 `cacheParent` → 重启 server（daemon 经 `--cache-parent` 接收；失败清理半成品并回滚配置）；返回错误文案或 null |
+| `pickCacheDir()` / `changeCacheDir(path)` | 缓存父目录迁移：选目录 → 校验（缓存不得落在库内；目标须为空或不存在）→ 停 server → 整体搬迁（先复制后删除，主进程代发 `migrate` 进度帧）→ 写 `config.toml` 的 `cacheParent` → 重启 server（daemon 经 `--cache-parent` 接收；失败清理半成品并回滚配置）；返回错误文案或 null |
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
 | `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），应用内启动屏用；返回退订函数 |
@@ -569,7 +569,7 @@ hawk-app/
 │   │   ├── main.ts         # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
 │   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
 │   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、关窗隐藏到托盘 + 系统托盘、退出标志
-│   │   ├── app-config.ts   # 用户配置（~/.config/hawk/hawk-app.json，全平台统一）：最近素材库与历史记录、缓存父目录、当前库根会话状态
+│   │   ├── app-config.ts   # 用户配置（~/.config/hawk/config.toml，全平台统一，TOML 格式；Electron 会话数据在平台默认 userData，两目录分离）：最近素材库与历史记录、缓存父目录、当前库根会话状态
 │   │   ├── updater.ts      # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
 │   │   ├── lan.ts          # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）
 │   │   ├── ipc.ts          # 白名单 IPC 注册（换库/文件管理器/剪贴板/窗口控制/局域网地址/退出应用）

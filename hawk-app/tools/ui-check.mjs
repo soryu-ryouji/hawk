@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
+const toml = require('smol-toml');
 const tmp = path.join(root, 'tools', '.tmp');
 const lib = path.join(tmp, 'library');
 
@@ -92,10 +93,11 @@ fs.writeFileSync(path.join(lib, '海报', 'cat.png'), png(2, 4, [0, 255, 0]));
 fs.writeFileSync(path.join(lib, '海报', 'logo.png'), png(8, 8, [0, 0, 255]));
 
 // 预设素材库配置，跳过目录选择框（跑完恢复原配置）
-// userData 全平台统一为 ~/.config/hawk（main.ts 经 app.setPath 重定向，见 electron/src/paths.ts）
+// 应用自有配置目录全平台统一为 ~/.config/hawk（TOML，见 electron/src/app-config.ts）；
+// Electron 会话数据在平台默认 userData（appData/hawk-app），本脚本不触碰
 const configDir = path.join(os.homedir(), '.config', 'hawk');
 fs.mkdirSync(configDir, { recursive: true });
-const configFile = path.join(configDir, 'hawk-app.json');
+const configFile = path.join(configDir, 'config.toml');
 const configBackup = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null;
 // 任何退出路径（含 spawn 失败导致的进程崩溃）都恢复原配置；原本无配置则删除本次写入，不残留
 process.on('exit', () => {
@@ -105,7 +107,7 @@ process.on('exit', () => {
     fs.rmSync(configFile, { force: true });
   }
 });
-fs.writeFileSync(configFile, JSON.stringify({ libraryPath: lib }));
+fs.writeFileSync(configFile, toml.stringify({ libraryPath: lib }));
 
 // ---------- 启动 vite + electron ----------
 
@@ -737,8 +739,8 @@ try {
   }, 5_000).catch(() => '');
   check('回收站空态', trashEmpty, '回收站为空');
 
-  // 主进程素材库记忆：userData 配置应已写入当前库路径
-  const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  // 主进程素材库记忆：应用配置（TOML）应已写入当前库路径
+  const cfg = toml.parse(fs.readFileSync(configFile, 'utf8'));
   check('素材库路径已持久化', cfg.libraryPath === lib, true);
   await screenshot('ui-trash.png');
 

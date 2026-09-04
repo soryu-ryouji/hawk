@@ -12,6 +12,7 @@ export const APP_DIR = path.join(ELECTRON_DIR, '..', '..');
 /** 窗口/托盘共用的应用图标（build/icon.png，512px 源图，托盘用时按平台重采样） */
 export const APP_ICON = path.join(APP_DIR, 'build', 'icon.png');
 
-/** 全局配置目录（全平台统一 ~/.config/hawk；经 app.setPath('userData') 重定向，
- *  hawk-app.json 与 Electron 会话数据（localStorage 等）均落在此） */
-export const USER_DATA_DIR = path.join(os.homedir(), '.config', 'hawk');
+/** 应用自有配置目录（全平台统一 ~/.config/hawk；只放 TOML 配置，与 Electron 会话数据分离）。
+ *  Electron 平台默认 userData 不可直接用：打包版 productName=hawk 会让 Linux 默认 userData
+ *  恰好解析为本目录，Chromium 缓存会混进来——main.ts 把 userData 固定到 appData/hawk-app */
+export const CONFIG_DIR = path.join(os.homedir(), '.config', 'hawk');

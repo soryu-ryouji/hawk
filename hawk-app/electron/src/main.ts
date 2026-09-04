@@ -4,15 +4,17 @@
 // updater（应用更新）、lan（局域网地址）、ipc（白名单通道）。
 import { app, dialog } from 'electron';
 import fs from 'node:fs';
+import path from 'node:path';
 import { createTray, createWindow, loadMainPage, setQuitting, showMainWindow } from './window';
 import { openLibraryAt, stopServer } from './server';
 import { readConfig } from './app-config';
 import { registerIpc } from './ipc';
 import { registerUpdaterIpc } from './updater';
-import { USER_DATA_DIR } from './paths';
 
-// 全局配置目录全平台统一为 ~/.config/hawk（须在 app ready 前重定向）
-app.setPath('userData', USER_DATA_DIR);
+// Electron 会话数据（localStorage/缓存等）走平台默认位置：appData 父目录 + 固定 hawk-app 子目录。
+// 不依赖运行时应用名的默认解析：打包版 productName=hawk 在 Linux 会把默认 userData 解析为
+// ~/.config/hawk，与应用自有配置目录（paths.ts 的 CONFIG_DIR）相撞，Chromium 数据会混进去
+app.setPath('userData', path.join(app.getPath('appData'), 'hawk-app'));
 
 // 单实例：托盘驻留期间再次启动（双击图标/快捷方式）应唤起已有窗口，而不是拉起第二个实例
 // （第二个实例会拉起第二套 hawk-daemon 进程争用同一素材库，引发索引与文件监听竞争）
