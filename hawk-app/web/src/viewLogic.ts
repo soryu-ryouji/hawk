@@ -17,12 +17,24 @@ export function isUnfilteredView(view: ViewState, query: QueryState): boolean {
   return view.kind === 'all' && query.keywords.length === 0 && query.star === undefined && !query.color;
 }
 
-/** 视图位置范围：folder 视图 → "<path>/" 前缀，root 视图 → ""（顶层文件）；
- *  其余视图无位置语义（返回 null，「仅从此处移除」选项不适用） */
-export function viewPathPrefix(view: ViewState): string | null {
-  if (view.kind === 'folder') return `${view.path}/`;
-  if (view.kind === 'root') return '';
-  return null;
+/** 条目 key：同内容（同 hash）多位置在视图中各自成条，前端以 `${id}\n${path}` 唯一定位。
+ *  \n 不可能是文件名字符；DOM dataset / JSON 均安全 */
+export function itemKey(id: string, path: string): string {
+  return `${id}\n${path}`;
+}
+
+/** 回收站位置前缀（与后端 LibraryPaths 一致）：位置路径的展示口径要剥掉它（恢复原路径） */
+export const TRASH_PREFIX = '.hawk/trash/';
+
+/** 位置路径的展示口径：回收站位置剥掉 trash 前缀，其余原样 */
+export function displayPath(p: string): string {
+  return p.startsWith(TRASH_PREFIX) ? p.slice(TRASH_PREFIX.length) : p;
+}
+
+/** itemKey 的逆运算：拆出内容 id 与库内位置（API 边界用：写操作按 id+path 寻址） */
+export function splitKey(key: string): { id: string; path: string } {
+  const i = key.indexOf('\n');
+  return { id: key.slice(0, i), path: key.slice(i + 1) };
 }
 
 /**
@@ -56,24 +68,25 @@ export function skeletonNeedsPatch(prev: SkeletonItem, updated: Item): boolean {
   return prev.star !== updated.star || prev.width !== updated.width || prev.height !== updated.height;
 }
 
-/** 选择集变更：默认单选替换；toggle 反选；range 以末位选中为锚点框选骨架索引区间（双向） */
+/** 选择集变更：默认单选替换；toggle 反选；range 以末位选中为锚点框选骨架索引区间（双向）。
+ *  条目以 itemKey（id+path）标识：同内容多位置在选择集中是独立成员 */
 export function nextSelection(
-  skeleton: readonly Pick<SkeletonItem, 'id'>[],
+  skeleton: readonly Pick<SkeletonItem, 'id' | 'path'>[],
   selection: readonly string[],
-  id: string,
+  key: string,
   mod?: 'range' | 'toggle',
 ): string[] {
   if (mod === 'range' && selection.length > 0) {
     const anchor = selection[selection.length - 1];
-    const a = skeleton.findIndex((i) => i.id === anchor);
-    const b = skeleton.findIndex((i) => i.id === id);
+    const a = skeleton.findIndex((i) => itemKey(i.id, i.path) === anchor);
+    const b = skeleton.findIndex((i) => itemKey(i.id, i.path) === key);
     if (a >= 0 && b >= 0) {
       const [from, to] = a < b ? [a, b] : [b, a];
-      return skeleton.slice(from, to + 1).map((i) => i.id);
+      return skeleton.slice(from, to + 1).map((i) => itemKey(i.id, i.path));
     }
   }
   if (mod === 'toggle') {
-    return selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id];
+    return selection.includes(key) ? selection.filter((s) => s !== key) : [...selection, key];
   }
-  return [id];
+  return [key];
 }

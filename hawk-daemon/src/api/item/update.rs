@@ -132,6 +132,8 @@ pub(crate) async fn item_update(
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemBatchUpdateRequest {
     ids: Vec<String>,
+    /// 与 ids 等长的可选位置限定（同内容多位置时按位置移动 folder_path；缺省或元素为 null 时取主位置）
+    paths: Option<Vec<Option<String>>>,
     add_tags: Option<Vec<String>>,
     add_categories: Option<Vec<String>>,
     star: Option<i32>,
@@ -160,6 +162,11 @@ pub(crate) async fn item_batch_update(
     if req.ids.is_empty() {
         return Err(ApiError::invalid_param("ids 不能为空"));
     }
+    if let Some(paths) = &req.paths {
+        if paths.len() != req.ids.len() {
+            return Err(ApiError::invalid_param("paths 须与 ids 等长"));
+        }
+    }
     if req.add_tags.is_none() && req.add_categories.is_none() && req.star.is_none() && req.folder_path.is_none() {
         return Err(ApiError::invalid_param("至少提供一个更新字段"));
     }
@@ -174,7 +181,7 @@ pub(crate) async fn item_batch_update(
     ids.dedup();
     let mut move_failed: Vec<String> = Vec::new();
 
-    // folder_path:逐个移动主位置(库内);已在目标处的跳过;无库内位置(全在回收站)的移动不适用,跳过
+    // folder_path:逐个移动指定位置(库内;缺省主位置);已在目标处的跳过;无库内位置(全在回收站)的移动不适用,跳过
     if let Some(folder_path) = &req.folder_path {
         let folder_abs = if folder_path.is_empty() {
             state.paths.root.clone()
@@ -188,8 +195,9 @@ pub(crate) async fn item_batch_update(
             }
             abs
         };
-        for id in &ids {
-            let Some(loc) = state.index.find_location(id, None, Some(false)) else {
+        for (i, id) in ids.iter().enumerate() {
+            let path = req.paths.as_ref().and_then(|ps| ps.get(i)).and_then(|p| p.as_deref());
+            let Some(loc) = state.index.find_location(id, path, Some(false)) else {
                 continue;
             };
             let file_name = loc.path.rsplit('/').next().unwrap_or(&loc.path).to_string();

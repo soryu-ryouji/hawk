@@ -27,7 +27,6 @@ import ConnectScreen from './components/ConnectScreen.vue';
 import StartingScreen from './components/StartingScreen.vue';
 import SettingsDialog from './components/SettingsDialog.vue';
 import ImportDuplicateDialog from './components/ImportDuplicateDialog.vue';
-import DeleteScopeDialog from './components/DeleteScopeDialog.vue';
 
 const store = useLibraryStore();
 const importer = useImporterStore();
@@ -348,7 +347,6 @@ useDragImport();
     <!-- 导入重复策略对话框（导入中首个重复内容触发，选择整批生效） -->
     <ImportDuplicateDialog />
     <!-- 多位置删除策略对话框（删除含多位置副本的素材时触发） -->
-    <DeleteScopeDialog />
     <ContextMenu />
 
     <Teleport to="body">

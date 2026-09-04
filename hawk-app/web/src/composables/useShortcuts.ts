@@ -6,6 +6,7 @@ import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from './useContextMenu';
 import { gridNavRows, moveGridSelection } from './useGridNav';
+import { itemKey } from '../viewLogic';
 
 export function useShortcuts() {
   const store = useLibraryStore();
@@ -38,7 +39,7 @@ export function useShortcuts() {
       if (preview.previewId) {
         preview.closePreview();
       } else if (store.primarySelected) {
-        preview.openPreview(store.primarySelected.id);
+        preview.openPreview(itemKey(store.primarySelected.id, store.primarySelected.path));
       }
       return;
     }
@@ -73,7 +74,12 @@ export function useShortcuts() {
       e.preventDefault();
       const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
       const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
-      const next = moveGridSelection(gridNavRows.value, store.primarySelected?.id ?? null, dx, dy);
+      const next = moveGridSelection(
+        gridNavRows.value,
+        store.primarySelected ? itemKey(store.primarySelected.id, store.primarySelected.path) : null,
+        dx,
+        dy,
+      );
       if (next) {
         store.select(next);
       }

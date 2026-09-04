@@ -73,6 +73,21 @@ impl ItemIndex {
             .map(|i| i.to_dto(!i.has_library_locations()))
     }
 
+    /// 锁内投影指定位置的 DTO（同内容多位置时按 path 定位；path 缺省等同 get_dto 主位置口径）
+    pub fn get_dto_at(&self, hash: &str, path: Option<&str>) -> Option<ItemDto> {
+        let inner = read_inner!(self);
+        let item = inner.by_hash.get(hash).filter(|i| !i.locations.is_empty())?;
+        let trash_view = !item.has_library_locations();
+        let loc = match path {
+            None => item.main_location(trash_view)?,
+            Some(p) => item
+                .locations
+                .iter()
+                .find(|l| l.in_trash() == trash_view && (l.path == p || l.library_path() == p))?,
+        };
+        Some(item.to_dto_at(loc, trash_view))
+    }
+
     /// 宽高是否尚未解析（0 × 0）。只读访问，缩略图 worker 的补宽高闸门用
     pub fn dim_is_zero(&self, hash: &str) -> bool {
         let inner = read_inner!(self);
@@ -242,10 +257,14 @@ impl ItemIndex {
             .collect()
     }
 
-    /// 库内 item 总数（不含回收站）
+    /// 库内文件总数（位置级：同内容多位置各计一次；不含回收站）
     pub fn count(&self) -> usize {
         let inner = read_inner!(self);
-        inner.by_hash.values().filter(|i| i.has_library_locations()).count()
+        inner
+            .by_hash
+            .values()
+            .map(|i| i.locations.iter().filter(|l| !l.in_trash()).count())
+            .sum()
     }
 
     /// 指定 item 是否还有库内位置（回收站视图判定用）
@@ -295,13 +314,17 @@ impl ItemIndex {
         out
     }
 
-    /// 全部标签及库内计数快照（计数不含回收站）
+    /// 全部标签及库内计数快照（位置级计数：同内容多位置各计一次；不含回收站）
     pub fn tags_with_counts(&self) -> Vec<(String, usize)> {
         let inner = read_inner!(self);
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for item in inner.by_hash.values().filter(|i| i.has_library_locations()) {
+        for item in inner.by_hash.values() {
+            let n = item.locations.iter().filter(|l| !l.in_trash()).count();
+            if n == 0 {
+                continue;
+            }
             for t in &item.tags {
-                *counts.entry(t.clone()).or_insert(0) += 1;
+                *counts.entry(t.clone()).or_insert(0) += n;
             }
         }
         let mut names: HashSet<String> = HashSet::new();
@@ -313,59 +336,59 @@ impl ItemIndex {
         names.into_iter().map(|n| (n.clone(), counts.get(&n).copied().unwrap_or(0))).collect()
     }
 
-    /// 按目录统计库内 item 数（不含回收站）。key 为目录相对路径（"" 为库根）。
-    /// 计数含全部子孙目录；同一 item 在同一目录节点只计一次
+    /// 按目录统计库内文件数（位置级：同内容多位置各计一次；不含回收站）。key 为目录相对路径（"" 为库根）。
+    /// 计数含全部子孙目录（每位置沿目录链各计一次）
     pub fn folder_counts(&self) -> HashMap<String, usize> {
         let inner = read_inner!(self);
         let mut counts: HashMap<String, usize> = HashMap::new();
         for item in inner.by_hash.values() {
-            let mut dirs: HashSet<String> = HashSet::new();
             for loc in item.locations.iter().filter(|l| !l.in_trash()) {
                 let mut dir = LibraryPaths::dir_of(&loc.path);
                 loop {
-                    dirs.insert(dir.to_string());
+                    *counts.entry(dir.to_string()).or_insert(0) += 1;
                     if dir.is_empty() {
                         break;
                     }
                     dir = LibraryPaths::dir_of(dir);
                 }
             }
-            for dir in dirs {
-                *counts.entry(dir).or_insert(0) += 1;
-            }
         }
         counts
     }
 
-    /// 按分类统计 item 数（同一 item 重复挂同一分类只计一次）
+    /// 按分类统计文件数（位置级：item 的每个库内位置各计一次）
     pub fn category_counts(&self) -> HashMap<String, usize> {
         let inner = read_inner!(self);
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for item in inner.by_hash.values().filter(|i| i.has_library_locations()) {
-            let mut seen = HashSet::new();
+        for item in inner.by_hash.values() {
+            let n = item.locations.iter().filter(|l| !l.in_trash()).count();
+            if n == 0 {
+                continue;
+            }
             for c in &item.categories {
-                if seen.insert(c.clone()) {
-                    *counts.entry(c.clone()).or_insert(0) += 1;
-                }
+                *counts.entry(c.clone()).or_insert(0) += n;
             }
         }
         counts
     }
 
-    /// 条件查询。锁内只做过滤与轻量排序键投影，排序在锁外进行（读写互堵不含 O(N log N) 排序）；
+    /// 条件查询（位置级展开：同内容多位置各自成条）。锁内只做过滤与轻量排序键投影，排序在锁外进行（读写互堵不含 O(N log N) 排序）；
     /// DTO 只投影分页窗口——大库下避免为全部命中项克隆完整 DTO（UI 卡死的根因之一）。
-    /// total_size 为过滤后全量（未分页）的字节数合计。
+    /// total_size 为过滤后全量（未分页）的字节数合计（各位置 size 之和）。
     /// 窗口 DTO 投影需二次读锁：排序快照与 DTO 快照之间可能隔一个写事件，UI 列表差一帧无碍（SSE 会推送对齐）
     pub fn query(&self, q: &ItemQuery) -> (Vec<ItemDto>, usize, i64) {
         let (mut keyed, total_size) = {
             let inner = read_inner!(self);
-            let items = filter_items(&inner, q);
-            let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
-            let keyed = items.into_iter().map(|i| (sort_key(i, q), i.id.clone())).collect::<Vec<_>>();
+            let entries = filter_locations(&inner, q);
+            let total_size = entries.iter().map(|(_, l)| l.size).sum();
+            let keyed = entries
+                .into_iter()
+                .map(|(i, l)| (sort_key(i, l, q), i.id.clone(), l.path.clone()))
+                .collect::<Vec<_>>();
             (keyed, total_size)
         };
         let total = keyed.len();
-        sort_keyed(&mut keyed, q, |id| id.as_str());
+        sort_keyed(&mut keyed, q, |p| p.as_str());
         let offset = q.offset.max(0) as usize;
         let limit = q.limit.max(1) as usize;
         let inner = read_inner!(self);
@@ -373,24 +396,30 @@ impl ItemIndex {
             .into_iter()
             .skip(offset)
             .take(limit)
-            .filter_map(|(_, id)| inner.by_hash.get(&id).map(|i| i.to_dto(q.in_trash)))
+            .filter_map(|(_, id, path)| {
+                let item = inner.by_hash.get(&id)?;
+                let loc = item.locations.iter().find(|l| l.path == path)?;
+                Some(item.to_dto_at(loc, q.in_trash))
+            })
             .collect();
         (dtos, total, total_size)
     }
 
-    /// 骨架查询：与 query 同过滤、同排序（含确定性次序），投影为 id/width/height/star，不分页
+    /// 骨架查询：与 query 同过滤、同排序（含确定性次序），投影为 id/path/width/height/star，不分页
     pub fn query_skeleton(&self, q: &ItemQuery) -> (Vec<ItemSkeletonDto>, i64) {
         let (mut keyed, total_size) = {
             let inner = read_inner!(self);
-            let items = filter_items(&inner, q);
-            let total_size = items.iter().map(|i| main_size(i, q.in_trash)).sum();
-            let keyed = items
+            let entries = filter_locations(&inner, q);
+            let total_size = entries.iter().map(|(_, l)| l.size).sum();
+            let keyed = entries
                 .into_iter()
-                .map(|i| {
+                .map(|(i, l)| {
                     (
-                        sort_key(i, q),
+                        sort_key(i, l, q),
+                        i.id.clone(),
                         ItemSkeletonDto {
                             id: i.id.clone(),
+                            path: l.path.clone(),
                             width: i.width,
                             height: i.height,
                             star: i.star,
@@ -400,8 +429,8 @@ impl ItemIndex {
                 .collect::<Vec<_>>();
             (keyed, total_size)
         };
-        sort_keyed(&mut keyed, q, |s| s.id.as_str());
-        (keyed.into_iter().map(|(_, s)| s).collect(), total_size)
+        sort_keyed(&mut keyed, q, |s: &ItemSkeletonDto| s.path.as_str());
+        (keyed.into_iter().map(|(_, _, s)| s).collect(), total_size)
     }
 
     /// 范围内全部 item 的 hash 快照（宽高为 0 的项优先，修复时最先被处理）。
@@ -417,7 +446,7 @@ impl ItemIndex {
             RefreshScope::Folder(f) => inner
                 .by_hash
                 .values()
-                .filter(|i| in_folder(i, f, false, false))
+                .filter(|i| i.locations.iter().any(|l| !l.in_trash() && loc_in_folder(l, f, false)))
                 .map(|i| (i.id.clone(), i.width))
                 .collect::<Vec<_>>(),
             RefreshScope::Category(c) => inner
@@ -440,19 +469,11 @@ impl ItemIndex {
     }
 }
 
-/// 过滤（AND 语义）。返回引用，零克隆
-fn filter_items<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<&'a Item> {
-    let mut items: Vec<&Item> = inner
-        .by_hash
-        .values()
-        .filter(|i| {
-            if q.in_trash {
-                i.has_trash_locations()
-            } else {
-                i.has_library_locations()
-            }
-        })
-        .collect();
+/// 过滤（AND 语义），位置级展开：同内容多位置各自成条。
+/// 先按 item 级条件（ids/tags/star/categories/annotation/url/color 等元数据）粗筛，
+/// 再展开该视图侧的位置做位置级条件（name 关键词/folders/ext）。返回引用，零克隆
+fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, &'a ItemLocation)> {
+    let mut items: Vec<&Item> = inner.by_hash.values().collect();
 
     if let Some(ids) = &q.ids {
         if !ids.is_empty() {
@@ -467,16 +488,6 @@ fn filter_items<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<&'a Item> {
     }
     if let Some(star) = q.star {
         items.retain(|i| i.star == star);
-    }
-    if let Some(keywords) = &q.keywords {
-        if !keywords.is_empty() {
-            items.retain(|i| keywords.iter().all(|k| matches_keyword(i, k, q.in_trash)));
-        }
-    }
-    if let Some(folders) = &q.folders {
-        if !folders.is_empty() {
-            items.retain(|i| folders.iter().any(|f| in_folder(i, f, q.in_trash, q.folders_exact)));
-        }
     }
     if let Some(categories) = &q.categories {
         if !categories.is_empty() {
@@ -506,11 +517,6 @@ fn filter_items<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<&'a Item> {
     if q.without_tags {
         items.retain(|i| i.tags.is_empty());
     }
-    if let Some(ext) = &q.ext {
-        if !ext.is_empty() {
-            items.retain(|i| matches_ext(i, ext, q.in_trash));
-        }
-    }
     if let Some(annotation) = &q.annotation {
         if !annotation.is_empty() {
             items.retain(|i| i.annotation.as_deref().map(|a| a.to_lowercase().contains(&annotation.to_lowercase())).unwrap_or(false));
@@ -524,36 +530,45 @@ fn filter_items<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<&'a Item> {
     if let Some(color) = q.color {
         items.retain(|i| i.palette.iter().any(|p| delta_e_squared(p.lab, color) <= COLOR_MATCH_THRESHOLD_SQUARED));
     }
-    items
-}
 
-/// 视图的主位置（与 Item::main_location 一致：普通视图取首个库内位置，回收站视图取首个回收站位置）
-fn view_main_location(item: &Item, trash_view: bool) -> Option<&ItemLocation> {
-    item.locations.iter().find(|l| l.in_trash() == trash_view)
-}
-
-/// 视图主位置的字节数（total_size 口径与 DTO 一致）
-fn main_size(item: &Item, trash_view: bool) -> i64 {
-    view_main_location(item, trash_view).map(|l| l.size).unwrap_or(0)
+    // 位置级展开：只保留本视图侧位置，再按位置属性过滤
+    let mut entries: Vec<(&Item, &ItemLocation)> = Vec::new();
+    for item in items {
+        for loc in item.locations.iter().filter(|l| l.in_trash() == q.in_trash) {
+            entries.push((item, loc));
+        }
+    }
+    if let Some(keywords) = &q.keywords {
+        if !keywords.is_empty() {
+            entries.retain(|(i, l)| keywords.iter().all(|k| matches_keyword(i, l, k)));
+        }
+    }
+    if let Some(folders) = &q.folders {
+        if !folders.is_empty() {
+            entries.retain(|(_, l)| folders.iter().any(|f| loc_in_folder(l, f, q.folders_exact)));
+        }
+    }
+    if let Some(ext) = &q.ext {
+        if !ext.is_empty() {
+            entries.retain(|(_, l)| LibraryPaths::ext_of(l.library_path()) == ext.to_lowercase());
+        }
+    }
+    entries
 }
 
 /// 排序键：查询时锁内预计算（name 键预转小写避免比较器内反复分配；size/mtime/star 统一为数值键），
-/// 排序在锁外进行。同一查询键类型一致，不会混合
+/// 排序在锁外进行。位置级：name/size/mtime 取该位置；star 为 item 级。同一查询键类型一致，不会混合
 enum SortKey {
     Name(String),
     Num(i64),
 }
 
-fn sort_key(item: &Item, q: &ItemQuery) -> SortKey {
+fn sort_key(item: &Item, loc: &ItemLocation, q: &ItemQuery) -> SortKey {
     match q.order_by.as_deref().unwrap_or("modification_time") {
-        "name" => SortKey::Name(
-            view_main_location(item, q.in_trash)
-                .map(|l| LibraryPaths::name_of(l.library_path()).to_lowercase())
-                .unwrap_or_default(),
-        ),
-        "size" => SortKey::Num(main_size(item, q.in_trash)),
+        "name" => SortKey::Name(LibraryPaths::name_of(loc.library_path()).to_lowercase()),
+        "size" => SortKey::Num(loc.size),
         "star" => SortKey::Num(i64::from(item.star)),
-        _ => SortKey::Num(main_mtime(item, q.in_trash)),
+        _ => SortKey::Num(loc.modification_time),
     }
 }
 
@@ -565,26 +580,22 @@ fn cmp_sort_key(a: &SortKey, b: &SortKey) -> Ordering {
     }
 }
 
-/// 锁外排序。主键同值时按 id 字典序打破平局：排序不稳定 + 两次独立查询（骨架/视口窗口）
-/// 的次序必须逐位一致，否则按 offset 取窗口会错位。
-/// desc 反转整个比较结果（含 id 平局）
-fn sort_keyed<T>(entries: &mut [(SortKey, T)], q: &ItemQuery, id_of: impl Fn(&T) -> &str) {
+/// 锁外排序。主键同值时按 (id, path) 字典序打破平局：排序不稳定 + 两次独立查询（骨架/视口窗口）
+/// 的次序必须逐位一致，否则按 offset 取窗口会错位；同内容多位置的排序键相同，须再按 path 决胜。
+/// desc 反转整个比较结果（含平局决胜）
+fn sort_keyed<T>(entries: &mut [(SortKey, String, T)], q: &ItemQuery, path_of: impl Fn(&T) -> &str) {
     let desc = !q.order.as_deref().map(|o| o.eq_ignore_ascii_case("asc")).unwrap_or(false);
     entries.sort_by(|a, b| {
-        let c = cmp_sort_key(&a.0, &b.0).then_with(|| id_of(&a.1).cmp(id_of(&b.1)));
+        let c = cmp_sort_key(&a.0, &b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| path_of(&a.2).cmp(path_of(&b.2)));
         if desc { c.reverse() } else { c }
     });
 }
 
-fn main_mtime(item: &Item, trash_view: bool) -> i64 {
-    view_main_location(item, trash_view).map(|l| l.modification_time).unwrap_or(0)
-}
-
-fn matches_keyword(item: &Item, keyword: &str, trash_view: bool) -> bool {
-    if let Some(main) = item.main_location(trash_view) {
-        if LibraryPaths::name_of(main.library_path()).to_lowercase().contains(&keyword.to_lowercase()) {
-            return true;
-        }
+fn matches_keyword(item: &Item, loc: &ItemLocation, keyword: &str) -> bool {
+    if LibraryPaths::name_of(loc.library_path()).to_lowercase().contains(&keyword.to_lowercase()) {
+        return true;
     }
     item.annotation
         .as_deref()
@@ -592,25 +603,13 @@ fn matches_keyword(item: &Item, keyword: &str, trash_view: bool) -> bool {
         .unwrap_or(false)
 }
 
-/// 文件夹匹配：默认前缀匹配（folder 本身及子目录；folder 为空串表示整个素材库）；
-/// exact 时只匹配直接位于该目录下的 item（空串 = 库根目录，不含任何子文件夹）
-fn in_folder(item: &Item, folder: &str, trash_view: bool, exact: bool) -> bool {
-    item.locations.iter().any(|l| {
-        if l.in_trash() != trash_view {
-            return false;
-        }
-        let dir = LibraryPaths::dir_of(l.library_path());
-        if exact {
-            dir == folder
-        } else {
-            folder.is_empty() || dir == folder || dir.starts_with(&format!("{folder}/"))
-        }
-    })
-}
-
-fn matches_ext(item: &Item, ext: &str, trash_view: bool) -> bool {
-    match item.main_location(trash_view) {
-        Some(main) => LibraryPaths::ext_of(main.library_path()) == ext.to_lowercase(),
-        None => false,
+/// 位置的文件夹匹配：默认前缀匹配（folder 本身及子目录；folder 为空串表示整个素材库）；
+/// exact 时只匹配直接位于该目录下的位置（空串 = 库根目录，不含任何子文件夹）
+fn loc_in_folder(loc: &ItemLocation, folder: &str, exact: bool) -> bool {
+    let dir = LibraryPaths::dir_of(loc.library_path());
+    if exact {
+        dir == folder
+    } else {
+        folder.is_empty() || dir == folder || dir.starts_with(&format!("{folder}/"))
     }
 }

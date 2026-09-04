@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { startItemsDrag } from '../dnd';
 import { useLibraryStore } from '../stores/library';
+import { itemKey } from '../viewLogic';
 import { CARD_BORDER, CARD_META_H } from '../layout';
 import type { Item } from '../types';
 
@@ -12,7 +13,7 @@ const props = withDefaults(
 );
 const emit = defineEmits<{
   select: [item: Item, e: MouseEvent];
-  open: [id: string];
+  open: [item: Item];
   menu: [item: Item, e: MouseEvent];
 }>();
 
@@ -55,7 +56,7 @@ const thumbSrc = computed(() => api.thumbnailUrl(props.item.id));
  */
 function onDragStart(e: DragEvent) {
   if (!props.selected) {
-    store.select(props.item.id);
+    store.select(itemKey(props.item.id, props.item.path));
   }
   startItemsDrag(e, store.selection);
 }
@@ -68,7 +69,7 @@ function onDragStart(e: DragEvent) {
     :style="cardStyle"
     :draggable="!store.isTrash"
     @click="emit('select', item, $event)"
-    @dblclick="emit('open', item.id)"
+    @dblclick="emit('open', item)"
     @contextmenu.prevent="emit('menu', item, $event)"
     @dragstart="onDragStart"
   >

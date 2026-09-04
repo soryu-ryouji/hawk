@@ -745,6 +745,47 @@ try {
   const cfg = toml.parse(fs.readFileSync(configFile, 'utf8'));
   check('素材库路径已持久化', cfg.libraryPath === lib, true);
 
+  // ---- 同 hash 多位置展开：同内容不同名文件各成一张卡，删除只动该位置 ----
+  // （sunset 在前面用例已移入「海报」文件夹，从那里复制；上一用例停在回收站视图，先切回全部素材）
+  await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((e) => e.textContent.includes('全部素材'))?.click()`);
+  fs.copyFileSync(path.join(lib, '海报', 'sunset.png'), path.join(lib, 'sunset-copy.png'));
+  const dupShown = await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names?.includes('sunset-copy.png') && names?.includes('sunset.png') ? true : null;
+  }, 15_000).catch(async () => {
+    // 诊断：区分「后端未入库/未发事件」与「前端未展开」
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    const sunsetId = await evaljs(idByName('sunset'));
+    const detail = sunsetId ? await evaljs(await fetchDetail(`'${sunsetId}'`)) : null;
+    console.log(`  [诊断] 卡片=${JSON.stringify(names)}，sunset paths=${JSON.stringify(detail?.paths)}`);
+    return null;
+  });
+  check('同 hash 副本各成一张卡', dupShown, true);
+  // 点副本卡：检查器名称为副本（位置级字段）
+  if (dupShown) {
+    await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === 'sunset-copy.png')?.click()`);
+    await waitFor(async () => evaljs(`document.querySelector('.inspector .name-input')?.value === 'sunset-copy' ? true : null`), 5_000);
+    check('同 hash 卡片名称各自（位置级）', true, true);
+    // 删除副本位置：原卡保留
+    const dupId = await evaljs(idByName('sunset-copy'));
+    await evaljs(`fetch(new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/item/delete', { method: 'POST', headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token'), 'Content-Type': 'application/json' }, body: JSON.stringify({ id: '${dupId}', path: 'sunset-copy.png' }) })`);
+    await waitFor(async () => {
+      const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+      return names && !names.includes('sunset-copy.png') && names.includes('sunset.png') ? true : null;
+    }, 10_000);
+    check('删除一个位置另一张保留', true, true);
+  }
+
+  // ---- 外部删除文件的残留收敛：watcher 或「刷新缓存」的消失对账，任一收敛即可 ----
+  fs.unlinkSync(path.join(lib, 'f1.png'));
+  const refreshRes = await evaljs(`fetch(new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/library/refresh_cache', { method: 'POST', headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token'), 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'folder', value: '' }) }).then((r) => r.json()).then((e) => e.data)`);
+  await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && !names.includes('f1.png') ? true : null;
+  }, 10_000);
+  check('外部删除后刷新缓存收敛残留', true, true);
+  check('刷新缓存响应含消失对账计数', typeof refreshRes?.removed === 'number', true);
+
   // ---- 侧栏底栏筛选框：过滤文件夹/分类/标签（Eagle 式） ----
   await evaljs(`(() => {
     const input = document.querySelector('.nav-filter input');

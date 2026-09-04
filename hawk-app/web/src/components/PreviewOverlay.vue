@@ -7,6 +7,7 @@ import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from '../composables/useContextMenu';
 import { useLayout } from '../composables/useLayout';
 import { useZoomPan } from '../composables/useZoomPan';
+import { itemKey, splitKey } from '../viewLogic';
 import { isRotatableImage } from '../imageEdit';
 import { showInFileManagerLabel, hasShell, shell } from '../platform';
 import type { Item } from '../types';
@@ -75,10 +76,11 @@ function onMenu(e: MouseEvent) {
 
 // 删除当前预览项：跳到下一张（无下一张则上一张，都没有则关闭预览）
 async function trashCurrent() {
+  const key = itemKey(props.item.id, props.item.path);
   const fallback = preview.previewNavId(1) ?? preview.previewNavId(-1);
-  store.select(props.item.id);
+  store.select(key);
   await store.trashSelected();
-  if (fallback && fallback !== props.item.id) {
+  if (fallback && fallback !== key) {
     preview.openPreview(fallback);
   } else {
     emit('close');
@@ -105,20 +107,20 @@ const {
 // 预加载相邻原图：内容寻址 immutable，浏览器缓存命中——carousel 拖动时邻图已解码，切换零等待
 function preloadNeighbors() {
   for (const step of [1, -1] as const) {
-    const id = preview.previewNavId(step);
-    if (id) {
-      new Image().src = api.fileUrl(id);
+    const key = preview.previewNavId(step);
+    if (key) {
+      new Image().src = api.fileUrl(splitKey(key).id);
     }
   }
 }
 
 onMounted(preloadNeighbors);
 
-// carousel 邻居：id 取自骨架（不依赖详情窗口），拖动时左右邻图已经可见（iOS 相册式）
-const prevId = computed(() => preview.previewNavId(-1));
-const nextId = computed(() => preview.previewNavId(1));
-const prevUrl = computed(() => (prevId.value ? api.fileUrl(prevId.value) : null));
-const nextUrl = computed(() => (nextId.value ? api.fileUrl(nextId.value) : null));
+// carousel 邻居：key 取自骨架（不依赖详情窗口），取图按内容 id；拖动时左右邻图已经可见（iOS 相册式）
+const prevKey = computed(() => preview.previewNavId(-1));
+const nextKey = computed(() => preview.previewNavId(1));
+const prevUrl = computed(() => (prevKey.value ? api.fileUrl(splitKey(prevKey.value).id) : null));
+const nextUrl = computed(() => (nextKey.value ? api.fileUrl(splitKey(nextKey.value).id) : null));
 
 // 缩放>1 的单图平移模式样式（carousel 模式由 trackStyle 负责）；手势层负责 cursor
 const imageStyle = computed(() => ({
@@ -140,7 +142,7 @@ const overlayStyle = computed(() => {
   return { background: `rgba(0, 0, 0, ${(0.85 * dim).toFixed(3)})` };
 });
 
-watch(() => props.item.id, () => {
+watch(() => itemKey(props.item.id, props.item.path), () => {
   // 切图复位：手势状态机清零（手指通常已抬起，兜底防泄漏）+ 相邻预加载
   gestures.reset();
   preloadNeighbors();
@@ -184,10 +186,10 @@ function pointInImage(px: number, py: number): boolean {
       <!-- 缩放=1：carousel 视觉层（手势层不位移，内层轨道跟手，iOS 相册式拖动邻图可见） -->
       <div v-else class="swipe-track">
         <div class="track-row" :class="{ 'track-anim': swipeAnim || pullAnim }" :style="trackStyle">
-          <img v-if="prevUrl" class="track-img" :src="prevUrl" :key="`p-${prevId}`" alt="上一张" draggable="false" />
+          <img v-if="prevUrl" class="track-img" :src="prevUrl" :key="`p-${prevKey}`" alt="上一张" draggable="false" />
           <div v-else class="track-img track-slot" />
           <img class="track-img" :src="imageUrl" :key="item.id" :alt="item.name" draggable="false" />
-          <img v-if="nextUrl" class="track-img" :src="nextUrl" :key="`n-${nextId}`" alt="下一张" draggable="false" />
+          <img v-if="nextUrl" class="track-img" :src="nextUrl" :key="`n-${nextKey}`" alt="下一张" draggable="false" />
           <div v-else class="track-img track-slot" />
         </div>
       </div>

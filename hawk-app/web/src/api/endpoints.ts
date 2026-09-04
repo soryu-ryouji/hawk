@@ -16,8 +16,10 @@ export interface ItemPatch {
   folder_path?: string;
 }
 
-/** 批量更新(item/batch_update):标签/分类为并集追加,评分/文件夹为设置 */
+/** 批量更新(item/batch_update):标签/分类为并集追加,评分/文件夹为设置；
+ *  paths 与 ids 等长平行（元素为 null 取主位置）：同内容多位置的选中集按位置移动 */
 export interface ItemBatchPatch {
+  paths?: (string | null)[];
   add_tags?: string[];
   add_categories?: string[];
   star?: number;
@@ -45,9 +47,10 @@ export const api = {
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
   /** 刷新缓存：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
   rescan: () => request<void>('POST', '/api/v1/library/rescan'),
-  /** 按范围刷新派生缓存（补缺失模式）：补 0 × 0 宽高 + 缺失缩略图/调色板，不重建已有文件 */
+  /** 按范围刷新派生缓存（补缺失模式）：补 0 × 0 宽高 + 缺失缩略图/调色板，不重建已有文件；
+   *  附带消失对账：范围内源文件已删除但索引残留的失效位置会被移除 */
   refreshCache: (type: 'folder' | 'category' | 'tag' | 'library', value?: string) =>
-    request<{ dispatched: number }>('POST', '/api/v1/library/refresh_cache', { body: { type, value } }),
+    request<{ dispatched: number; removed: number }>('POST', '/api/v1/library/refresh_cache', { body: { type, value } }),
 
   folderList: () => request<FolderNode>('GET', '/api/v1/folder/list'),
   folderCreate: (name: string, parentPath?: string) =>
@@ -61,7 +64,9 @@ export const api = {
   /** 全量骨架：与 item/list 同过滤同排序（确定性次序）、不分页，只含 id/width/height/star；前端虚拟网格建完整布局用 */
   itemSkeleton: (params: Omit<ItemListRequest, 'offset' | 'limit'>) =>
     request<ItemSkeletonResult>('POST', '/api/v1/item/skeleton', { body: params }),
-  itemDetail: (id: string) => request<Item>('GET', '/api/v1/item/detail', { query: { id } }),
+  /** 单条详情：同内容多位置时传 path 定位具体条目（缺省主位置） */
+  itemDetail: (id: string, path?: string) =>
+    request<Item>('GET', '/api/v1/item/detail', { query: path ? { id, path } : { id } }),
   itemCount: () => request<number>('GET', '/api/v1/item/count'),
   itemAddByPath: (path: string, opts?: { name?: string; folder_path?: string; tags?: string[]; skip_existing?: boolean }) =>
     request<{ item: Item; already_existed: boolean; skipped: boolean }>('POST', '/api/v1/item/add', {

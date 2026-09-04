@@ -34,7 +34,7 @@ function onContextMenu(e: MouseEvent) {
   menu.open(
     [
       { label: '重命名', action: () => emit('rename', props.name) },
-      { label: '刷新缓存', title: `修复该${kindLabel}下素材缺失的宽高/缩略图/调色板`, action: () => void store.refreshCache(props.kind, props.name) },
+      { label: '刷新缓存', title: `修复该${kindLabel}下素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目`, action: () => void store.refreshCache(props.kind, props.name) },
       {
         label: `删除${kindLabel}`,
         danger: true,

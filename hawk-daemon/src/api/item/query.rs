@@ -180,7 +180,7 @@ pub(crate) async fn item_detail(
 ) -> Result<Json<Envelope<ItemDto>>, ApiError> {
     let dto = state
         .index
-        .get_dto(&q.id)
+        .get_dto_at(&q.id, q.path.as_deref())
         .ok_or_else(|| ApiError::item_not_found(&q.id))?;
     Ok(Json(Envelope::ok(dto)))
 }

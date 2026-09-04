@@ -6,6 +6,7 @@ import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { formatSize } from '../format';
+import { itemKey } from '../viewLogic';
 import StarRating from './StarRating.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
@@ -48,7 +49,7 @@ function batchMoveFolder(path: string) {
     <div class="stack">
       <img
         v-for="(selected, i) in store.selectedItems.slice(0, 3)"
-        :key="selected.id"
+        :key="itemKey(selected.id, selected.path)"
         :src="api.thumbnailUrl(selected.id)"
         :style="{ zIndex: 3 - i, transform: `translateX(${i * 18}px) rotate(${(i - 1) * 5}deg)` }"
         alt=""

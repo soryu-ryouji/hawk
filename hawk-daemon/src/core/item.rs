@@ -68,10 +68,6 @@ impl Item {
         self.locations.iter().any(|l| !l.in_trash())
     }
 
-    pub fn has_trash_locations(&self) -> bool {
-        self.locations.iter().any(|l| l.in_trash())
-    }
-
     /// 用元数据刷新查询副本（元数据 → 索引的单向同步，只允许索引流水线调用）
     pub fn sync_from(&mut self, meta: &ItemMetadata) {
         self.url = meta.url.clone();
@@ -102,10 +98,16 @@ impl Item {
         }
     }
 
-    /// 投影为 API 的 Item 对象。回收站视图的 paths 展示原库内路径（恢复目标）。
+    /// 投影为 API 的 Item 对象（主位置口径：事件载荷/单条 detail 缺省用）。回收站视图的 paths 展示原库内路径（恢复目标）。
     pub fn to_dto(&self, trash_view: bool) -> ItemDto {
+        let main = self.main_location(trash_view).expect("to_dto: item must have a location in the view");
+        self.to_dto_at(main, trash_view)
+    }
+
+    /// 投影指定位置的 DTO：同内容多位置各自成卡（name/ext/size/mtime 取该位置），
+    /// paths/folders 仍投影该视图侧的全部位置（检查器展示同内容的完整分布）。
+    pub fn to_dto_at(&self, loc: &ItemLocation, trash_view: bool) -> ItemDto {
         let locations: Vec<&ItemLocation> = self.locations.iter().filter(|l| l.in_trash() == trash_view).collect();
-        let main = locations[0];
         let paths: Vec<String> = locations
             .iter()
             .map(|l| {
@@ -126,11 +128,12 @@ impl Item {
 
         ItemDto {
             id: self.id.clone(),
-            name: LibraryPaths::name_of(main.library_path()).to_string(),
-            ext: LibraryPaths::ext_of(main.library_path()),
+            path: loc.path.clone(),
+            name: LibraryPaths::name_of(loc.library_path()).to_string(),
+            ext: LibraryPaths::ext_of(loc.library_path()),
             width: self.width,
             height: self.height,
-            size: main.size,
+            size: loc.size,
             url: self.url.clone(),
             tags: self.tags.clone(),
             categories: self.categories.clone(),
@@ -138,7 +141,7 @@ impl Item {
             folders,
             star: self.star,
             annotation: self.annotation.clone(),
-            modification_time: main.modification_time,
+            modification_time: loc.modification_time,
             palette: self
                 .palette
                 .iter()
@@ -164,6 +167,8 @@ pub struct PaletteColorDto {
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct ItemDto {
     pub id: String,
+    /// 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径）
+    pub path: String,
     pub name: String,
     pub ext: String,
     pub width: i32,
@@ -186,6 +191,8 @@ pub struct ItemDto {
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct ItemSkeletonDto {
     pub id: String,
+    /// 同 id（内容）多位置时按 path 区分条目
+    pub path: String,
     pub width: i32,
     pub height: i32,
     pub star: i32,
@@ -223,6 +230,7 @@ impl Default for ItemDto {
     fn default() -> Self {
         ItemDto {
             id: String::new(),
+            path: String::new(),
             name: String::new(),
             ext: String::new(),
             width: 0,

@@ -142,13 +142,70 @@ async fn upsert_is_idempotent() {
     assert_eq!(rig.index.count(), 1);
     assert_eq!(rig.index.library_location_count(&id), 1);
 
-    // 同内容复制到另一路径：内容寻址收敛到同一 item，仅多登记一个位置
+    // 同内容复制到另一路径：内容寻址收敛到同一 item，仅多登记一个位置；
+    // count 为位置级口径（同内容两位置 = 两个文件）
     rig.copy_file("a.png", "b.png");
     let third = rig.pipeline.submit_upsert(rig.abs("b.png"), None).await.unwrap();
     let third = third.expect("同内容新路径应登记位置");
     assert_eq!(third.item.id, id, "同内容应收敛为同一 item");
-    assert_eq!(rig.index.count(), 1);
+    assert_eq!(rig.index.count(), 2);
     assert_eq!(rig.index.library_location_count(&id), 2);
+}
+
+/// 同 hash 多位置在查询中展开为独立条目：名称/位置各自，文件夹过滤按位置生效
+#[tokio::test]
+async fn same_content_locations_expand_in_query() {
+    let rig = Rig::new("same-content-expand");
+    rig.write_png("dup.png", [255, 0, 0]);
+    std::fs::create_dir_all(rig.abs("sub")).unwrap();
+    rig.copy_file("dup.png", "sub/dup2.png");
+    rig.pipeline.run_scan(false).await.unwrap();
+
+    // 全部视图：两个位置各成一条，名称各自
+    let base_q = || crate::core::item::ItemQuery { limit: 50, ..Default::default() };
+    let (items, total, _) = rig.index.query(&base_q());
+    assert_eq!(total, 2);
+    let mut names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["dup", "dup2"]);
+    let mut paths: Vec<&str> = items.iter().map(|i| i.path.as_str()).collect();
+    paths.sort();
+    assert_eq!(paths, ["dup.png", "sub/dup2.png"]);
+
+    // 骨架与 list 同序同数（含 path 维度）
+    let (skeleton, _) = rig.index.query_skeleton(&base_q());
+    assert_eq!(skeleton.len(), 2);
+    assert!(skeleton.iter().all(|s| !s.path.is_empty()));
+
+    // 文件夹视图只含该目录内的位置（同内容在别处的位置不出现）
+    let q = crate::core::item::ItemQuery {
+        folders: Some(vec!["sub".to_string()]),
+        folders_exact: true,
+        limit: 50,
+        ..Default::default()
+    };
+    let (sub_items, sub_total, _) = rig.index.query(&q);
+    assert_eq!(sub_total, 1);
+    assert_eq!(sub_items[0].name, "dup2");
+
+    // 按名称过滤按位置生效
+    let q = crate::core::item::ItemQuery {
+        keywords: Some(vec!["dup2".to_string()]),
+        limit: 50,
+        ..Default::default()
+    };
+    let (_, kw_total, _) = rig.index.query(&q);
+    assert_eq!(kw_total, 1);
+
+    // 删除一个位置后只剩另一条
+    let source = rig.abs("sub/dup2.png");
+    let trash = rig.abs(".hawk/trash/sub/dup2.png");
+    std::fs::create_dir_all(std::path::Path::new(&trash).parent().unwrap()).unwrap();
+    std::fs::rename(&source, &trash).unwrap();
+    rig.pipeline.submit_move(source, trash).await.unwrap();
+    let (after, after_total, _) = rig.index.query(&base_q());
+    assert_eq!(after_total, 1);
+    assert_eq!(after[0].name, "dup");
 }
 
 #[tokio::test]

@@ -91,10 +91,52 @@ struct RefreshCacheRequest {
 struct RefreshCacheResponse {
     /// 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计）
     dispatched: usize,
+    /// 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛）
+    removed: usize,
+}
+
+/// 范围内消失对账：索引位置的源文件明确不存在（NotFound）时移除——
+/// watcher 删除事件丢失（网络盘/外接盘常见）时该位置会永远残留，本对账是手动收敛入口。
+/// IO/权限错误（网络盘瞬断等）保守保留，不误删。移除走流水线单写者（notify_deleted → 索引摘除 + 事件广播）
+async fn reconcile_scope_missing(state: &SharedState, scope: &RefreshScope) -> usize {
+    // 范围内库内位置快照（folder 前缀含子目录，空串 = 全库；category/tag 按成员位置；library 含回收站）
+    let rels: Vec<String> = match scope {
+        RefreshScope::Folder(f) => {
+            let prefix = if f.is_empty() { String::new() } else { format!("{f}/") };
+            state.index.locations_under(&prefix)
+        }
+        RefreshScope::Category(_) | RefreshScope::Tag(_) => state
+            .index
+            .hashes_in_scope(scope)
+            .into_iter()
+            .flat_map(|h| state.index.item_locations(&h, Some(false)))
+            .map(|l| l.path)
+            .collect(),
+        RefreshScope::Library => state.index.all_location_paths(),
+    };
+    let abs_list: Vec<String> = rels
+        .iter()
+        .filter_map(|rel| state.paths.to_absolute(rel))
+        .collect();
+    // stat 批量检查移出运行时线程（万级位置的元数据调用也是毫秒级，但不阻塞 reactor）
+    let missing = tokio::task::spawn_blocking(move || {
+        abs_list
+            .into_iter()
+            .filter(|abs| matches!(std::fs::metadata(abs), Err(e) if e.kind() == std::io::ErrorKind::NotFound))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    let removed = missing.len();
+    for abs in missing {
+        state.pipeline.notify_deleted(abs);
+    }
+    removed
 }
 
 /// 按范围刷新派生缓存（补缺失模式）：对范围内全部 item 派发修复任务——
 /// 补缺失宽高（0 × 0）+ 生成缺失尺寸缩略图 + 提炼缺失调色板，不重建已有文件。
+/// 附带消失对账：范围内源文件已删除但索引残留的位置会被移除（watcher 漏事件的收敛入口）。
 /// 用户遇到显示异常时的手动修复入口；异步执行立即返回，积压经 task.progress(thumbnail) 可见
 #[utoipa::path(
     post,
@@ -120,6 +162,8 @@ async fn refresh_cache(
         },
         other => return Err(ApiError::invalid_param(format!("未知范围类型: {other}"))),
     };
+    // 先消失对账（源文件已删的失效位置移除），再对存活项派发修复
+    let removed = reconcile_scope_missing(&state, &scope).await;
     let hashes = state.index.hashes_in_scope(&scope);
     let mut dispatched = 0;
     for hash in &hashes {
@@ -129,5 +173,5 @@ async fn refresh_cache(
             }
         }
     }
-    Ok(Json(Envelope::ok(RefreshCacheResponse { dispatched })))
+    Ok(Json(Envelope::ok(RefreshCacheResponse { dispatched, removed })))
 }

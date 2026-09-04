@@ -4,11 +4,12 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SORT,
   isUnfilteredView,
+  itemKey,
   nextSelection,
   resolveSort,
   sameNameSet,
   skeletonNeedsPatch,
-  viewPathPrefix,
+  splitKey,
 } from './viewLogic';
 import type { Item, QueryState, ViewPrefs, ViewState } from './types';
 
@@ -59,21 +60,14 @@ describe('isUnfilteredView', () => {
   });
 });
 
-describe('viewPathPrefix', () => {
-  it('folder 视图带斜杠前缀', () => {
-    expect(viewPathPrefix({ kind: 'folder', path: 'a/b' })).toBe('a/b/');
+describe('itemKey / splitKey', () => {
+  it('组合与拆分互逆', () => {
+    const key = itemKey('abc123', '海报/cat.png');
+    expect(splitKey(key)).toEqual({ id: 'abc123', path: '海报/cat.png' });
   });
 
-  it('root 视图为空串（顶层文件）', () => {
-    expect(viewPathPrefix({ kind: 'root' })).toBe('');
-  });
-
-  it('其余视图无位置语义', () => {
-    expect(viewPathPrefix({ kind: 'all' })).toBeNull();
-    expect(viewPathPrefix({ kind: 'trash' })).toBeNull();
-    expect(viewPathPrefix({ kind: 'tag', name: 't' })).toBeNull();
-    expect(viewPathPrefix({ kind: 'category', name: 'c' })).toBeNull();
-    expect(viewPathPrefix({ kind: 'uncategorized' })).toBeNull();
+  it('同 id 不同 path 的 key 不同', () => {
+    expect(itemKey('h', 'a.png')).not.toBe(itemKey('h', 'b.png'));
   });
 });
 
@@ -114,7 +108,7 @@ describe('resolveSort', () => {
 });
 
 describe('skeletonNeedsPatch', () => {
-  const sk = { id: '1', width: 100, height: 50, star: 0 };
+  const sk = { id: '1', path: 'a.png', width: 100, height: 50, star: 0 };
   const item = { id: '1', width: 100, height: 50, star: 0 } as Item;
 
   it('star 或宽高任一变化才需要替换', () => {
@@ -129,34 +123,42 @@ describe('skeletonNeedsPatch', () => {
 });
 
 describe('nextSelection', () => {
-  const skeleton = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }];
+  // 条目以 itemKey(id, path) 标识；c/d 同 id 不同 path（同内容多位置）也是独立成员
+  const skeleton = [
+    { id: 'a', path: 'a.png' },
+    { id: 'b', path: 'b.png' },
+    { id: 'x', path: 'c.png' },
+    { id: 'x', path: 'd.png' },
+    { id: 'e', path: 'e.png' },
+  ];
+  const k = (id: string, path: string) => itemKey(id, path);
 
   it('默认单选替换', () => {
-    expect(nextSelection(skeleton, ['a', 'b'], 'c')).toEqual(['c']);
+    expect(nextSelection(skeleton, [k('a', 'a.png'), k('b', 'b.png')], k('x', 'c.png'))).toEqual([k('x', 'c.png')]);
   });
 
   it('toggle：未选中加入，已选中移除', () => {
-    expect(nextSelection(skeleton, ['a'], 'b', 'toggle')).toEqual(['a', 'b']);
-    expect(nextSelection(skeleton, ['a', 'b'], 'a', 'toggle')).toEqual(['b']);
+    expect(nextSelection(skeleton, [k('a', 'a.png')], k('b', 'b.png'), 'toggle')).toEqual([k('a', 'a.png'), k('b', 'b.png')]);
+    expect(nextSelection(skeleton, [k('a', 'a.png'), k('b', 'b.png')], k('a', 'a.png'), 'toggle')).toEqual([k('b', 'b.png')]);
   });
 
-  it('range：以末位选中为锚点框选（向后）', () => {
-    expect(nextSelection(skeleton, ['b'], 'd', 'range')).toEqual(['b', 'c', 'd']);
+  it('range：以末位选中为锚点框选（向后，含同 id 多位置）', () => {
+    expect(nextSelection(skeleton, [k('b', 'b.png')], k('x', 'd.png'), 'range')).toEqual([k('b', 'b.png'), k('x', 'c.png'), k('x', 'd.png')]);
   });
 
   it('range：向前框选取索引区间', () => {
-    expect(nextSelection(skeleton, ['d'], 'b', 'range')).toEqual(['b', 'c', 'd']);
+    expect(nextSelection(skeleton, [k('x', 'd.png')], k('b', 'b.png'), 'range')).toEqual([k('b', 'b.png'), k('x', 'c.png'), k('x', 'd.png')]);
   });
 
   it('range：空选择集回落单选', () => {
-    expect(nextSelection(skeleton, [], 'c', 'range')).toEqual(['c']);
+    expect(nextSelection(skeleton, [], k('x', 'c.png'), 'range')).toEqual([k('x', 'c.png')]);
   });
 
   it('range：锚点不在骨架中回落单选', () => {
-    expect(nextSelection(skeleton, ['zzz'], 'c', 'range')).toEqual(['c']);
+    expect(nextSelection(skeleton, ['zzz'], k('x', 'c.png'), 'range')).toEqual([k('x', 'c.png')]);
   });
 
   it('range：目标不在骨架中回落单选', () => {
-    expect(nextSelection(skeleton, ['b'], 'zzz', 'range')).toEqual(['zzz']);
+    expect(nextSelection(skeleton, [k('b', 'b.png')], 'zzz', 'range')).toEqual(['zzz']);
   });
 });

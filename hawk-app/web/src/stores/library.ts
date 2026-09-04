@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { useMediaQuery } from '@vueuse/core';
 import { api } from '../api/endpoints';
-import { isUnfilteredView, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, viewPathPrefix } from '../viewLogic';
+import { isUnfilteredView, displayPath, itemKey, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, splitKey } from '../viewLogic';
 import { hasShell } from '../platform';
 import { loadJSON, loadText, saveJSON, saveText, STORAGE_KEYS } from '../persist';
 import { debounce, errorText } from './util';
@@ -37,9 +37,10 @@ export const useLibraryStore = defineStore('library', () => {
   // ---- state ----
   const view = ref<ViewState>({ kind: 'all' });
   const query = ref<QueryState>({ keywords: [], orderBy: 'modification_time', order: 'desc' });
-  /** 当前视图全量骨架（id/width/height/star，与 item/list 同查询同排序）：布局与滚动条总高的唯一依据 */
+  /** 当前视图全量骨架（id/path/width/height/star，与 item/list 同查询同排序）：布局与滚动条总高的唯一依据。
+   *  同内容（同 hash）多位置各自成条，条目唯一标识为 itemKey(id, path)，selection/details 均以它为键 */
   const skeleton = ref<SkeletonItem[]>([]);
-  /** 已拉取的详情（视口窗口 + 预取），按 id 索引；不在视口的行只留骨架占位不渲染 */
+  /** 已拉取的详情（视口窗口 + 预取），按条目 key 索引；不在视口的行只留骨架占位不渲染 */
   const details = ref(new Map<string, Item>());
   /** 当前视图（含筛选）未分页的全量字节数合计，检查器「分区状态」用 */
   const totalSize = ref(0);
@@ -355,7 +356,7 @@ export const useLibraryStore = defineStore('library', () => {
     const to = Math.max(from, Math.min(end, sk.length));
     let missing = false;
     for (let i = from; i < to; i++) {
-      if (!details.value.has(sk[i].id)) {
+      if (!details.value.has(itemKey(sk[i].id, sk[i].path))) {
         missing = true;
         break;
       }
@@ -373,7 +374,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
       const map = new Map(details.value);
       for (const item of res.items) {
-        map.set(item.id, item);
+        map.set(itemKey(item.id, item.path), item);
       }
       details.value = map;
     } catch {
@@ -418,14 +419,14 @@ export const useLibraryStore = defineStore('library', () => {
       }
       skeleton.value = res.items;
       totalSize.value = Number(res.total_size);
-      const ids = new Set(res.items.map((i) => i.id));
-      selection.value = selection.value.filter((id) => ids.has(id));
+      const keys = new Set(res.items.map((i) => itemKey(i.id, i.path)));
+      selection.value = selection.value.filter((key) => keys.has(key));
       if (details.value.size > 0) {
         const map = new Map(details.value);
         let changed = false;
-        for (const id of [...map.keys()]) {
-          if (!ids.has(id)) {
-            map.delete(id);
+        for (const key of [...map.keys()]) {
+          if (!keys.has(key)) {
+            map.delete(key);
             changed = true;
           }
         }
@@ -438,15 +439,15 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  // ---- 选择 ----
-  function select(id: string, mod?: 'range' | 'toggle') {
+  // ---- 选择（条目以 itemKey 标识，同内容多位置是独立成员） ----
+  function select(key: string, mod?: 'range' | 'toggle') {
     // range/toggle 的区间计算在 viewLogic.nextSelection（纯函数，可单测）
-    selection.value = nextSelection(skeleton.value, selection.value, id, mod);
+    selection.value = nextSelection(skeleton.value, selection.value, key, mod);
   }
 
   function selectAll() {
     // 基于骨架（全量），不是仅视口窗口
-    selection.value = skeleton.value.map((i) => i.id);
+    selection.value = skeleton.value.map((i) => itemKey(i.id, i.path));
   }
 
   function clearSelection() {
@@ -465,32 +466,76 @@ export const useLibraryStore = defineStore('library', () => {
 
   /**
    * item.updated 的统一入口（updateItem 响应与 SSE 共用）。
-   * 详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。
-   * 过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖重载骨架——
+   * 同 hash 的全部位置条目同步内容级字段（tags/categories/star/宽高/调色板/位置分布）；
+   * 位置级字段（name/ext/size/mtime）仅在事件载荷对应该位置（updated.path）时随全量替换生效。
+   * 位置分布（paths）变化意味着改名/移动/位置增减：重拉该 hash 全部缓存位置对齐位置级字段。
+   * 骨架上的 star 同步（★ 角标）。过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖重载骨架——
    * 成员资格可能已变化（移出当前文件夹、摘掉当前分类/标签等），成员判定以服务端查询为准。
-   * 标签/分类集合真的变化时才刷分类计数：缩略图就绪等高频 updated 与计数无关，不再每事件刷 taxonomy。
    * 纯判定（无过滤视图/名称集合/骨架合并）在 viewLogic.ts。
    */
   function applyUpdatedItem(updated: Item, single: boolean) {
-    const prev = details.value.get(updated.id);
-    const taxonomyChanged =
-      prev !== undefined &&
-      (!sameNameSet(prev.tags, updated.tags) || !sameNameSet(prev.categories, updated.categories));
-    if (details.value.has(updated.id)) {
+    // 位置集变化判定以骨架为准（details 可能未缓存该 hash）：骨架 path 与事件 paths 同口径化后比对
+    // （回收站视图事件 paths 为原路径投影，骨架 path 剥掉 trash 前缀）；改名/移动/增删位置都会命中
+    const skelPaths = skeleton.value.filter((s) => s.id === updated.id).map((s) => displayPath(s.path));
+    const locationSetChanged =
+      skelPaths.length > 0 && !sameNameSet(skelPaths, updated.paths);
+    const keysOfHash = [...details.value.keys()].filter((k) => splitKey(k).id === updated.id);
+    let taxonomyChanged = false;
+    if (keysOfHash.length > 0) {
       const map = new Map(details.value);
-      map.set(updated.id, updated);
-      details.value = map;
-    }
-    const skIdx = skeleton.value.findIndex((s) => s.id === updated.id);
-    if (skIdx >= 0) {
-      const prev = skeleton.value[skIdx];
-      // 合并判定在 viewLogic.skeletonNeedsPatch
-      if (skeletonNeedsPatch(prev, updated)) {
-        const next = skeleton.value.slice();
-        next[skIdx] = { ...prev, star: updated.star, width: updated.width, height: updated.height };
-        skeleton.value = next;
+      const updatedKey = itemKey(updated.id, updated.path);
+      for (const key of keysOfHash) {
+        const prev = map.get(key)!;
+        if (!sameNameSet(prev.tags, updated.tags) || !sameNameSet(prev.categories, updated.categories)) {
+          taxonomyChanged = true;
+        }
+        map.set(
+          key,
+          key === updatedKey
+            ? updated
+            : {
+                ...prev,
+                tags: updated.tags,
+                categories: updated.categories,
+                star: updated.star,
+                annotation: updated.annotation,
+                url: updated.url,
+                width: updated.width,
+                height: updated.height,
+                palette: updated.palette,
+                paths: updated.paths,
+                folders: updated.folders,
+              },
+        );
       }
-    } else if (!isUnfilteredView(view.value, query.value) || single) {
+      details.value = map;
+      if (locationSetChanged) {
+        // 各位置条目重拉对齐位置级字段（name/size/mtime 以 detail 为准；事件载荷只有主位置口径）
+        for (const key of keysOfHash) {
+          void refetchLocation(key);
+        }
+      }
+    }
+    if (locationSetChanged) {
+      // 新位置的卡片要出现、消失位置的卡片要移除：成员与次序以服务端查询为准
+      debouncedSkeletonReload(() => void reloadSkeleton());
+    }
+    // 骨架：该 hash 的全部位置条目同步 star/宽高（★ 角标与布局比例）
+    let skeletonChanged = false;
+    const nextSkeleton = skeleton.value.map((s) => {
+      if (s.id !== updated.id || !skeletonNeedsPatch(s, updated)) {
+        return s;
+      }
+      skeletonChanged = true;
+      return { ...s, star: updated.star, width: updated.width, height: updated.height };
+    });
+    if (skeletonChanged) {
+      skeleton.value = nextSkeleton;
+    } else if (
+      !locationSetChanged &&
+      !skeleton.value.some((s) => s.id === updated.id) &&
+      (!isUnfilteredView(view.value, query.value) || single)
+    ) {
       // 不在当前骨架：可能刚成为本视图成员（同内容 item 经上传获得库内路径时服务端发的是
       // item.updated 而非 added，未过滤视图原不重拉 → 卡片永远不出现，刷新才有）。
       // 仅单条事件重拉（用户操作规模）；批量（items.updated，调色板回写）不重拉，
@@ -502,50 +547,28 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  // ---- 多位置删除策略：选中项含多个库内位置副本时询问（DeleteScopeDialog 呈现，
-  // App.vue 挂载）；单路径素材不弹窗，维持直接删除 ----
-  const deleteScopePrompt = ref<null | { count: number; folder: string | null; resolve: (choice: 'all' | 'folder' | 'cancel') => void }>(null);
-
-  function askDeleteScope(count: number, folder: string | null): Promise<'all' | 'folder' | 'cancel'> {
-    return new Promise((resolve) => {
-      deleteScopePrompt.value = { count, folder, resolve };
-    });
-  }
-
-  function resolveDeleteScope(choice: 'all' | 'folder' | 'cancel') {
-    deleteScopePrompt.value?.resolve(choice);
-    deleteScopePrompt.value = null;
-  }
-
-  /** 选中项全部移入回收站；多位置副本先问删除范围（askDeleteScope）。位置前缀判定在 viewLogic.viewPathPrefix */
-  async function trashSelected() {
-    const ids = [...selection.value];
-    // 多位置副本检测需要 paths（详情缓存，批量操作前统一补齐）
-    await ensureSelectionDetails();
-    const multiIds = ids.filter((id) => (details.value.get(id)?.paths.length ?? 0) > 1);
-    let scope: 'all' | 'folder' = 'all';
-    if (multiIds.length > 0) {
-      const prefix = viewPathPrefix(view.value);
-      const folderLabel = prefix === null ? null : prefix === '' ? '库根目录' : currentFolderPath.value;
-      const choice = await askDeleteScope(multiIds.length, folderLabel);
-      if (choice === 'cancel') {
-        return;
+  /** 按条目 key 重拉位置级详情（applyUpdatedItem 检测到位置集变化后调用） */
+  async function refetchLocation(key: string) {
+    const { id, path } = splitKey(key);
+    try {
+      const item = await api.itemDetail(id, path);
+      if (details.value.has(key)) {
+        const map = new Map(details.value);
+        map.set(key, item);
+        details.value = map;
       }
-      scope = choice;
+    } catch {
+      // 位置可能已不存在（改名/删除竞态）：交给骨架重载收敛
     }
-    const prefix = scope === 'folder' ? viewPathPrefix(view.value) : null;
-    for (const id of ids) {
+  }
+
+  /** 选中项逐个位置移入回收站（每张卡片即一个位置，删除只动该位置，其余位置保留） */
+  async function trashSelected() {
+    const keys = [...selection.value];
+    for (const key of keys) {
+      const { id, path } = splitKey(key);
       try {
-        const paths = details.value.get(id)?.paths ?? [];
-        if (prefix !== null && paths.length > 1) {
-          // 仅删当前视图范围内的位置（可能多条），其余位置保留
-          const inScope = paths.filter((p) => (prefix === '' ? !p.includes('/') : p.startsWith(prefix)));
-          for (const p of inScope) {
-            await api.itemDelete(id, p);
-          }
-        } else {
-          await api.itemDelete(id);
-        }
+        await api.itemDelete(id, path);
       } catch (e) {
         showToast(errorText(e));
       }
@@ -565,11 +588,12 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   async function restoreSelected() {
-    const ids = [...selection.value];
+    const keys = [...selection.value];
     let failed = 0;
-    for (const id of ids) {
+    for (const key of keys) {
+      const { id, path } = splitKey(key);
       try {
-        await api.itemRestore(id);
+        await api.itemRestore(id, path);
       } catch (e) {
         failed++;
         showToast(errorText(e));
@@ -604,27 +628,38 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 按范围刷新派生缓存（补缺失模式）：修复 0 × 0 宽高、缺失缩略图/调色板；修复项经 item.updated 自动刷新 */
+  /** 按范围刷新派生缓存（补缺失模式）：修复 0 × 0 宽高、缺失缩略图/调色板；修复项经 item.updated 自动刷新。
+   *  附带消失对账：源文件已删但索引残留的失效位置会被清除（watcher 漏事件时的手动收敛入口） */
   async function refreshCache(type: 'folder' | 'category' | 'tag' | 'library', value?: string, label?: string) {
     try {
       const res = await api.refreshCache(type, value);
-      showToast(res.dispatched > 0 ? `正在刷新「${label ?? type}」缓存（${res.dispatched} 项）` : `「${label ?? type}」派生缓存完好，无需修复`);
+      const parts: string[] = [];
+      if (res.removed > 0) {
+        parts.push(`已清除 ${res.removed} 个失效位置`);
+      }
+      parts.push(res.dispatched > 0 ? `正在刷新「${label ?? type}」缓存（${res.dispatched} 项）` : `「${label ?? type}」派生缓存完好，无需修复`);
+      showToast(parts.join('，'));
+      if (res.removed > 0) {
+        debouncedSkeletonReload(() => void reloadSkeleton());
+      }
     } catch (e) {
       showToast(errorText(e));
     }
   }
 
-  /** 选中项详情补齐：加标签/分类需读现有值合并，批量选中（含视口外）时先按需拉取 */
+  /** 选中项详情补齐：加标签/分类需读现有值合并，批量选中（含视口外）时先按需拉取；
+   *  ids 查询返回该 hash 的全部位置条目，统一按条目 key 回填（多回无害） */
   async function ensureSelectionDetails() {
-    const missing = selection.value.filter((id) => !details.value.has(id));
+    const missing = selection.value.filter((key) => !details.value.has(key));
     if (missing.length === 0) {
       return;
     }
+    const ids = [...new Set(missing.map((key) => splitKey(key).id))];
     try {
-      const res = await api.itemList({ ...listParams(), ids: missing, offset: 0, limit: missing.length });
+      const res = await api.itemList({ ...listParams(), ids, offset: 0, limit: missing.length * 4 });
       const map = new Map(details.value);
       for (const item of res.items) {
-        map.set(item.id, item);
+        map.set(itemKey(item.id, item.path), item);
       }
       details.value = map;
     } catch {
@@ -632,33 +667,52 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 为全部选中项追加分类(去重,保留已有);完成后立即刷新分类计数,不等 SSE 防抖 */
+  /** 为全部选中项追加分类(内容级：同 hash 多位置只应用一次;去重,保留已有);完成后立即刷新分类计数,不等 SSE 防抖 */
   async function addCategoryToSelected(name: string) {
     await ensureSelectionDetails();
-    const ids = selection.value.filter((id) => !(details.value.get(id)?.categories ?? []).includes(name));
+    const ids = selectionUniqueIds().filter((id) => {
+      const hit = [...details.value.values()].find((i) => i.id === id);
+      return !(hit?.categories ?? []).includes(name);
+    });
     await batchUpdate(ids, { add_categories: [name] }, '已添加分类');
     taxonomyHooks?.refreshTaxonomy();
   }
 
-  /** 为全部选中项追加标签(去重,保留已有);完成后立即刷新标签计数,不等 SSE 防抖 */
+  /** 为全部选中项追加标签(内容级：同 hash 多位置只应用一次;去重,保留已有);完成后立即刷新标签计数,不等 SSE 防抖 */
   async function addTagToSelected(tag: string) {
     await ensureSelectionDetails();
-    const ids = selection.value.filter((id) => !(details.value.get(id)?.tags ?? []).includes(tag));
+    const ids = selectionUniqueIds().filter((id) => {
+      const hit = [...details.value.values()].find((i) => i.id === id);
+      return !(hit?.tags ?? []).includes(tag);
+    });
     await batchUpdate(ids, { add_tags: [tag] }, '已添加标签');
     taxonomyHooks?.refreshTaxonomy();
   }
 
-  /** 将全部选中项移动到目标文件夹(空字符串为根目录);已在目标文件夹的项跳过;完成后立即刷新文件夹树 */
+  /** 选中集的内容 id（去重）：元数据类批量操作（标签/分类/评分）按内容应用一次 */
+  function selectionUniqueIds(): string[] {
+    return [...new Set(selection.value.map((key) => splitKey(key).id))];
+  }
+
+  /** 将全部选中项移动到目标文件夹(位置级：每位置各移;空字符串为根目录);已在目标文件夹的位置跳过;完成后立即刷新文件夹树 */
   async function moveSelectedToFolder(path: string) {
-    await ensureSelectionDetails();
-    const ids = selection.value.filter((id) => (details.value.get(id)?.folders?.[0] ?? '') !== path);
-    await batchUpdate(ids, { folder_path: path }, '已移动');
+    const targets = selection.value
+      .map((key) => splitKey(key))
+      .filter(({ path: p }) => {
+        const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+        return dir !== path;
+      });
+    await batchUpdate(
+      targets.map((t) => t.id),
+      { paths: targets.map((t) => t.path), folder_path: path },
+      '已移动',
+    );
     taxonomyHooks?.refreshFolders();
   }
 
-  /** 批量设置选中项评分(多选面板与右键菜单共用) */
+  /** 批量设置选中项评分(内容级去重;多选面板与右键菜单共用) */
   async function setStarForSelected(star: number) {
-    await batchUpdate([...selection.value], { star }, '已设置评分');
+    await batchUpdate(selectionUniqueIds(), { star }, '已设置评分');
   }
 
   /** 批量端点统一入口:missing(内容不存在/移动冲突)在结果中提示,不整体失败 */
@@ -705,16 +759,20 @@ export const useLibraryStore = defineStore('library', () => {
       case 'item.trashed':
       case 'item.removed': {
         const id = (payload as { id: string }).id;
-        // 就地移除立即反馈；回收站视图同事件意味着「进来了」，统一以防抖重载兜底
-        if (details.value.has(id)) {
+        // 就地移除该 hash 的全部位置条目（立即反馈）；回收站视图同事件意味着「进来了」，统一以防抖重载兜底
+        if ([...details.value.keys()].some((k) => splitKey(k).id === id)) {
           const map = new Map(details.value);
-          map.delete(id);
+          for (const key of [...map.keys()]) {
+            if (splitKey(key).id === id) {
+              map.delete(key);
+            }
+          }
           details.value = map;
         }
         if (skeleton.value.some((s) => s.id === id)) {
           skeleton.value = skeleton.value.filter((s) => s.id !== id);
         }
-        selection.value = selection.value.filter((s) => s !== id);
+        selection.value = selection.value.filter((key) => splitKey(key).id !== id);
         debouncedSkeletonReload(() => void reloadSkeleton());
         taxonomyHooks?.refreshTaxonomy();
         taxonomyHooks?.refreshFolders();
@@ -740,7 +798,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, library, thumbSize, setUserThumbSize, searchText, toast, deleteScopePrompt, resolveDeleteScope, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, library, thumbSize, setUserThumbSize, searchText, toast, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, hasActiveFilters,
     init, setView, correctView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,

@@ -838,6 +838,8 @@ export interface components {
                 modification_time: number;
                 name: string;
                 palette: components["schemas"]["PaletteColorDto"][];
+                /** @description 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径） */
+                path: string;
                 paths: string[];
                 /** Format: int64 */
                 size: number;
@@ -1006,6 +1008,8 @@ export interface components {
             add_tags?: string[] | null;
             folder_path?: string | null;
             ids: string[];
+            /** @description 与 ids 等长的可选位置限定（同内容多位置时按位置移动 folder_path；缺省或元素为 null 时取主位置） */
+            paths?: (string | null)[] | null;
             /** Format: int32 */
             star?: number | null;
         };
@@ -1026,6 +1030,8 @@ export interface components {
             modification_time: number;
             name: string;
             palette: components["schemas"]["PaletteColorDto"][];
+            /** @description 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径） */
+            path: string;
             paths: string[];
             /** Format: int64 */
             size: number;
@@ -1092,6 +1098,8 @@ export interface components {
             /** Format: int32 */
             height: number;
             id: string;
+            /** @description 同 id（内容）多位置时按 path 区分条目 */
+            path: string;
             /** Format: int32 */
             star: number;
             /** Format: int32 */
@@ -1723,6 +1731,8 @@ export interface operations {
             query: {
                 /** @description item id（内容 BLAKE3 哈希 hex） */
                 id: string;
+                /** @description 可选：库内相对位置（缺省为主位置） */
+                path?: string;
             };
             header?: never;
             path?: never;
@@ -1746,6 +1756,8 @@ export interface operations {
             query: {
                 /** @description item id（内容 BLAKE3 哈希 hex） */
                 id: string;
+                /** @description 可选：库内相对位置（缺省为主位置） */
+                path?: string;
             };
             header?: never;
             path?: never;

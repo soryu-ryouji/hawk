@@ -5,6 +5,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useLayout } from '../composables/useLayout';
+import { displayPath, itemKey } from '../viewLogic';
 import { formatSize, formatTime } from '../format';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
@@ -47,8 +48,15 @@ watch([name, annotation], async () => {
 const item = computed(() => store.primarySelected);
 const previewUrl = computed(() => (item.value ? api.thumbnailUrl(item.value.id) : ''));
 
+/** 当前条目位置所在目录（位置级：同内容多位置各自不同；回收站位置剥前缀；"" = 库根目录） */
+const currentDir = computed(() => {
+  const p = displayPath(item.value?.path ?? '');
+  return p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+});
+
 watch(
-  () => item.value?.id,
+  // 以条目 key 为重置边界：同内容不同位置的条目切换时名称/大小等位置级字段也要重置
+  () => (item.value ? itemKey(item.value.id, item.value.path) : undefined),
   () => {
     name.value = item.value?.name ?? '';
     annotation.value = item.value?.annotation ?? '';
@@ -75,7 +83,8 @@ function submitName() {
   const value = name.value.replace(/[\r\n]+/g, ' ').trim();
   name.value = value;
   if (item.value && value && value !== item.value.name) {
-    void store.updateItem(item.value.id, { name: value });
+    // 改名是位置级操作（同内容多位置时只改本条目对应的文件）
+    void store.updateItem(item.value.id, { name: value }, item.value.path);
   }
 }
 
@@ -144,8 +153,9 @@ function toggleFolderPicker() {
 }
 
 function moveToFolder(path: string) {
-  if (item.value && path !== (item.value.folders?.[0] ?? '')) {
-    void store.updateItem(item.value.id, { folder_path: path });
+  if (item.value && path !== currentDir.value) {
+    // 移动是位置级操作（同上）
+    void store.updateItem(item.value.id, { folder_path: path }, item.value.path);
   }
 }
 
@@ -227,7 +237,7 @@ function searchColor(color: string) {
 
       <section>
         <div class="section-title">文件夹</div>
-        <button v-if="item.folders?.[0]" class="jump ro-text" @click="goView(folderViewOf(item.folders[0]))">{{ item.folders[0] }}</button>
+        <button v-if="currentDir" class="jump ro-text" @click="goView(folderViewOf(currentDir))">{{ currentDir }}</button>
         <span v-else class="ro-text">—</span>
       </section>
 
@@ -299,13 +309,13 @@ function searchColor(color: string) {
         <div class="folder-row">
           <!-- Eagle 式：点击当前值弹出可折叠文件夹树，选择即移动（FolderTreePicker） -->
           <button ref="folderValueEl" class="folder-value" title="选择所在文件夹（点击移动）" @click="toggleFolderPicker">
-            {{ item.folders?.[0] || '（根目录）' }}
+            {{ currentDir || '（根目录）' }}
           </button>
-          <button class="finder" title="打开所在文件夹" @click="goView(folderViewOf(item.folders?.[0] ?? ''))">›</button>
+          <button class="finder" title="打开所在文件夹" @click="goView(folderViewOf(currentDir))">›</button>
         </div>
         <FolderTreePicker
           v-if="pickerAnchor"
-          :current="item.folders?.[0] ?? ''"
+          :current="currentDir"
           :trigger="folderValueEl"
           :anchor="pickerAnchor"
           @pick="moveToFolder"

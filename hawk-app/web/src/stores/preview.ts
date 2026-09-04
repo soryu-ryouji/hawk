@@ -8,12 +8,14 @@ import { ApiError } from '../api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
 import { loadText, saveText, STORAGE_KEYS } from '../persist';
 import { useLibraryStore } from './library';
+import { itemKey } from '../viewLogic';
 import { errorText } from './util';
 import type { Item } from '../types';
 
 export const usePreviewStore = defineStore('preview', () => {
   const library = useLibraryStore();
 
+  /** 预览目标（条目 key：同内容多位置时定位到具体位置条目） */
   const previewId = ref<string | null>(null);
 
   // 预览关闭按钮显隐偏好（设置面板外观分区开关，所有端即时生效）：默认显示；
@@ -35,16 +37,16 @@ export const usePreviewStore = defineStore('preview', () => {
     // sticky:详情未加载时不置空——避免浮层卸载重建导致滑动切换动画与状态丢失；关闭时随 previewId 归零
     return current ?? (previewId.value ? lastPreviewItem : null);
   });
-  const previewIndex = computed(() => library.skeleton.findIndex((i) => i.id === previewId.value));
+  const previewIndex = computed(() => library.skeleton.findIndex((i) => itemKey(i.id, i.path) === previewId.value));
   const previewNavId = (step: 1 | -1) => {
     const next = previewIndex.value >= 0 ? library.skeleton[previewIndex.value + step] : undefined;
-    return next?.id ?? null;
+    return next ? itemKey(next.id, next.path) : null;
   };
 
-  function openPreview(id: string) {
-    previewId.value = id;
+  function openPreview(key: string) {
+    previewId.value = key;
     // 详情可能未加载（如键盘导航跳到视口外项）：按骨架索引补拉，到位后浮层即出现
-    const idx = library.skeleton.findIndex((s) => s.id === id);
+    const idx = library.skeleton.findIndex((s) => itemKey(s.id, s.path) === key);
     if (idx >= 0) {
       void library.ensureWindow(idx, idx + 1);
     }
@@ -74,11 +76,11 @@ export const usePreviewStore = defineStore('preview', () => {
 
   /**
    * 编辑窗口保存:解码/旋转/重编码在客户端完成(编辑计算归客户端),经 item/replace 提交存储层。
-   * 内容哈希变化导致 id 漂移:新 item 就地替换详情;预览若正打开该 item 则跟随新 id;
-   * 骨架/选择的旧 id 由 SSE item.removed 清理。返回是否成功,调用方据此关闭编辑窗口。
+   * 内容哈希变化导致 id 漂移:新条目就地替换详情;预览若正打开该条目则跟随新 key;
+   * 骨架/选择的旧条目由 SSE item.removed 清理。返回是否成功,调用方据此关闭编辑窗口。
    */
-  async function saveImageEdit(id: string, angle: RotateAngle): Promise<boolean> {
-    const item = library.details.get(id);
+  async function saveImageEdit(key: string, angle: RotateAngle): Promise<boolean> {
+    const item = library.details.get(key);
     if (!item) {
       return false;
     }
@@ -90,13 +92,14 @@ export const usePreviewStore = defineStore('preview', () => {
         throw new Error('原图获取失败');
       }
       const rotated = await rotateImage(await res.blob(), angle, item.ext);
-      const updated = await api.itemReplace(item.id, await blobToBase64(rotated));
+      // replace 按 id+path 定位写回该位置（同内容多位置时只改当前条目对应的文件）
+      const updated = await api.itemReplace(item.id, await blobToBase64(rotated), item.path);
       const map = new Map(library.details);
-      map.delete(item.id);
-      map.set(updated.id, updated);
+      map.delete(key);
+      map.set(itemKey(updated.id, updated.path), updated);
       library.details = map;
-      if (previewId.value === item.id) {
-        previewId.value = updated.id;
+      if (previewId.value === key) {
+        previewId.value = itemKey(updated.id, updated.path);
       }
       library.showToast('已保存');
       return true;

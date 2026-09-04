@@ -14,6 +14,7 @@ import PromptDialog from './PromptDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import { isRotatableImage } from '../imageEdit';
+import { itemKey } from '../viewLogic';
 import { useLayout } from '../composables/useLayout';
 import { CARD_META_H, GRID_GAP, layoutRows, type LayoutCell, type LayoutRow } from '../layout';
 
@@ -100,14 +101,14 @@ function onScroll() {
   });
 }
 
-/** 齐行布局本体在 layout.layoutRows（纯函数）；这里只做 store 骨架的 Number 强转适配 */
+/** 齐行布局本体在 layout.layoutRows（纯函数）；骨架的 id 字段升级为条目 key（同内容多位置逐位区分） */
 const layout = computed<LayoutRow[]>(() => {
   const width = containerWidth.value;
   if (width <= 0) {
     return [];
   }
   return layoutRows(
-    store.skeleton.map((s) => ({ id: s.id, width: Number(s.width), height: Number(s.height), star: Number(s.star) })),
+    store.skeleton.map((s) => ({ id: itemKey(s.id, s.path), width: Number(s.width), height: Number(s.height), star: Number(s.star) })),
     width,
     store.thumbSize,
   );
@@ -179,12 +180,12 @@ watchEffect(() => {
 
 // 键盘移动选中框时滚动到可见区域；目标行未渲染时先把容器滚过去（触发渲染）再细调
 watch(
-  () => store.primarySelected?.id,
-  async (id) => {
-    if (!id || !gridRef.value) {
+  () => (store.primarySelected ? itemKey(store.primarySelected.id, store.primarySelected.path) : null),
+  async (key) => {
+    if (!key || !gridRef.value) {
       return;
     }
-    const idx = store.skeleton.findIndex((s) => s.id === id);
+    const idx = store.skeleton.findIndex((s) => itemKey(s.id, s.path) === key);
     if (idx < 0) {
       return;
     }
@@ -195,7 +196,7 @@ watch(
     }
     await nextTick();
     requestAnimationFrame(() => {
-      document.querySelector(`[data-item-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+      document.querySelector(`[data-item-id="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
     });
   },
 );
@@ -208,30 +209,31 @@ watch(
 // 鼠标任何布局：单击选择/多选、双击打开（ItemCard @dblclick）。
 let lastPointerType = 'mouse';
 const DOUBLE_TAP_MS = 300;
-let lastTap: { id: string | null; time: number } = { id: null, time: 0 };
+let lastTap: { key: string | null; time: number } = { key: null, time: 0 };
 
 function onCardPointerDown(e: PointerEvent) {
   lastPointerType = e.pointerType;
 }
 
 function onSelect(item: Item, e: MouseEvent) {
+  const key = itemKey(item.id, item.path);
   if (lastPointerType !== 'mouse') {
-    store.select(item.id);
+    store.select(key);
     if (narrow.value) {
-      preview.openPreview(item.id);
+      preview.openPreview(key);
       return;
     }
     const now = Date.now();
-    if (lastTap.id === item.id && now - lastTap.time < DOUBLE_TAP_MS) {
-      lastTap = { id: null, time: 0 };
-      preview.openPreview(item.id);
+    if (lastTap.key === key && now - lastTap.time < DOUBLE_TAP_MS) {
+      lastTap = { key: null, time: 0 };
+      preview.openPreview(key);
       return;
     }
-    lastTap = { id: item.id, time: now };
+    lastTap = { key, time: now };
     return;
   }
   const mod = e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : undefined;
-  store.select(item.id, mod);
+  store.select(key, mod);
 }
 
 function confirmClearTrash() {
@@ -246,8 +248,9 @@ function onMenu(item: Item, e: MouseEvent) {
     return;
   }
   // 右键未选中项时先选中它
-  if (!store.selection.includes(item.id)) {
-    store.select(item.id);
+  const key = itemKey(item.id, item.path);
+  if (!store.selection.includes(key)) {
+    store.select(key);
   }
 
   const items = store.isTrash
@@ -261,8 +264,8 @@ function onMenu(item: Item, e: MouseEvent) {
         { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
         // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
         ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => preview.openEditor(item) }] : []),
-        // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现
-        ...(hasShell ? [{ label: showInFileManagerLabel, action: () => void shell.showInFinder(item.paths[0]) }] : []),
+        // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现；定位本卡片对应的位置
+        ...(hasShell ? [{ label: showInFileManagerLabel, action: () => void shell.showInFinder(item.path) }] : []),
         { separator: true, label: '' },
         { label: '移入回收站', danger: true, action: () => void store.trashSelected() },
       ];
@@ -290,7 +293,7 @@ function onMenu(item: Item, e: MouseEvent) {
             :height="cell.height"
             @select="onSelect"
             @pointerdown="onCardPointerDown"
-            @open="preview.openPreview"
+            @open="(item) => preview.openPreview(itemKey(item.id, item.path))"
             @menu="onMenu"
           />
           <!-- 详情未拉取：只保留宽高的占位块，不进视口渲染（ Eagle 式） -->

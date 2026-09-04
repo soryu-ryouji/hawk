@@ -47,12 +47,14 @@ pub fn routes() -> OpenApiRouter<SharedState> {
 
 // ---------- 公共类型与辅助 ----------
 
-/// id 查询参数（detail/file 共用）
+/// id 查询参数（detail/file 共用）；path 定位同内容多位置中的具体条目（detail 用）
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct IdQuery {
     /// item id（内容 BLAKE3 哈希 hex）
     pub(crate) id: String,
+    /// 可选：库内相对位置（缺省为主位置）
+    pub(crate) path: Option<String>,
 }
 
 pub(crate) use add::ItemAddResponse;
