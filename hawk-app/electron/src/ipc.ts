@@ -121,6 +121,14 @@ export function registerIpc(): void {
     }
   });
 
+  // 重启当前库的 server（存储方案迁移等设置变更后调用；switchLibrary 会先切启动屏再重建）
+  ipcMain.handle(IPC.restartServer, async () => {
+    const libRoot = getLibraryRoot();
+    if (libRoot) {
+      await openLibraryAt(libRoot);
+    }
+  });
+
   // 复制文件路径到剪贴板（预览右键菜单；复制图片在渲染进程经 Web Clipboard API 完成，无 IPC）
   ipcMain.handle(IPC.copyPath, async (_event, relPath: unknown) => {
     const abs = resolveLibraryPath(relPath);

@@ -4,6 +4,7 @@ use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
 use crate::core::global_filter::GlobalFilter;
 use crate::core::index::ItemIndex;
+use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::pipeline::IndexPipeline;
 use crate::settings::Settings;
@@ -88,6 +89,8 @@ pub struct AppState {
     pub index: Arc<ItemIndex>,
     pub bus: EventBus,
     pub pipeline: IndexPipeline,
+    /// 元数据存储（存储方案模式/迁移入口的读取面）
+    pub store: Arc<MetadataStore>,
     // ---- 缩略图派生：服务 + 后台 worker（结果经队列回流流水线） ----
     pub thumbs: ThumbnailService,
     pub worker: Arc<ThumbnailWorker>,

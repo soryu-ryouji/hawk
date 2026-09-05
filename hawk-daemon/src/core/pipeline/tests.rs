@@ -8,7 +8,6 @@
 //! 不断言后台 worker 的提炼结果（缩略图/调色板/宽高为异步补充，与本测试关注的不变量无关）。
 
 use super::*;
-use crate::core::index_db::IndexDb;
 use crate::core::taxonomy::{CategoryRegistry, ItemEvents, TagRegistry};
 use std::path::PathBuf;
 
@@ -23,7 +22,17 @@ struct Rig {
 }
 
 impl Rig {
+    /// 默认装配：新库探测为数据库模式（local）。需配置文件（Toml）模式的用 Rig::toml
     fn new(name: &str) -> Rig {
+        Self::with_mode(name, None)
+    }
+
+    /// 配置文件（Toml）模式装配
+    fn toml(name: &str) -> Rig {
+        Self::with_mode(name, Some(crate::core::metadata_store::StorageMode::Toml))
+    }
+
+    fn with_mode(name: &str, mode: Option<crate::core::metadata_store::StorageMode>) -> Rig {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new("debug"))
             .with_test_writer()
@@ -39,9 +48,8 @@ impl Rig {
         let paths = LibraryPaths::new(&root_str, Some(cache.to_string_lossy().to_string()));
         paths.ensure_layout();
         let config = Arc::new(LibraryConfig::new(paths.clone()));
-        let db = Arc::new(IndexDb::open(&paths.index_db_file));
         let startup = Arc::new(StartupState::default());
-        let store = Arc::new(MetadataStore::new(paths.clone(), db.clone(), &startup));
+        let store = Arc::new(MetadataStore::with_mode(paths.clone(), &startup, mode));
         let index = Arc::new(ItemIndex::default());
         let bus = EventBus::new();
         let categories = Arc::new(CategoryRegistry::new(&paths));
@@ -409,10 +417,10 @@ async fn tag_delete_cascade_batches_events() {
     assert!(rig.store.try_get(&items_updated_ids[0]).unwrap().tags.is_empty());
 }
 
-/// 大批量元数据应用（≥64 条触发并行落盘路径）：全部应用、TOML 落盘、事件合并发布
+/// 大批量元数据应用（≥64 条触发并行落盘路径，Toml 模式）：全部应用、TOML 落盘、事件合并发布
 #[tokio::test]
 async fn batch_metadata_parallel_path() {
-    let rig = Rig::new("batch-parallel");
+    let rig = Rig::toml("batch-parallel");
     std::fs::create_dir_all(rig.abs("p")).unwrap();
     let mut ids = Vec::new();
     for i in 0..100u8 {

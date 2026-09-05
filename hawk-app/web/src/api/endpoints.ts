@@ -46,6 +46,9 @@ export const api = {
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   /** 改库显示名（写库内 config.toml 的 name，daemon 热更并广播 library.updated 事件）；返回更新后的库信息 */
   libraryRename: (name: string) => request<LibraryInfo>('PATCH', '/api/v1/library/info', { body: { name } }),
+  /** 切换元数据存储方案（database/toml）：daemon 侧全量迁移；成功后须重启 server（调用方负责） */
+  librarySetStorageMode: (mode: 'database' | 'toml') =>
+    request<void>('POST', '/api/v1/library/storage_mode', { body: { mode } }),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
   /** 刷新缓存：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
   rescan: () => request<void>('POST', '/api/v1/library/rescan'),

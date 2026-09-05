@@ -36,6 +36,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   pickCacheDir: async () => null,
   changeCacheDir: async () => '浏览器端不支持',
   copyPath: async () => {},
+  restartServer: async () => {},
   getPathForFile: () => '',
   minimizeWindow: async () => {},
   toggleMaximizeWindow: async () => false,

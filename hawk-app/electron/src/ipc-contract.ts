@@ -12,6 +12,7 @@ export const IPC = {
   copyPath: 'hawk:copy-path',
   lanAddresses: 'hawk:lan-addresses',
   quitApp: 'hawk:quit-app',
+  restartServer: 'hawk:restart-server',
   appVersion: 'hawk:app-version',
   updateChannelGet: 'hawk:update-channel-get',
   updateChannelSet: 'hawk:update-channel-set',
@@ -107,6 +108,8 @@ export interface HawkShell {
   removeLibrary(path: string): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 复制库内文件的绝对路径到剪贴板 */
   copyPath(relPath: string): Promise<void>;
+  /** 重启当前库的 server（存储方案迁移等需要进程级重启的设置变更；主进程切启动屏并重建连接） */
+  restartServer(): Promise<void>;
   /** 本机局域网 IPv4 地址列表（设置面板展示用；LAN 配置读写走 REST app/lan） */
   lanAddresses(): Promise<string[]>;
   /** 在系统文件管理器中显示库内文件（相对路径） */

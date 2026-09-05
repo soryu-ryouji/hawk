@@ -22,6 +22,10 @@ pub struct LibraryPaths {
     pub index_db_file: String,
     pub trash_dir: String,
     pub config_file: String,
+    /// 数据库模式的权威元数据存储（.hawk/metadata.db）；存在即判定为数据库模式
+    pub metadata_db_file: String,
+    /// 存储方案标记文件（.hawk/storage_mode）：迁移完成后最后写入，探测时优先于文件存在性探测
+    pub storage_mode_file: String,
     pub categories_file: String,
     pub tags_file: String,
     pub view_file: String,
@@ -49,6 +53,8 @@ impl LibraryPaths {
         let thumbnails_dir = join_path(&cache_dir, "thumbnails");
         let trash_dir = join_path(&hawk_dir, TRASH_DIR_NAME);
         let config_file = join_path(&hawk_dir, "config.toml");
+        let metadata_db_file = join_path(&hawk_dir, "metadata.db");
+        let storage_mode_file = join_path(&hawk_dir, "storage_mode");
         let categories_file = join_path(&hawk_dir, "categories.toml");
         let tags_file = join_path(&hawk_dir, "tags.toml");
         let view_file = join_path(&hawk_dir, "view.toml");
@@ -62,6 +68,8 @@ impl LibraryPaths {
             thumbnails_dir,
             trash_dir,
             config_file,
+            metadata_db_file,
+            storage_mode_file,
             categories_file,
             tags_file,
             view_file,

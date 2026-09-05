@@ -14,7 +14,6 @@ use super::{build_router, AppState, SharedState};
 use crate::core::config::LibraryConfig;
 use crate::core::events::{EventBus, LibraryEvents};
 use crate::core::index::ItemIndex;
-use crate::core::index_db::IndexDb;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::pipeline::IndexPipeline;
@@ -60,6 +59,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("POST", "/api/v1/item/list", Some("{}")),
     ("POST", "/api/v1/item/skeleton", Some("{}")),
     ("POST", "/api/v1/library/reindex", None),
+    ("POST", "/api/v1/library/storage_mode", Some(r#"{"mode":"database"}"#)),
     ("POST", "/api/v1/library/rescan", None),
     ("POST", "/api/v1/library/refresh_cache", Some(r#"{"type":"library"}"#)),
     ("POST", "/api/v1/trash/clear", None),
@@ -117,6 +117,11 @@ struct TestApp {
 fn test_app(name: &str) -> TestApp {
     let base = std::env::temp_dir().join(format!("hawk-contract-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
+    test_app_at(base)
+}
+
+/// 在指定目录上装配（同库重开 = 迁移测试的重启语义）
+fn test_app_at(base: PathBuf) -> TestApp {
     let root = base.join("library");
     let cache = base.join("cache");
     std::fs::create_dir_all(&root).unwrap();
@@ -127,9 +132,8 @@ fn test_app(name: &str) -> TestApp {
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
     let folder_tree = Arc::new(crate::api::folder::FolderTreeCache::new());
-    let db = Arc::new(IndexDb::open(&paths.index_db_file));
     let startup = Arc::new(StartupState::default());
-    let store = Arc::new(MetadataStore::new(paths.clone(), db.clone(), &startup));
+    let store = Arc::new(MetadataStore::new(paths.clone(), &startup));
     let index = Arc::new(ItemIndex::default());
     let bus = EventBus::new();
     let categories = Arc::new(CategoryRegistry::new(&paths));
@@ -182,6 +186,7 @@ fn test_app(name: &str) -> TestApp {
         index,
         bus,
         pipeline,
+        store,
         thumbs,
         prefs,
         categories,
@@ -202,6 +207,13 @@ impl Drop for TestApp {
 }
 
 impl TestApp {
+    /// 放弃清理并返回库目录（同库重开场景：旧的 TestApp 句柄不能先删库）
+    fn leak(self) -> PathBuf {
+        let base = self.base.clone();
+        std::mem::forget(self);
+        base
+    }
+
     fn library_root(&self) -> PathBuf {
         self.base.join("library")
     }
@@ -649,4 +661,54 @@ async fn folder_delete_missing_dir_is_idempotent() {
     let (_, bytes) = call_json(&app.router, "GET", "/api/v1/folder/list", None).await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["children"], json!([]));
+}
+
+/// 存储方案迁移往返：新库默认数据库模式；切配置文件 → TOML 落盘、重开探测为 toml、数据完好；
+/// 切回数据库 → metadata.db 存在、TOML 清除、重开探测回数据库
+#[tokio::test]
+async fn storage_mode_migration_roundtrip() {
+    let app = test_app("storage-migrate");
+
+    // 新库默认数据库模式
+    async fn info_mode(app: &TestApp) -> String {
+        let (_, bytes) = call_json(&app.router, "GET", "/api/v1/library/info", None).await;
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        v["data"]["storage_mode"].as_str().unwrap().to_string()
+    }
+    assert_eq!(info_mode(&app).await, "database");
+
+    let id = app.add_test_item("a.png", [1, 1, 1]).await;
+    let (status, _) = call_json(&app.router, "POST", "/api/v1/item/update", Some(json!({"id": id, "tags": ["迁移标记"]}))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // database → toml：TOML 落盘且含标签
+    let (status, bytes) = call_json(&app.router, "POST", "/api/v1/library/storage_mode", Some(json!({"mode": "toml"}))).await;
+    assert_eq!(status, StatusCode::OK, "迁移到 toml: {}", String::from_utf8_lossy(&bytes));
+    let toml_file = app.library_root().join(format!(".hawk/metadata/{id}.toml"));
+    let text = std::fs::read_to_string(&toml_file).expect("迁移后 TOML 应存在");
+    assert!(text.contains("迁移标记"));
+
+    // 重开：探测为 toml，数据完好
+    let base = app.leak();
+    let app2 = test_app_at(base.clone());
+    assert_eq!(info_mode(&app2).await, "toml");
+    let (_, bytes) = call_json(&app2.router, "GET", &format!("/api/v1/item/detail?id={id}"), None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["tags"], json!(["迁移标记"]));
+
+    // toml → database：metadata.db 建立、TOML 清除
+    let (status, _) = call_json(&app2.router, "POST", "/api/v1/library/storage_mode", Some(json!({"mode": "database"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!toml_file.exists(), "切回数据库后旧 TOML 应删除");
+    assert!(app2.library_root().join(".hawk/metadata.db").exists());
+
+    // 再重开：探测回 database，数据完好
+    let base = app2.leak();
+    let app3 = test_app_at(base.clone());
+    assert_eq!(info_mode(&app3).await, "database");
+    let (_, bytes) = call_json(&app3.router, "GET", &format!("/api/v1/item/detail?id={id}"), None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["tags"], json!(["迁移标记"]));
+
+    let _ = std::fs::remove_dir_all(&base);
 }

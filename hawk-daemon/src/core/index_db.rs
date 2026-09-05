@@ -17,10 +17,27 @@ pub struct IndexDb {
     poisoned: Mutex<bool>,
     /// 缓存是否已完成至少一次全量注水。false 时内容不可信，必须由 TOML 全量重建
     pub hydrated: std::sync::atomic::AtomicBool,
+    role: DbRole,
+}
+
+/// 库角色：Cache = 派生缓存（写失败静默熔断）；Authority = 权威存储（写失败上传错误，不熔断）
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DbRole {
+    Cache,
+    Authority,
 }
 
 impl IndexDb {
     pub fn open(index_db_file: &str) -> IndexDb {
+        Self::open_as(index_db_file, DbRole::Cache)
+    }
+
+    /// 权威模式打开（.hawk/metadata.db）：写操作经 strict 变体上传错误；熔断语义不适用
+    pub fn open_authority(index_db_file: &str) -> IndexDb {
+        Self::open_as(index_db_file, DbRole::Authority)
+    }
+
+    fn open_as(index_db_file: &str, role: DbRole) -> IndexDb {
         let result = (|| -> rusqlite::Result<Connection> {
             let conn = Connection::open(index_db_file)?;
             conn.pragma_update(None, "journal_mode", "DELETE")?;
@@ -35,6 +52,7 @@ impl IndexDb {
                     conn: Mutex::new(Some(conn)),
                     poisoned: Mutex::new(false),
                     hydrated: std::sync::atomic::AtomicBool::new(false),
+                    role,
                 };
                 db.init_schema();
                 db
@@ -45,6 +63,7 @@ impl IndexDb {
                     conn: Mutex::new(None),
                     poisoned: Mutex::new(false),
                     hydrated: std::sync::atomic::AtomicBool::new(false),
+                    role,
                 }
             }
         }
@@ -81,6 +100,53 @@ impl IndexDb {
             }
             Err(e) => self.poison(&format!("元数据缓存注水失败，保持未注水状态: {e}")),
         }
+    }
+
+    /// 权威写（strict）：失败返回 Err 不熔断（权威层没有「退化」可言）。缓存模式不应调用
+    pub fn save_strict(&self, hash: &str, meta: &ItemMetadata) -> Result<(), String> {
+        debug_assert_eq!(self.role, DbRole::Authority);
+        self.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            upsert_item(&tx, hash, meta, 0)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .map_err(|e| format!("元数据数据库写入失败 {hash}: {e}"))
+    }
+
+    /// 权威批量写（strict）：单事务。失败返回 Err
+    pub fn save_batch_strict(&self, entries: &[(String, ItemMetadata)]) -> Result<(), String> {
+        debug_assert_eq!(self.role, DbRole::Authority);
+        self.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            for (hash, meta) in entries {
+                upsert_item(&tx, hash, meta, 0)?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .map_err(|e| format!("元数据数据库批量写入失败: {e}"))
+    }
+
+    /// 权威删除（strict）：失败返回 Err
+    pub fn delete_strict(&self, hash: &str) -> Result<(), String> {
+        debug_assert_eq!(self.role, DbRole::Authority);
+        self.with_conn(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM items WHERE hash=?1", [hash])?;
+            delete_child_rows(&tx, hash)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .map_err(|e| format!("元数据数据库删除失败 {hash}: {e}"))
+    }
+
+    /// 条目数（存储模式探测用：空库视为未初始化）
+    pub fn item_count(&self) -> usize {
+        let conn = self.conn.lock().unwrap();
+        conn.as_ref()
+            .and_then(|c| c.query_row("SELECT COUNT(*) FROM items", [], |row| row.get::<_, i64>(0)).ok())
+            .unwrap_or(0) as usize
     }
 
     /// 全量读取（启动注水内存用）。缓存不可用或损坏时返回 Err，调用方回退 TOML 全量解析

@@ -142,6 +142,11 @@ pub(crate) enum Job {
         reply: Reply<Result<(), String>>,
     },
     RegistryReload,
+    /// 存储方案迁移（写新权威层 + 删旧文件）；单写者内执行保证无并发写。成功后调用方应引导重启
+    StorageMigrate {
+        target: crate::core::metadata_store::StorageMode,
+        reply: Reply<Result<(), String>>,
+    },
 }
 
 #[derive(Clone)]
@@ -521,6 +526,18 @@ impl IndexPipeline {
         }
         await_reply(rx).await
     }
+
+    /// 存储方案迁移（数据库 ⇄ 配置文件）：单写者内完成全量迁移；成功后调用方引导重启
+    pub async fn submit_storage_migrate(&self, target: crate::core::metadata_store::StorageMode) -> Result<(), String> {
+        let (tx, rx) = oneshot::channel();
+        if !self.ctx.sender.try_fire(Job::StorageMigrate {
+            target,
+            reply: Some(tx),
+        }) {
+            return Err("索引队列已满".to_string());
+        }
+        await_reply(rx).await
+    }
 }
 
 /// 等待回复的统一出口：oneshot 断开（消费循环停止/任务 panic 丢弃发送端）或超时返回错误。
@@ -631,7 +648,12 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             })();
             complete(reply, result);
         }
-        Job::MetadataSync => reconcile::do_metadata_sync(ctx),
+        Job::MetadataSync => {
+            // 数据库模式无 TOML 可对账（权威层即 metadata.db，无外部可写源）
+            if ctx.store.mode() == crate::core::metadata_store::StorageMode::Toml {
+                reconcile::do_metadata_sync(ctx);
+            }
+        }
         Job::Palette { hash, palette } => {
             // 调色板回写聚合批量处理（flush 时统一落盘），全库重提炼时避免 N 次单条事务 + 事件洪峰。
             // 语义不变：提炼结果(内容的纯函数)入元数据 TOML;meta 已随漂移/删除消失时丢弃;
@@ -697,6 +719,10 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             if filter_changed {
                 crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
             }
+            complete(reply, result);
+        }
+        Job::StorageMigrate { target, reply } => {
+            let result = crate::core::metadata_store::migrate_authority(&ctx.paths, &ctx.store.snapshot(), target);
             complete(reply, result);
         }
         Job::RegistryReload => {

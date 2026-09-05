@@ -213,6 +213,7 @@ hawk-daemon 单实例对应单个素材库。
 | 方法 | 端点                      | 说明               |
 | ---- | ------------------------- | ------------------ |
 | GET  | `/api/v1/library/info`    | 获取当前素材库信息 |
+| POST | `/api/v1/library/storage_mode` | 切换元数据存储方案（`{"mode": "database" \| "toml"}`），全量迁移后调用方应重启进程 |
 | POST | `/api/v1/library/reindex` | 全量重建索引       |
 | POST | `/api/v1/library/rescan`  | 强制重新遍历文件系统 |
 | POST | `/api/v1/library/refresh_cache` | 按范围刷新派生缓存 |
@@ -232,10 +233,13 @@ hawk-daemon 单实例对应单个素材库。
     "name": "设计素材库",
     "path": "D:/Assets/Design",
     "modification_time": 1592461625783,
-    "application_version": "1.0.0"
+    "application_version": "1.0.0",
+    "storage_mode": "database"
   }
 }
 ```
+
+`storage_mode` 为元数据存储方案：`database`（`.hawk/metadata.db`，默认）/ `toml`（`.hawk/metadata/*.toml`，网盘同步友好）；语义与迁移见 [存储设计](storage.md)。
 
 ### reindex
 

@@ -11,7 +11,6 @@ use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
 use crate::core::global_filter::{publish_changed as publish_global_filter_changed, GlobalFilter};
 use crate::core::index::ItemIndex;
-use crate::core::index_db::IndexDb;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::pipeline::IndexPipeline;
@@ -96,9 +95,8 @@ fn build_state(settings: Settings) -> SharedState {
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
     let folder_tree = Arc::new(api::folder::FolderTreeCache::new());
-    let db = Arc::new(IndexDb::open(&paths.index_db_file));
     let startup = Arc::new(StartupState::default());
-    let store = Arc::new(MetadataStore::new(paths.clone(), db.clone(), &startup));
+    let store = Arc::new(MetadataStore::new(paths.clone(), &startup));
 
     // ---- 索引流水线（单写者） ----
     let index = Arc::new(ItemIndex::default());
@@ -154,6 +152,7 @@ fn build_state(settings: Settings) -> SharedState {
         index,
         bus,
         pipeline,
+        store,
         thumbs,
         worker,
         prefs,

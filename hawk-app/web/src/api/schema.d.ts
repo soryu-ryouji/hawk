@@ -639,6 +639,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/storage_mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 切换元数据存储方案：单写者内完成全量迁移（写新权威层 + 删旧文件），成功后调用方应重启进程
+         *     （打开库时按内容探测模式，见 metadata_store::detect_storage_mode）。已是目标模式时幂等成功
+         */
+        post: operations["storage_mode_set"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tag/create": {
         parameters: {
             query?: never;
@@ -947,6 +967,8 @@ export interface components {
                 modification_time: number;
                 name: string;
                 path: string;
+                /** @description 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好） */
+                storage_mode: string;
             };
             status: string;
         };
@@ -1234,6 +1256,8 @@ export interface components {
             modification_time: number;
             name: string;
             path: string;
+            /** @description 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好） */
+            storage_mode: string;
         };
         LibraryRenameBody: {
             /** @description 新显示名；空白清除自定义名（回退库目录名） */
@@ -1299,6 +1323,10 @@ export interface components {
             status: string;
             /** Format: int32 */
             total?: number | null;
+        };
+        StorageModeBody: {
+            /** @description database | toml */
+            mode: string;
         };
         /** @description 无 data 的成功响应：`{"status":"success"}` */
         SuccessOnly: {
@@ -2192,6 +2220,30 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    storage_mode_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageModeBody"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

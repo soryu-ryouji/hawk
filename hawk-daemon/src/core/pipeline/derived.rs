@@ -68,17 +68,19 @@ pub(crate) fn flush_palette_batch(ctx: &PipelineCtx) {
         std::mem::take(&mut *pending)
     };
 
-    let mut applied: Vec<(String, ItemMetadata, i64)> = Vec::with_capacity(batch.len());
     let batch_len = batch.len();
+    let mut to_write: Vec<(String, ItemMetadata)> = Vec::with_capacity(batch_len);
     for (hash, palette) in batch {
         let Some(mut meta) = ctx.store.try_get(&hash) else {
             continue;
         };
         meta.palette = Some(palette_to_entries(&palette));
-        let Ok(source_mtime) = ctx.store.save_toml(&hash, &meta) else {
-            continue;
-        };
-        applied.push((hash, meta, source_mtime));
+        to_write.push((hash, meta));
+    }
+    // 权威层先行（两模式分发：Db 单事务 / Toml 并行小文件）
+    let (applied, failed) = ctx.store.persist_batch(&to_write);
+    if !failed.is_empty() {
+        tracing::warn!("调色板批量冲刷：{} 条落盘失败（下轮重提炼补齐）", failed.len());
     }
     if applied.is_empty() {
         return;

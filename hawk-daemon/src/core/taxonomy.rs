@@ -391,7 +391,7 @@ impl TaxonomyMigrator {
         let mut changed = ChangeBatcher::new(&self.bus);
         let mut updated = 0;
         for slice in batch.chunks(1000) {
-            let (written, failed) = self.store.save_toml_batch(slice);
+            let (written, failed) = self.store.persist_batch(slice);
             failed_out.extend(failed);
             self.store.apply_batch(&written);
             for (hash, meta, _) in &written {

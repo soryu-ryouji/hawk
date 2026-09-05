@@ -554,13 +554,18 @@
               },
               "path": {
                 "type": "string"
+              },
+              "storage_mode": {
+                "description": "元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）",
+                "type": "string"
               }
             },
             "required": [
               "name",
               "path",
               "modification_time",
-              "application_version"
+              "application_version",
+              "storage_mode"
             ],
             "type": "object"
           },
@@ -1682,13 +1687,18 @@
           },
           "path": {
             "type": "string"
+          },
+          "storage_mode": {
+            "description": "元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）",
+            "type": "string"
           }
         },
         "required": [
           "name",
           "path",
           "modification_time",
-          "application_version"
+          "application_version",
+          "storage_mode"
         ],
         "type": "object"
       },
@@ -1887,6 +1897,18 @@
         },
         "required": [
           "status"
+        ],
+        "type": "object"
+      },
+      "StorageModeBody": {
+        "properties": {
+          "mode": {
+            "description": "database | toml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
         ],
         "type": "object"
       },
@@ -3112,6 +3134,37 @@
           }
         },
         "summary": "刷新缓存：忽略快照强制遍历全部文件做复用判定（不读文件内容）。异步执行，立即返回",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/storage_mode": {
+      "post": {
+        "operationId": "storage_mode_set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageModeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "切换元数据存储方案：单写者内完成全量迁移（写新权威层 + 删旧文件），成功后调用方应重启进程\n（打开库时按内容探测模式，见 metadata_store::detect_storage_mode）。已是目标模式时幂等成功",
         "tags": [
           "library"
         ]
