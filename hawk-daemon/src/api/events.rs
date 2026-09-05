@@ -50,6 +50,7 @@ async fn events(State(state): State<SharedState>) -> Response {
 
 // ---------- SSE 事件载荷注册表（OpenAPI components，与 ItemEvents 常量一一对应） ----------
 
+use crate::api::library::LibraryInfo;
 use crate::core::events::TaskProgress;
 use crate::core::item::ItemDto;
 
@@ -78,6 +79,9 @@ pub struct SseEvents {
     folder_changed: FolderChangedPayload,
     #[serde(rename = "task.progress")]
     task_progress: TaskProgress,
+    /// 改库显示名广播，负载为完整 LibraryInfo（含新显示名）
+    #[serde(rename = "library.updated")]
+    library_updated: LibraryInfo,
 }
 
 #[allow(dead_code)]

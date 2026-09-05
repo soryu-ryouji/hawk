@@ -15,6 +15,7 @@ const shell: HawkShell = {
   selectLibrary: () => ipcRenderer.invoke(IPC.selectLibrary),
   listLibraries: () => ipcRenderer.invoke(IPC.listLibraries),
   openLibrary: (path) => ipcRenderer.invoke(IPC.openLibrary, path),
+  openLibraryFolder: (path) => ipcRenderer.invoke(IPC.openLibraryFolder, path),
   removeLibrary: (path) => ipcRenderer.invoke(IPC.removeLibrary, path),
   copyPath: (relPath) => ipcRenderer.invoke(IPC.copyPath, relPath),
   lanAddresses: () => ipcRenderer.invoke(IPC.lanAddresses),

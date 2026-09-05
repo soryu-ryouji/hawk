@@ -7,6 +7,7 @@ export const IPC = {
   selectLibrary: 'hawk:select-library',
   listLibraries: 'hawk:list-libraries',
   openLibrary: 'hawk:open-library',
+  openLibraryFolder: 'hawk:open-library-folder',
   removeLibrary: 'hawk:remove-library',
   copyPath: 'hawk:copy-path',
   lanAddresses: 'hawk:lan-addresses',
@@ -99,6 +100,8 @@ export interface HawkShell {
   listLibraries(): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 打开历史素材库（仅限历史记录内的路径） */
   openLibrary(path: string): Promise<boolean>;
+  /** 在系统文件管理器中打开素材库目录（仅限历史记录内的路径） */
+  openLibraryFolder(path: string): Promise<void>;
   /** 从历史记录移除一条素材库（不动目录本身），返回移除后的列表 */
   removeLibrary(path: string): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 复制库内文件的绝对路径到剪贴板 */

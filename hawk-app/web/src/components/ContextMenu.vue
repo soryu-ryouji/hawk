@@ -66,7 +66,7 @@ watch(
 <template>
   <Teleport to="body">
     <div v-if="state.visible" class="mask" @click="close" @contextmenu.prevent="close">
-      <div ref="menuRef" class="menu" :style="{ left: pos.x + 'px', top: pos.y + 'px' }" @click.stop>
+      <div ref="menuRef" class="menu" data-context-menu="" :style="{ left: pos.x + 'px', top: pos.y + 'px' }" @click.stop>
         <template v-for="(item, i) in state.items" :key="i">
           <div v-if="item.separator" class="separator" />
           <button

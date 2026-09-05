@@ -1588,6 +1588,18 @@
         ],
         "type": "object"
       },
+      "LibraryRenameBody": {
+        "properties": {
+          "name": {
+            "description": "新显示名；空白清除自定义名（回退库目录名）",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "PaletteColorDto": {
         "description": "API 的调色板颜色项",
         "properties": {
@@ -1710,6 +1722,10 @@
             "$ref": "#/components/schemas/ItemsUpdatedPayload",
             "description": "item.updated 的批量变体（调色板批量回写等）"
           },
+          "library.updated": {
+            "$ref": "#/components/schemas/LibraryInfo",
+            "description": "改库显示名广播，负载为完整 LibraryInfo（含新显示名）"
+          },
           "task.progress": {
             "$ref": "#/components/schemas/TaskProgress"
           }
@@ -1723,7 +1739,8 @@
           "item.restored",
           "item.removed",
           "folder.changed",
-          "task.progress"
+          "task.progress",
+          "library.updated"
         ],
         "type": "object"
       },
@@ -2832,6 +2849,35 @@
           }
         },
         "summary": "库信息：显示名取 config 的 name，缺省目录名",
+        "tags": [
+          "library"
+        ]
+      },
+      "patch": {
+        "operationId": "library_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRenameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LibraryInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "改库显示名：写库内 .hawk/config.toml 的 name 键（toml_edit 保注释，保存即热更）；\n只读 viewer 在 auth 层被拒（非 GET 且不在查询白名单）",
         "tags": [
           "library"
         ]

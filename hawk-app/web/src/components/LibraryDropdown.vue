@@ -6,11 +6,14 @@
 // 换库就绪经 hawk:server-started 事件驱动 App 原地重启数据。
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { shell } from '../platform';
+import { useContextMenu } from '../composables/useContextMenu';
 import { useLibraryStore } from '../stores/library';
 import Icon from './Icon.vue';
-import type { LibraryHistoryItem } from '../types';
+import PromptDialog from './PromptDialog.vue';
+import type { LibraryHistoryItem, MenuItem } from '../types';
 
 const store = useLibraryStore();
+const menu = useContextMenu();
 
 const open = ref(false);
 const current = ref<string | null>(null);
@@ -66,6 +69,10 @@ function onOutside(event: Event): void {
   if (triggerRef.value?.contains(target) || panelRef.value?.contains(target)) {
     return;
   }
+  // 右键菜单上的点按（移除历史项等）不算外部：面板保持，连续处理多条记录
+  if (target instanceof Element && target.closest('[data-context-menu]')) {
+    return;
+  }
   close();
 }
 
@@ -90,6 +97,49 @@ async function remove(lib: LibraryHistoryItem): Promise<void> {
   const res = await shell.removeLibrary(lib.path);
   current.value = res.current;
   libraries.value = res.libraries;
+}
+
+/** 条目右侧 `···`：存在库可打开目录；当前库可重命名（改名走 daemon API，非当前库无进程服务）；
+ *  其余条目（含目录已删除的）可移除历史记录 */
+function openItemMenu(lib: LibraryHistoryItem, e: MouseEvent): void {
+  const anchor = e.currentTarget as HTMLElement;
+  const items: MenuItem[] = [];
+  if (lib.exists) {
+    items.push({ label: '打开素材库文件夹', action: () => void shell.openLibraryFolder(lib.path) });
+  }
+  if (lib.path === current.value) {
+    items.push({
+      label: '重命名',
+      // 面板先收起：改名弹窗单独存在，不压在浮层上方
+      action: () => {
+        close();
+        renameTarget.value = lib.path;
+      },
+    });
+  } else {
+    items.push({ label: '从列表中移除', danger: true, action: () => void remove(lib) });
+  }
+  menu.open(items, e, anchor);
+}
+
+/** 重命名目标库路径（非空即弹输入框） */
+const renameTarget = ref('');
+
+/** 提交改名：走 daemon PATCH /library/info，成功后就地更新浮层条目；其他端经 library.updated 事件对齐 */
+async function submitRename(name: string): Promise<void> {
+  const path = renameTarget.value;
+  renameTarget.value = '';
+  if (path !== current.value) {
+    return;
+  }
+  if (name !== store.library?.name) {
+    const ok = await store.renameLibrary(name);
+    if (!ok) {
+      return;
+    }
+    // 浮层开着时就地改条目；重开浮层经 listLibraries 重拉兜底
+    libraries.value = libraries.value.map((l) => (l.path === path ? { ...l, name } : l));
+  }
 }
 
 /** 底部「打开文件夹…」：弹系统目录选择框加入新库 */
@@ -138,9 +188,14 @@ onBeforeUnmount(() => {
       >
         <span class="check">{{ lib.path === current ? '✓' : '' }}</span>
         <span class="label">{{ lib.exists ? lib.name : `${lib.name}（已删除）` }}</span>
-        <span v-if="lib.path !== current" class="remove" title="从列表中移除" @click.stop="void remove(lib)">
-          ×
-        </span>
+        <button
+          type="button"
+          class="more"
+          title="更多操作"
+          @click.stop="openItemMenu(lib, $event)"
+        >
+          ···
+        </button>
       </button>
       <div class="separator" />
       <button type="button" class="lib-item" @click="pickFolder">
@@ -149,6 +204,16 @@ onBeforeUnmount(() => {
       </button>
       </div>
     </Teleport>
+    <!-- Teleport 不产生实际 DOM：置于 button 内保住单根结构（父 scoped 显隐类依赖根元素继承） -->
+    <PromptDialog
+      v-if="renameTarget"
+      title="重命名素材库"
+      placeholder="素材库名称"
+      :default-value="libraries.find((l) => l.path === renameTarget)?.name"
+      :dismiss-on-mask="false"
+      @confirm="submitRename"
+      @cancel="renameTarget = ''"
+    />
   </button>
 </template>
 
@@ -220,28 +285,29 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 项右侧移除按钮：默认隐去，悬停该行时浮现，避免整列 × 造成视觉噪音 */
-.lib-item .remove {
+/* 项右侧 `···` 按钮：默认隐去，悬停该行时浮现，避免整列按钮造成视觉噪音 */
+.lib-item .more {
   flex: none;
   margin-right: -6px;
   padding: 0 4px;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
+  letter-spacing: 1px;
   color: var(--fg-1);
   visibility: hidden;
 }
 
 @media (hover: hover) {
 
-.lib-item:hover .remove {
+.lib-item:hover .more {
   visibility: visible;
 }
 }
 
 @media (hover: hover) {
 
-.lib-item .remove:hover {
-  color: var(--danger);
+.lib-item .more:hover {
+  color: var(--accent);
 }
 }
 

@@ -153,6 +153,7 @@ async function runBoot() {
       onRemoved: (id) => store.applyEvent('item.removed', { id }),
       onTaskProgress: (p) => store.applyEvent('task.progress', p),
       onFolderChanged: () => store.applyEvent('folder.changed', {}),
+      onLibraryUpdated: (info) => store.applyEvent('library.updated', info),
       onReconnect: () => {
         void store.reloadSkeleton();
         void taxonomy.refreshFolders();

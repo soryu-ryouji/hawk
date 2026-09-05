@@ -64,6 +64,14 @@ export function registerIpc(): void {
     }
   });
 
+  ipcMain.handle(IPC.openLibraryFolder, (_event, libPath: unknown) => {
+    // 与 openLibrary 同规约：只接受历史记录内的路径（打开目录本身，非 reveal 到父目录）
+    if (typeof libPath !== 'string' || !listLibraries().libraries.some((l) => l.path === libPath)) {
+      return;
+    }
+    void shell.openPath(libPath);
+  });
+
   ipcMain.handle(IPC.removeLibrary, (_event, libPath: unknown) => {
     // 与 openLibrary 同规约：只接受历史记录内的路径
     if (typeof libPath !== 'string' || !listLibraries().libraries.some((l) => l.path === libPath)) {

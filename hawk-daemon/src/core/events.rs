@@ -41,6 +41,13 @@ impl EventBus {
     }
 }
 
+/// 库级事件名（非 item 维度）。改库显示名后广播，负载为 LibraryInfo
+pub struct LibraryEvents;
+
+impl LibraryEvents {
+    pub const UPDATED: &'static str = "library.updated";
+}
+
 /// 后台任务进度快照(task.progress 事件与 app/status 端点共用)。
 /// phase/processed/total 仅 index 任务在扫描期间携带；非扫描期间省略（None）
 #[derive(Clone, serde::Serialize, utoipa::ToSchema)]

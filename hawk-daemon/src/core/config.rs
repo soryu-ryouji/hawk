@@ -74,6 +74,32 @@ impl LibraryConfig {
         change
     }
 
+    /// 写回 name 键并热更：toml_edit 就地改/删键，保留文件其余段与注释。
+    /// 原子写（临时文件 + rename，update_web 同款）；None/空白清除自定义名（回退库目录名）
+    pub fn update_name(&self, name: Option<&str>) -> Result<(), String> {
+        let file = &self.paths.config_file;
+        let text =
+            std::fs::read_to_string(file).map_err(|e| format!("读取配置失败 {file}: {e}"))?;
+        let mut doc = text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("配置解析失败 {file}: {e}"))?;
+        match name.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(n) => doc["name"] = toml_edit::value(n),
+            None => {
+                doc.as_table_mut().remove("name");
+            }
+        }
+        let tmp = format!("{file}.tmp");
+        std::fs::write(&tmp, doc.to_string()).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
+        if let Err(e) = std::fs::rename(&tmp, file) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("配置替换失败 {file}: {e}"));
+        }
+        // name 变化无后续动作（library/info 每次读 current()），reload 仅刷新快照
+        self.reload();
+        Ok(())
+    }
+
     /// 相对路径是否被 ignore 规则命中（仅用于库内文件，回收站不参与）
     pub fn is_ignored(&self, rel: &str) -> bool {
         self.matcher.read().unwrap().is_ignored(rel)
@@ -320,5 +346,30 @@ mod tests {
     fn case_insensitive() {
         let matcher = m(&["Node_Modules"]);
         assert!(matcher.is_ignored("a/node_modules/x.js"));
+    }
+
+    #[test]
+    fn update_name_writes_and_clears() {
+        let dir = std::env::temp_dir().join(format!("hawk-cfg-test-{}", std::process::id()));
+        let root = dir.join("lib");
+        std::fs::create_dir_all(root.join(".hawk")).unwrap();
+        let paths = LibraryPaths::new(root.to_str().unwrap(), None);
+        let cfg = LibraryConfig::new(paths);
+
+        // 改名生效且保留其余段与注释
+        cfg.update_name(Some("  我的库  ")).unwrap();
+        let text = std::fs::read_to_string(&root.join(".hawk/config.toml")).unwrap();
+        assert!(text.contains("name = \"我的库\""));
+        assert!(text.contains("[web]"));
+        assert!(text.contains("# 索引时忽略的路径"));
+        assert_eq!(cfg.current().name.as_deref(), Some("我的库"));
+
+        // 空白清除自定义名（回退目录名）
+        cfg.update_name(Some(" ")).unwrap();
+        let text = std::fs::read_to_string(&root.join(".hawk/config.toml")).unwrap();
+        assert!(!text.lines().any(|l| l.starts_with("name")));
+        assert_eq!(cfg.current().name, None);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -2,10 +2,18 @@
 import { ref } from 'vue';
 import type { Directive } from 'vue';
 
-defineProps<{ title: string; placeholder?: string; suggestions?: string[] }>();
+const props = defineProps<{
+  title: string;
+  placeholder?: string;
+  suggestions?: string[];
+  defaultValue?: string;
+  /** 点击遮罩是否取消（默认 true）；预填内容的对话框传 false 防误触丢失输入 */
+  dismissOnMask?: boolean;
+}>();
 const emit = defineEmits<{ confirm: [value: string]; cancel: [] }>();
 
-const text = ref('');
+// 预填默认值（重命名场景）：对话框每次条件渲染重建，取一次初值即可
+const text = ref(props.defaultValue ?? '');
 const listId = `dl-${Math.random().toString(36).slice(2)}`;
 
 const vFocus: Directive<HTMLElement> = {
@@ -20,11 +28,17 @@ function confirm() {
     emit('cancel');
   }
 }
+
+function onMaskClick(): void {
+  if (props.dismissOnMask !== false) {
+    emit('cancel');
+  }
+}
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="mask" @click.self="emit('cancel')">
+    <div class="mask" @click.self="onMaskClick">
       <div class="dialog">
         <div class="title">{{ title }}</div>
         <input

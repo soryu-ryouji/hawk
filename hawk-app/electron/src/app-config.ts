@@ -86,6 +86,20 @@ export function setUpdateChannel(channel: UpdateChannel): void {
   writeConfig({ updateChannel: channel });
 }
 
+/** 库显示名：优先读库内 .hawk/config.toml 的 name（与 daemon library/info 同源），缺失/异常回退目录名 */
+function libraryDisplayName(libPath: string): string {
+  try {
+    const text = fs.readFileSync(path.join(libPath, '.hawk', 'config.toml'), 'utf8');
+    const name = (parse(text) as { name?: unknown }).name;
+    if (typeof name === 'string' && name.trim()) {
+      return name.trim();
+    }
+  } catch {
+    // 无配置文件/解析失败：回退目录名
+  }
+  return path.basename(libPath);
+}
+
 /** 历史库列表（最近使用在前，含目录存在性；当前库由 libraryRoot 标记） */
 export function listLibraries(): LibraryList {
   const history = readConfig().libraryHistory ?? [];
@@ -93,7 +107,7 @@ export function listLibraries(): LibraryList {
     current: libraryRoot,
     libraries: history
       .filter((p): p is string => typeof p === 'string')
-      .map((p) => ({ path: p, name: path.basename(p), exists: fs.existsSync(p) })),
+      .map((p) => ({ path: p, name: libraryDisplayName(p), exists: fs.existsSync(p) })),
   };
 }
 

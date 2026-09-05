@@ -618,6 +618,17 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** 改库显示名（当前库）：写库内 config.toml 的 name；成功后就地更新库信息并返回 true */
+  async function renameLibrary(name: string): Promise<boolean> {
+    try {
+      library.value = await api.libraryRename(name);
+      return true;
+    } catch (e) {
+      showToast(errorText(e));
+      return false;
+    }
+  }
+
   /** 手动「刷新缓存」：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
   async function refreshLibrary() {
     try {
@@ -794,6 +805,10 @@ export const useLibraryStore = defineStore('library', () => {
         // 目录结构变化（本端操作/外部进程/对账兜底）：重拉文件夹树；与骨架成员和分类/标签计数无关
         taxonomyHooks?.refreshFolders();
         break;
+      case 'library.updated':
+        // 改库显示名广播（本端 PATCH 的回声或其他客户端发起）：就地对齐库信息
+        library.value = payload as LibraryInfo;
+        break;
     }
   }
 
@@ -802,7 +817,7 @@ export const useLibraryStore = defineStore('library', () => {
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, hasActiveFilters,
     init, setView, correctView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache,
+    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, renameLibrary,
     addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
     showToast, applyEvent,
   };

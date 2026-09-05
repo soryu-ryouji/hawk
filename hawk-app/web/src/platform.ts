@@ -27,6 +27,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   selectLibrary: async () => false,
   listLibraries: async () => ({ current: null, libraries: [] }),
   openLibrary: async () => false,
+  openLibraryFolder: async () => {},
   removeLibrary: async () => ({ current: null, libraries: [] }),
   lanAddresses: async () => [],
   showInFinder: async () => {},

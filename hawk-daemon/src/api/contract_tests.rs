@@ -12,7 +12,7 @@
 use super::lan::LanSupervisor;
 use super::{build_router, AppState, SharedState};
 use crate::core::config::LibraryConfig;
-use crate::core::events::EventBus;
+use crate::core::events::{EventBus, LibraryEvents};
 use crate::core::index::ItemIndex;
 use crate::core::index_db::IndexDb;
 use crate::core::metadata_store::MetadataStore;
@@ -48,6 +48,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("GET", "/api/v1/folder/list", None),
     ("GET", "/api/v1/item/count", None),
     ("GET", "/api/v1/library/info", None),
+    ("PATCH", "/api/v1/library/info", Some(r#"{"name":"契约测试库"}"#)),
     ("GET", "/api/v1/tag/list", None),
     ("GET", "/api/v1/view/preferences", None),
     ("POST", "/api/v1/item/list", Some("{}")),
@@ -311,7 +312,7 @@ fn openapi_endpoints_all_classified() {
     let spec = spec();
     let mut declared = BTreeSet::new();
     for (path, item) in spec["paths"].as_object().unwrap() {
-        for method in ["get", "post", "put", "delete"] {
+        for method in ["get", "post", "put", "patch", "delete"] {
             if item.get(method).is_some() {
                 declared.insert((method.to_uppercase(), path.clone()));
             }
@@ -473,6 +474,7 @@ async fn sse_events_match_schema() {
         ItemEvents::REMOVED,
         ItemEvents::FOLDER_CHANGED,
         ItemEvents::TASK_PROGRESS,
+        LibraryEvents::UPDATED,
     ]
     .map(str::to_string)
     .into_iter()

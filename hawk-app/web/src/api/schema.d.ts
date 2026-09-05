@@ -542,7 +542,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * 改库显示名：写库内 .hawk/config.toml 的 name 键（toml_edit 保注释，保存即热更）；
+         *     只读 viewer 在 auth 层被拒（非 GET 且不在查询白名单）
+         */
+        patch: operations["library_update"];
         trace?: never;
     };
     "/api/v1/library/refresh_cache": {
@@ -1170,6 +1174,10 @@ export interface components {
             name: string;
             path: string;
         };
+        LibraryRenameBody: {
+            /** @description 新显示名；空白清除自定义名（回退库目录名） */
+            name: string;
+        };
         /** @description API 的调色板颜色项 */
         PaletteColorDto: {
             /** @description # 前缀小写 hex，如 "#344441" */
@@ -1216,6 +1224,8 @@ export interface components {
             "items.added": components["schemas"]["ItemsAddedPayload"];
             /** @description item.updated 的批量变体（调色板批量回写等） */
             "items.updated": components["schemas"]["ItemsUpdatedPayload"];
+            /** @description 改库显示名广播，负载为完整 LibraryInfo（含新显示名） */
+            "library.updated": components["schemas"]["LibraryInfo"];
             "task.progress": components["schemas"]["TaskProgress"];
         };
         StartupInfo: {
@@ -1987,6 +1997,30 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LibraryInfo"];
+                };
+            };
+        };
+    };
+    library_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryRenameBody"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

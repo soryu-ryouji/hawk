@@ -1,7 +1,7 @@
 // SSE 订阅：EventSource 断线自动重连；重连成功后回调 onReconnect 做全量对齐。
 import { apiConfig } from './client';
 import type { components } from './schema';
-import type { Item } from '../types';
+import type { Item, LibraryInfo } from '../types';
 
 /** 后台任务进度快照（契约见 openapi.json 的 SseEvents/TaskProgress） */
 export type TaskProgress = components['schemas']['TaskProgress'];
@@ -19,6 +19,8 @@ export interface EventHandlers {
   onTaskProgress(progress: TaskProgress): void;
   /** 目录结构变化:本端文件夹操作、外部进程改动、对账扫描兜底;reason 恒为 external,忽略取值 */
   onFolderChanged(reason: string): void;
+  /** 改库显示名广播（本端或其他客户端发起）：负载为完整 LibraryInfo（含新显示名） */
+  onLibraryUpdated(info: LibraryInfo): void;
   onReconnect(): void;
 }
 
@@ -49,6 +51,7 @@ export function connectEvents(handlers: EventHandlers): () => void {
   listen<{ id: string }>('item.removed', (d) => handlers.onRemoved(d.id));
   listen<TaskProgress>('task.progress', handlers.onTaskProgress);
   listen<{ reason: string }>('folder.changed', (d) => handlers.onFolderChanged(d.reason));
+  listen<LibraryInfo>('library.updated', handlers.onLibraryUpdated);
 
   return () => source.close();
 }

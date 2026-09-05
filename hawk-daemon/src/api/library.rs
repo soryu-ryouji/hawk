@@ -2,6 +2,7 @@
 
 use crate::api::envelope::{success, ApiError, Envelope, JsonBody, SuccessOnly};
 use crate::api::SharedState;
+use crate::core::events::LibraryEvents;
 use crate::core::index::RefreshScope;
 use crate::core::paths::unix_ms;
 use axum::extract::State;
@@ -13,13 +14,14 @@ use utoipa_axum::routes;
 pub fn routes() -> OpenApiRouter<SharedState> {
     OpenApiRouter::new()
         .routes(routes!(library_info))
+        .routes(routes!(library_update))
         .routes(routes!(reindex))
         .routes(routes!(rescan))
         .routes(routes!(refresh_cache))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
-struct LibraryInfo {
+pub(crate) struct LibraryInfo {
     name: String,
     path: String,
     modification_time: i64,
@@ -34,23 +36,60 @@ struct LibraryInfo {
     responses((status = 200, description = "OK", body = Envelope<LibraryInfo>))
 )]
 async fn library_info(State(state): State<SharedState>) -> Json<Envelope<LibraryInfo>> {
+    Json(Envelope::ok(build_library_info(&state)))
+}
+
+/// 组装库信息（GET 响应与改名后回传共用；显示名每次读 config 快照）
+fn build_library_info(state: &SharedState) -> LibraryInfo {
     let root = &state.paths.root;
-    let name = state
-        .config
-        .current()
-        .name
-        .clone()
-        .unwrap_or_else(|| root.trim_end_matches('/').rsplit('/').next().unwrap_or(root).to_string());
+    let name = state.config.current().name.clone().unwrap_or_else(|| {
+        root.trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(root)
+            .to_string()
+    });
     let modification_time = std::fs::metadata(root)
         .and_then(|m| m.modified())
         .map(unix_ms)
         .unwrap_or(0);
-    Json(Envelope::ok(LibraryInfo {
+    LibraryInfo {
         name,
         path: root.clone(),
         modification_time,
         application_version: env!("CARGO_PKG_VERSION"),
-    }))
+    }
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct LibraryRenameBody {
+    /// 新显示名；空白清除自定义名（回退库目录名）
+    name: String,
+}
+
+/// 改库显示名：写库内 .hawk/config.toml 的 name 键（toml_edit 保注释，保存即热更）；
+/// 只读 viewer 在 auth 层被拒（非 GET 且不在查询白名单）
+#[utoipa::path(
+    patch,
+    path = "/api/v1/library/info",
+    tags = ["library"],
+    request_body = LibraryRenameBody,
+    responses((status = 200, description = "OK", body = Envelope<LibraryInfo>))
+)]
+async fn library_update(
+    State(state): State<SharedState>,
+    JsonBody(body): JsonBody<LibraryRenameBody>,
+) -> Result<Json<Envelope<LibraryInfo>>, ApiError> {
+    state
+        .config
+        .update_name(Some(&body.name))
+        .map_err(ApiError::internal)?;
+    // 广播库信息（含新显示名）：所有连接的客户端（含 LAN 浏览器）就地对齐，无需重拉
+    let info = build_library_info(&state);
+    state
+        .bus
+        .publish(LibraryEvents::UPDATED, serde_json::to_value(&info).unwrap());
+    Ok(Json(Envelope::ok(info)))
 }
 
 /// 全量重建索引：重算全部哈希，异步执行，立即返回

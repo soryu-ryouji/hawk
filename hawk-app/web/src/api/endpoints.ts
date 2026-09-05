@@ -44,6 +44,8 @@ export const api = {
   saveAppLan: (body: components['schemas']['PutLanBody']) =>
     request<components['schemas']['LanSettingsDto']>('PUT', '/api/v1/app/lan', { body }),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
+  /** 改库显示名（写库内 config.toml 的 name，daemon 热更并广播 library.updated 事件）；返回更新后的库信息 */
+  libraryRename: (name: string) => request<LibraryInfo>('PATCH', '/api/v1/library/info', { body: { name } }),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
   /** 刷新缓存：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
   rescan: () => request<void>('POST', '/api/v1/library/rescan'),
