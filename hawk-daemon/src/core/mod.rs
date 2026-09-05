@@ -14,6 +14,7 @@ pub mod metadata;
 pub mod metadata_store;
 pub mod paths;
 pub mod pipeline;
+pub mod registry_file;
 pub mod scanner;
 pub mod startup;
 pub mod taxonomy;

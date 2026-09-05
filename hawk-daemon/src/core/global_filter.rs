@@ -8,8 +8,8 @@
 //! 恢复时随之回归，清空回收站时一并清除（与排序偏好同款簿记）。
 
 use crate::core::events::EventBus;
-use crate::core::metadata::toml_string;
 use crate::core::paths::LibraryPaths;
+use crate::core::registry_file::{atomic_write, format_string_list, parse_string_list, sort_entries};
 use std::sync::RwLock;
 
 /// 隐藏集变更事件：负载为完整快照（GlobalFilterSnapshot），客户端据此重拉/就地替换并重查列表
@@ -221,10 +221,6 @@ fn delete_locked(
     true
 }
 
-fn sort_entries(entries: &mut Vec<String>) {
-    entries.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-}
-
 // ---------- 文件读写：固定 schema（三个字符串数组键），原子写 ----------
 
 fn load(file: &str) -> GlobalFilterSnapshot {
@@ -240,39 +236,20 @@ fn load(file: &str) -> GlobalFilterSnapshot {
         }
     };
     GlobalFilterSnapshot {
-        folders: read_list(&value, "folders"),
-        categories: read_list(&value, "categories"),
-        tags: read_list(&value, "tags"),
+        folders: parse_string_list(&value, "folders"),
+        categories: parse_string_list(&value, "categories"),
+        tags: parse_string_list(&value, "tags"),
     }
-}
-
-fn read_list(value: &toml::Value, key: &str) -> Vec<String> {
-    let mut out: Vec<String> = value
-        .get(key)
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-        .unwrap_or_default();
-    out = out.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-    out.dedup();
-    sort_entries(&mut out);
-    out
 }
 
 fn save(file: &str, folders: &[String], categories: &[String], tags: &[String]) {
     let body = format!(
-        "folders = [{}]\ncategories = [{}]\ntags = [{}]\n",
-        join_list(folders),
-        join_list(categories),
-        join_list(tags),
+        "{}\n{}\n{}\n",
+        format_string_list("folders", folders),
+        format_string_list("categories", categories),
+        format_string_list("tags", tags),
     );
-    let tmp = format!("{file}.tmp");
-    if std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, file).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-}
-
-fn join_list(entries: &[String]) -> String {
-    entries.iter().map(|e| toml_string(e)).collect::<Vec<_>>().join(", ")
+    atomic_write(file, &body);
 }
 
 #[cfg(test)]

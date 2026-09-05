@@ -4,7 +4,19 @@ import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { useMediaQuery } from '@vueuse/core';
 import { api } from '../api/endpoints';
-import { isUnfilteredView, displayPath, itemKey, nextSelection, resolveSort, sameNameSet, skeletonNeedsPatch, splitKey } from '../viewLogic';
+import {
+  isGlobalViewKind,
+  isUnfilteredView,
+  itemKey,
+  locationSetChangedOf,
+  mergeDetailOnUpdate,
+  nextSelection,
+  patchSkeletonOnUpdate,
+  resolveSort,
+  shouldReloadOnUpdate,
+  splitKey,
+  taxonomyChanged,
+} from '../viewLogic';
 import { hasShell } from '../platform';
 import { loadJSON, loadText, saveJSON, saveText, STORAGE_KEYS } from '../persist';
 import { debounce, errorText } from './util';
@@ -158,8 +170,13 @@ export const useLibraryStore = defineStore('library', () => {
 
   /** 全局类视图（全部/根目录/未分类/未标签）应用隐藏排除；维度自身视图与回收站不排除 */
   function isGlobalView(): boolean {
-    const k = view.value.kind;
-    return k === 'all' || k === 'root' || k === 'uncategorized' || k === 'untagged';
+    return isGlobalViewKind(view.value);
+  }
+
+  /** 隐藏排除激活：全局类视图且隐藏集非空（分类/标签变化可能改变成员资格） */
+  function exclusionActive(): boolean {
+    const gf = globalFilter.value;
+    return isGlobalView() && gf.folders.length + gf.categories.length + gf.tags.length > 0;
   }
 
   /** 隐藏排除参数：仅全局类视图且隐藏集非空时附带（OR 语义：命中任一隐藏维度即排除） */
@@ -495,84 +512,50 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
-   * item.updated 的统一入口（updateItem 响应与 SSE 共用）。
-   * 同 hash 的全部位置条目同步内容级字段（tags/categories/star/宽高/调色板/位置分布）；
-   * 位置级字段（name/ext/size/mtime）仅在事件载荷对应该位置（updated.path）时随全量替换生效。
-   * 位置分布（paths）变化意味着改名/移动/位置增减：重拉该 hash 全部缓存位置对齐位置级字段。
-   * 骨架上的 star 同步（★ 角标）。过滤视图（文件夹/分类/标签/回收站）或激活查询条件时防抖重载骨架——
-   * 成员资格可能已变化（移出当前文件夹、摘掉当前分类/标签等），成员判定以服务端查询为准。
-   * 纯判定（无过滤视图/名称集合/骨架合并）在 viewLogic.ts。
+   * item.updated 的统一入口（updateItem 响应与 SSE 共用）。本函数只做状态接线，
+   * 全部判定（位置集/分类维度变化、详情合并、骨架补丁、重载时机）为 viewLogic.ts 纯函数。
+   * 位置分布变化时重拉该 hash 全部缓存位置对齐位置级字段（事件载荷只有主位置口径）。
    */
   function applyUpdatedItem(updated: Item, single: boolean) {
-    // 位置集变化判定以骨架为准（details 可能未缓存该 hash）：骨架 path 与事件 paths 同口径化后比对
-    // （回收站视图事件 paths 为原路径投影，骨架 path 剥掉 trash 前缀）；改名/移动/增删位置都会命中
-    const skelPaths = skeleton.value.filter((s) => s.id === updated.id).map((s) => displayPath(s.path));
-    const locationSetChanged =
-      skelPaths.length > 0 && !sameNameSet(skelPaths, updated.paths);
+    const locationSetChanged = locationSetChangedOf(skeleton.value, updated);
     const keysOfHash = [...details.value.keys()].filter((k) => splitKey(k).id === updated.id);
-    let taxonomyChanged = false;
+    let taxChanged = false;
     if (keysOfHash.length > 0) {
       const map = new Map(details.value);
       const updatedKey = itemKey(updated.id, updated.path);
       for (const key of keysOfHash) {
         const prev = map.get(key)!;
-        if (!sameNameSet(prev.tags, updated.tags) || !sameNameSet(prev.categories, updated.categories)) {
-          taxonomyChanged = true;
+        if (taxonomyChanged(prev, updated)) {
+          taxChanged = true;
         }
-        map.set(
-          key,
-          key === updatedKey
-            ? updated
-            : {
-                ...prev,
-                tags: updated.tags,
-                categories: updated.categories,
-                star: updated.star,
-                annotation: updated.annotation,
-                url: updated.url,
-                width: updated.width,
-                height: updated.height,
-                palette: updated.palette,
-                paths: updated.paths,
-                folders: updated.folders,
-              },
-        );
+        map.set(key, mergeDetailOnUpdate(prev, updated, key === updatedKey));
       }
       details.value = map;
       if (locationSetChanged) {
-        // 各位置条目重拉对齐位置级字段（name/size/mtime 以 detail 为准；事件载荷只有主位置口径）
+        // 各位置条目重拉对齐位置级字段（name/size/mtime 以 detail 为准）
         for (const key of keysOfHash) {
           void refetchLocation(key);
         }
       }
     }
-    if (locationSetChanged) {
-      // 新位置的卡片要出现、消失位置的卡片要移除：成员与次序以服务端查询为准
-      debouncedSkeletonReload(() => void reloadSkeleton());
-    }
-    // 骨架：该 hash 的全部位置条目同步 star/宽高（★ 角标与布局比例）
-    let skeletonChanged = false;
-    const nextSkeleton = skeleton.value.map((s) => {
-      if (s.id !== updated.id || !skeletonNeedsPatch(s, updated)) {
-        return s;
-      }
-      skeletonChanged = true;
-      return { ...s, star: updated.star, width: updated.width, height: updated.height };
-    });
+    const { next, changed: skeletonChanged } = patchSkeletonOnUpdate(skeleton.value, updated);
     if (skeletonChanged) {
-      skeleton.value = nextSkeleton;
-    } else if (
-      !locationSetChanged &&
-      !skeleton.value.some((s) => s.id === updated.id) &&
-      (!isUnfilteredView(view.value, query.value) || single)
+      skeleton.value = next;
+    }
+    if (
+      shouldReloadOnUpdate({
+        locationSetChanged,
+        inSkeleton: skeleton.value.some((s) => s.id === updated.id),
+        skeletonChanged,
+        taxonomyChanged: taxChanged,
+        unfiltered: isUnfilteredView(view.value, query.value),
+        exclusionActive: exclusionActive(),
+        single,
+      })
     ) {
-      // 不在当前骨架：可能刚成为本视图成员（同内容 item 经上传获得库内路径时服务端发的是
-      // item.updated 而非 added，未过滤视图原不重拉 → 卡片永远不出现，刷新才有）。
-      // 仅单条事件重拉（用户操作规模）；批量（items.updated，调色板回写）不重拉，
-      // 避免全库重建时非成员项触发重拉风暴
       debouncedSkeletonReload(() => void reloadSkeleton());
     }
-    if (taxonomyChanged) {
+    if (taxChanged) {
       taxonomyHooks?.refreshTaxonomy();
     }
   }
@@ -838,6 +821,10 @@ export const useLibraryStore = defineStore('library', () => {
       case 'library.updated':
         // 改库显示名广播（本端 PATCH 的回声或其他客户端发起）：就地对齐库信息
         library.value = payload as LibraryInfo;
+        break;
+      case 'global_filter.changed':
+        // 隐藏集变更（负载为完整快照）：由 taxonomy store 就地替换并联动重查
+        taxonomyHooks?.onGlobalFilterChanged(payload as GlobalFilter);
         break;
     }
   }

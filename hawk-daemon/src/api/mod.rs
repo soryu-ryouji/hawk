@@ -82,6 +82,8 @@ pub struct AppState {
     pub paths: LibraryPaths,
     pub config: Arc<LibraryConfig>,
     pub startup: Arc<StartupState>,
+    /// 目录结构缓存（folder/list 的递归建树结果；失效与 folder.changed 同线）
+    pub folder_tree: Arc<folder::FolderTreeCache>,
     // ---- 索引流水线（单写者）：内存索引 + 事件总线 + 消费循环 ----
     pub index: Arc<ItemIndex>,
     pub bus: EventBus,

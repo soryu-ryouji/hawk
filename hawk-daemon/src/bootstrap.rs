@@ -50,6 +50,9 @@ pub async fn run(settings: Settings) {
     });
     let lan_task = tokio::spawn(state.lan.clone().run(state.clone()));
 
+    // 文件夹树缓存失效：与 folder.changed 同线（事件即「目录结构可能变化」信号，含扫描兜底）
+    state.folder_tree.spawn_invalidation(&state.bus);
+
     // ---------- 随后装配索引流水线（HTTP 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
     state.pipeline.start();
     let watcher = start_watcher(&state);
@@ -92,6 +95,7 @@ fn build_state(settings: Settings) -> SharedState {
     }
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
+    let folder_tree = Arc::new(api::folder::FolderTreeCache::new());
     let db = Arc::new(IndexDb::open(&paths.index_db_file));
     let startup = Arc::new(StartupState::default());
     let store = Arc::new(MetadataStore::new(paths.clone(), db.clone(), &startup));
@@ -145,6 +149,7 @@ fn build_state(settings: Settings) -> SharedState {
         settings,
         paths,
         config,
+        folder_tree,
         startup,
         index,
         bus,
@@ -166,13 +171,24 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
     let watcher = LibraryWatcher::new(state.paths.clone(), {
         let pipeline = state.pipeline.clone();
         let config = state.config.clone();
+        let paths = state.paths.clone();
+        let folder_tree = state.folder_tree.clone();
         let prefs = state.prefs.clone();
         let global_filter = state.global_filter.clone();
         let bus = state.bus.clone();
         let lan = state.lan.clone();
         Arc::new(move |event| match event {
             WatcherEvent::FileUpsert(abs) => pipeline.notify_upsert(abs),
-            WatcherEvent::Deleted(abs) => pipeline.notify_deleted(abs),
+            WatcherEvent::Deleted(abs) => {
+                pipeline.notify_deleted(abs.clone());
+                // 外部空目录删除无索引/注册表信号（Windows 的 Remove 事件不区分文件/目录）：
+                // 以目录树缓存为参照，命中已知目录才广播 folder.changed（缓存冷时不发，下次建树即最新）
+                if let Some(rel) = paths.to_relative(&abs) {
+                    if !rel.is_empty() && folder_tree.known_dir(&rel) {
+                        pipeline.notify_folder_changed(REASON_EXTERNAL);
+                    }
+                }
+            }
             WatcherEvent::Moved { old, new } => pipeline.notify_moved(old, new),
             WatcherEvent::FolderCreated(path) => {
                 tracing::trace!("目录创建: {path}");
@@ -183,6 +199,8 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
             WatcherEvent::ConfigChanged => {
                 let change = config.reload();
                 if change.ignore_changed {
+                    // ignore 规则参与树构建，与重扫同点失效
+                    folder_tree.invalidate();
                     pipeline.notify_config_changed();
                 }
                 if change.web_changed {

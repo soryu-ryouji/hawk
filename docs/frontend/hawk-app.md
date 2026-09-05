@@ -166,7 +166,7 @@ web/
     ├── App.vue                # 布局骨架；启动阶段状态机与跨 store 编排；挂载全局 composables（快捷键/拖拽导入）与浮层
     ├── types.ts               # 业务类型（ViewState/QueryState/MenuItem）+ hawkShell 全局类型声明；Item 等从 schema.d.ts 别名导出
     ├── dnd.ts                 # 素材拖拽共享工具（网格→侧栏）：ITEMS_MIME、startItemsDrag/itemsDragOver/readItemsDrop
-    ├── viewLogic.ts           # 视图/查询纯决策逻辑（排序父链继承/无过滤视图/选择集 range/toggle/骨架合并判定）：library.ts 消费，Vitest 覆盖
+    ├── viewLogic.ts           # 视图/查询纯决策逻辑（排序父链继承/无过滤视图/选择集 range/toggle/item.updated 的合并与骨架重载决策）：library.ts 消费，Vitest 覆盖
     ├── importBatch.ts         # 批量导入共享状态机（重复策略 ask→首问整批生效、计数、进度推进）：依赖注入不触碰 store，Vitest 覆盖
     ├── layout.ts              # 网格布局单一来源：GRID_GAP/CARD_META_H/CARD_BORDER 常量（ItemCard 经 CSS 变量消费）+ 齐行布局纯函数 layoutRows，Vitest 覆盖
     ├── persist.ts             # localStorage 收口：键注册表（hawk:panelWidths/thumbSize/lastView/token）+ 统一损坏回退/写入静默
@@ -533,7 +533,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 - 瀑布流不等高布局、框选、颜色标签、标签云
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
-- UI/组件级测试框架（组件树渲染测试不做）；Vitest 仅覆盖纯函数与决策逻辑（viewLogic/importBatch/layout），契约层由 server 的 smoke.sh 兜底
+- UI/组件级测试框架不做全量覆盖；Vitest 主要覆盖纯函数与决策逻辑（viewLogic/importBatch/layout），侧栏维度行等交互密集组件有渲染测试（@vue/test-utils + jsdom，渲染分支回归），契约层由 server 的 smoke.sh 兜底
 
 ## 打包与分发
 

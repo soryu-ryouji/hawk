@@ -72,8 +72,8 @@ impl ViewPreferences {
         save_locked(&self.file, &entries);
     }
 
-    /// 文件夹删除：前缀范围内的 folder: 键一并清除
-    pub fn delete_prefix(&self, dir: &str) {
+    /// 文件夹删除：前缀范围内的 folder: 键一并清除。返回是否有条目被清除
+    pub fn delete_prefix(&self, dir: &str) -> bool {
         let mut entries = self.entries.lock().unwrap();
         let prefix = format!("folder:{dir}");
         let hits: Vec<String> = entries
@@ -82,12 +82,13 @@ impl ViewPreferences {
             .cloned()
             .collect();
         if hits.is_empty() {
-            return;
+            return false;
         }
         for key in hits {
             entries.remove(&key);
         }
         save_locked(&self.file, &entries);
+        true
     }
 
     /// 外部修改（含网盘同步落地）后重载；解析失败的条目跳过
@@ -168,10 +169,7 @@ fn save_locked(file: &str, entries: &HashMap<String, ViewSort>) {
         sb.push_str(&format!("order = {}\n", toml_string(&sort.order)));
         sb.push('\n');
     }
-    let tmp = format!("{file}.tmp");
-    if std::fs::write(&tmp, sb).is_ok() && std::fs::rename(&tmp, file).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    crate::core::registry_file::atomic_write(file, &sb);
 }
 
 #[cfg(test)]

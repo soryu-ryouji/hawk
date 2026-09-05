@@ -68,6 +68,92 @@ export function skeletonNeedsPatch(prev: SkeletonItem, updated: Item): boolean {
   return prev.star !== updated.star || prev.width !== updated.width || prev.height !== updated.height;
 }
 
+/** 全局类视图（隐藏排除生效的视图）：全部素材/根目录/未分类/未标签；维度自身视图与回收站不排除 */
+export function isGlobalViewKind(view: ViewState): boolean {
+  return view.kind === 'all' || view.kind === 'root' || view.kind === 'uncategorized' || view.kind === 'untagged';
+}
+
+/** item.updated 的位置集变化判定：以骨架为准（details 可能未缓存该 hash）。骨架 path 与事件 paths
+ *  同口径化后比对（回收站视图事件 paths 为原路径投影，骨架 path 剥掉 trash 前缀）；
+ *  改名/移动/增删位置都会命中 */
+export function locationSetChangedOf(
+  skeleton: readonly Pick<SkeletonItem, 'id' | 'path'>[],
+  updated: Pick<Item, 'id' | 'paths'>,
+): boolean {
+  const skelPaths = skeleton.filter((s) => s.id === updated.id).map((s) => displayPath(s.path));
+  return skelPaths.length > 0 && !sameNameSet(skelPaths, updated.paths);
+}
+
+/** item.updated 的分类/标签维度变化判定（内容级，与位置无关） */
+export function taxonomyChanged(
+  prev: Pick<Item, 'tags' | 'categories'>,
+  updated: Pick<Item, 'tags' | 'categories'>,
+): boolean {
+  return !sameNameSet(prev.tags, updated.tags) || !sameNameSet(prev.categories, updated.categories);
+}
+
+/** item.updated 的详情合并：同 hash 全部位置条目同步内容级字段；事件载荷对应的位置条目整体替换
+ * （位置级字段 name/ext/size/mtime 仅该条目随全量替换生效），其余位置保留自己的位置级字段 */
+export function mergeDetailOnUpdate(prev: Item, updated: Item, isEventLocation: boolean): Item {
+  if (isEventLocation) {
+    return updated;
+  }
+  return {
+    ...prev,
+    tags: updated.tags,
+    categories: updated.categories,
+    star: updated.star,
+    annotation: updated.annotation,
+    url: updated.url,
+    width: updated.width,
+    height: updated.height,
+    palette: updated.palette,
+    paths: updated.paths,
+    folders: updated.folders,
+  };
+}
+
+/** item.updated 的骨架就地合并：该 hash 全部位置条目同步 star/宽高（★ 角标与布局比例）；
+ *  未变化返回原数组引用（changed=false），调用方据此跳过重渲染 */
+export function patchSkeletonOnUpdate(
+  skeleton: readonly SkeletonItem[],
+  updated: Item,
+): { next: SkeletonItem[]; changed: boolean } {
+  let changed = false;
+  const next = skeleton.map((s) => {
+    if (s.id !== updated.id || !skeletonNeedsPatch(s, updated)) {
+      return s;
+    }
+    changed = true;
+    return { ...s, star: updated.star, width: updated.width, height: updated.height };
+  });
+  return { next: changed ? next : (skeleton as SkeletonItem[]), changed };
+}
+
+/** item.updated 后是否需要重载骨架（成员/次序以服务端查询为准的兜底时机）。
+ *  三种重载理由：位置集变化（新位置卡片出现/消失）；隐藏排除激活时的分类维度变化
+ * （挂上/摘掉隐藏维度即进出全局视图）；不属于当前骨架且视图可能漏新成员（过滤视图或单条事件） */
+export function shouldReloadOnUpdate(args: {
+  locationSetChanged: boolean;
+  inSkeleton: boolean;
+  skeletonChanged: boolean;
+  taxonomyChanged: boolean;
+  /** 无过滤视图（全部素材 + 无关键词/评分/颜色）：item.updated 不可能改变成员资格 */
+  unfiltered: boolean;
+  /** 隐藏排除激活（全局类视图且隐藏集非空）：分类/标签变化可能改变成员资格 */
+  exclusionActive: boolean;
+  /** 单条事件（用户操作规模）才为非成员重拉；批量事件（调色板回写）不重拉，避免风暴 */
+  single: boolean;
+}): boolean {
+  if (args.locationSetChanged) {
+    return true;
+  }
+  if (args.taxonomyChanged && args.exclusionActive) {
+    return true;
+  }
+  return !args.skeletonChanged && !args.inSkeleton && (!args.unfiltered || args.single);
+}
+
 /** 选择集变更：默认单选替换；toggle 反选；range 以末位选中为锚点框选骨架索引区间（双向）。
  *  条目以 itemKey（id+path）标识：同内容多位置在选择集中是独立成员 */
 export function nextSelection(

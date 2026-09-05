@@ -254,7 +254,8 @@ fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
     if is_internal_path(paths, abs) {
         return;
     }
-    // 目录不产生 item 事件,单独上报以驱动 folder.changed(目录删除无事件,由周期对账扫描兜底)
+    // 目录不产生 item 事件,单独上报以驱动 folder.changed(目录删除的信号处理：含内容/有设置的目录
+    // 由 do_delete 判定广播，空目录由 bootstrap Deleted 分支以目录树缓存判定)
     if std::path::Path::new(abs).is_dir() {
         cb(WatcherEvent::FolderCreated(abs.to_string()));
         return;

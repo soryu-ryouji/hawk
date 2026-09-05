@@ -13,11 +13,16 @@ use super::upsert::do_upsert;
 
 /// 按相对路径删除:同时按文件(精确)与目录(前缀)匹配,删除事件不区分两者
 pub(crate) fn do_delete(ctx: &PipelineCtx, rel: &str) {
+    // 结构判定（先算后改）：前缀下有索引位置 = 含内容的目录；排序偏好/隐藏集条目命中 = 有设置的目录。
+    // 三类命中都意味着「目录被删」→ 广播 folder.changed 驱动客户端重拉文件夹树。
+    // 空目录的外部删除无任何索引信号，由 bootstrap 的 Deleted 分支以目录树缓存判定补充
+    let had_children = !ctx.index.locations_under(&format!("{rel}/")).is_empty();
     // 目录(或其下的文件)删除:前缀范围内的 folder: 排序偏好一并清除。
     // 同目录下文件与文件夹不可同名,按前缀匹配不会误伤文件夹设置
-    ctx.prefs.delete_prefix(rel);
+    let prefs_changed = ctx.prefs.delete_prefix(rel);
     // 隐藏集同款簿记：删除路径命中的隐藏文件夹条目一并清除
-    if ctx.global_filter.delete_folder_prefix(rel) {
+    let filter_changed = ctx.global_filter.delete_folder_prefix(rel);
+    if filter_changed {
         crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
     }
 
@@ -31,6 +36,11 @@ pub(crate) fn do_delete(ctx: &PipelineCtx, rel: &str) {
             note_invalidated(ctx, &loc);
             ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &hash);
         }
+    }
+
+    if had_children || prefs_changed || filter_changed {
+        ctx.bus
+            .publish(ItemEvents::FOLDER_CHANGED, folder_changed_payload(crate::core::events::REASON_EXTERNAL));
     }
 }
 

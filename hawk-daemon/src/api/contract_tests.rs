@@ -126,6 +126,7 @@ fn test_app(name: &str) -> TestApp {
     let paths = LibraryPaths::new(&root_str, Some(cache.to_string_lossy().to_string()));
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
+    let folder_tree = Arc::new(crate::api::folder::FolderTreeCache::new());
     let db = Arc::new(IndexDb::open(&paths.index_db_file));
     let startup = Arc::new(StartupState::default());
     let store = Arc::new(MetadataStore::new(paths.clone(), db.clone(), &startup));
@@ -176,6 +177,7 @@ fn test_app(name: &str) -> TestApp {
         settings,
         paths,
         config,
+        folder_tree,
         startup,
         index,
         bus,
@@ -189,6 +191,7 @@ fn test_app(name: &str) -> TestApp {
         lan: LanSupervisor::new(),
     });
     let router = build_router(state.clone());
+    state.folder_tree.spawn_invalidation(&state.bus);
     TestApp { base, router, state }
 }
 
@@ -586,4 +589,64 @@ async fn global_filter_exclusion() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "空文件夹路径应 400");
     let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "other", "name": "x", "hidden": true}))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法维度应 400");
+}
+
+/// 文件夹树缓存新鲜度：API 增删目录后 folder/list 立即反映（端点内同步失效）
+#[tokio::test]
+async fn folder_tree_cache_stays_fresh() {
+    let app = test_app("foldertree");
+    async fn child_names(app: &TestApp) -> Vec<String> {
+        let (_, bytes) = call_json(&app.router, "GET", "/api/v1/folder/list", None).await;
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        v["data"]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    assert!(child_names(&app).await.is_empty(), "空库无子目录");
+    // 建目录 → 立即可见（首个 folder/list 填充缓存，create 端点内失效）
+    let (status, _) = call_json(&app.router, "POST", "/api/v1/folder/create", Some(json!({"name": "甲"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(child_names(&app).await, vec!["甲".to_string()], "创建后立即可见");
+    // 重命名 → 跟随
+    let (status, _) = call_json(&app.router, "POST", "/api/v1/folder/update", Some(json!({"path": "甲", "name": "乙"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(child_names(&app).await, vec!["乙".to_string()], "重命名后跟随");
+    // 删除 → 消失
+    let (status, _) = call_json(&app.router, "POST", "/api/v1/folder/delete", Some(json!({"path": "乙"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(child_names(&app).await.is_empty(), "删除后不再出现");
+}
+
+/// 目录被外部删除后的幂等删除：folder/delete 对不存在目录返回成功并清理残留（索引位置/目录设置），
+/// 文件夹树即时反映（用户清走陈旧条目的入口）
+#[tokio::test]
+async fn folder_delete_missing_dir_is_idempotent() {
+    let app = test_app("folder-missing");
+    std::fs::create_dir_all(app.library_root().join("幽灵")).unwrap();
+    let id = app.add_test_item("幽灵/inner.png", [40, 40, 40]).await;
+    // 先拉一次文件夹树（缓存填充，含「幽灵」），再外部删除整个目录（模拟资源管理器操作）
+    let (_, bytes) = call_json(&app.router, "GET", "/api/v1/folder/list", None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["children"][0]["name"], json!("幽灵"), "缓存应含新目录");
+    std::fs::remove_dir_all(app.library_root().join("幽灵")).unwrap();
+
+    // 删除不存在的目录：成功而非 FOLDER_NOT_FOUND
+    let (status, bytes) = call_json(&app.router, "POST", "/api/v1/folder/delete", Some(json!({"path": "幽灵"}))).await;
+    assert_eq!(status, StatusCode::OK, "幂等删除应成功: {}", String::from_utf8_lossy(&bytes));
+
+    // 索引位置经 Delete job 按前缀清除（notify_deleted 为火忘任务，轮询索引收敛）
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while app.state.index.contains(&id) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!app.state.index.contains(&id), "目录下残留位置应被清除");
+
+    // 文件夹树不含已删目录
+    let (_, bytes) = call_json(&app.router, "GET", "/api/v1/folder/list", None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["children"], json!([]));
 }

@@ -3,13 +3,19 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SORT,
+  isGlobalViewKind,
   isUnfilteredView,
   itemKey,
+  locationSetChangedOf,
+  mergeDetailOnUpdate,
   nextSelection,
+  patchSkeletonOnUpdate,
   resolveSort,
   sameNameSet,
+  shouldReloadOnUpdate,
   skeletonNeedsPatch,
   splitKey,
+  taxonomyChanged,
 } from './viewLogic';
 import type { Item, QueryState, ViewPrefs, ViewState } from './types';
 
@@ -160,5 +166,148 @@ describe('nextSelection', () => {
 
   it('range：目标不在骨架中回落单选', () => {
     expect(nextSelection(skeleton, [k('b', 'b.png')], 'zzz', 'range')).toEqual(['zzz']);
+  });
+});
+
+// ---- item.updated 合并/重载决策 ----
+
+const item = (patch: Partial<Item> = {}): Item => ({
+  id: 'x',
+  name: 'x',
+  ext: 'png',
+  path: 'x.png',
+  paths: ['x.png'],
+  folders: [''],
+  size: 1,
+  width: 8,
+  height: 8,
+  modification_time: 1,
+  star: 0,
+  tags: [],
+  categories: [],
+  palette: [],
+  ...patch,
+});
+
+const skel = (id: string, path: string, patch: Partial<{ star: number; width: number; height: number }> = {}) => ({
+  id,
+  path,
+  width: 8,
+  height: 8,
+  star: 0,
+  ...patch,
+});
+
+describe('isGlobalViewKind', () => {
+  it('全局类视图成立', () => {
+    for (const kind of ['all', 'root', 'uncategorized', 'untagged'] as const) {
+      expect(isGlobalViewKind({ kind })).toBe(true);
+    }
+  });
+
+  it('维度自身视图与回收站不成立', () => {
+    expect(isGlobalViewKind({ kind: 'folder', path: 'a' })).toBe(false);
+    expect(isGlobalViewKind({ kind: 'category', name: 'c' })).toBe(false);
+    expect(isGlobalViewKind({ kind: 'tag', name: 't' })).toBe(false);
+    expect(isGlobalViewKind({ kind: 'trash' })).toBe(false);
+  });
+});
+
+describe('locationSetChangedOf', () => {
+  it('位置集一致不变化', () => {
+    expect(locationSetChangedOf([skel('x', 'a.png')], item({ paths: ['a.png'] }))).toBe(false);
+  });
+
+  it('位置增减/改名命中', () => {
+    expect(locationSetChangedOf([skel('x', 'a.png')], item({ paths: ['a.png', 'b.png'] }))).toBe(true);
+    expect(locationSetChangedOf([skel('x', 'a.png')], item({ paths: ['b.png'] }))).toBe(true);
+  });
+
+  it('骨架不含该 hash 时不判定变化（交由非成员分支处理）', () => {
+    expect(locationSetChangedOf([], item({ paths: ['a.png'] }))).toBe(false);
+  });
+
+  it('回收站口径：骨架 path（含 trash 前缀）剥前缀后与事件 paths 对齐', () => {
+    expect(locationSetChangedOf([skel('x', '.hawk/trash/a.png')], item({ paths: ['a.png'] }))).toBe(false);
+  });
+});
+
+describe('taxonomyChanged', () => {
+  it('标签/分类任一变化即命中', () => {
+    expect(taxonomyChanged(item({ tags: ['a'] }), item({ tags: ['a'] }))).toBe(false);
+    expect(taxonomyChanged(item({ tags: ['a'] }), item({ tags: ['b'] }))).toBe(true);
+    expect(taxonomyChanged(item({ categories: [] }), item({ categories: ['c'] }))).toBe(true);
+  });
+});
+
+describe('mergeDetailOnUpdate', () => {
+  it('事件位置条目整体替换', () => {
+    const updated = item({ path: 'a.png', name: '新名', tags: ['t'] });
+    expect(mergeDetailOnUpdate(item({ path: 'a.png' }), updated, true)).toBe(updated);
+  });
+
+  it('其余位置同步内容级字段、保留位置级字段', () => {
+    const prev = item({ path: 'b.png', name: 'b位名', size: 99, star: 1 });
+    const updated = item({ path: 'a.png', name: 'a位名', size: 5, star: 5, tags: ['t'] });
+    const merged = mergeDetailOnUpdate(prev, updated, false);
+    expect(merged.name).toBe('b位名');
+    expect(merged.size).toBe(99);
+    expect(merged.star).toBe(5);
+    expect(merged.tags).toEqual(['t']);
+  });
+});
+
+describe('patchSkeletonOnUpdate', () => {
+  it('同 hash 全部位置条目同步 star/宽高', () => {
+    const { next, changed } = patchSkeletonOnUpdate(
+      [skel('x', 'a.png'), skel('x', 'b.png'), skel('y', 'c.png')],
+      item({ id: 'x', star: 3, width: 16, height: 16 }),
+    );
+    expect(changed).toBe(true);
+    expect(next[0]).toMatchObject({ star: 3, width: 16 });
+    expect(next[1]).toMatchObject({ star: 3, width: 16 });
+    expect(next[2]).toMatchObject({ star: 0 });
+  });
+
+  it('无变化返回原数组引用', () => {
+    const skeleton = [skel('x', 'a.png')];
+    const { next, changed } = patchSkeletonOnUpdate(skeleton, item({ id: 'x' }));
+    expect(changed).toBe(false);
+    expect(next).toBe(skeleton);
+  });
+});
+
+describe('shouldReloadOnUpdate', () => {
+  const base = {
+    locationSetChanged: false,
+    inSkeleton: true,
+    skeletonChanged: false,
+    taxonomyChanged: false,
+    unfiltered: true,
+    exclusionActive: false,
+    single: true,
+  };
+
+  it('无变化成员不重载', () => {
+    expect(shouldReloadOnUpdate(base)).toBe(false);
+  });
+
+  it('位置集变化必重载', () => {
+    expect(shouldReloadOnUpdate({ ...base, locationSetChanged: true })).toBe(true);
+  });
+
+  it('隐藏排除激活时分类维度变化重载', () => {
+    expect(shouldReloadOnUpdate({ ...base, taxonomyChanged: true, exclusionActive: true })).toBe(true);
+    expect(shouldReloadOnUpdate({ ...base, taxonomyChanged: true })).toBe(false);
+  });
+
+  it('非成员：无过滤视图仅单条事件重拉；过滤视图批量也重拉', () => {
+    expect(shouldReloadOnUpdate({ ...base, inSkeleton: false })).toBe(true);
+    expect(shouldReloadOnUpdate({ ...base, inSkeleton: false, single: false })).toBe(false);
+    expect(shouldReloadOnUpdate({ ...base, inSkeleton: false, single: false, unfiltered: false })).toBe(true);
+  });
+
+  it('骨架已就地补丁的非成员不重载（skeletonChanged 蕴含在骨架中，防御分支）', () => {
+    expect(shouldReloadOnUpdate({ ...base, inSkeleton: false, skeletonChanged: true, single: false, unfiltered: false })).toBe(false);
   });
 });

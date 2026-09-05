@@ -4,7 +4,8 @@
 use crate::core::events::EventBus;
 use crate::core::index::ItemIndex;
 use crate::core::item::ItemDto;
-use crate::core::metadata::{toml_string, ItemMetadata};
+use crate::core::metadata::ItemMetadata;
+use crate::core::registry_file::sort_entries;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use std::sync::RwLock;
@@ -31,27 +32,11 @@ fn load_registry(file: &str, key: &str) -> Vec<String> {
             return Vec::new();
         }
     };
-    let mut out: Vec<String> = value
-        .get(key)
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-        .unwrap_or_default();
-    out = out.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-    out.dedup();
-    out.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-    out
+    crate::core::registry_file::parse_string_list(&value, key)
 }
 
 fn save_registry(file: &str, key: &str, entries: &[String]) {
-    let body = format!(
-        "{} = [{}]\n",
-        key,
-        entries.iter().map(|e| toml_string(e)).collect::<Vec<_>>().join(", ")
-    );
-    let tmp = format!("{file}.tmp");
-    if std::fs::write(&tmp, body).is_ok() && std::fs::rename(&tmp, file).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    crate::core::registry_file::atomic_write(file, &format!("{}\n", crate::core::registry_file::format_string_list(key, entries)));
 }
 
 /// 分类/标签注册表共用骨架：持久化空名字（先建后放），写入只发生在索引流水线
@@ -83,7 +68,7 @@ impl Registry {
         let mut entries = self.entries.write().unwrap();
         if !entries.iter().any(|e| e == name) {
             entries.push(name.to_string());
-            entries.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            sort_entries(&mut entries);
             save_registry(&self.file, self.key, &entries);
         }
     }
@@ -102,7 +87,7 @@ impl Registry {
             if !entries.iter().any(|e| e == new_name) {
                 entries.push(new_name.to_string());
             }
-            entries.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            sort_entries(&mut entries);
             save_registry(&self.file, self.key, &entries);
         }
     }

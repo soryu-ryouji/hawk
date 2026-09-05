@@ -9,7 +9,7 @@
 
 use super::*;
 use crate::core::index_db::IndexDb;
-use crate::core::taxonomy::{CategoryRegistry, TagRegistry};
+use crate::core::taxonomy::{CategoryRegistry, ItemEvents, TagRegistry};
 use std::path::PathBuf;
 
 /// 测试装配：与 main.rs 同一套组件接线，目录全部落在系统临时目录（用毕即删）
@@ -19,6 +19,7 @@ struct Rig {
     pipeline: IndexPipeline,
     index: Arc<ItemIndex>,
     store: Arc<MetadataStore>,
+    bus: EventBus,
 }
 
 impl Rig {
@@ -71,7 +72,7 @@ impl Rig {
             store.clone(),
             index.clone(),
             thumbs,
-            bus,
+            bus.clone(),
             scanner,
             migrator,
             prefs,
@@ -84,7 +85,7 @@ impl Rig {
         pipeline.start();
         startup.mark_ready();
 
-        Rig { root, cache, pipeline, index, store }
+        Rig { root, cache, pipeline, index, store, bus }
     }
 
     fn abs(&self, rel: &str) -> String {
@@ -274,4 +275,46 @@ async fn move_onto_existing_content_merges_locations() {
     assert!(rig.index.hash_by_location("c.png").is_some());
     assert!(rig.index.hash_by_location("b.png").is_some());
     assert!(rig.index.hash_by_location("a.png").is_none());
+}
+
+/// 目录删除广播 folder.changed：含内容的目录经 Delete 事件删除后客户端据此重拉文件夹树；
+/// 纯文件删除不广播（无目录结构变化）
+#[tokio::test]
+async fn delete_dir_publishes_folder_changed() {
+    let rig = Rig::new("delete-dir-fcevent");
+    rig.write_png("f.png", [9, 9, 9]);
+    rig.pipeline.submit_upsert(rig.abs("f.png"), None).await.unwrap();
+    std::fs::create_dir_all(rig.abs("d")).unwrap();
+    rig.write_png("d/a.png", [1, 2, 3]);
+    rig.pipeline.submit_upsert(rig.abs("d/a.png"), None).await.unwrap();
+
+    let mut rx = rig.bus.subscribe();
+    // 纯文件删除：无 folder.changed（随后的 upsert 屏障保证 Delete 已处理完）
+    rig.pipeline.notify_deleted(rig.abs("f.png"));
+    rig.pipeline.submit_upsert(rig.abs("f.png"), None).await.unwrap();
+    let mut file_delete_fired = false;
+    loop {
+        match rx.try_recv() {
+            Ok(e) if e.kind == ItemEvents::FOLDER_CHANGED => file_delete_fired = true,
+            Ok(_) => continue,
+            Err(_) => break,
+        }
+    }
+    assert!(!file_delete_fired, "纯文件删除不应广播 folder.changed");
+
+    // 含内容的目录删除：广播 folder.changed
+    rig.pipeline.notify_deleted(rig.abs("d"));
+    let got = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match rx.recv().await {
+                Ok(e) if e.kind == ItemEvents::FOLDER_CHANGED => break true,
+                Ok(_) => continue,
+                Err(_) => break false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(got, "删除含内容的目录应广播 folder.changed");
+    assert_eq!(rig.index.count(), 1, "目录下位置应已清除（f.png 保留）");
 }
