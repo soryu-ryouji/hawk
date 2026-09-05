@@ -144,9 +144,11 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
     }
   }
 
-  /** 首屏/换库加载（组件层编排，先于主 store init：restoreView 的校验依赖本 store 数据） */
+  /** 首屏/换库加载（组件层编排，先于主 store init：restoreView 的校验依赖本 store 数据）。
+   *  隐藏集必须先于计数就绪：refreshTaxonomy 的计数查询带 exclude 参数，并发跑会按未过滤口径算错 */
   async function refreshAll() {
-    await Promise.all([refreshFolders(), refreshTaxonomy(), refreshGlobalFilter()]);
+    await refreshGlobalFilter();
+    await Promise.all([refreshFolders(), refreshTaxonomy()]);
   }
 
   // ---- 文件夹写操作 ----
