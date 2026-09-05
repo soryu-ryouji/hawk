@@ -229,7 +229,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 完整文件夹树（实时从文件系统构建，排除 .hawk 与被 ignore 目录；count 含祖先目录） */
+        /** 完整文件夹树（目录结构缓存 + 实时计数合并；count 含祖先目录） */
         get: operations["folder_list"];
         put?: never;
         post?: never;
