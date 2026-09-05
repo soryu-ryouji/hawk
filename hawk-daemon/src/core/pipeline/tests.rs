@@ -408,3 +408,49 @@ async fn tag_delete_cascade_batches_events() {
     // 元数据与索引已清除该标签
     assert!(rig.store.try_get(&items_updated_ids[0]).unwrap().tags.is_empty());
 }
+
+/// 大批量元数据应用（≥64 条触发并行落盘路径）：全部应用、TOML 落盘、事件合并发布
+#[tokio::test]
+async fn batch_metadata_parallel_path() {
+    let rig = Rig::new("batch-parallel");
+    std::fs::create_dir_all(rig.abs("p")).unwrap();
+    let mut ids = Vec::new();
+    for i in 0..100u8 {
+        let rel = format!("p/{i}.png");
+        rig.write_png(&rel, [i, 10, 10]);
+        let id = rig.pipeline.submit_upsert(rig.abs(&rel), None).await.unwrap().unwrap().item.id;
+        ids.push(id);
+    }
+
+    let mut rx = rig.bus.subscribe();
+    let result = rig
+        .pipeline
+        .submit_batch_metadata(ids.clone(), |m| {
+            if !m.tags.iter().any(|t| t == "并发") {
+                m.tags.push("并发".to_string());
+            }
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.updated, 100);
+    assert!(result.missing_ids.is_empty());
+
+    // 权威层落盘可解析（随机抽查 3 个）
+    for id in ids.iter().take(3) {
+        let toml_path = format!("{}/{}.toml", rig.root.join(".hawk/metadata").display(), id);
+        let text = std::fs::read_to_string(&toml_path).expect("TOML 应已落盘");
+        assert!(text.contains("并发"), "TOML 内容应含新标签");
+    }
+
+    // 事件：合并为单个 items.updated 帧（100 < 1000，一帧装完）
+    let mut frames = 0;
+    let mut total_items = 0;
+    while let Ok(e) = rx.try_recv() {
+        if e.kind == ItemEvents::ITEMS_UPDATED {
+            frames += 1;
+            total_items += e.payload["items"].as_array().unwrap().len();
+        }
+    }
+    assert_eq!(frames, 1);
+    assert_eq!(total_items, 100);
+}

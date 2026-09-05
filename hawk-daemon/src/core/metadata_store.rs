@@ -203,6 +203,58 @@ impl MetadataStore {
         Ok(file_mtime_ms(&file))
     }
 
+    /// 批量 TOML 落盘（只写权威层；成功后由调用方 apply_batch 刷内存与缓存）。
+    /// 大批量时多线程并行：不同 hash 不同文件，写入互相独立（thread::scope 借用 &self）。
+    /// 单条失败不中断整批：失败 hash 记入返回值第二分量并 tracing 记录
+    pub fn save_toml_batch(&self, entries: &[(String, ItemMetadata)]) -> (Vec<(String, ItemMetadata, i64)>, Vec<String>) {
+        /// 低于该阈值走串行（线程开销不值得）
+        const PARALLEL_THRESHOLD: usize = 64;
+        /// 写线程上限（机械盘/杀软环境下更多线程无收益）
+        const MAX_WRITE_THREADS: usize = 8;
+
+        fn write_chunk(
+            store: &MetadataStore,
+            chunk: &[(String, ItemMetadata)],
+        ) -> (Vec<(String, ItemMetadata, i64)>, Vec<String>) {
+            let mut ok = Vec::new();
+            let mut failed = Vec::new();
+            for (hash, meta) in chunk {
+                match store.save_toml(hash, meta) {
+                    Ok(mtime) => ok.push((hash.clone(), meta.clone(), mtime)),
+                    Err(e) => {
+                        tracing::warn!("批量元数据落盘失败: {hash}: {e}");
+                        failed.push(hash.clone());
+                    }
+                }
+            }
+            (ok, failed)
+        }
+
+        if entries.len() < PARALLEL_THRESHOLD {
+            return write_chunk(self, entries);
+        }
+
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(MAX_WRITE_THREADS);
+        let chunk_size = entries.len().div_ceil(threads);
+        std::thread::scope(|s| {
+            let handles: Vec<_> = entries
+                .chunks(chunk_size)
+                .map(|chunk| s.spawn(|| write_chunk(self, chunk)))
+                .collect();
+            let mut ok = Vec::new();
+            let mut failed = Vec::new();
+            for h in handles {
+                let (mut o, mut f) = h.join().expect("批量落盘线程 panic");
+                ok.append(&mut o);
+                failed.append(&mut f);
+            }
+            (ok, failed)
+        })
+    }
+
     /// 批量应用（内存副本 + SQLite 单事务）。TOML 须已由 save_toml 逐条落盘。
     /// 先冲刷待冲刷缓冲，避免旧值覆盖本批新值
     pub fn apply_batch(&self, entries: &[(String, ItemMetadata, i64)]) {
@@ -341,4 +393,58 @@ fn load_all_from_toml(paths: &LibraryPaths, startup: &StartupState) -> Vec<(Stri
     }
     tracing::info!("已从 TOML 全量解析 {} 条元数据", entries.len());
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 手动性能测量（`cargo test bench_save_toml_batch -- --ignored --nocapture`）：
+    /// 串行逐条 save_toml vs save_toml_batch 并行路径的耗时对比
+    #[test]
+    #[ignore]
+    fn bench_save_toml_batch() {
+        let dir = std::env::temp_dir().join(format!("hawk-bench-meta-{}", std::process::id()));
+        let root = dir.join("lib");
+        std::fs::create_dir_all(root.join(".hawk/metadata")).unwrap();
+        let paths = LibraryPaths::new(root.to_str().unwrap(), Some(dir.join("cache").to_string_lossy().to_string()));
+        let db = std::sync::Arc::new(IndexDb::open(&paths.index_db_file));
+        let startup = StartupState::default();
+        let store = MetadataStore::new(paths.clone(), db, &startup);
+
+        const N: usize = 2000;
+        let entries: Vec<(String, ItemMetadata)> = (0..N)
+            .map(|i| {
+                let mut meta = ItemMetadata::default();
+                meta.tags = vec!["基准".to_string()];
+                (format!("{i:064x}"), meta)
+            })
+            .collect();
+
+        // 串行基线
+        let t0 = Instant::now();
+        for (hash, meta) in &entries {
+            store.save_toml(hash, meta).unwrap();
+        }
+        let serial = t0.elapsed();
+
+        // 并行（覆盖写同批文件）
+        let t1 = Instant::now();
+        let (ok, failed) = store.save_toml_batch(&entries);
+        let parallel = t1.elapsed();
+        assert_eq!(ok.len(), N);
+        assert!(failed.is_empty());
+
+        // 纯写临时文件（不 rename）：定位成本大头在写还是原子替换
+        let t2 = Instant::now();
+        for (hash, meta) in &entries {
+            let tmp = format!("{}/{hash}.toml.tmp", paths.metadata_dir);
+            std::fs::write(&tmp, crate::core::metadata::serialize(meta)).unwrap();
+            let _ = std::fs::remove_file(&tmp);
+        }
+        let write_only = t2.elapsed();
+
+        println!("串行 {N} 条: {serial:?}；并行 {N} 条: {parallel:?}（加速比 {:.1}x）；纯写(不 rename): {write_only:?}", serial.as_secs_f64() / parallel.as_secs_f64());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -292,18 +292,15 @@ impl TaxonomyMigrator {
         Ok(None)
     }
 
-    /// 批量元数据应用(item/batch_update):逐个 mutate + 落盘 + 同步;
-    /// 空操作（mutate 后元数据无变化，如标签已存在）跳过落盘与事件，不计入 updated。
-    /// 不存在的 id 记入 missing_ids(跳过),返回实际更新数。
-    /// 事件合并为分块的 items.updated（大批量时逐条 item.updated 会形成事件风暴打挂客户端）
+    /// 批量元数据应用(item/batch_update):逐个 mutate 收集变更（空操作跳过，不计入 updated），
+    /// 批量尾部统一落盘/同步。不存在的 id 记入 missing_ids(跳过),返回实际更新数
     pub fn apply_metadata_batch(
         &self,
         hashes: &[String],
         mutate: &mut dyn FnMut(&mut ItemMetadata),
         missing_ids: &mut Vec<String>,
     ) -> Result<usize, String> {
-        let mut updated = 0;
-        let mut changed = ChangeBatcher::new(&self.bus);
+        let mut batch: Vec<(String, ItemMetadata)> = Vec::new();
         for hash in hashes {
             let mut meta = match self.store.try_get(hash) {
                 Some(m) => m,
@@ -317,19 +314,9 @@ impl TaxonomyMigrator {
             if meta == before {
                 continue; // 空操作：不写盘、不发事件
             }
-            self.store.save(hash, &meta)?;
-            self.register_taxonomy(&meta);
-
-            if self.index.contains(hash) {
-                self.index.with_item_mut(hash, |item| item.sync_from(&meta));
-                if let Some(dto) = self.index.get_dto(hash) {
-                    changed.push(dto);
-                }
-            }
-            updated += 1;
+            batch.push((hash.clone(), meta));
         }
-        changed.flush();
-        Ok(updated)
+        Ok(self.finish_metadata_batch(batch, missing_ids))
     }
 
     /// 分类重命名:注册表更名 + 全部命中 item 的 categories 替换;目标已存在时合并
@@ -338,7 +325,7 @@ impl TaxonomyMigrator {
         // 分类可能仅由赋值产生而未注册过,补上登记
         self.categories.register(new_name);
 
-        let mut changed = ChangeBatcher::new(&self.bus);
+        let mut batch: Vec<(String, ItemMetadata)> = Vec::new();
         for (hash, mut meta) in self.store.snapshot() {
             if !meta.categories.iter().any(|c| c == old_name) {
                 continue;
@@ -349,67 +336,88 @@ impl TaxonomyMigrator {
                 .map(|c| if c == old_name { new_name.to_string() } else { c.clone() })
                 .collect();
             meta.categories = dedup_preserve_order(&replaced);
-            self.save_and_sync(&hash, &meta, &mut changed)?;
+            batch.push((hash, meta));
         }
-        changed.flush();
-        Ok(())
+        self.finish_cascade(batch)
     }
 
     /// 分类删除:注册表与全部 item 的该分类赋值一并清除
     pub fn delete_category(&self, name: &str) -> Result<(), String> {
         self.categories.delete(name);
-        let mut changed = ChangeBatcher::new(&self.bus);
+        let mut batch: Vec<(String, ItemMetadata)> = Vec::new();
         for (hash, mut meta) in self.store.snapshot() {
             let before = meta.categories.len();
             meta.categories.retain(|c| c != name);
             if meta.categories.len() != before {
-                self.save_and_sync(&hash, &meta, &mut changed)?;
+                batch.push((hash, meta));
             }
         }
-        changed.flush();
-        Ok(())
+        self.finish_cascade(batch)
     }
 
     /// 标签重命名:注册表更名 + 全部 item 的 tags 替换;目标已存在时合并
     pub fn rename_tag(&self, name: &str, new_name: &str) -> Result<(), String> {
         self.tags.rename(name, new_name);
-        let mut changed = ChangeBatcher::new(&self.bus);
+        let mut batch: Vec<(String, ItemMetadata)> = Vec::new();
         for (hash, mut meta) in self.store.snapshot() {
             if !meta.tags.iter().any(|t| t == name) {
                 continue;
             }
             meta.tags = dedup_preserve_order(&meta.tags.iter().map(|t| if t == name { new_name.to_string() } else { t.clone() }).collect::<Vec<_>>());
-            self.save_and_sync(&hash, &meta, &mut changed)?;
+            batch.push((hash, meta));
         }
-        changed.flush();
-        Ok(())
+        self.finish_cascade(batch)
     }
 
     /// 标签删除:注册表与全部 item 的该标签清除
     pub fn delete_tag(&self, name: &str) -> Result<(), String> {
         self.tags.delete(name);
-        let mut changed = ChangeBatcher::new(&self.bus);
+        let mut batch: Vec<(String, ItemMetadata)> = Vec::new();
         for (hash, mut meta) in self.store.snapshot() {
             let before = meta.tags.len();
             meta.tags.retain(|t| t != name);
             if meta.tags.len() != before {
-                self.save_and_sync(&hash, &meta, &mut changed)?;
+                batch.push((hash, meta));
             }
         }
-        changed.flush();
-        Ok(())
+        self.finish_cascade(batch)
     }
 
-    /// 级联迁移的公共收尾:保存元数据、同步索引、收集变更 DTO（攒满即由 ChangeBatcher 发布）
-    fn save_and_sync(&self, hash: &str, meta: &ItemMetadata, changed: &mut ChangeBatcher) -> Result<(), String> {
-        self.store.save(hash, meta)?;
-        if self.index.contains(hash) {
-            self.index.with_item_mut(hash, |item| item.sync_from(meta));
-            if let Some(dto) = self.index.get_dto(hash) {
-                changed.push(dto);
+    /// 批量写应用的公共尾部：按 1000 条分片，逐片「并行 TOML 落盘（权威层先行）→ apply_batch
+    /// （内存+SQLite 单事务）→ 注册表登记 → 索引同步 → ChangeBatcher 发事件」——
+    /// 长批量（数万条落盘以十秒计）期间客户端渐进可见，而不是全部写完才动。
+    /// 落盘失败的 hash 记入 failed_out，返回实际更新数
+    fn finish_metadata_batch(&self, batch: Vec<(String, ItemMetadata)>, failed_out: &mut Vec<String>) -> usize {
+        let mut changed = ChangeBatcher::new(&self.bus);
+        let mut updated = 0;
+        for slice in batch.chunks(1000) {
+            let (written, failed) = self.store.save_toml_batch(slice);
+            failed_out.extend(failed);
+            self.store.apply_batch(&written);
+            for (hash, meta, _) in &written {
+                self.register_taxonomy(meta);
+                if self.index.contains(hash) {
+                    self.index.with_item_mut(hash, |item| item.sync_from(meta));
+                    if let Some(dto) = self.index.get_dto(hash) {
+                        changed.push(dto);
+                    }
+                }
+                updated += 1;
             }
+            changed.flush();
         }
-        Ok(())
+        updated
+    }
+
+    /// 级联迁移的批量尾部：落盘失败整体报错（级联是原子语义的注册表操作，调用端 500 回传）
+    fn finish_cascade(&self, batch: Vec<(String, ItemMetadata)>) -> Result<(), String> {
+        let mut failed = Vec::new();
+        self.finish_metadata_batch(batch, &mut failed);
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("{} 个条目的元数据落盘失败", failed.len()))
+        }
     }
 }
 
