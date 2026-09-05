@@ -74,6 +74,35 @@ export const useLibraryStore = defineStore('library', () => {
   const skeletonSizeMap = computed(() => new Map(skeleton.value.map((s) => [itemKey(s.id, s.path), Number(s.size)])));
   /** 骨架按内容 id 的索引（item.updated 事件处理 O(1) 定位；随骨架替换重建） */
   const skeletonIndexMap = computed(() => indexSkeletonById(skeleton.value));
+
+  /** 选择集的共有特性（标签/分类交集）：多选面板数据源。
+   *  详情缓存只覆盖视口窗口，交集由服务端 item/aggregate 全量计算；选择集 ≤1 时为 null */
+  const selectionAggregate = ref<{ tags: string[]; categories: string[] } | null>(null);
+  let aggregateVersion = 0;
+  const debouncedAggregateFetch = debounce(200);
+
+  watch(selection, () => {
+    if (selection.value.length > 1) {
+      debouncedAggregateFetch(() => void fetchSelectionAggregate());
+    } else {
+      aggregateVersion++;
+      selectionAggregate.value = null;
+    }
+  });
+
+  /** 拉取选择集聚合（版本守卫丢弃过期响应） */
+  async function fetchSelectionAggregate() {
+    const version = ++aggregateVersion;
+    const ids = selectionUniqueIds();
+    try {
+      const res = await api.itemAggregate(ids);
+      if (version === aggregateVersion) {
+        selectionAggregate.value = { tags: res.common_tags, categories: res.common_categories };
+      }
+    } catch {
+      // 下次选择变更/批量操作完成时再对齐
+    }
+  }
   const library = ref<LibraryInfo | null>(null);
   // 网格卡片边长偏好（滑杆 120–280，齐行布局的目标行高）：
   // - 桌面端（Electron）：会话级、固定默认 160，不持久化；
@@ -729,6 +758,18 @@ export const useLibraryStore = defineStore('library', () => {
     await batchUpdate(selectionUniqueIds(), { star }, '已设置评分');
   }
 
+  /** 从全部选中项移除标签（共有标签 × 摘除）；完成后立即刷新聚合与计数 */
+  async function removeTagFromSelected(tag: string) {
+    await batchUpdate(selectionUniqueIds(), { remove_tags: [tag] }, '已移除标签');
+    taxonomyHooks?.refreshTaxonomy();
+  }
+
+  /** 从全部选中项移除分类（共有分类 × 摘除） */
+  async function removeCategoryFromSelected(name: string) {
+    await batchUpdate(selectionUniqueIds(), { remove_categories: [name] }, '已移除分类');
+    taxonomyHooks?.refreshTaxonomy();
+  }
+
   /** 批量端点统一入口:missing(内容不存在/移动冲突)在结果中提示,不整体失败 */
   async function batchUpdate(ids: string[], patch: Parameters<typeof api.itemBatchUpdate>[1], doneText: string) {
     if (ids.length === 0) {
@@ -738,6 +779,10 @@ export const useLibraryStore = defineStore('library', () => {
       const res = await api.itemBatchUpdate(ids, patch);
       const skipped = res.missing_ids.length;
       showToast(skipped > 0 ? `${doneText}(${skipped} 个未处理)` : doneText);
+      // 批量写可能改变了选择集的共有特性（加/摘标签分类）→ 立即重拉聚合（不等防抖）
+      if (selection.value.length > 1) {
+        void fetchSelectionAggregate();
+      }
     } catch (e) {
       showToast(errorText(e));
     }
@@ -820,12 +865,12 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, selectionSet, skeletonSizeMap, library, thumbSize, setUserThumbSize, searchText, toast, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, selectionSet, skeletonSizeMap, skeletonIndexMap, selectionAggregate, library, thumbSize, setUserThumbSize, searchText, toast, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, hasActiveFilters,
     init, setView, correctView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, renameLibrary,
-    addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
+    addCategoryToSelected, addTagToSelected, removeTagFromSelected, removeCategoryFromSelected, moveSelectedToFolder, setStarForSelected,
     showToast, applyEvent, setGlobalFilter,
   };
 });

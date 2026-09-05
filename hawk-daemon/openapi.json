@@ -264,6 +264,41 @@
         ],
         "type": "object"
       },
+      "Envelope_ItemAggregateResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "common_categories": {
+                "description": "全部选中项的分类交集（排序稳定）",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "common_tags": {
+                "description": "全部选中项的标签交集（排序稳定）",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "common_tags",
+              "common_categories"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_ItemBatchUpdateResponse": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -1004,6 +1039,43 @@
         ],
         "type": "object"
       },
+      "ItemAggregateRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "ItemAggregateResponse": {
+        "properties": {
+          "common_categories": {
+            "description": "全部选中项的分类交集（排序稳定）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "common_tags": {
+            "description": "全部选中项的标签交集（排序稳定）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "common_tags",
+          "common_categories"
+        ],
+        "type": "object"
+      },
       "ItemBatchUpdateRequest": {
         "properties": {
           "add_categories": {
@@ -1043,6 +1115,25 @@
                 "string",
                 "null"
               ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "remove_categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "remove_tags": {
+            "description": "并集移除（多选面板的「共有标签/分类 × 摘除」用）",
+            "items": {
+              "type": "string"
             },
             "type": [
               "array",
@@ -2584,6 +2675,37 @@
           }
         },
         "summary": "路径导入 / URL 下载 / base64 入库（三选一取内容）。目标已存在报 FILE_EXISTS；\nskip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/aggregate": {
+      "post": {
+        "operationId": "item_aggregate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAggregateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemAggregateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "选择集共有特性聚合（标签/分类交集）。多选面板的「共同标签/分类」数据源——\n前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算",
         "tags": [
           "item"
         ]

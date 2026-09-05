@@ -459,7 +459,7 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |
 | `Inspector.vue` | — | — | 检查器**壳**：顶部 40px 拖拽条（Windows/Linux 窗口控制 fixed 右侧；SearchBox `.inspector-search` 默认隐藏，触屏横屏 wide+touch 时填充——浏览器端该条本是无拖拽需求的空条）+ 按选中数分区分发：单选 `InspectorItem` / 多选 `InspectorBatch` / 无选中内联分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size）。共享样式在 `inspector-shared.css`（`.inspector-scope` 前缀隔离），格式化工具在 `format.ts` |
 | `InspectorItem.vue` | — | — | 单选区：1024 预览 + 调色板色块行（点击按颜色检索，再点清除）+ 只读态（触屏/viewer：同结构全静态）/ 编辑态（失焦提交 updateItem；名称/注释自动增高 textarea，名称回车提交且换行转空格，注释 Ctrl+Enter 提交）；**信息导航**：标签/分类 chips、文件位置路径点击跳对应视图；文件夹 Eagle 式树选择（FolderTreePicker，点击当前值弹出、选择即移动）；分类 ＋ 弹 CategoryPickerDialog（复用 addCategoryToSelected 批量追加语义）；文件位置列表多路径时逐行「删除此位置」（store.deleteLocation） |
-| `InspectorBatch.vue` | — | — | 多选区（参考 Eagle 多选面板）：堆叠预览 + 数量 + 批量标签/分类/文件夹/评分（应用到全部选中）+ 移入回收站/恢复；只读查看下隐藏全部写操作 |
+| `InspectorBatch.vue` | — | — | 多选区：与单选面板同构的 Unity Inspector 语义——同一套分区（标签/分类/文件夹/基本信息），值为全部选中项的交集，混值显示「多个值」（文件夹仍可点选统一移动）；标签/分类交集经 `item/aggregate` 服务端聚合，文件夹/评分/大小按选择集与骨架纯前端计算；chip 的 × 批量摘除（`remove_tags`/`remove_categories`），＋ 批量追加，评分为统一设置；只读查看下同结构纯展示 |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
 | `CategoryPickerDialog.vue` | `title: string` | `confirm(name: string)`、`cancel` | 分类输入模态：输入框带已有分类候选（datalist），可输入新名字；确认单个分类名（Inspector「＋添加到分类」与多选批量添加共用） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |

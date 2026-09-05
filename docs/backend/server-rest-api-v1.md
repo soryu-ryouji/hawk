@@ -392,6 +392,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | ---- | -------------------------------- | -------------- |
 | POST | `/api/v1/item/list`              | 查询 item 列表 |
 | POST | `/api/v1/item/skeleton`          | 全量布局骨架（dim，不分页，与 list 同序） |
+| POST | `/api/v1/item/aggregate`          | 选择集共有特性聚合：`{ ids }` → 标签/分类交集（多选面板数据源） |
 | GET  | `/api/v1/item/detail`            | 获取单个 item  |
 | GET  | `/api/v1/item/count`             | 获取 item 总数 |
 | POST | `/api/v1/item/add`               | 添加新 item    |
@@ -633,6 +634,7 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 语义与 `item/update` 的差异:
 
 - `add_tags` / `add_categories` 是**并集追加**(保留已有),不是整体替换
+- `remove_tags` / `remove_categories` 是**并集移除**（多选面板的共有特性摘除）
 - `star` / `folder_path` 是**设置**(与 `item/update` 同语义)
 
 #### 请求
@@ -643,9 +645,11 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 | add_tags      | string[] | 否   | 追加标签(并集,自动登记注册表)                  |
 | add_categories | string[] | 否  | 追加分类(并集;名称校验同 `item/update`,自动登记注册表) |
 | star          | number   | 否   | 评分 0–5(设置)                                 |
+| remove_tags   | string[] | 否   | 移除标签(并集)                                |
+| remove_categories | string[] | 否 | 移除分类(并集)                                |
 | folder_path   | string   | 否   | 移动到该文件夹(移动各 item 的主位置;空字符串为库根目录) |
 
-四个更新字段至少提供一个,否则返回 `INVALID_PARAM`。
+六个更新字段至少提供一个,否则返回 `INVALID_PARAM`。
 
 #### 部分失败语义
 

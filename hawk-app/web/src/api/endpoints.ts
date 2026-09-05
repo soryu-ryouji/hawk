@@ -22,6 +22,8 @@ export interface ItemBatchPatch {
   paths?: (string | null)[];
   add_tags?: string[];
   add_categories?: string[];
+  remove_tags?: string[];
+  remove_categories?: string[];
   star?: number;
   folder_path?: string;
 }
@@ -93,6 +95,9 @@ export const api = {
   /** 批量更新;missing_ids 为内容不存在或移动冲突的 id(其余字段照常应用) */
   itemBatchUpdate: (ids: string[], patch: ItemBatchPatch) =>
     request<{ updated: number; missing_ids: string[] }>('POST', '/api/v1/item/batch_update', { body: { ids, ...patch } }),
+  /** 选择集共有特性聚合（标签/分类交集；多选面板数据源） */
+  itemAggregate: (ids: string[]) =>
+    request<{ common_tags: string[]; common_categories: string[] }>('POST', '/api/v1/item/aggregate', { body: { ids } }),
   itemDelete: (id: string, path?: string) => request<void>('POST', '/api/v1/item/delete', { body: { id, path } }),
   itemRestore: (id: string, path?: string) => request<void>('POST', '/api/v1/item/restore', { body: { id, path } }),
   refreshThumbnail: (id: string) => request<void>('POST', '/api/v1/item/refresh_thumbnail', { body: { id } }),

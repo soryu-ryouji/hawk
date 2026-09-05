@@ -279,7 +279,7 @@ fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
     // 查询类 POST（复杂过滤结构），语义只读
     matches!(
         req.uri().path(),
-        "/api/v1/item/list" | "/api/v1/item/skeleton"
+        "/api/v1/item/list" | "/api/v1/item/skeleton" | "/api/v1/item/aggregate"
     )
 }
 

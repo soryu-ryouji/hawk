@@ -169,6 +169,43 @@ fn dispatch_dim_heal<'a>(state: &SharedState, items: impl Iterator<Item = (&'a s
     }
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(crate) struct ItemAggregateRequest {
+    ids: Vec<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct ItemAggregateResponse {
+    /// 全部选中项的标签交集（排序稳定）
+    common_tags: Vec<String>,
+    /// 全部选中项的分类交集（排序稳定）
+    common_categories: Vec<String>,
+}
+
+/// 选择集共有特性聚合（标签/分类交集）。多选面板的「共同标签/分类」数据源——
+/// 前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算
+#[utoipa::path(
+    post,
+    path = "/api/v1/item/aggregate",
+    tags = ["item"],
+    request_body = ItemAggregateRequest,
+    responses((status = 200, description = "OK", body = Envelope<ItemAggregateResponse>))
+)]
+pub(crate) async fn item_aggregate(
+    State(state): State<SharedState>,
+    JsonBody(req): JsonBody<ItemAggregateRequest>,
+) -> Result<Json<Envelope<ItemAggregateResponse>>, ApiError> {
+    if req.ids.is_empty() {
+        return Err(ApiError::invalid_param("ids 不能为空"));
+    }
+    let (common_tags, common_categories) = state.index.common_taxonomy(&req.ids);
+    Ok(Json(Envelope::ok(ItemAggregateResponse {
+        common_tags,
+        common_categories,
+    })))
+}
+
 /// 单 item 详情（锁内投影）
 #[utoipa::path(
     get,

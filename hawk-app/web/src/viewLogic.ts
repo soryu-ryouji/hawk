@@ -47,6 +47,45 @@ export function selectionTotalSize(selection: readonly string[], sizes: Readonly
   return sum;
 }
 
+/** 选择集共有文件夹：全部选中条目位于同一目录时返回该目录（"" 为库根），跨目录返回空数组。
+ *  纯客户端计算（条目 key 自带位置路径），无需服务端聚合 */
+export function commonFoldersOf(selection: readonly string[]): string[] {
+  if (selection.length === 0) {
+    return [];
+  }
+  const first = dirOfKey(selection[0]);
+  return selection.every((key) => dirOfKey(key) === first) ? [first] : [];
+}
+
+function dirOfKey(key: string): string {
+  const path = splitKey(key).path;
+  return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+}
+
+/** 选择集的共同评分：全部选中条目同分返回该分，混分/空选返回 null（多选面板评分回显用）
+ *  数据源为骨架（star 字段，全量） */
+export function commonStarOf(selection: readonly string[], skeleton: readonly SkeletonItem[]): number | null {
+  if (selection.length === 0) {
+    return null;
+  }
+  const stars = new Map(skeleton.map((s) => [itemKey(s.id, s.path), Number(s.star)]));
+  let common: number | null = null;
+  let first = true;
+  for (const key of selection) {
+    const star = stars.get(key);
+    if (star === undefined) {
+      continue;
+    }
+    if (first) {
+      common = star;
+      first = false;
+    } else if (common !== star) {
+      return null;
+    }
+  }
+  return common;
+}
+
 /**
  * 解析视图的有效排序：folder 自底向上沿父链继承（子文件夹自己的设置优先），
  * category/tag 无层级直接回落默认；无记忆语义的视图用全局默认

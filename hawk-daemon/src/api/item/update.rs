@@ -136,6 +136,9 @@ pub(crate) struct ItemBatchUpdateRequest {
     paths: Option<Vec<Option<String>>>,
     add_tags: Option<Vec<String>>,
     add_categories: Option<Vec<String>>,
+    /// 并集移除（多选面板的「共有标签/分类 × 摘除」用）
+    remove_tags: Option<Vec<String>>,
+    remove_categories: Option<Vec<String>>,
     star: Option<i32>,
     folder_path: Option<String>,
 }
@@ -167,7 +170,13 @@ pub(crate) async fn item_batch_update(
             return Err(ApiError::invalid_param("paths 须与 ids 等长"));
         }
     }
-    if req.add_tags.is_none() && req.add_categories.is_none() && req.star.is_none() && req.folder_path.is_none() {
+    if req.add_tags.is_none()
+        && req.add_categories.is_none()
+        && req.remove_tags.is_none()
+        && req.remove_categories.is_none()
+        && req.star.is_none()
+        && req.folder_path.is_none()
+    {
         return Err(ApiError::invalid_param("至少提供一个更新字段"));
     }
     if let Some(star) = req.star {
@@ -219,11 +228,13 @@ pub(crate) async fn item_batch_update(
         }
     }
 
-    // 元数据:标签/分类并集追加、评分设置;一次提交,由流水线批量应用(单写者)
+    // 元数据:标签/分类并集追加或移除、评分设置;一次提交,由流水线批量应用(单写者)
     let mut updated = 0;
     let mut missing: Vec<String> = move_failed;
-    if req.add_tags.is_some() || add_categories.is_some() || req.star.is_some() {
+    if req.add_tags.is_some() || add_categories.is_some() || req.remove_tags.is_some() || req.remove_categories.is_some() || req.star.is_some() {
         let add_tags = req.add_tags.clone();
+        let remove_tags = req.remove_tags.clone();
+        let remove_categories = req.remove_categories.clone();
         let star = req.star;
         let result = state
             .pipeline
@@ -235,12 +246,18 @@ pub(crate) async fn item_batch_update(
                         }
                     }
                 }
+                if let Some(tags) = &remove_tags {
+                    meta.tags.retain(|t| !tags.contains(t));
+                }
                 if let Some(categories) = &add_categories {
                     for c in categories {
                         if !meta.categories.contains(c) {
                             meta.categories.push(c.clone());
                         }
                     }
+                }
+                if let Some(categories) = &remove_categories {
+                    meta.categories.retain(|c| !categories.contains(c));
                 }
                 if let Some(star) = star {
                     meta.star = star;

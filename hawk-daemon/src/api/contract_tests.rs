@@ -57,6 +57,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("GET", "/api/v1/tag/list", None),
     ("GET", "/api/v1/view/preferences", None),
     ("POST", "/api/v1/item/list", Some("{}")),
+    ("POST", "/api/v1/item/aggregate", Some(r#"{"ids":["x"]}"#)),
     ("POST", "/api/v1/item/skeleton", Some("{}")),
     ("POST", "/api/v1/library/reindex", None),
     ("POST", "/api/v1/library/storage_mode", Some(r#"{"mode":"database"}"#)),
@@ -711,4 +712,47 @@ async fn storage_mode_migration_roundtrip() {
     assert_eq!(body["data"]["tags"], json!(["迁移标记"]));
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// 选择集聚合：common_taxonomy 交集语义 + batch_update 的 remove_tags/remove_categories 摘除
+#[tokio::test]
+async fn aggregate_and_batch_remove() {
+    let app = test_app("aggregate");
+    let id_a = app.add_test_item("a.png", [11, 11, 11]).await;
+    let id_b = app.add_test_item("b.png", [12, 12, 12]).await;
+    // a: 共有+独有；b: 共有+另一独有 + 分类
+    call_json(&app.router, "POST", "/api/v1/item/update", Some(json!({"id": id_a, "tags": ["共有", "仅A"], "categories": ["共有分类"]}))).await;
+    call_json(&app.router, "POST", "/api/v1/item/update", Some(json!({"id": id_b, "tags": ["共有", "仅B"], "categories": ["共有分类", "仅B分类"]}))).await;
+
+    // 交集：tags=[共有]，categories=[共有分类]
+    let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": [id_a, id_b]}))).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["common_tags"], json!(["共有"]));
+    assert_eq!(body["data"]["common_categories"], json!(["共有分类"]));
+
+    // 空 ids 报错；不存在的 id 静默跳过
+    let (status, _) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": []}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": ["ghost"]}))).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["common_tags"], json!([]));
+
+    // 批量摘除共有标签/分类：remove 语义生效
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/batch_update",
+        Some(json!({"ids": [id_a, id_b], "remove_tags": ["共有"], "remove_categories": ["共有分类"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+    let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": [id_a, id_b]}))).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["common_tags"], json!([]), "共有标签应已摘除");
+    assert_eq!(body["data"]["common_categories"], json!([]));
+
+    // 各自的独有标签不受影响
+    let (_, bytes) = call_json(&app.router, "GET", &format!("/api/v1/item/detail?id={id_a}"), None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["tags"], json!(["仅A"]));
 }

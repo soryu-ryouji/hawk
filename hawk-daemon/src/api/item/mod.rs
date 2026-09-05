@@ -31,6 +31,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     OpenApiRouter::new()
         .routes(routes!(query::item_list))
         .routes(routes!(query::item_skeleton))
+        .routes(routes!(query::item_aggregate))
         .routes(routes!(query::item_detail))
         .routes(routes!(query::item_count))
         .routes(routes!(add::item_add))

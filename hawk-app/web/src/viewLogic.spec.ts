@@ -6,6 +6,8 @@ import {
   isGlobalViewKind,
   indexSkeletonById,
   isUnfilteredView,
+  commonFoldersOf,
+  commonStarOf,
   itemKey,
   locationSetChangedOf,
   mergeDetailOnUpdate,
@@ -199,6 +201,24 @@ const skel = (id: string, path: string, patch: Partial<{ star: number; width: nu
   star: 0,
   size: 100,
   ...patch,
+});
+
+describe('commonFoldersOf', () => {
+  it('全部同目录返回该目录；跨目录返回空；库根为 ""', () => {
+    expect(commonFoldersOf([itemKey('a', 'd/1.png'), itemKey('b', 'd/2.png')])).toEqual(['d']);
+    expect(commonFoldersOf([itemKey('a', 'd/1.png'), itemKey('b', 'e/2.png')])).toEqual([]);
+    expect(commonFoldersOf([itemKey('a', '1.png')])).toEqual(['']);
+    expect(commonFoldersOf([])).toEqual([]);
+  });
+});
+
+describe('commonStarOf', () => {
+  it('全同分返回该分；混分/空选/无骨架返回 null', () => {
+    const skeleton = [skel('a', '1.png', { star: 3 }), skel('b', '2.png', { star: 3 }), skel('c', '3.png', { star: 5 })];
+    expect(commonStarOf([itemKey('a', '1.png'), itemKey('b', '2.png')], skeleton)).toBe(3);
+    expect(commonStarOf([itemKey('a', '1.png'), itemKey('c', '3.png')], skeleton)).toBeNull();
+    expect(commonStarOf([], skeleton)).toBeNull();
+  });
 });
 
 describe('selectionTotalSize', () => {

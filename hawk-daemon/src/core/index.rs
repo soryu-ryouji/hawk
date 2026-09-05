@@ -336,6 +336,30 @@ impl ItemIndex {
         names.into_iter().map(|n| (n.clone(), counts.get(&n).copied().unwrap_or(0))).collect()
     }
 
+    /// 一批 item 的标签/分类交集（多选面板的共有特性聚合）。不在索引的 id 静默跳过；
+    /// 全不在或交集为空 → 空列表。结果排序（小写字典序）保证稳定
+    pub fn common_taxonomy(&self, hashes: &[String]) -> (Vec<String>, Vec<String>) {
+        let inner = read_inner!(self);
+        let mut tags: Option<Vec<String>> = None;
+        let mut categories: Option<Vec<String>> = None;
+        for hash in hashes {
+            let Some(item) = inner.by_hash.get(hash) else { continue };
+            tags = Some(match tags {
+                None => item.tags.clone(),
+                Some(prev) => prev.into_iter().filter(|t| item.tags.contains(t)).collect(),
+            });
+            categories = Some(match categories {
+                None => item.categories.clone(),
+                Some(prev) => prev.into_iter().filter(|c| item.categories.contains(c)).collect(),
+            });
+        }
+        let mut tags = tags.unwrap_or_default();
+        let mut categories = categories.unwrap_or_default();
+        tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        categories.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        (tags, categories)
+    }
+
     /// 按目录统计库内文件数（位置级：同内容多位置各计一次；不含回收站）。key 为目录相对路径（"" 为库根）。
     /// 计数含全部子孙目录（每位置沿目录链各计一次）
     pub fn folder_counts(&self) -> HashMap<String, usize> {

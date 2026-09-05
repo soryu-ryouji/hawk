@@ -327,6 +327,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/item/aggregate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 选择集共有特性聚合（标签/分类交集）。多选面板的「共同标签/分类」数据源——
+         *     前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算
+         */
+        post: operations["item_aggregate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/item/batch_update": {
         parameters: {
             query?: never;
@@ -884,6 +904,16 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_ItemAggregateResponse: {
+            data?: {
+                /** @description 全部选中项的分类交集（排序稳定） */
+                common_categories: string[];
+                /** @description 全部选中项的标签交集（排序稳定） */
+                common_tags: string[];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_ItemBatchUpdateResponse: {
             data?: {
                 missing_ids: string[];
@@ -1087,6 +1117,15 @@ export interface components {
              */
             skipped: boolean;
         };
+        ItemAggregateRequest: {
+            ids: string[];
+        };
+        ItemAggregateResponse: {
+            /** @description 全部选中项的分类交集（排序稳定） */
+            common_categories: string[];
+            /** @description 全部选中项的标签交集（排序稳定） */
+            common_tags: string[];
+        };
         ItemBatchUpdateRequest: {
             add_categories?: string[] | null;
             add_tags?: string[] | null;
@@ -1094,6 +1133,9 @@ export interface components {
             ids: string[];
             /** @description 与 ids 等长的可选位置限定（同内容多位置时按位置移动 folder_path；缺省或元素为 null 时取主位置） */
             paths?: (string | null)[] | null;
+            remove_categories?: string[] | null;
+            /** @description 并集移除（多选面板的「共有标签/分类 × 摘除」用） */
+            remove_tags?: string[] | null;
             /** Format: int32 */
             star?: number | null;
         };
@@ -1804,6 +1846,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_ItemAddResponse"];
+                };
+            };
+        };
+    };
+    item_aggregate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemAggregateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ItemAggregateResponse"];
                 };
             };
         };
