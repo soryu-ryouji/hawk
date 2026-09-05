@@ -4,6 +4,7 @@ import { api } from '../api/endpoints';
 import { startItemsDrag } from '../dnd';
 import { useLibraryStore } from '../stores/library';
 import { itemKey } from '../viewLogic';
+import { useLongPress } from '../composables/useLongPress';
 import { CARD_BORDER, CARD_META_H } from '../layout';
 import type { Item } from '../types';
 
@@ -60,6 +61,18 @@ function onDragStart(e: DragEvent) {
   }
   startItemsDrag(e, store.selection);
 }
+
+// 长按（触屏/笔）→ 菜单：iOS 长按不派发 contextmenu，这里是移动端条目菜单的入口；
+// 发与右键同款 menu 事件（菜单逻辑在 ItemGrid.onMenu）。长按后松手的首个 click 吞掉，
+// 防触屏单击语义（选中/开预览）在菜单背后再触发。
+const longPress = useLongPress((e) => emit('menu', props.item, e));
+
+function onClick(e: MouseEvent) {
+  if (longPress.consumeClick()) {
+    return;
+  }
+  emit('select', props.item, e);
+}
 </script>
 
 <template>
@@ -68,9 +81,13 @@ function onDragStart(e: DragEvent) {
     :class="{ selected }"
     :style="cardStyle"
     :draggable="!store.isTrash"
-    @click="emit('select', item, $event)"
+    @click="onClick"
     @dblclick="emit('open', item)"
     @contextmenu.prevent="emit('menu', item, $event)"
+    @pointerdown="longPress.down"
+    @pointermove="longPress.move"
+    @pointerup="longPress.end"
+    @pointercancel="longPress.end"
     @dragstart="onDragStart"
   >
     <div class="thumb" :style="thumbStyle">
@@ -101,6 +118,9 @@ function onDragStart(e: DragEvent) {
   /* 总边框宽 = --card-border（2px × 2），与 ItemGrid 行槽位计算同一来源 */
   border: calc(var(--card-border, 4px) / 2) solid transparent;
   cursor: default;
+  /* 禁 iOS 长按系统弹层：缩略图是 1024 压缩图，系统「存储图像」存到的不是原图，
+     长按保存统一走条目菜单的「保存图片」（useLongPress） */
+  -webkit-touch-callout: none;
 }
 
 .card.selected {

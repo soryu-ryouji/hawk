@@ -9,6 +9,7 @@ import { useLayout } from '../composables/useLayout';
 import { useZoomPan } from '../composables/useZoomPan';
 import { itemKey, splitKey } from '../viewLogic';
 import { isRotatableImage } from '../imageEdit';
+import { saveImageToDisk } from '../saveImage';
 import { showInFileManagerLabel, hasShell, shell } from '../platform';
 import type { Item } from '../types';
 
@@ -50,10 +51,27 @@ async function copyImage() {
   }
 }
 
-// 右键菜单：打开所在文件夹 / 复制文件路径 / 复制图片 / 编辑图片 / 删除。
+// 右键/长按菜单：保存图片（仅浏览器端）/ 打开所在文件夹 / 复制文件路径 / 复制图片 / 编辑图片 / 删除。
 // 浏览器（无 hawkShell）隐藏系统相关项；只读查看（viewer）隐藏全部写操作，无可用项时不弹菜单。
 function onMenu(e: MouseEvent) {
   const items = [
+    // 保存图片：仅浏览器端出现（桌面端文件本就在本机，走「在文件管理器中显示」）；
+    // 读操作，viewer 只读也可用——移动端预览层是保存原图的主入口
+    ...(!hasShell
+      ? [
+          {
+            label: '保存图片',
+            action: () =>
+              void saveImageToDisk(props.item)
+                .then((r) => {
+                  if (r === 'saved') {
+                    store.showToast('已保存图片');
+                  }
+                })
+                .catch(() => store.showToast('保存图片失败')),
+          },
+        ]
+      : []),
     ...(hasShell
       ? [
           { label: showInFileManagerLabel, action: () => void shell.showInFinder(props.item.paths[0]) },
@@ -96,6 +114,8 @@ const gestures = useZoomPan({
   navigate: (dir) => emit('navigate', dir),
   close: () => emit('close'),
   hitImage: pointInImage,
+  // 长按（触屏/笔）打开条目菜单：iOS 无原生长按菜单，移动端保存图片的入口
+  onLongPress: (e) => onMenu(e),
 });
 const {
   scale, tx, ty, dragging,

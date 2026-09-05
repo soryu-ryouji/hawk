@@ -14,6 +14,7 @@ import PromptDialog from './PromptDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import { isRotatableImage } from '../imageEdit';
+import { saveImageToDisk } from '../saveImage';
 import { itemKey } from '../viewLogic';
 import { useLayout } from '../composables/useLayout';
 import { CARD_META_H, GRID_GAP, layoutRows, type LayoutCell, type LayoutRow } from '../layout';
@@ -254,12 +255,25 @@ function onMenu(item: Item, e: MouseEvent) {
     store.select(key);
   }
 
+  /** 保存原图到本机（浏览器端移动端的主保存路径；结果/失败反馈见 saveImage.ts 与 toast） */
+  function saveItem() {
+    saveImageToDisk(item)
+      .then((r) => {
+        if (r === 'saved') {
+          store.showToast('已保存图片');
+        }
+      })
+      .catch(() => store.showToast('保存图片失败'));
+  }
+
   const items = store.isTrash
     ? [
         { label: '恢复', action: () => void store.restoreSelected() },
         { label: '清空回收站', danger: true, action: confirmClearTrash },
       ]
     : [
+        // 保存图片：仅浏览器端出现（桌面端文件本就在本机，走「在文件管理器中显示」）
+        ...(!hasShell ? [{ label: '保存图片', action: saveItem }] : []),
         { label: '添加标签…', action: () => (showTagDialog.value = true) },
         { label: '添加到分类…', action: () => (showCategoryDialog.value = true) },
         { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },

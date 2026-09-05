@@ -1,8 +1,21 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref, watch } from 'vue';
-import { useContextMenu } from '../composables/useContextMenu';
+import { CONTEXT_MENU_OPEN_GUARD_MS, useContextMenu } from '../composables/useContextMenu';
 
 const { state, close } = useContextMenu();
+
+/** 开场守卫：打开后 OPEN_GUARD_MS 内的遮罩 click/contextmenu 忽略——长按开菜单后松手跟发的
+ *  click/contextmenu（Android 原生长按、指针捕获回投）落在遮罩上，不挡会把刚开的菜单秒关。
+ *  人手不可能在 250ms 内点到遮罩，正常「点空白关菜单」不受影响 */
+function canClose(): boolean {
+  return Date.now() - state.openedAt >= CONTEXT_MENU_OPEN_GUARD_MS;
+}
+
+function onMaskClick(): void {
+  if (canClose()) {
+    close();
+  }
+}
 
 const menuRef = ref<HTMLElement | null>(null);
 const pos = ref({ x: 0, y: 0 });
@@ -65,7 +78,7 @@ watch(
 
 <template>
   <Teleport to="body">
-    <div v-if="state.visible" class="mask" @click="close" @contextmenu.prevent="close">
+    <div v-if="state.visible" class="mask" @click="onMaskClick" @contextmenu.prevent="onMaskClick">
       <div ref="menuRef" class="menu" data-context-menu="" :style="{ left: pos.x + 'px', top: pos.y + 'px' }" @click.stop>
         <template v-for="(item, i) in state.items" :key="i">
           <div v-if="item.separator" class="separator" />

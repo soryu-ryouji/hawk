@@ -10,6 +10,9 @@
 // - 双指变单指：放大态剩余手指无缝接管平移；捏合收尾不按滑动/下拉判定
 // - 边缘橡皮筋：首/末张无邻图一侧拖动 0.35 阻尼（不可拖出空槽）
 // - 点击 vs 拖拽：位移 >8px 记 moved，点击关闭/双击不再触发
+// - 长按（触屏/笔单指按住不动 500ms）：打开条目菜单（iOS 无原生长按菜单，移动端保存图片入口）；
+//   移动超阈值/第二指/抬手取消，触发后本次按压冻结（不再驱动平移/滑动/下拉/tap），
+//   松手跟发的 click 被吞（落点在空白边距时防误关预览）
 // - 释放/关闭动画（170ms）期间不接收新手势
 // 所有手势落在始终挂载的全屏手势层上（pointer capture），视觉层只是其下 pointer-events:none 的
 // 跟随层——v-if 模式切换不打断进行中的手势（捏合跨 scale=1 不丢跟踪）。
@@ -37,7 +40,12 @@ export interface ZoomPanOptions {
   close: () => void;
   /** 平移模式点击空白边距关闭的命中测试：点在实际图像显示区内返回 true（不关闭） */
   hitImage: (x: number, y: number) => boolean;
+  /** 长按触发（触屏/笔单指按住不动 500ms）：打开条目菜单（iOS 无原生长按菜单） */
+  onLongPress?: (e: PointerEvent) => void;
 }
+
+/** 长按判定时长与双击窗口一致量级 */
+const LONG_PRESS_MS = 500;
 
 export function useZoomPan(opts: ZoomPanOptions) {
   const scale = ref(1);
@@ -67,6 +75,19 @@ export function useZoomPan(opts: ZoomPanOptions) {
   let lastPointerType = 'mouse';
   /** 触屏双击计时的上次点按（位置 + 时刻）；拖拽/切图清零重计 */
   let lastTap: { x: number; y: number; time: number } | null = null;
+  /** 长按计时器（未触发为 0）：单指触屏/笔按住不动，移动/第二指/抬手取消 */
+  let longPressTimer = 0;
+  /** 长按已触发：本次按压冻结（不再驱动平移/滑动/下拉/tap，防菜单背后拖动图片） */
+  let longPressLock = false;
+  /** 长按触发后松手跟发的 click 吞一次（落点在空白边距时防误关预览） */
+  let clickGuard = false;
+
+  function cancelLongPress(): void {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = 0;
+    }
+  }
 
   /** 视觉层复位（切图/复位时调用；手指通常已抬起，手势状态一并清零兜底防泄漏） */
   function reset() {
@@ -85,6 +106,9 @@ export function useZoomPan(opts: ZoomPanOptions) {
     dragging.value = false;
     moved = false;
     lastTap = null;
+    cancelLongPress();
+    longPressLock = false;
+    clickGuard = false;
   }
 
   /** 双击语义：未放大（scale≤1）时退出预览（与双击卡片开预览对称）；放大状态仍复位
@@ -155,7 +179,8 @@ export function useZoomPan(opts: ZoomPanOptions) {
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     moved = false;
     if (pointers.size === 2) {
-      // 第二指落下：转捏合，取消进行中的单指手势（平移/滑动/下拉）
+      // 第二指落下：转捏合，取消进行中的单指手势（平移/滑动/下拉/长按）
+      cancelLongPress();
       const [a, b] = [...pointers.values()];
       pinch = { startDist: Math.hypot(a.x - b.x, a.y - b.y), startScale: scale.value };
       dragStart = null;
@@ -167,6 +192,16 @@ export function useZoomPan(opts: ZoomPanOptions) {
     } else if (pointers.size === 1) {
       dragStart = { x: e.clientX, y: e.clientY, tx: tx.value, ty: ty.value };
       dragging.value = true;
+      // 长按计时（触屏/笔单指）：移动/抬手/第二指取消；触发后本次按压冻结为菜单态
+      if (e.pointerType !== 'mouse') {
+        longPressTimer = window.setTimeout(() => {
+          longPressTimer = 0;
+          longPressLock = true;
+          clickGuard = true;
+          navigator.vibrate?.(10);
+          opts.onLongPress?.(e);
+        }, LONG_PRESS_MS);
+      }
     }
   }
 
@@ -175,6 +210,10 @@ export function useZoomPan(opts: ZoomPanOptions) {
       return;
     }
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // 长按已触发（菜单已开）：冻结手势，只跟踪指针位置，防菜单背后拖动图片
+    if (longPressLock) {
+      return;
+    }
     if (pinch) {
       if (pointers.size < 2) {
         return;
@@ -199,6 +238,7 @@ export function useZoomPan(opts: ZoomPanOptions) {
     const dy = e.clientY - dragStart.y;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
       moved = true;
+      cancelLongPress(); // 移动即取消长按：滚动/滑动/拖拽意图优先
     }
     if (scale.value > 1) {
       tx.value = dragStart.tx + dx;
@@ -230,6 +270,7 @@ export function useZoomPan(opts: ZoomPanOptions) {
       return;
     }
     pointers.delete(e.pointerId);
+    cancelLongPress();
     if (pinch) {
       if (pointers.size >= 2) {
         return; // 仍有两指：捏合继续
@@ -248,6 +289,11 @@ export function useZoomPan(opts: ZoomPanOptions) {
     }
     dragStart = null;
     dragging.value = false;
+    // 长按已触发：本次按压的释放不产生 tap/滑动/下拉语义（菜单已开，手势冻结到抬起为止）
+    if (longPressLock) {
+      longPressLock = false;
+      return;
+    }
     // 下拉释放：过阈值 → 下滑出 + 背景淡出后关闭；否则回弹（仅移动端会进入 pullActive）
     if (pullActive.value) {
       const shouldClose = pullY.value >= PULL_CLOSE_MIN;
@@ -291,6 +337,8 @@ export function useZoomPan(opts: ZoomPanOptions) {
 
   function onPointerCancel(e: PointerEvent) {
     pointers.delete(e.pointerId);
+    cancelLongPress();
+    longPressLock = false;
     if (pointers.size < 2) {
       pinch = null;
     }
@@ -307,6 +355,11 @@ export function useZoomPan(opts: ZoomPanOptions) {
    * carousel 点击不关闭，平移模式点图像不关闭。
    */
   function onGestureClick(e: MouseEvent) {
+    // 长按触发后松手跟发的 click：吞掉（落点在空白边距时会误关预览）
+    if (clickGuard) {
+      clickGuard = false;
+      return;
+    }
     if (moved || scale.value <= 1 || opts.hitImage(e.clientX, e.clientY)) {
       return;
     }
