@@ -1427,6 +1427,11 @@
             "description": "同 id（内容）多位置时按 path 区分条目",
             "type": "string"
           },
+          "size": {
+            "description": "该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）",
+            "format": "int64",
+            "type": "integer"
+          },
           "star": {
             "format": "int32",
             "type": "integer"
@@ -1441,7 +1446,8 @@
           "path",
           "width",
           "height",
-          "star"
+          "star",
+          "size"
         ],
         "type": "object"
       },

@@ -506,14 +506,14 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
   "status": "success",
   "data": {
     "items": [
-      { "id": "9b1f2c...", "width": 1920, "height": 1080, "star": 4 }
+      { "id": "9b1f2c...", "path": "posters/a.jpg", "width": 1920, "height": 1080, "star": 4, "size": 1048576 }
     ],
     "total_size": 314572800
   }
 }
 ```
 
-条目数（`items` 长度）即全量计数；`star` 供网格 ★ 角标在未加载详情时显示。
+条目数（`items` 长度）即全量计数；`star` 供网格 ★ 角标在未加载详情时显示；`size` 为该位置字节数，供选择集大小聚合（选择集可远超视口窗口，详情缓存承担不起全量聚合）。
 
 ### detail
 
@@ -650,6 +650,7 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 - **内容不存在**的 id:跳过该项(元数据与移动都不应用),记入 `missing_ids`
 - **移动冲突**(目标位置已有同名文件):跳过该项的移动,记入 `missing_ids`;`add_tags` / `add_categories` / `star` 照常应用
 - **回收站中的 item**(无库内位置):移动不适用,跳过;元数据照常应用
+- **空操作**（如追加的标签已存在，元数据无变化）：跳过落盘与事件，不计入 `updated`
 
 #### 响应
 
@@ -660,9 +661,9 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 }
 ```
 
-`updated` 为成功应用元数据的 id 数;`missing_ids` 为上述未达成的 id(去重)。客户端可据此提示「已更新 n 项,m 项未处理」。
+`updated` 为实际变更元数据的 id 数（空操作不计）;`missing_ids` 为上述未达成的 id(去重)。客户端可据此提示「已更新 n 项,m 项未处理」。
 
-每个成功更新的 item 都会照常推送 `item.updated` 事件。
+事件推送合并为分块的 `items.updated`（每块最多 1000 个 item），不再逐条发 `item.updated`——大批量（数万项）时逐条事件会形成风暴打挂客户端。
 
 ### delete
 
@@ -849,7 +850,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `item.added`      | Item 对象 | 新文件入库（单条路径：监听/API 增量） |
 | `items.added`     | `{ "ids": ["..."] }` | 扫描导入的批量合并事件（300ms 窗口/2000 条上限合成一条）；客户端按「有新增」信号重载列表即可 |
 | `item.updated`    | Item 对象 | 元数据、文件位置或调色板变更(缩略图生成完成也补发一次,前端据此重建 404 占位) |
-| `items.updated`   | `{ "items": [Item...] }` | `item.updated` 的批量变体（调色板批量回写等），客户端逐个就地替换缓存 |
+| `items.updated`   | `{ "items": [Item...] }` | `item.updated` 的批量变体（调色板批量回写、`batch_update`、分类/标签重命名与删除的级联迁移），攒满 1000 条发一帧，客户端逐个就地替换缓存 |
 | `item.trashed`    | `{ "id": "..." }` | 最后一个库内位置移入回收站 |
 | `item.restored`   | Item 对象 | 首个回收站位置回归库内 |
 | `item.removed`    | `{ "id": "..." }` | 彻底删除(无剩余位置) |
@@ -893,7 +894,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 
 ### 时序与可靠性语义
 
-- **节流**:`task.progress` 服务端 500ms 最多一帧;`item.*` 事件无节流,批量操作(如 `item/batch_update` 500 项)会连续收到多条
+- **节流**:`task.progress` 服务端 500ms 最多一帧;`item.*` 事件无节流;批量元数据操作（`item/batch_update`）合并为分块的 `items.updated` 帧
 - **不保证送达**:订阅者消费跟不上(积压 1024 条)时服务端直接断开该订阅——客户端重连后必须以 `item/skeleton` + `folder/list` 全量对齐,不得假设收到过全部事件
 - **初始索引期间**:就绪网关拦截期内不推事件(订阅端点同样 503),主界面加载完成后订阅即可
 - **顺序**:同一 item 的事件按流水线处理顺序发出;不同 item 之间无全局顺序保证

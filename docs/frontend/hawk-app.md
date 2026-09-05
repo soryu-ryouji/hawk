@@ -352,6 +352,7 @@ details: Map<string, Item>;      // 已拉取详情（视口窗口 + 预取）�
 total: number;                   // = skeleton.length
 totalSize: number; loading: boolean; windowLoading: boolean;   // 整表加载中 / 视口窗口补数据中
 selection: string[];             // 选中 id，有序；末位为主选中/连选锚点（selectAll 基于全量骨架）
+selectionSet: Set<string>;       // selection 的 computed 集：渲染层成员查询一律 has()（数组 includes 在全选数万条目时是 O(n²) + 响应式索引跟踪双重开销）
 library: LibraryInfo | null;
 thumbSize: number;               // 网格卡片边长偏好（滑杆 120–280，齐行布局目标行高）：桌面端会话级、固定 160 不持久化；web 端（浏览器）用户显式设置过则记忆 localStorage（`hawk:thumbSize`，越界/损坏回退到无偏好，经 persist.ts）且不再自动切换，未设置时跟随视口宽度的动态默认——≥700px 用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转经 useMediaQuery 自动跟随；用户设置统一走 setUserThumbSize（与动态默认写入路径区分）
 sidebarVisible: boolean;         // 侧栏显隐（标题栏开关，默认开）
@@ -504,7 +505,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 | 事件 | 处理 |
 | ---- | ---- |
 | `item.updated` | 负载是完整 Item。详情在缓存中就地替换立即反映；骨架上的 star 同步（★ 角标）。过滤视图/激活查询条件时防抖 200ms 重载骨架（成员判定以服务端查询为准，如摘掉当前分类后 item 即时消失）；未过滤视图下事件不在骨架且为单条（如同内容 item 经上传获得库内路径的复活场景）也重拉，否则新成员卡片不出现。updateItem 响应走同一入口（按单条处理） |
-| `items.updated` | `item.updated` 的批量变体（调色板批量回写），逐个就地替换详情缓存；不在骨架的成员不重拉骨架（避免全库重建时非成员项触发重拉风暴） |
+| `items.updated` | `item.updated` 的批量变体（调色板批量回写、`batch_update` 批量元数据应用——后者按 1000 条分块），逐个就地替换详情缓存；不在骨架的成员不重拉骨架（避免全库重建时非成员项触发重拉风暴） |
 | `item.added` / `item.restored` | 新 item 落点（成员/次序）以服务端为准，防抖 200ms 重载骨架 |
 | `items.added` | 扫描导入批量事件（300ms 窗口合并），与 `item.added` 同处理 |
 | `item.trashed` / `item.removed` | 就地移除（详情 + 骨架 + 选择），回收站视图同事件意味着「进来」，统一防抖重载兜底 |

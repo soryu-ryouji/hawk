@@ -18,7 +18,7 @@ pub struct PaletteEntry {
     pub percentage: f32,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct ItemMetadata {
     pub paths: Vec<PathEntry>,
     pub url: Option<String>,

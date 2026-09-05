@@ -423,6 +423,7 @@ impl ItemIndex {
                             width: i.width,
                             height: i.height,
                             star: i.star,
+                            size: l.size,
                         },
                     )
                 })

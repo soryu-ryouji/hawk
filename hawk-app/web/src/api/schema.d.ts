@@ -1163,6 +1163,11 @@ export interface components {
             id: string;
             /** @description 同 id（内容）多位置时按 path 区分条目 */
             path: string;
+            /**
+             * Format: int64
+             * @description 该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）
+             */
+            size: number;
             /** Format: int32 */
             star: number;
             /** Format: int32 */

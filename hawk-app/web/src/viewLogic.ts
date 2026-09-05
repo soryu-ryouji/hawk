@@ -37,6 +37,16 @@ export function splitKey(key: string): { id: string; path: string } {
   return { id: key.slice(0, i), path: key.slice(i + 1) };
 }
 
+/** 选择集总字节数：按选择集条目 key 查表累加。数据源是骨架（含 size，全量）而非详情
+ * （详情只覆盖视口窗口：全选数万条目时仅百来条有详情，按详情聚合必然偏小） */
+export function selectionTotalSize(selection: readonly string[], sizes: ReadonlyMap<string, number>): number {
+  let sum = 0;
+  for (const key of selection) {
+    sum += sizes.get(key) ?? 0;
+  }
+  return sum;
+}
+
 /**
  * 解析视图的有效排序：folder 自底向上沿父链继承（子文件夹自己的设置优先），
  * category/tag 无层级直接回落默认；无记忆语义的视图用全局默认
@@ -73,15 +83,26 @@ export function isGlobalViewKind(view: ViewState): boolean {
   return view.kind === 'all' || view.kind === 'root' || view.kind === 'uncategorized' || view.kind === 'untagged';
 }
 
-/** item.updated 的位置集变化判定：以骨架为准（details 可能未缓存该 hash）。骨架 path 与事件 paths
- *  同口径化后比对（回收站视图事件 paths 为原路径投影，骨架 path 剥掉 trash 前缀）；
+/** 骨架按内容 id 建索引（id → 骨架下标数组；同内容多位置各占一项）。
+ *  item.updated 处理链路经它 O(1) 定位相关条目，避免每条事件全扫骨架（批量更新时是 O(n²)） */
+export function indexSkeletonById(skeleton: readonly SkeletonItem[]): Map<string, number[]> {
+  const map = new Map<string, number[]>();
+  for (let i = 0; i < skeleton.length; i++) {
+    const list = map.get(skeleton[i].id);
+    if (list) {
+      list.push(i);
+    } else {
+      map.set(skeleton[i].id, [i]);
+    }
+  }
+  return map;
+}
+
+/** item.updated 的位置集变化判定：入参为该 id 的骨架条目路径（调用方经 indexSkeletonById 取）。
+ *  骨架 path 与事件 paths 同口径化后比对（回收站视图事件 paths 为原路径投影，骨架 path 剥掉 trash 前缀）；
  *  改名/移动/增删位置都会命中 */
-export function locationSetChangedOf(
-  skeleton: readonly Pick<SkeletonItem, 'id' | 'path'>[],
-  updated: Pick<Item, 'id' | 'paths'>,
-): boolean {
-  const skelPaths = skeleton.filter((s) => s.id === updated.id).map((s) => displayPath(s.path));
-  return skelPaths.length > 0 && !sameNameSet(skelPaths, updated.paths);
+export function locationSetChangedOf(skelPaths: readonly string[], updated: Pick<Item, 'paths'>): boolean {
+  return skelPaths.length > 0 && !sameNameSet(skelPaths.map(displayPath), updated.paths);
 }
 
 /** item.updated 的分类/标签维度变化判定（内容级，与位置无关） */
@@ -113,21 +134,25 @@ export function mergeDetailOnUpdate(prev: Item, updated: Item, isEventLocation: 
   };
 }
 
-/** item.updated 的骨架就地合并：该 hash 全部位置条目同步 star/宽高（★ 角标与布局比例）；
- *  未变化返回原数组引用（changed=false），调用方据此跳过重渲染 */
+/** item.updated 的骨架就地补丁：按索引（indexSkeletonById 取出）同步 star/宽高（★ 角标与布局比例）；
+ *  任一变化才克隆数组（changed=true），未变化返回原数组引用，调用方据此跳过重渲染 */
 export function patchSkeletonOnUpdate(
   skeleton: readonly SkeletonItem[],
+  indices: readonly number[],
   updated: Item,
 ): { next: SkeletonItem[]; changed: boolean } {
-  let changed = false;
-  const next = skeleton.map((s) => {
-    if (s.id !== updated.id || !skeletonNeedsPatch(s, updated)) {
-      return s;
+  let next: SkeletonItem[] | null = null;
+  for (const idx of indices) {
+    const s = skeleton[idx];
+    if (!skeletonNeedsPatch(s, updated)) {
+      continue;
     }
-    changed = true;
-    return { ...s, star: updated.star, width: updated.width, height: updated.height };
-  });
-  return { next: changed ? next : (skeleton as SkeletonItem[]), changed };
+    if (!next) {
+      next = skeleton.slice();
+    }
+    next[idx] = { ...s, star: updated.star, width: updated.width, height: updated.height };
+  }
+  return { next: next ?? (skeleton as SkeletonItem[]), changed: next !== null };
 }
 
 /** item.updated 后是否需要重载骨架（成员/次序以服务端查询为准的兜底时机）。

@@ -5,7 +5,7 @@ import { useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from './useContextMenu';
-import { gridNavRows, moveGridSelection } from './useGridNav';
+import { gridNavRows, markKeyboardNavScroll, moveGridSelection } from './useGridNav';
 import { itemKey } from '../viewLogic';
 
 export function useShortcuts() {
@@ -57,7 +57,10 @@ export function useShortcuts() {
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
-      store.selectAll();
+      if (!e.repeat) {
+        // 按住不放时 keydown 自动重复：全选幂等，重复触发只是白重建选择集
+        store.selectAll();
+      }
       return;
     }
 
@@ -81,6 +84,8 @@ export function useShortcuts() {
         dy,
       );
       if (next) {
+        // 仅键盘导航允许触发「滚动到选中项」（ItemGrid 的 watcher 消费此标记）
+        markKeyboardNavScroll();
         store.select(next);
       }
     }

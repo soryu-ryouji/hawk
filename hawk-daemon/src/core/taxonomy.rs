@@ -293,7 +293,9 @@ impl TaxonomyMigrator {
     }
 
     /// 批量元数据应用(item/batch_update):逐个 mutate + 落盘 + 同步;
-    /// 不存在的 id 记入 missing_ids(跳过),返回实际更新数。每个更新各发一个 item.updated
+    /// 空操作（mutate 后元数据无变化，如标签已存在）跳过落盘与事件，不计入 updated。
+    /// 不存在的 id 记入 missing_ids(跳过),返回实际更新数。
+    /// 事件合并为分块的 items.updated（大批量时逐条 item.updated 会形成事件风暴打挂客户端）
     pub fn apply_metadata_batch(
         &self,
         hashes: &[String],
@@ -301,6 +303,7 @@ impl TaxonomyMigrator {
         missing_ids: &mut Vec<String>,
     ) -> Result<usize, String> {
         let mut updated = 0;
+        let mut changed = ChangeBatcher::new(&self.bus);
         for hash in hashes {
             let mut meta = match self.store.try_get(hash) {
                 Some(m) => m,
@@ -309,18 +312,23 @@ impl TaxonomyMigrator {
                     continue;
                 }
             };
+            let before = meta.clone();
             mutate(&mut meta);
+            if meta == before {
+                continue; // 空操作：不写盘、不发事件
+            }
             self.store.save(hash, &meta)?;
             self.register_taxonomy(&meta);
 
             if self.index.contains(hash) {
                 self.index.with_item_mut(hash, |item| item.sync_from(&meta));
                 if let Some(dto) = self.index.get_dto(hash) {
-                    ItemEvents::publish_changed(&self.bus, &dto);
+                    changed.push(dto);
                 }
             }
             updated += 1;
         }
+        changed.flush();
         Ok(updated)
     }
 
@@ -330,6 +338,7 @@ impl TaxonomyMigrator {
         // 分类可能仅由赋值产生而未注册过,补上登记
         self.categories.register(new_name);
 
+        let mut changed = ChangeBatcher::new(&self.bus);
         for (hash, mut meta) in self.store.snapshot() {
             if !meta.categories.iter().any(|c| c == old_name) {
                 continue;
@@ -340,60 +349,98 @@ impl TaxonomyMigrator {
                 .map(|c| if c == old_name { new_name.to_string() } else { c.clone() })
                 .collect();
             meta.categories = dedup_preserve_order(&replaced);
-            self.save_and_sync(&hash, &meta)?;
+            self.save_and_sync(&hash, &meta, &mut changed)?;
         }
+        changed.flush();
         Ok(())
     }
 
     /// 分类删除:注册表与全部 item 的该分类赋值一并清除
     pub fn delete_category(&self, name: &str) -> Result<(), String> {
         self.categories.delete(name);
+        let mut changed = ChangeBatcher::new(&self.bus);
         for (hash, mut meta) in self.store.snapshot() {
             let before = meta.categories.len();
             meta.categories.retain(|c| c != name);
             if meta.categories.len() != before {
-                self.save_and_sync(&hash, &meta)?;
+                self.save_and_sync(&hash, &meta, &mut changed)?;
             }
         }
+        changed.flush();
         Ok(())
     }
 
     /// 标签重命名:注册表更名 + 全部 item 的 tags 替换;目标已存在时合并
     pub fn rename_tag(&self, name: &str, new_name: &str) -> Result<(), String> {
         self.tags.rename(name, new_name);
+        let mut changed = ChangeBatcher::new(&self.bus);
         for (hash, mut meta) in self.store.snapshot() {
             if !meta.tags.iter().any(|t| t == name) {
                 continue;
             }
             meta.tags = dedup_preserve_order(&meta.tags.iter().map(|t| if t == name { new_name.to_string() } else { t.clone() }).collect::<Vec<_>>());
-            self.save_and_sync(&hash, &meta)?;
+            self.save_and_sync(&hash, &meta, &mut changed)?;
         }
+        changed.flush();
         Ok(())
     }
 
     /// 标签删除:注册表与全部 item 的该标签清除
     pub fn delete_tag(&self, name: &str) -> Result<(), String> {
         self.tags.delete(name);
+        let mut changed = ChangeBatcher::new(&self.bus);
         for (hash, mut meta) in self.store.snapshot() {
             let before = meta.tags.len();
             meta.tags.retain(|t| t != name);
             if meta.tags.len() != before {
-                self.save_and_sync(&hash, &meta)?;
+                self.save_and_sync(&hash, &meta, &mut changed)?;
             }
         }
+        changed.flush();
         Ok(())
     }
 
-    /// 批量迁移的公共收尾:保存元数据、同步索引、推送 item.updated
-    fn save_and_sync(&self, hash: &str, meta: &ItemMetadata) -> Result<(), String> {
+    /// 级联迁移的公共收尾:保存元数据、同步索引、收集变更 DTO（攒满即由 ChangeBatcher 发布）
+    fn save_and_sync(&self, hash: &str, meta: &ItemMetadata, changed: &mut ChangeBatcher) -> Result<(), String> {
         self.store.save(hash, meta)?;
         if self.index.contains(hash) {
             self.index.with_item_mut(hash, |item| item.sync_from(meta));
             if let Some(dto) = self.index.get_dto(hash) {
-                ItemEvents::publish_changed(&self.bus, &dto);
+                changed.push(dto);
             }
         }
         Ok(())
+    }
+}
+
+/// 批量变更的合并事件出口：攒满 1000 条即发布一帧 items.updated（长批量渐进可见），
+/// 末尾 flush 剩余。避免数万条逐条 item.updated 形成事件风暴（客户端主线程被占满时输入都会卡死）
+struct ChangeBatcher<'a> {
+    bus: &'a EventBus,
+    buf: Vec<ItemDto>,
+}
+
+impl<'a> ChangeBatcher<'a> {
+    fn new(bus: &'a EventBus) -> ChangeBatcher<'a> {
+        ChangeBatcher { bus, buf: Vec::new() }
+    }
+
+    fn push(&mut self, dto: ItemDto) {
+        self.buf.push(dto);
+        if self.buf.len() >= 1000 {
+            self.flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.buf.is_empty() {
+            return;
+        }
+        self.bus.publish(
+            ItemEvents::ITEMS_UPDATED,
+            serde_json::json!({ "items": self.buf }),
+        );
+        self.buf.clear();
     }
 }
 

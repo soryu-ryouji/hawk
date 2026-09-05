@@ -196,6 +196,8 @@ pub struct ItemSkeletonDto {
     pub width: i32,
     pub height: i32,
     pub star: i32,
+    /// 该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）
+    pub size: i64,
 }
 
 /// item/list 的查询条件（全部可选，组合逻辑为 AND）

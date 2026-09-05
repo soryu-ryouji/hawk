@@ -5,7 +5,7 @@ import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from '../composables/useContextMenu';
-import { gridNavRows } from '../composables/useGridNav';
+import { gridNavRows, consumeKeyboardNavScroll } from '../composables/useGridNav';
 import { showInFileManagerLabel, hasShell, shell } from '../platform';
 import type { Item } from '../types';
 import ItemCard from './ItemCard.vue';
@@ -178,11 +178,12 @@ watchEffect(() => {
   });
 });
 
-// 键盘移动选中框时滚动到可见区域；目标行未渲染时先把容器滚过去（触发渲染）再细调
+// 键盘移动选中框时滚动到可见区域（仅消费键盘导航标记，全选/鼠标选择不滚动视图）；
+// 目标行未渲染时先把容器滚过去（触发渲染）再细调
 watch(
   () => (store.primarySelected ? itemKey(store.primarySelected.id, store.primarySelected.path) : null),
   async (key) => {
-    if (!key || !gridRef.value) {
+    if (!consumeKeyboardNavScroll() || !key || !gridRef.value) {
       return;
     }
     const idx = store.skeleton.findIndex((s) => itemKey(s.id, s.path) === key);
@@ -249,7 +250,7 @@ function onMenu(item: Item, e: MouseEvent) {
   }
   // 右键未选中项时先选中它
   const key = itemKey(item.id, item.path);
-  if (!store.selection.includes(key)) {
+  if (!store.selectionSet.has(key)) {
     store.select(key);
   }
 
@@ -288,7 +289,7 @@ function onMenu(item: Item, e: MouseEvent) {
             v-if="cell.item"
             :item="cell.item"
             :data-item-id="cell.id"
-            :selected="store.selection.includes(cell.id)"
+            :selected="store.selectionSet.has(cell.id)"
             :width="cell.width"
             :height="cell.height"
             @select="onSelect"
@@ -300,7 +301,7 @@ function onMenu(item: Item, e: MouseEvent) {
           <div
             v-else
             class="cell-placeholder"
-            :class="{ selected: store.selection.includes(cell.id) }"
+            :class="{ selected: store.selectionSet.has(cell.id) }"
             :style="{ width: `${cell.width}px`, height: `${cell.height + CARD_META_H}px` }"
             :data-item-id="cell.id"
           >

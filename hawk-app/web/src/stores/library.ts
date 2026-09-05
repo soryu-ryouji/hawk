@@ -7,6 +7,7 @@ import { api } from '../api/endpoints';
 import {
   isGlobalViewKind,
   isUnfilteredView,
+  indexSkeletonById,
   itemKey,
   locationSetChangedOf,
   mergeDetailOnUpdate,
@@ -65,6 +66,14 @@ export const useLibraryStore = defineStore('library', () => {
   /** 骨架版本：换视图/骨架重载时自增，过期窗口响应据此丢弃 */
   let skeletonVersion = 0;
   const selection = ref<string[]>([]);
+  /** 选中集的 O(1) 成员查询（渲染层一律用 has，不直接扫数组：
+   *  全选数万条目时，逐卡片 includes 是 O(选中数×可见卡片数)，
+   *  且响应式会跟踪数组的每个索引——每个卡片的渲染 effect 订阅上万个依赖） */
+  const selectionSet = computed(() => new Set(selection.value));
+  /** 骨架的 条目key → 字节数 索引（选择集大小聚合的数据源；随骨架替换重建，选中变化不重建） */
+  const skeletonSizeMap = computed(() => new Map(skeleton.value.map((s) => [itemKey(s.id, s.path), Number(s.size)])));
+  /** 骨架按内容 id 的索引（item.updated 事件处理 O(1) 定位；随骨架替换重建） */
+  const skeletonIndexMap = computed(() => indexSkeletonById(skeleton.value));
   const library = ref<LibraryInfo | null>(null);
   // 网格卡片边长偏好（滑杆 120–280，齐行布局的目标行高）：
   // - 桌面端（Electron）：会话级、固定默认 160，不持久化；
@@ -517,7 +526,9 @@ export const useLibraryStore = defineStore('library', () => {
    * 位置分布变化时重拉该 hash 全部缓存位置对齐位置级字段（事件载荷只有主位置口径）。
    */
   function applyUpdatedItem(updated: Item, single: boolean) {
-    const locationSetChanged = locationSetChangedOf(skeleton.value, updated);
+    const indices = skeletonIndexMap.value.get(updated.id) ?? [];
+    const skelPaths = indices.map((i) => skeleton.value[i].path);
+    const locationSetChanged = locationSetChangedOf(skelPaths, updated);
     const keysOfHash = [...details.value.keys()].filter((k) => splitKey(k).id === updated.id);
     let taxChanged = false;
     if (keysOfHash.length > 0) {
@@ -538,14 +549,14 @@ export const useLibraryStore = defineStore('library', () => {
         }
       }
     }
-    const { next, changed: skeletonChanged } = patchSkeletonOnUpdate(skeleton.value, updated);
+    const { next, changed: skeletonChanged } = patchSkeletonOnUpdate(skeleton.value, indices, updated);
     if (skeletonChanged) {
       skeleton.value = next;
     }
     if (
       shouldReloadOnUpdate({
         locationSetChanged,
-        inSkeleton: skeleton.value.some((s) => s.id === updated.id),
+        inSkeleton: indices.length > 0,
         skeletonChanged,
         taxonomyChanged: taxChanged,
         unfiltered: isUnfilteredView(view.value, query.value),
@@ -671,44 +682,23 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 选中项详情补齐：加标签/分类需读现有值合并，批量选中（含视口外）时先按需拉取；
-   *  ids 查询返回该 hash 的全部位置条目，统一按条目 key 回填（多回无害） */
-  async function ensureSelectionDetails() {
-    const missing = selection.value.filter((key) => !details.value.has(key));
-    if (missing.length === 0) {
-      return;
-    }
-    const ids = [...new Set(missing.map((key) => splitKey(key).id))];
-    try {
-      const res = await api.itemList({ ...listParams(), ids, offset: 0, limit: missing.length * 4 });
-      const map = new Map(details.value);
-      for (const item of res.items) {
-        map.set(itemKey(item.id, item.path), item);
-      }
-      details.value = map;
-    } catch {
-      // 尽力而为：拉不到的选中项在后续合并中跳过
-    }
-  }
-
-  /** 为全部选中项追加分类(内容级：同 hash 多位置只应用一次;去重,保留已有);完成后立即刷新分类计数,不等 SSE 防抖 */
+  /** 为全部选中项追加分类(内容级：同 hash 多位置只应用一次)。
+   *  已有该分类的 id 从已加载详情一次构建（未加载的由服务端空操作跳过，不为过滤拉全量详情） */
   async function addCategoryToSelected(name: string) {
-    await ensureSelectionDetails();
-    const ids = selectionUniqueIds().filter((id) => {
-      const hit = [...details.value.values()].find((i) => i.id === id);
-      return !(hit?.categories ?? []).includes(name);
-    });
+    const existing = new Set(
+      [...details.value.values()].filter((i) => i.categories.includes(name)).map((i) => i.id),
+    );
+    const ids = selectionUniqueIds().filter((id) => !existing.has(id));
     await batchUpdate(ids, { add_categories: [name] }, '已添加分类');
     taxonomyHooks?.refreshTaxonomy();
   }
 
-  /** 为全部选中项追加标签(内容级：同 hash 多位置只应用一次;去重,保留已有);完成后立即刷新标签计数,不等 SSE 防抖 */
+  /** 为全部选中项追加标签(同 addCategoryToSelected 的过滤策略) */
   async function addTagToSelected(tag: string) {
-    await ensureSelectionDetails();
-    const ids = selectionUniqueIds().filter((id) => {
-      const hit = [...details.value.values()].find((i) => i.id === id);
-      return !(hit?.tags ?? []).includes(tag);
-    });
+    const existing = new Set(
+      [...details.value.values()].filter((i) => i.tags.includes(tag)).map((i) => i.id),
+    );
+    const ids = selectionUniqueIds().filter((id) => !existing.has(id));
     await batchUpdate(ids, { add_tags: [tag] }, '已添加标签');
     taxonomyHooks?.refreshTaxonomy();
   }
@@ -830,7 +820,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, library, thumbSize, setUserThumbSize, searchText, toast, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
+    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, selectionSet, skeletonSizeMap, library, thumbSize, setUserThumbSize, searchText, toast, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, hasActiveFilters,
     init, setView, correctView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,

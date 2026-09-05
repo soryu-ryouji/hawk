@@ -10,6 +10,20 @@ export interface GridNavCell {
 /** 当前网格的行布局，由 ItemGrid 随布局变化更新 */
 export const gridNavRows = ref<GridNavCell[][]>([]);
 
+/** 方向键导航的一次性滚动标记：ItemGrid 的 primarySelected watcher 只在消费到此标记时才滚动视图。
+ *  全选/鼠标点选/连选不应移动视口（Ctrl+A 语义：原地全选，滚动条不动） */
+let pendingKeyboardScroll = false;
+
+export function markKeyboardNavScroll(): void {
+  pendingKeyboardScroll = true;
+}
+
+export function consumeKeyboardNavScroll(): boolean {
+  const pending = pendingKeyboardScroll;
+  pendingKeyboardScroll = false;
+  return pending;
+}
+
 /**
  * 方向键移动选中：左右为线性前后（跨行连续），上下按视觉列中心对齐取最近项。
  * 无可达目标返回 null；无当前选中时返回第一项。

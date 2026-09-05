@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SORT,
   isGlobalViewKind,
+  indexSkeletonById,
   isUnfilteredView,
   itemKey,
   locationSetChangedOf,
@@ -13,6 +14,7 @@ import {
   resolveSort,
   sameNameSet,
   shouldReloadOnUpdate,
+  selectionTotalSize,
   skeletonNeedsPatch,
   splitKey,
   taxonomyChanged,
@@ -114,7 +116,7 @@ describe('resolveSort', () => {
 });
 
 describe('skeletonNeedsPatch', () => {
-  const sk = { id: '1', path: 'a.png', width: 100, height: 50, star: 0 };
+  const sk = { id: '1', path: 'a.png', width: 100, height: 50, star: 0, size: 10 };
   const item = { id: '1', width: 100, height: 50, star: 0 } as Item;
 
   it('star 或宽高任一变化才需要替换', () => {
@@ -189,13 +191,23 @@ const item = (patch: Partial<Item> = {}): Item => ({
   ...patch,
 });
 
-const skel = (id: string, path: string, patch: Partial<{ star: number; width: number; height: number }> = {}) => ({
+const skel = (id: string, path: string, patch: Partial<{ star: number; width: number; height: number; size: number }> = {}) => ({
   id,
   path,
   width: 8,
   height: 8,
   star: 0,
+  size: 100,
   ...patch,
+});
+
+describe('selectionTotalSize', () => {
+  it('按条目 key 累加骨架 size；未命中按 0', () => {
+    const sizes = new Map([[itemKey('x', 'a.png'), 100], [itemKey('x', 'b.png'), 200]]);
+    expect(selectionTotalSize([itemKey('x', 'a.png'), itemKey('x', 'b.png')], sizes)).toBe(300);
+    expect(selectionTotalSize([itemKey('x', 'a.png'), itemKey('ghost', 'g.png')], sizes)).toBe(100);
+    expect(selectionTotalSize([], sizes)).toBe(0);
+  });
 });
 
 describe('isGlobalViewKind', () => {
@@ -215,12 +227,12 @@ describe('isGlobalViewKind', () => {
 
 describe('locationSetChangedOf', () => {
   it('位置集一致不变化', () => {
-    expect(locationSetChangedOf([skel('x', 'a.png')], item({ paths: ['a.png'] }))).toBe(false);
+    expect(locationSetChangedOf(['a.png'], item({ paths: ['a.png'] }))).toBe(false);
   });
 
   it('位置增减/改名命中', () => {
-    expect(locationSetChangedOf([skel('x', 'a.png')], item({ paths: ['a.png', 'b.png'] }))).toBe(true);
-    expect(locationSetChangedOf([skel('x', 'a.png')], item({ paths: ['b.png'] }))).toBe(true);
+    expect(locationSetChangedOf(['a.png'], item({ paths: ['a.png', 'b.png'] }))).toBe(true);
+    expect(locationSetChangedOf(['a.png'], item({ paths: ['b.png'] }))).toBe(true);
   });
 
   it('骨架不含该 hash 时不判定变化（交由非成员分支处理）', () => {
@@ -228,7 +240,16 @@ describe('locationSetChangedOf', () => {
   });
 
   it('回收站口径：骨架 path（含 trash 前缀）剥前缀后与事件 paths 对齐', () => {
-    expect(locationSetChangedOf([skel('x', '.hawk/trash/a.png')], item({ paths: ['a.png'] }))).toBe(false);
+    expect(locationSetChangedOf(['.hawk/trash/a.png'], item({ paths: ['a.png'] }))).toBe(false);
+  });
+});
+
+describe('indexSkeletonById', () => {
+  it('同 id 多位置聚为一组下标', () => {
+    const map = indexSkeletonById([skel('x', 'a.png'), skel('y', 'b.png'), skel('x', 'c.png')]);
+    expect(map.get('x')).toEqual([0, 2]);
+    expect(map.get('y')).toEqual([1]);
+    expect(map.get('zz')).toBeUndefined();
   });
 });
 
@@ -258,11 +279,9 @@ describe('mergeDetailOnUpdate', () => {
 });
 
 describe('patchSkeletonOnUpdate', () => {
-  it('同 hash 全部位置条目同步 star/宽高', () => {
-    const { next, changed } = patchSkeletonOnUpdate(
-      [skel('x', 'a.png'), skel('x', 'b.png'), skel('y', 'c.png')],
-      item({ id: 'x', star: 3, width: 16, height: 16 }),
-    );
+  it('按索引补丁 star/宽高，不动其他条目', () => {
+    const skeleton = [skel('x', 'a.png'), skel('x', 'b.png'), skel('y', 'c.png')];
+    const { next, changed } = patchSkeletonOnUpdate(skeleton, [0, 1], item({ id: 'x', star: 3, width: 16, height: 16 }));
     expect(changed).toBe(true);
     expect(next[0]).toMatchObject({ star: 3, width: 16 });
     expect(next[1]).toMatchObject({ star: 3, width: 16 });
@@ -271,7 +290,7 @@ describe('patchSkeletonOnUpdate', () => {
 
   it('无变化返回原数组引用', () => {
     const skeleton = [skel('x', 'a.png')];
-    const { next, changed } = patchSkeletonOnUpdate(skeleton, item({ id: 'x' }));
+    const { next, changed } = patchSkeletonOnUpdate(skeleton, [0], item({ id: 'x' }));
     expect(changed).toBe(false);
     expect(next).toBe(skeleton);
   });

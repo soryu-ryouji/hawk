@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // 检查器多选区：批量操作面板（参考 Eagle 多选面板）。只读查看下隐藏全部写操作，
 // 仅保留堆叠预览与基本信息。
+// 选中总大小走骨架 size 索引（selectionTotalSize）：详情缓存只覆盖视口窗口，
+// 全选大文件夹时按详情聚合会严重偏小（骨架是唯一的全量本地数据源）。
 import { computed, ref } from 'vue';
 import { api } from '../api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { formatSize } from '../format';
-import { itemKey } from '../viewLogic';
+import { itemKey, selectionTotalSize } from '../viewLogic';
 import StarRating from './StarRating.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderPickerDialog from './FolderPickerDialog.vue';
@@ -17,9 +19,7 @@ const showCategoryPicker = ref(false);
 const showFolderPicker = ref(false);
 const batchTag = ref('');
 
-const totalSelectedSize = computed(() =>
-  store.selectedItems.reduce((sum, selected) => sum + Number(selected.size), 0),
-);
+const totalSelectedSize = computed(() => selectionTotalSize(store.selection, store.skeletonSizeMap));
 
 function applyStarToAll(value: number) {
   void store.setStarForSelected(value);

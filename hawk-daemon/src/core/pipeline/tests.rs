@@ -318,3 +318,93 @@ async fn delete_dir_publishes_folder_changed() {
     assert!(got, "删除含内容的目录应广播 folder.changed");
     assert_eq!(rig.index.count(), 1, "目录下位置应已清除（f.png 保留）");
 }
+
+/// 批量元数据应用：空操作（标签已存在）跳过落盘/事件且不计入 updated；
+/// 有变更的项合并为 items.updated 事件（批量不逐条发 item.updated）
+#[tokio::test]
+async fn batch_metadata_skips_noop_and_batches_events() {
+    let rig = Rig::new("batch-noop");
+    rig.write_png("a.png", [5, 5, 5]);
+    rig.write_png("b.png", [6, 6, 6]);
+    let id_a = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap().unwrap().item.id;
+    let id_b = rig.pipeline.submit_upsert(rig.abs("b.png"), None).await.unwrap().unwrap().item.id;
+
+    // 先给 a 打上标签（b 无标签）
+    rig.pipeline
+        .submit_metadata(id_a.clone(), |m| m.tags.push("批量".to_string()))
+        .await
+        .unwrap();
+
+    let mut rx = rig.bus.subscribe();
+    let result = rig
+        .pipeline
+        .submit_batch_metadata(vec![id_a.clone(), id_b.clone()], move |m| {
+            if !m.tags.iter().any(|t| t == "批量") {
+                m.tags.push("批量".to_string());
+            }
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.updated, 1, "a 已含标签为空操作，只有 b 实际更新");
+    assert!(result.missing_ids.is_empty());
+
+    // 事件：恰有一个 items.updated 帧且只含 b；无 item.updated
+    let mut items_updated_frames = 0;
+    let mut single_updated = false;
+    let mut frame_ids: Vec<String> = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        match e.kind {
+            ItemEvents::ITEMS_UPDATED => {
+                items_updated_frames += 1;
+                for item in e.payload["items"].as_array().unwrap() {
+                    frame_ids.push(item["id"].as_str().unwrap().to_string());
+                }
+            }
+            ItemEvents::UPDATED => single_updated = true,
+            _ => {}
+        }
+    }
+    assert_eq!(items_updated_frames, 1, "应合并为一个 items.updated 帧");
+    assert!(!single_updated, "批量路径不应发逐条 item.updated");
+    assert_eq!(frame_ids, vec![id_b]);
+}
+
+/// 标签删除级联：全部命中 item 的变更合并发 items.updated（不逐条发 item.updated），
+/// 事件按流水线处理节奏分块（攒满即flush，长批量渐进可见）
+#[tokio::test]
+async fn tag_delete_cascade_batches_events() {
+    let rig = Rig::new("tag-cascade-batch");
+    rig.write_png("a.png", [7, 7, 7]);
+    rig.write_png("b.png", [8, 8, 8]);
+    let id_a = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap().unwrap().item.id;
+    let id_b = rig.pipeline.submit_upsert(rig.abs("b.png"), None).await.unwrap().unwrap().item.id;
+    rig.pipeline
+        .submit_batch_metadata(vec![id_a.clone(), id_b.clone()], |m| m.tags.push("待删".to_string()))
+        .await
+        .unwrap();
+
+    let mut rx = rig.bus.subscribe();
+    rig.pipeline.submit_tag_delete("待删".to_string()).await.unwrap();
+
+    let mut items_updated_ids: Vec<String> = Vec::new();
+    let mut single_updated = false;
+    while let Ok(e) = rx.try_recv() {
+        match e.kind {
+            ItemEvents::ITEMS_UPDATED => {
+                for item in e.payload["items"].as_array().unwrap() {
+                    items_updated_ids.push(item["id"].as_str().unwrap().to_string());
+                }
+            }
+            ItemEvents::UPDATED => single_updated = true,
+            _ => {}
+        }
+    }
+    assert!(!single_updated, "级联路径不应发逐条 item.updated");
+    items_updated_ids.sort();
+    let mut expected = vec![id_a, id_b];
+    expected.sort();
+    assert_eq!(items_updated_ids, expected, "两个命中项应合并进 items.updated");
+
+    // 元数据与索引已清除该标签
+    assert!(rig.store.try_get(&items_updated_ids[0]).unwrap().tags.is_empty());
+}
