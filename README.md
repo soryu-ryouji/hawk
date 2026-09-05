@@ -10,6 +10,7 @@
   <a href="https://github.com/soryu-ryouji/hawk/actions/workflows/ci.yml"><img src="https://github.com/soryu-ryouji/hawk/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="https://github.com/soryu-ryouji/hawk/releases/latest"><img src="https://img.shields.io/github/v/release/soryu-ryouji/hawk" alt="release version"></a>
   <a href="https://github.com/soryu-ryouji/hawk/releases/tag/nightly"><img src="https://img.shields.io/badge/nightly-滚动预发布-orange" alt="nightly"></a>
+  <a href="https://github.com/soryu-ryouji/hawk/releases"><img src="https://img.shields.io/github/downloads/soryu-ryouji/hawk/total" alt="downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="license"></a>
 </p>
 
