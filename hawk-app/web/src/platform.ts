@@ -31,6 +31,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   removeLibrary: async () => ({ current: null, libraries: [] }),
   lanAddresses: async () => [],
   showInFinder: async () => {},
+  openFolder: async () => {},
   getCacheDir: async () => ({ current: '', isDefault: true }),
   pickCacheDir: async () => null,
   changeCacheDir: async () => '浏览器端不支持',

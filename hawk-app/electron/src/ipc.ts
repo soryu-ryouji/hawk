@@ -1,6 +1,7 @@
 // 白名单 IPC：窗口控制、素材库选择/历史、局域网地址、文件管理器/剪贴板、退出。
 // 业务数据一律走 REST，不经 IPC（更新通道的注册在 updater.ts）。
 import { app, clipboard, dialog, ipcMain, shell } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getLibraryRoot, listLibraries, removeLibraryHistory } from './app-config';
@@ -109,6 +110,14 @@ export function registerIpc(): void {
     const abs = resolveLibraryPath(relPath);
     if (abs) {
       shell.showItemInFolder(abs);
+    }
+  });
+
+  // 打开库内文件夹本身（侧栏文件夹右键；区别 showInFinder 的定位到父级）
+  ipcMain.handle(IPC.openFolder, (_event, relPath: unknown) => {
+    const abs = resolveLibraryPath(relPath);
+    if (abs && fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
+      void shell.openPath(abs);
     }
   });
 

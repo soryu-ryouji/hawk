@@ -20,6 +20,7 @@ export const IPC = {
   updateCancel: 'hawk:update-cancel',
   updateInstall: 'hawk:update-install',
   showInFinder: 'hawk:show-in-finder',
+  openFolder: 'hawk:open-folder',
   cacheDirGet: 'hawk:cache-dir-get',
   cacheDirPick: 'hawk:cache-dir-pick',
   cacheDirChange: 'hawk:cache-dir-change',
@@ -110,6 +111,8 @@ export interface HawkShell {
   lanAddresses(): Promise<string[]>;
   /** 在系统文件管理器中显示库内文件（相对路径） */
   showInFinder(relPath: string): Promise<void>;
+  /** 在系统文件管理器中打开库内文件夹本身（区别 showInFinder 的「定位到父级并选中」） */
+  openFolder(relPath: string): Promise<void>;
   /** 当前缓存父目录（isDefault=true 表示系统默认路径） */
   getCacheDir(): Promise<{ current: string; isDefault: boolean }>;
   /** 弹目录选择框选新缓存父目录（取消返回 null） */

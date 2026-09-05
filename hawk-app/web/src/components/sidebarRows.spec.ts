@@ -23,8 +23,14 @@ window.matchMedia =
 const mocks = vi.hoisted(() => ({
   globalFilterSet: vi.fn(() => Promise.resolve()),
   globalFilterList: vi.fn(() => Promise.resolve({ folders: [], categories: [], tags: [] })),
+  openFolder: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('../api/endpoints', () => ({ api: mocks }));
+// Electron 壳分支：hasShell 置真，openFolder 用 spy 断言（其余方法 no-op）
+vi.mock('../platform', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../platform')>();
+  return { ...actual, hasShell: true, shell: { ...actual.shell, openFolder: mocks.openFolder } };
+});
 const { globalFilterSet } = mocks;
 
 import FolderTreeNode from './FolderTreeNode.vue';
@@ -131,5 +137,14 @@ describe('FolderTreeNode', () => {
     expect(hide).toBeTruthy();
     hide!.action!();
     expect(globalFilterSet).toHaveBeenCalledWith('folder', '素材堆', true);
+  });
+
+  it('右键菜单含「在文件管理器中打开」，动作调用 shell.openFolder', async () => {
+    const wrapper = mountNode(makeNode());
+    const items = await openMenu(wrapper, '.node');
+    const open = items.find((i) => i.label.includes('中打开'));
+    expect(open).toBeTruthy();
+    open!.action!();
+    expect(mocks.openFolder).toHaveBeenCalledWith('素材堆');
   });
 });

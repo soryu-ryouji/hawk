@@ -5,6 +5,7 @@ import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
 import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
+import { hasShell, shell, fileManagerName } from '../platform';
 import Icon from './Icon.vue';
 import type { FolderNode } from '../types';
 
@@ -73,6 +74,8 @@ function onContextMenu(e: MouseEvent) {
     [
       { label: '新建子文件夹', action: () => startEdit('create') },
       { label: '重命名', action: () => startEdit('rename') },
+      // 「在文件管理器中打开」依赖 Electron 主进程，浏览器（局域网查看）不出现
+      ...(hasShell ? [{ label: `在${fileManagerName}中打开`, action: () => void shell.openFolder(props.node.path) }] : []),
       { separator: true, label: '' },
       {
         label: hidden.value ? '恢复在全局列表显示' : '不在全局列表显示',
