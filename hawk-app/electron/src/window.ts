@@ -1,8 +1,9 @@
-// 窗口与系统托盘：主窗口生命周期（关窗隐藏到托盘）、托盘菜单、最大化状态同步、退出标志。
+// 窗口与系统托盘：主窗口生命周期（关窗行为可配：直接退出/隐藏到托盘）、托盘菜单、最大化状态同步、退出标志。
 import { app, BrowserWindow, Menu, nativeImage, Tray } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { APP_DIR, APP_ICON, ELECTRON_DIR } from './paths';
+import { getCloseAction } from './app-config';
 import { IPC, type ServerConn } from './ipc-contract';
 
 const isDev = !app.isPackaged;
@@ -67,13 +68,17 @@ export function createWindow(): void {
   // 提前 show 会把空白/白窗暴露给用户——ready-to-show 是「内容已可见」的可靠信号
   win.once('ready-to-show', () => win.show());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  // Eagle 式关窗：拦截 close 改为隐藏到托盘（真正退出经托盘菜单，见 before-quit 的 isQuitting）
+  // 关窗行为按偏好分流（实时读取 config.toml，设置面板改后即生效）：
+  // tray：拦截 close 改为隐藏到托盘（Eagle 式驻留）；exit（默认）：放行 close，
+  // 由 window-all-closed 退出应用。真正退出（托盘菜单/macOS Cmd+Q）经 before-quit 置 isQuitting 放行
   win.on('close', (event) => {
     if (isQuitting) {
       return;
     }
-    event.preventDefault();
-    win.hide();
+    if (getCloseAction() === 'tray') {
+      event.preventDefault();
+      win.hide();
+    }
   });
   // 同步最大化状态给渲染进程（标题栏 最大化/还原 图标切换）
   win.on('maximize', () => win.webContents.send(IPC.winMaximized, true));

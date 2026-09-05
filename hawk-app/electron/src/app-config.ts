@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parse, stringify } from 'smol-toml';
 import { CONFIG_DIR } from './paths';
-import type { LibraryHistoryItem, UpdateChannel } from './ipc-contract';
+import type { CloseAction, LibraryHistoryItem, UpdateChannel } from './ipc-contract';
 
 interface AppConfig {
   libraryPath?: string;
@@ -13,6 +13,8 @@ interface AppConfig {
   cacheParent?: string;
   /** 应用更新通道；未设置时视为 stable */
   updateChannel?: UpdateChannel;
+  /** 关窗行为：exit=直接退出（默认），tray=隐藏到托盘驻留后台 */
+  closeAction?: CloseAction;
 }
 
 export interface LibraryList {
@@ -24,8 +26,9 @@ const CONFIG_FILE = path.join(CONFIG_DIR, 'config.toml');
 
 /** 配置默认值（唯一事实源：文件缺失落盘从这里序列化，读取回退也从这里兜底；
  *  有默认值的字段在此声明为必填，新增/调整字段只改 AppConfig 与此处，无独立模板文本可漂移） */
-const DEFAULT_CONFIG: Readonly<{ updateChannel: UpdateChannel }> = {
+const DEFAULT_CONFIG: Readonly<{ updateChannel: UpdateChannel; closeAction: CloseAction }> = {
   updateChannel: 'stable',
+  closeAction: 'exit',
 };
 
 /** 确保配置文件存在：缺失即把默认值序列化落盘，已存在则不动（不覆盖手改）。
@@ -84,6 +87,15 @@ export function getUpdateChannel(): UpdateChannel {
 
 export function setUpdateChannel(channel: UpdateChannel): void {
   writeConfig({ updateChannel: channel });
+}
+
+/** 关窗行为偏好（config.toml 持久化；未设置/损坏回退默认值）。关窗时实时读取，改后无需重启 */
+export function getCloseAction(): CloseAction {
+  return readConfig().closeAction ?? DEFAULT_CONFIG.closeAction;
+}
+
+export function setCloseAction(action: CloseAction): void {
+  writeConfig({ closeAction: action });
 }
 
 /** 库显示名：优先读库内 .hawk/config.toml 的 name（与 daemon library/info 同源），缺失/异常回退目录名 */

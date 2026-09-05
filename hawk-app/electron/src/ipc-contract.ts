@@ -16,6 +16,8 @@ export const IPC = {
   appVersion: 'hawk:app-version',
   updateChannelGet: 'hawk:update-channel-get',
   updateChannelSet: 'hawk:update-channel-set',
+  closeActionGet: 'hawk:close-action-get',
+  closeActionSet: 'hawk:close-action-set',
   updateCheck: 'hawk:update-check',
   updateDownload: 'hawk:update-download',
   updateCancel: 'hawk:update-cancel',
@@ -50,6 +52,10 @@ export interface LibraryHistoryItem {
 /** 更新通道（偏好枚举，config.toml 持久化）：stable=正式版（semver 比对）/
  *  nightly=滚动版（构建 sha 比对）/ off=不检查更新 */
 export type UpdateChannel = 'stable' | 'nightly' | 'off';
+
+/** 关窗行为（偏好枚举，config.toml 持久化）：exit=关窗直接退出（默认）/
+ *  tray=关窗隐藏到托盘驻留后台 */
+export type CloseAction = 'exit' | 'tray';
 
 /** 可发起检查的通道（偏好的子集：off 只是不检查，不是可查询的 Release 线） */
 export type CheckableChannel = Exclude<UpdateChannel, 'off'>;
@@ -138,6 +144,10 @@ export interface HawkShell {
   getUpdateChannel(): Promise<UpdateChannel>;
   /** 保存更新通道偏好（config.toml） */
   setUpdateChannel(channel: UpdateChannel): Promise<void>;
+  /** 当前关窗行为偏好（主进程 config.toml 持久化；未设置回退默认值 exit） */
+  getCloseAction(): Promise<CloseAction>;
+  /** 保存关窗行为偏好（config.toml；即改即生效，无需重启） */
+  setCloseAction(action: CloseAction): Promise<void>;
   /** 下载并校验上次检查到的更新（进度经 onUpdateProgress 推送；已就绪时幂等） */
   downloadUpdate(): Promise<void>;
   /** 取消进行中的下载（清半成品；无下载在跑时为空操作） */

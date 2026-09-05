@@ -1,11 +1,33 @@
 <script setup lang="ts">
-// 外观分区：缩略图尺寸滑杆（实时生效）+ 预览关闭按钮开关。无保存语义，改动即时写入偏好。
-// 显隐由主组件 v-show 作用于本组件根元素。
+// 外观分区：缩略图尺寸滑杆（实时生效）+ 预览关闭按钮开关 + 关窗行为（仅 Electron，实时生效）。
+// 无保存语义，改动即时写入偏好。显隐由主组件 v-show 作用于本组件根元素。
+import { onMounted, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
+import { hasShell, shell } from '../platform';
+import SelectBox from './SelectBox.vue';
+import type { CloseAction } from '../types';
 
 const store = useLibraryStore();
 const preview = usePreviewStore();
+
+/** 关窗行为偏好（config.toml，主进程为唯一事实源）：打开面板时拉取，切换即写 */
+const closeAction = ref<CloseAction>('exit');
+const closeOptions: { value: CloseAction; label: string }[] = [
+  { value: 'exit', label: '直接退出' },
+  { value: 'tray', label: '关闭到托盘' },
+];
+
+onMounted(() => {
+  void shell.getCloseAction().then((v) => {
+    closeAction.value = v;
+  });
+});
+
+function onCloseActionChange(action: CloseAction) {
+  closeAction.value = action;
+  void shell.setCloseAction(action);
+}
 
 /** 缩略图尺寸步进（滑杆 ± 按钮）：用户显式设置，写入偏好 */
 function stepThumb(delta: number) {
@@ -44,6 +66,16 @@ function onHidePreviewClose(e: Event) {
         <input type="checkbox" :checked="preview.hidePreviewClose" @change="onHidePreviewClose" />
         <span class="track" />
       </label>
+    </div>
+
+    <div v-if="hasShell" class="field column">
+      <span class="field-label">关闭行为</span>
+      <SelectBox
+        :model-value="closeAction"
+        :options="closeOptions"
+        @update:model-value="onCloseActionChange($event as CloseAction)"
+      />
+      <p class="hint">关闭到托盘：窗口驻留系统托盘、后台服务保持运行；从托盘菜单或再次启动唤起。</p>
     </div>
   </div>
 </template>

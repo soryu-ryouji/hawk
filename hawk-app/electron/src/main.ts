@@ -47,8 +47,11 @@ app.whenReady().then(async () => {
   }
 });
 
-// 关窗只是隐藏到托盘（close 已被拦截，正常不会走到这里）；不监听此事件的话 Electron 默认关窗即退出
-app.on('window-all-closed', () => {});
+// 所有关窗已销毁：exit 模式（默认）用户关窗走到这里直接退出应用；tray 模式窗口只是隐藏，
+// 仅真正退出（托盘菜单「退出」/Cmd+Q）时触发。不监听的话 Electron 默认关窗即退出，两者语义都不成立
+app.on('window-all-closed', () => {
+  app.quit();
+});
 // 真正退出（托盘菜单「退出」、macOS Cmd+Q）：放行 close 拦截，由 will-quit 回收 server
 app.on('before-quit', setQuitting);
 // macOS：关窗（隐藏到托盘）后点击 Dock 图标重新打开

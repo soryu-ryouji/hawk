@@ -69,14 +69,15 @@ Electron 主进程启动
 
 握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。
 
-关窗不退出（Eagle 式托盘驻留）：主进程拦截窗口 `close` 事件改为 `hide()`，
-应用驻留系统托盘、`hawk-daemon` 保持运行（浏览器扩展采集不间断）。托盘左键单击
-或菜单「打开 hawk」唤起主窗口，菜单「退出」才是真正退出（`before-quit` 置
+关窗行为可配（`config.toml` 的 `closeAction`，设置面板「外观」分区可改，即改即生效）：
+`exit`（默认）关窗直接退出——close 不拦截，窗口销毁后经 `window-all-closed` 走 `app.quit()`；
+`tray` 则拦截 close 改为 `hide()`，应用驻留系统托盘、`hawk-daemon` 保持运行（浏览器扩展采集
+不间断）。托盘左键单击或菜单「打开 hawk」唤起主窗口，菜单「退出」才是真正退出（`before-quit` 置
 `isQuitting` 放行 close 拦截，经 `will-quit` 回收 server）。再次启动应用由单实例锁
 （`requestSingleInstanceLock`）转到已有实例——否则第二个实例的 hawk-daemon
 会因 27371 端口占用直接启动失败。macOS 关窗后点 Dock 图标经 `activate` 唤起。
 托盘为纯主进程行为，不新增 preload IPC 通道；自绘标题栏的关闭按钮与系统关窗
-行为一致（同样落入托盘）。托盘图标复用 `build/icon.png`（512px 源图运行时按平台
+行为一致（同一 `close` 事件分流）。托盘图标复用 `build/icon.png`（512px 源图运行时按平台
 重采样：Windows/Linux 32px、macOS 18px），该文件已列入 electron-builder `files`，
 打包后可用。
 
@@ -101,7 +102,8 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `onServerRestarting(cb)` | 订阅 server 即将重启（换库/应用设置重启）：主进程停旧 server 时即发，前端应立即切启动屏（早于 ready 的 `onServerStarted`）；返回退订函数 |
 | `onServerStarted(cb)` | 订阅 server 就绪：`{ address, token }`（冷启动/换库/应用设置重启都会到达；restart 会换端口，渲染进程须先重配 API 再重启数据）；返回退订函数 |
 | `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message }`（页面内错误屏呈现）；返回退订函数 |
-| `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的隐藏到托盘） |
+| `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的按关窗行为分流） |
+| `getCloseAction()` / `setCloseAction(action)` | 关窗行为偏好的读写：`'exit'`（默认，关窗直接退出）\| `'tray'`（关窗隐藏到托盘驻留），主进程持久化到 `~/.config/hawk/config.toml`（唯一事实源，未设置回退默认值）；即改即生效，无需重启 |
 | `getAppVersion()` | 当前应用版本与构建 sha（`{ version, sha }`；sha 来自打包时写入的 `build-info.json`，开发态为 `'dev'`） |
 | `getUpdateChannel()` / `setUpdateChannel(channel)` | 更新通道偏好的读写：`'stable' \| 'nightly' \| 'off'`（off=不检查更新：启动静默检查跳过、设置面板禁用检查按钮），主进程持久化到 `~/.config/hawk/config.toml`（唯一事实源，未设置回退默认值）；启动时渲染层异步拉取，check 前等待加载完成避免误检 |
 | `checkUpdate(channel)` | 检查更新（`'stable'`=GitHub latest 正式版比 semver；`'nightly'`=滚动预发布比构建 sha）；有更新返回 `UpdateInfo`，无更新返回 null；查询/比较逻辑在主进程（GitHub Releases API，无自建服务）。发现更新时先查磁盘缓存：暂存目录已有同包（sha256 边车比对一致，如「下完未装就退出」）则 `UpdateInfo.downloaded=true`，可跳过下载直接安装 |
@@ -527,7 +529,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 8. 回收站：查看、单项或批量恢复、清空（二次确认）
 9. 实时性：另一进程改动库目录（或第二窗口操作）经 SSE 反映到界面
 10. 快捷键：`Delete` 回收/恢复、`Esc` 关浮层、`Cmd/Ctrl+A` 全选
-11. 托盘运行：关闭窗口最小化到系统托盘（hawk-daemon 驻留后台，扩展采集不间断）；托盘左键/菜单唤出主窗口；托盘「退出」才真正退出；驻留期间再次启动应用唤起已有实例
+11. 托盘运行（可选，`closeAction=tray`，默认直接退出）：关闭窗口最小化到系统托盘（hawk-daemon 驻留后台，扩展采集不间断）；托盘左键/菜单唤出主窗口；托盘「退出」才真正退出；驻留期间再次启动应用唤起已有实例
 
 ## 非目标（v1 明确不做）
 
@@ -573,7 +575,7 @@ hawk-app/
 │   ├── src/                # 主进程/preload 的 TS 源码（esbuild 打包到 out/，见 scripts/build-electron.mjs）
 │   │   ├── main.ts         # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
 │   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
-│   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、关窗隐藏到托盘 + 系统托盘、退出标志
+│   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、可配关窗行为（默认退出/托盘驻留） + 系统托盘、退出标志
 │   │   ├── app-config.ts   # 用户配置（~/.config/hawk/config.toml，全平台统一，TOML 格式；Electron 会话数据在平台默认 userData，两目录分离）：最近素材库与历史记录、缓存父目录、当前库根会话状态
 │   │   ├── updater.ts      # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
 │   │   ├── lan.ts          # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）

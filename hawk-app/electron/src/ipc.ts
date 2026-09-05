@@ -4,7 +4,7 @@ import { app, clipboard, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
-import { getLibraryRoot, listLibraries, removeLibraryHistory } from './app-config';
+import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction } from './app-config';
 import { openLibraryAt, pickLibrary, getStartedConn } from './server';
 import { changeCacheParent, currentCacheParent } from './cache';
 import { lanAddresses } from './lan';
@@ -32,6 +32,15 @@ export function registerIpc(): void {
     return win.isMaximized();
   });
   ipcMain.handle(IPC.winClose, () => getMainWindow()?.close());
+
+  // 关窗行为偏好（config.toml 持久化，主进程为唯一事实来源；渲染层经 IPC 读写）
+  ipcMain.handle(IPC.closeActionGet, () => getCloseAction());
+  ipcMain.handle(IPC.closeActionSet, (_event, action: string) => {
+    if (action !== 'exit' && action !== 'tray') {
+      throw new Error('未知关窗行为');
+    }
+    setCloseAction(action);
+  });
 
   ipcMain.handle(IPC.selectLibrary, async (): Promise<boolean> => {
     const selected = await pickLibrary();
