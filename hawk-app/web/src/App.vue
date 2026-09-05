@@ -154,9 +154,11 @@ async function runBoot() {
       onTaskProgress: (p) => store.applyEvent('task.progress', p),
       onFolderChanged: () => store.applyEvent('folder.changed', {}),
       onLibraryUpdated: (info) => store.applyEvent('library.updated', info),
+      onGlobalFilterChanged: (filter) => store.applyEvent('global_filter.changed', filter),
       onReconnect: () => {
         void store.reloadSkeleton();
         void taxonomy.refreshFolders();
+        void taxonomy.refreshGlobalFilter();
       },
     });
     phase.value = 'ready';

@@ -9,6 +9,7 @@ use crate::api;
 use crate::api::SharedState;
 use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
+use crate::core::global_filter::{publish_changed as publish_global_filter_changed, GlobalFilter};
 use crate::core::index::ItemIndex;
 use crate::core::index_db::IndexDb;
 use crate::core::metadata_store::MetadataStore;
@@ -104,6 +105,7 @@ fn build_state(settings: Settings) -> SharedState {
     let categories = Arc::new(CategoryRegistry::new(&paths));
     let tags = Arc::new(TagRegistry::new(&paths));
     let prefs = Arc::new(ViewPreferences::new(&paths));
+    let global_filter = Arc::new(GlobalFilter::new(&paths));
     let migrator = Arc::new(TaxonomyMigrator::new(
         store.clone(),
         index.clone(),
@@ -126,6 +128,7 @@ fn build_state(settings: Settings) -> SharedState {
         scanner,
         migrator,
         prefs.clone(),
+        global_filter.clone(),
         worker.clone(),
         startup.clone(),
         settings.clone(),
@@ -151,6 +154,7 @@ fn build_state(settings: Settings) -> SharedState {
         prefs,
         categories,
         tags,
+        global_filter,
         lan,
     })
 }
@@ -163,6 +167,8 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
         let pipeline = state.pipeline.clone();
         let config = state.config.clone();
         let prefs = state.prefs.clone();
+        let global_filter = state.global_filter.clone();
+        let bus = state.bus.clone();
         let lan = state.lan.clone();
         Arc::new(move |event| match event {
             WatcherEvent::FileUpsert(abs) => pipeline.notify_upsert(abs),
@@ -185,6 +191,12 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
             }
             WatcherEvent::RegistryChanged => pipeline.notify_registry_changed(),
             WatcherEvent::PreferencesChanged => prefs.reload(),
+            // 隐藏集外部变更（网盘同步落地）：重载后有变化才广播，客户端重查列表
+            WatcherEvent::GlobalFilterChanged => {
+                if global_filter.reload() {
+                    publish_global_filter_changed(&bus, &global_filter.snapshot());
+                }
+            }
             WatcherEvent::Overflow => pipeline.notify_overflow(),
         })
     });

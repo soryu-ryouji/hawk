@@ -203,7 +203,7 @@ function onCategoryContextMenu(e: MouseEvent) {
       <div class="entry" :class="{ active: store.view.kind === 'all' }" @click="store.setView({ kind: 'all' })">
         <Icon name="all" />
         <span class="label">全部素材</span>
-        <span class="count">{{ taxonomy.folders?.count ?? 0 }}</span>
+        <span class="count">{{ taxonomy.allCount }}</span>
       </div>
 
       <div class="entry" :class="{ active: store.view.kind === 'root' }" @click="store.setView({ kind: 'root' })">

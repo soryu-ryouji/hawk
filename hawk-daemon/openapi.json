@@ -159,6 +159,46 @@
         ],
         "type": "object"
       },
+      "Envelope_GlobalFilterSnapshot": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "categories": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "folders": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "folders",
+              "categories",
+              "tags"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_HashMap_String_ViewSortDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -783,6 +823,55 @@
         ],
         "type": "object"
       },
+      "GlobalFilterPutRequest": {
+        "properties": {
+          "hidden": {
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "维度：folder / category / tag",
+            "type": "string"
+          },
+          "name": {
+            "description": "folder 为库内相对路径（如 \"posters/2024\"）；category/tag 为名称",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "hidden"
+        ],
+        "type": "object"
+      },
+      "GlobalFilterSnapshot": {
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders",
+          "categories",
+          "tags"
+        ],
+        "type": "object"
+      },
       "IndexBacklog": {
         "properties": {
           "active": {
@@ -1142,6 +1231,15 @@
             ]
           },
           "exclude_categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "exclude_folders": {
             "items": {
               "type": "string"
             },
@@ -1699,6 +1797,10 @@
           "folder.changed": {
             "$ref": "#/components/schemas/FolderChangedPayload"
           },
+          "global_filter.changed": {
+            "$ref": "#/components/schemas/GlobalFilterSnapshot",
+            "description": "全局列表隐藏集变更（含级联跟随与外部同步重载），负载为完整快照"
+          },
           "item.added": {
             "$ref": "#/components/schemas/ItemDto"
           },
@@ -1740,7 +1842,8 @@
           "item.removed",
           "folder.changed",
           "task.progress",
-          "library.updated"
+          "library.updated",
+          "global_filter.changed"
         ],
         "type": "object"
       },
@@ -2372,6 +2475,58 @@
         "summary": "重命名/移动目录（禁止移入自身子目录；级联迁移经 DirMoveJob 由流水线执行）",
         "tags": [
           "folder"
+        ]
+      }
+    },
+    "/api/v1/global_filter": {
+      "put": {
+        "operationId": "global_filter_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlobalFilterPutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "标记/取消单个维度的全局列表隐藏（幂等；无变化时同样返回成功）",
+        "tags": [
+          "global_filter"
+        ]
+      }
+    },
+    "/api/v1/global_filter/list": {
+      "get": {
+        "operationId": "global_filter_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_GlobalFilterSnapshot"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全部隐藏项（文件夹为库内相对路径，子树整体隐藏）",
+        "tags": [
+          "global_filter"
         ]
       }
     },

@@ -82,6 +82,9 @@ pub struct SseEvents {
     /// 改库显示名广播，负载为完整 LibraryInfo（含新显示名）
     #[serde(rename = "library.updated")]
     library_updated: LibraryInfo,
+    /// 全局列表隐藏集变更（含级联跟随与外部同步重载），负载为完整快照
+    #[serde(rename = "global_filter.changed")]
+    global_filter_changed: crate::core::global_filter::GlobalFilterSnapshot,
 }
 
 #[allow(dead_code)]

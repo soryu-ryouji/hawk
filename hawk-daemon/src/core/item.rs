@@ -212,6 +212,8 @@ pub struct ItemQuery {
     pub categories_match: Option<String>,
     pub exclude_categories: Option<Vec<String>>,
     pub exclude_tags: Option<Vec<String>>,
+    /// 排除文件夹（位置级，子树整体剔除；任一命中即剔除）。空字符串条目无意义，过滤时忽略
+    pub exclude_folders: Option<Vec<String>>,
     pub without_categories: bool,
     pub without_tags: bool,
     pub ext: Option<String>,

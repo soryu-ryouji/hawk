@@ -273,6 +273,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/global_filter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 标记/取消单个维度的全局列表隐藏（幂等；无变化时同样返回成功） */
+        put: operations["global_filter_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/global_filter/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部隐藏项（文件夹为库内相对路径，子树整体隐藏） */
+        get: operations["global_filter_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/item/add": {
         parameters: {
             query?: never;
@@ -798,6 +832,15 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_GlobalFilterSnapshot: {
+            data?: {
+                categories: string[];
+                folders: string[];
+                tags: string[];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_HashMap_String_ViewSortDto: {
             data?: {
                 [key: string]: {
@@ -976,6 +1019,18 @@ export interface components {
             parent_path?: string | null;
             path: string;
         };
+        GlobalFilterPutRequest: {
+            hidden: boolean;
+            /** @description 维度：folder / category / tag */
+            kind: string;
+            /** @description folder 为库内相对路径（如 "posters/2024"）；category/tag 为名称 */
+            name: string;
+        };
+        GlobalFilterSnapshot: {
+            categories: string[];
+            folders: string[];
+            tags: string[];
+        };
         IndexBacklog: {
             /** Format: int32 */
             active: number;
@@ -1062,6 +1117,7 @@ export interface components {
             categories_match?: string | null;
             color?: string | null;
             exclude_categories?: string[] | null;
+            exclude_folders?: string[] | null;
             exclude_tags?: string[] | null;
             ext?: string | null;
             folders?: string[] | null;
@@ -1215,6 +1271,8 @@ export interface components {
          */
         SseEvents: {
             "folder.changed": components["schemas"]["FolderChangedPayload"];
+            /** @description 全局列表隐藏集变更（含级联跟随与外部同步重载），负载为完整快照 */
+            "global_filter.changed": components["schemas"]["GlobalFilterSnapshot"];
             "item.added": components["schemas"]["ItemDto"];
             "item.removed": components["schemas"]["ItemIdPayload"];
             "item.restored": components["schemas"]["ItemDto"];
@@ -1645,6 +1703,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_FolderNode"];
+                };
+            };
+        };
+    };
+    global_filter_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GlobalFilterPutRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    global_filter_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_GlobalFilterSnapshot"];
                 };
             };
         };

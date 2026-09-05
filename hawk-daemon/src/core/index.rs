@@ -548,6 +548,12 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
             entries.retain(|(_, l)| folders.iter().any(|f| loc_in_folder(l, f, q.folders_exact)));
         }
     }
+    if let Some(exclude) = &q.exclude_folders {
+        if !exclude.is_empty() {
+            // 子树整体剔除；空字符串（库根）命中一切，无排除语义，防御性跳过
+            entries.retain(|(_, l)| !exclude.iter().any(|f| !f.is_empty() && loc_in_folder(l, f, false)));
+        }
+    }
     if let Some(ext) = &q.ext {
         if !ext.is_empty() {
             entries.retain(|(_, l)| LibraryPaths::ext_of(l.library_path()) == ext.to_lowercase());

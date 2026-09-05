@@ -16,6 +16,10 @@ pub(crate) fn do_delete(ctx: &PipelineCtx, rel: &str) {
     // 目录(或其下的文件)删除:前缀范围内的 folder: 排序偏好一并清除。
     // 同目录下文件与文件夹不可同名,按前缀匹配不会误伤文件夹设置
     ctx.prefs.delete_prefix(rel);
+    // 隐藏集同款簿记：删除路径命中的隐藏文件夹条目一并清除
+    if ctx.global_filter.delete_folder_prefix(rel) {
+        crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+    }
 
     if let Some(hash) = ctx.index.remove_location(rel) {
         note_invalidated(ctx, rel);
@@ -81,6 +85,10 @@ pub(crate) fn do_dir_move(ctx: &Arc<PipelineCtx>, old_abs: &str, new_abs: &str) 
 
     // 排序偏好跟随目录移动/重命名(含移入回收站,恢复时随之回归)
     ctx.prefs.rename_prefix(&old_rel, &new_rel);
+    // 隐藏集同款跟随：隐藏文件夹移动/改名后维持隐藏
+    if ctx.global_filter.rename_folder_prefix(&old_rel, &new_rel) {
+        crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+    }
 
     let old_in_trash = LibraryPaths::is_in_trash(&format!("{old_rel}/"));
     let new_in_trash = LibraryPaths::is_in_trash(&format!("{new_rel}/"));
@@ -136,6 +144,13 @@ pub(crate) fn do_clear_trash(ctx: &PipelineCtx) -> Result<(), String> {
     // 回收站内的 folder: 排序偏好随清空一并移除
     ctx.prefs
         .delete_prefix(&format!("{}/{}", LibraryPaths::HAWK_DIR_NAME, LibraryPaths::TRASH_DIR_NAME));
+    // 回收站内的隐藏文件夹条目同款清除
+    if ctx
+        .global_filter
+        .delete_folder_prefix(&format!("{}/{}", LibraryPaths::HAWK_DIR_NAME, LibraryPaths::TRASH_DIR_NAME))
+    {
+        crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+    }
 
     for rel in ctx
         .index

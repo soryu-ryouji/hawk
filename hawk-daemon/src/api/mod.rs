@@ -2,6 +2,7 @@
 
 use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
+use crate::core::global_filter::GlobalFilter;
 use crate::core::index::ItemIndex;
 use crate::core::paths::LibraryPaths;
 use crate::core::pipeline::IndexPipeline;
@@ -18,6 +19,7 @@ pub mod app;
 pub mod envelope;
 pub mod events;
 pub mod folder;
+pub mod global_filter;
 pub mod item;
 pub mod lan;
 pub mod library;
@@ -91,6 +93,8 @@ pub struct AppState {
     pub prefs: Arc<ViewPreferences>,
     pub categories: Arc<CategoryRegistry>,
     pub tags: Arc<TagRegistry>,
+    /// 全局列表隐藏项注册表（.hawk/global_filter.toml）
+    pub global_filter: Arc<GlobalFilter>,
     /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
     pub lan: Arc<lan::LanSupervisor>,
 }
@@ -107,6 +111,7 @@ pub fn api_router() -> (axum::Router<SharedState>, utoipa::openapi::OpenApi) {
         .merge(folder::routes())
         .merge(item::routes())
         .merge(taxonomy::routes())
+        .merge(global_filter::routes())
         .merge(view::routes())
         .merge(trash::routes())
         .merge(events::routes())

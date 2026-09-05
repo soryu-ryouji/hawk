@@ -5,6 +5,7 @@ import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
 import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
+import Icon from './Icon.vue';
 import type { FolderNode } from '../types';
 
 // 输入框自动聚焦指令（<script setup> 中以 vFocus 局部变量形式注册）
@@ -23,6 +24,9 @@ const menu = useContextMenu();
 const expanded = ref(props.depth < 1);
 const editing = ref<false | 'rename' | 'create'>(false);
 const editText = ref('');
+
+/** 全局列表隐藏标记（右键菜单文案与行尾 eyeOff 图标共用） */
+const hidden = computed(() => taxonomy.isHidden('folder', props.node.path));
 
 // ---- 侧栏筛选（底栏筛选框输入的关键词，调用方已转小写）：----
 // 匹配节点与其祖先可见（祖先仅作上下文）；含匹配后代的节点强制展开，保证匹配链可达
@@ -70,6 +74,11 @@ function onContextMenu(e: MouseEvent) {
       { label: '新建子文件夹', action: () => startEdit('create') },
       { label: '重命名', action: () => startEdit('rename') },
       { separator: true, label: '' },
+      {
+        label: hidden.value ? '恢复在全局列表显示' : '不在全局列表显示',
+        title: '隐藏后其中（含子目录）素材不再出现在全部素材/根目录/未分类/未标签列表，进入该文件夹仍可见',
+        action: () => void taxonomy.setHidden('folder', props.node.path, !hidden.value),
+      },
       { label: '刷新缓存', title: '修复该文件夹（含子目录）缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目', action: () => void store.refreshCache('folder', props.node.path, props.node.name) },
       { separator: true, label: '' },
       {
@@ -132,7 +141,10 @@ function onDrop(e: DragEvent) {
         >▸</span
       >
       <span v-else class="arrow-placeholder" />
-      <span v-if="editing !== 'rename'" class="name">{{ node.name }}</span>
+      <template v-if="editing !== 'rename'">
+        <span class="name">{{ node.name }}</span>
+        <Icon v-if="hidden" name="eyeOff" :size="12" class="node-hidden" />
+      </template>
       <input
         v-else
         v-model="editText"
@@ -227,6 +239,12 @@ function onDrop(e: DragEvent) {
 .count {
   padding-right: 4px;
   font-size: 11px;
+  color: var(--fg-1);
+}
+
+/* 全局列表隐藏标记（名称右侧眼睛划线图标） */
+.node-hidden {
+  flex: none;
   color: var(--fg-1);
 }
 

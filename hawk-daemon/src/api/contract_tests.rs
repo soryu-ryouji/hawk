@@ -46,6 +46,12 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("GET", "/api/v1/app/token", None),
     ("GET", "/api/v1/category/list", None),
     ("GET", "/api/v1/folder/list", None),
+    ("GET", "/api/v1/global_filter/list", None),
+    (
+        "PUT",
+        "/api/v1/global_filter",
+        Some(r#"{"kind":"category","name":"契约隐藏","hidden":true}"#),
+    ),
     ("GET", "/api/v1/item/count", None),
     ("GET", "/api/v1/library/info", None),
     ("PATCH", "/api/v1/library/info", Some(r#"{"name":"契约测试库"}"#)),
@@ -128,6 +134,7 @@ fn test_app(name: &str) -> TestApp {
     let categories = Arc::new(CategoryRegistry::new(&paths));
     let tags = Arc::new(TagRegistry::new(&paths));
     let prefs = Arc::new(ViewPreferences::new(&paths));
+    let global_filter = Arc::new(crate::core::global_filter::GlobalFilter::new(&paths));
     let thumbs = ThumbnailService::new(Arc::new(paths.clone()));
     let worker = ThumbnailWorker::new(thumbs.clone(), bus.clone());
     let migrator = Arc::new(TaxonomyMigrator::new(
@@ -156,6 +163,7 @@ fn test_app(name: &str) -> TestApp {
         scanner,
         migrator,
         prefs.clone(),
+        global_filter.clone(),
         worker.clone(),
         startup.clone(),
         settings.clone(),
@@ -176,6 +184,7 @@ fn test_app(name: &str) -> TestApp {
         prefs,
         categories,
         tags,
+        global_filter,
         worker,
         lan: LanSupervisor::new(),
     });
@@ -475,6 +484,7 @@ async fn sse_events_match_schema() {
         ItemEvents::FOLDER_CHANGED,
         ItemEvents::TASK_PROGRESS,
         LibraryEvents::UPDATED,
+        crate::core::global_filter::GLOBAL_FILTER_CHANGED,
     ]
     .map(str::to_string)
     .into_iter()
@@ -514,4 +524,66 @@ async fn sse_events_match_schema() {
         errors.join("\n"),
         event.payload
     );
+}
+
+/// 全局列表隐藏：global_filter 端点读写 + item/list 的 exclude_folders/categories/tags 排除语义
+#[tokio::test]
+async fn global_filter_exclusion() {
+    let app = test_app("gfhide");
+    // 根目录与子目录各一项；子目录项挂上分类与标签
+    let root_id = app.add_test_item("root.png", [10, 10, 10]).await;
+    std::fs::create_dir_all(app.library_root().join("积压")).unwrap();
+    let sub_id = app.add_test_item("积压/inner.png", [20, 20, 20]).await;
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/update",
+        Some(json!({"id": sub_id, "categories": ["素材堆"], "tags": ["量大"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "item/update 挂分类标签");
+
+    // 端点读写：标记后可从 list 读回；取消后消失
+    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "folder", "name": "积压", "hidden": true}))).await;
+    assert_eq!(status, StatusCode::OK, "PUT global_filter folder");
+    let (_, bytes) = call_json(&app.router, "GET", "/api/v1/global_filter/list", None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["folders"], json!(["积压"]), "隐藏文件夹读回");
+
+    // 无排除：两项都在
+    let list_total = |body: Value| async {
+        let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/list", Some(body)).await;
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        (v["data"]["total"].as_u64().unwrap(), v["data"].clone())
+    };
+    let (total, _) = list_total(json!({})).await;
+    assert_eq!(total, 2, "无排除时应为全部两项");
+
+    // 文件夹子树排除：只剩根目录项
+    let (total, data) = list_total(json!({"exclude_folders": ["积压"]})).await;
+    assert_eq!(total, 1, "exclude_folders 子树排除");
+    assert_eq!(data["items"][0]["id"], json!(root_id));
+
+    // 分类/标签排除：命中即剔
+    let (total, _) = list_total(json!({"exclude_categories": ["素材堆"]})).await;
+    assert_eq!(total, 1, "exclude_categories 排除");
+    let (total, _) = list_total(json!({"exclude_tags": ["量大"]})).await;
+    assert_eq!(total, 1, "exclude_tags 排除");
+
+    // 维度自身视图不受影响：正向 folders 过滤仍能看到子目录项
+    let (total, _) = list_total(json!({"folders": ["积压"]})).await;
+    assert_eq!(total, 1, "文件夹自身视图不过滤自身");
+
+    // 取消隐藏
+    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "folder", "name": "积压", "hidden": false}))).await;
+    assert_eq!(status, StatusCode::OK, "PUT global_filter 取消隐藏");
+    let (_, bytes) = call_json(&app.router, "GET", "/api/v1/global_filter/list", None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["folders"], json!([]), "取消后列表为空");
+
+    // 非法参数：空路径 / 非法维度
+    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "folder", "name": "", "hidden": true}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "空文件夹路径应 400");
+    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "other", "name": "x", "hidden": true}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "非法维度应 400");
 }

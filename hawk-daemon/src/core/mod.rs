@@ -6,6 +6,7 @@ pub mod config;
 pub mod content_hash;
 pub mod events;
 pub mod fs_util;
+pub mod global_filter;
 pub mod index;
 pub mod index_db;
 pub mod item;

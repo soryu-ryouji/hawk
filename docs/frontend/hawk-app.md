@@ -393,12 +393,15 @@ applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略�
 ```
 
 **分类维度子 store `useTaxonomyStore`（stores/taxonomy.ts）**：文件夹树 / 分类 / 标签 / 侧栏计数域。
-状态 `folders`（完整树含根）、`categories`、`tagList`、`trashTotal`、`rootCount`、`uncategorizedCount`、
-`untaggedCount`；getter `flatFolders`（移动目标选择控件）、`categoryOptions`、`folderExists/categoryExists/
-tagExists`（restoreView 校验经 App.vue 注入主 store init）；action `refreshAll`（首屏/换库加载，先于主
-store init）、`refreshFolders/refreshTaxonomy` 与文件夹/分类/标签 CRUD（视图跟随重命名/删除回退让当前
-视图经主 store `correctView` 修正）。创建时经 `registerTaxonomyHooks` 注册两个防抖刷新回调，SSE 事件
-（item 增删/集合变化/folder.changed）与本地批量 action 的分类维度刷新都由主 store 经钩子转发至此。
+状态 `folders`（完整树含根）、`categories`、`tagList`、`trashTotal`、`allCount`（全部素材计数，应用隐藏排除）、
+`rootCount`、`uncategorizedCount`、`untaggedCount`、`globalFilter`（全局列表隐藏集）；getter `flatFolders`（移动目标选择控件）、`categoryOptions`、`folderExists/categoryExists/
+tagExists`（restoreView 校验经 App.vue 注入主 store init）、`isHidden`；action `refreshAll`（首屏/换库加载，先于主
+store init）、`refreshFolders/refreshTaxonomy/refreshGlobalFilter` 与文件夹/分类/标签 CRUD（视图跟随重命名/删除回退让当前
+视图经主 store `correctView` 修正）、`setHidden`（标记/取消全局列表隐藏）。创建时经 `registerTaxonomyHooks` 注册防抖刷新回调与
+`onGlobalFilterChanged`（隐藏集事件：同步两侧状态 → 重查骨架 + 计数），SSE 事件
+（item 增删/集合变化/folder.changed/global_filter.changed）与本地批量 action 的分类维度刷新都由主 store 经钩子转发至此。
+隐藏排除经主 store `listParams` 在全局类视图（全部/根目录/未分类/未标签）附带 `exclude_folders/categories/tags`
+（隐藏集由本 store 经 `setGlobalFilter` 注入主 store，保持引用方向 DAG）；维度自身视图与回收站不排除。
 
 **导入子 store `useImporterStore`（stores/importer.ts）**：批量导入域。状态 `importProgress`
 （null 无任务；total=0 收集文件阶段不定态）、`dupPrompt`（重复策略弹窗挂起态，ImportDuplicateDialog
@@ -514,7 +517,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 ## 功能清单 v1（验收标准）
 
 1. 启动选库：首次启动弹目录选择；记住上次素材库与上次浏览的文件夹视图（按库路径存 localStorage，文件夹已删则回退全部素材）；菜单可更换库
-2. 侧栏：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站）/ 文件夹树 / 分类列表 / 标签列表（三分区均支持「＋」新建与右键重命名/删除；**接受素材拖入**：拖到文件夹=移动，拖到分类/标签=添加）
+2. 侧栏：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站）/ 文件夹树 / 分类列表 / 标签列表（三分区均支持「＋」新建与右键重命名/删除；**接受素材拖入**：拖到文件夹=移动，拖到分类/标签=添加；右键可设「不在全局列表显示」——隐藏维度（文件夹含子树）下的素材从全部素材/根目录/未分类/未标签列表排除，行尾显示眼睛划线标记，设置面板「隐藏项」分区可查看清单并逐条取消）
 3. 网格：缩略图懒加载、虚拟渲染（打开即知总高、滚动条自由拖动、离屏不渲染）、单选/Shift 连选/Cmd 点选、双击预览浮层
 4. 搜索与筛选：关键词（命中名称/备注）、star 精确筛选、四种排序双向
 5. 检查器：1024 预览；名称、标签（chip 增删）、评分（点星）、备注、URL 编辑即存（失焦/回车提交）；只读信息：尺寸、大小、mtime、全部路径

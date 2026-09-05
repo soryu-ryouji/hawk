@@ -442,6 +442,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | categories | string[] | 按分类过滤（精确匹配），`categories_match`：`any`（默认）/ `all` |
 | exclude_categories | string[] | 排除分类（任一命中即剔除）                    |
 | exclude_tags | string[] | 排除标签（任一命中即剔除）                                |
+| exclude_folders | string[] | 排除文件夹（含子目录，任一命中即剔除；空字符串条目被忽略）      |
 | star       | number   | 按评分过滤                                                      |
 | folders    | string[] | 按文件夹路径过滤（含子目录）                                    |
 | folders_exact | boolean | 为 true 时文件夹只精确匹配直接位于该目录下的 item（不含子目录）；空字符串表示库根目录，默认 false |
@@ -804,6 +805,17 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 | PUT | `/api/v1/view/preference` | `{ "scope", "order_by", "order" }`，覆盖写；非法 scope/排序值返回 `INVALID_PARAM` |
 | DELETE | `/api/v1/view/preference?scope=<scope>` | 删除条目，回到继承/默认 |
 
+## global_filter
+
+全局列表隐藏项（`.hawk/global_filter.toml`，参与同步）：被标记的文件夹/分类/标签，其下素材由客户端在「全部素材/根目录/未分类/未标签」等全局视图查询时附带 `exclude_*` 参数排除（OR 语义：命中任一隐藏维度即剔除）；维度自身视图与回收站不排除。文件夹条目为库内相对路径，子树整体隐藏。
+
+级联跟随与排序偏好同款：文件夹移动/重命名（含移入回收站，恢复时回归）自动迁移，删除/清空回收站自动清除；分类/标签重命名跟随（目标已隐藏时合并）、删除清除。变更广播 `global_filter.changed`（含外部同步写入的重载），负载为完整快照。
+
+| 方法 | 端点 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/api/v1/global_filter/list` | 全部隐藏项：`{ "folders": [...], "categories": [...], "tags": [...] }` |
+| PUT | `/api/v1/global_filter` | `{ "kind": "folder" \| "category" \| "tag", "name", "hidden" }`，幂等；路径/名称非法返回 `INVALID_PARAM` |
+
 ## trash
 
 回收站内容通过 `item/list`（`in_trash: true`）查询。
@@ -842,6 +854,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `item.restored`   | Item 对象 | 首个回收站位置回归库内 |
 | `item.removed`    | `{ "id": "..." }` | 彻底删除(无剩余位置) |
 | `folder.changed`  | `{ "reason": "external" }` | 目录结构可能变化,客户端应重拉 `folder/list`;reason 恒为 `external`,客户端必须忽略取值(结构为将来预留) |
+| `global_filter.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 全局列表隐藏集变更（标记/取消、级联跟随、外部同步重载）；负载为完整快照，客户端就地替换并重查列表 |
 | `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(缩略图/调色板队列与索引管道;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
 
 事件名与负载即持久契约(Rust 重写必须逐字兼容);后端以常量集中定义(`ItemEvents`),客户端不许凭代码反推。

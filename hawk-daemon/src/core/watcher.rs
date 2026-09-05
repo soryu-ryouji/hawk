@@ -27,6 +27,8 @@ pub enum WatcherEvent {
     RegistryChanged,
     /// view.toml 视图偏好变更（含外部同步写入）
     PreferencesChanged,
+    /// global_filter.toml 隐藏项注册表变更（含外部同步写入）
+    GlobalFilterChanged,
     /// 事件缓冲溢出，需要全量扫描兜底
     Overflow,
 }
@@ -232,6 +234,7 @@ fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
     let norm_categories = normalize_str(&paths.categories_file);
     let norm_tags = normalize_str(&paths.tags_file);
     let norm_view = normalize_str(&paths.view_file);
+    let norm_global_filter = normalize_str(&paths.global_filter_file);
     if abs == norm_config {
         cb(WatcherEvent::ConfigChanged);
         return;
@@ -242,6 +245,10 @@ fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
     }
     if abs == norm_view {
         cb(WatcherEvent::PreferencesChanged);
+        return;
+    }
+    if abs == norm_global_filter {
+        cb(WatcherEvent::GlobalFilterChanged);
         return;
     }
     if is_internal_path(paths, abs) {

@@ -6,7 +6,7 @@ import { defineStore } from 'pinia';
 import { api } from '../api/endpoints';
 import { debounce, errorText } from './util';
 import { registerTaxonomyHooks, useLibraryStore } from './library';
-import type { CategoryInfo, FolderNode, TagInfo } from '../types';
+import type { CategoryInfo, FolderNode, GlobalFilter, TagInfo } from '../types';
 
 export const useTaxonomyStore = defineStore('taxonomy', () => {
   const library = useLibraryStore();
@@ -16,10 +16,67 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
   const categories = ref<CategoryInfo[]>([]);
   const tagList = ref<TagInfo[]>([]);
   const trashTotal = ref(0);
+  /** 全部素材计数（应用隐藏排除后；不再用文件夹树根节点计数——那是未过滤口径） */
+  const allCount = ref(0);
   // 侧栏智能条目计数（limit:1 只取 total）
   const rootCount = ref(0);
   const uncategorizedCount = ref(0);
   const untaggedCount = ref(0);
+  /** 全局列表隐藏集（与主 store 共用同一份：变更经 applyGlobalFilter 同步两侧） */
+  const globalFilter = ref<GlobalFilter>({ folders: [], categories: [], tags: [] });
+
+  // ---- 隐藏集 ----
+  const hiddenFolderSet = computed(() => new Set(globalFilter.value.folders));
+  const hiddenCategorySet = computed(() => new Set(globalFilter.value.categories));
+  const hiddenTagSet = computed(() => new Set(globalFilter.value.tags));
+
+  /** 维度是否被标记为全局列表隐藏（文件夹为精确路径命中；子树继承由查询层前缀匹配承担） */
+  function isHidden(kind: 'folder' | 'category' | 'tag', name: string): boolean {
+    const set = kind === 'folder' ? hiddenFolderSet.value : kind === 'category' ? hiddenCategorySet.value : hiddenTagSet.value;
+    return set.has(name);
+  }
+
+  /** 隐藏集落位：本 store 与主 store 同步同一份（纯状态，无后续动作；首屏加载不应触发重查） */
+  function applyGlobalFilter(gf: GlobalFilter) {
+    globalFilter.value = gf;
+    library.setGlobalFilter(gf);
+  }
+
+  /** 隐藏集变更的联动收尾：成员与计数均已变化 → 重查骨架 + 防抖刷新计数 */
+  function onGlobalFilterUpdated(gf: GlobalFilter) {
+    applyGlobalFilter(gf);
+    debouncedRefreshTaxonomy(() => void refreshTaxonomy());
+    void library.reloadSkeleton();
+  }
+
+  async function refreshGlobalFilter() {
+    try {
+      applyGlobalFilter(await api.globalFilterList());
+    } catch (e) {
+      library.showToast(errorText(e));
+    }
+  }
+
+  /** 标记/取消隐藏（右键菜单与设置面板共用）：本地先行对齐（SSE 回声到达后幂等重放） */
+  async function setHidden(kind: 'folder' | 'category' | 'tag', name: string, hidden: boolean) {
+    try {
+      await api.globalFilterSet(kind, name, hidden);
+      await refreshGlobalFilter();
+      onGlobalFilterUpdated(globalFilter.value);
+    } catch (e) {
+      library.showToast(errorText(e));
+    }
+  }
+
+  /** 隐藏排除参数（全局类视图计数查询用；与主 store listParams 同口径） */
+  function excludeParams() {
+    const gf = globalFilter.value;
+    return {
+      exclude_folders: gf.folders.length > 0 ? gf.folders : undefined,
+      exclude_categories: gf.categories.length > 0 ? gf.categories : undefined,
+      exclude_tags: gf.tags.length > 0 ? gf.tags : undefined,
+    };
+  }
 
   // ---- getters ----
   /** 扁平化的文件夹树（移动到文件夹等选择控件用），含根目录 */
@@ -65,17 +122,20 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
 
   async function refreshTaxonomy() {
     try {
-      const [categoryList, tags, trash, root, uncategorized, untagged] = await Promise.all([
+      const excludes = excludeParams();
+      const [categoryList, tags, trash, all, root, uncategorized, untagged] = await Promise.all([
         api.categoryList(),
         api.tagList(),
         api.itemList({ in_trash: true, limit: 1 }),
-        api.itemList({ folders: [''], folders_exact: true, limit: 1 }),
-        api.itemList({ without_categories: true, limit: 1 }),
-        api.itemList({ without_tags: true, limit: 1 }),
+        api.itemList({ ...excludes, limit: 1 }),
+        api.itemList({ folders: [''], folders_exact: true, ...excludes, limit: 1 }),
+        api.itemList({ without_categories: true, ...excludes, limit: 1 }),
+        api.itemList({ without_tags: true, ...excludes, limit: 1 }),
       ]);
       categories.value = categoryList;
       tagList.value = tags;
       trashTotal.value = Number(trash.total);
+      allCount.value = Number(all.total);
       rootCount.value = Number(root.total);
       uncategorizedCount.value = Number(uncategorized.total);
       untaggedCount.value = Number(untagged.total);
@@ -86,7 +146,7 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
 
   /** 首屏/换库加载（组件层编排，先于主 store init：restoreView 的校验依赖本 store 数据） */
   async function refreshAll() {
-    await Promise.all([refreshFolders(), refreshTaxonomy()]);
+    await Promise.all([refreshFolders(), refreshTaxonomy(), refreshGlobalFilter()]);
   }
 
   // ---- 文件夹写操作 ----
@@ -198,11 +258,13 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
   registerTaxonomyHooks({
     refreshTaxonomy: () => debouncedRefreshTaxonomy(() => void refreshTaxonomy()),
     refreshFolders: () => debouncedRefreshFolders(() => void refreshFolders()),
+    onGlobalFilterChanged: (filter) => onGlobalFilterUpdated(filter),
   });
 
   return {
-    folders, categories, tagList, trashTotal, rootCount, uncategorizedCount, untaggedCount,
+    folders, categories, tagList, trashTotal, allCount, rootCount, uncategorizedCount, untaggedCount, globalFilter,
     flatFolders, categoryOptions, folderExists, categoryExists, tagExists,
+    isHidden, setHidden, refreshGlobalFilter,
     refreshFolders, refreshTaxonomy, refreshAll,
     folderCreate, folderRename, folderDelete,
     categoryCreate, categoryRename, categoryDelete, tagCreate, tagRename, tagDelete,

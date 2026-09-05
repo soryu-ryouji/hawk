@@ -1,7 +1,7 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
 import { apiConfig, request } from './client';
 import type { components } from './schema';
-import type { CategoryInfo, FolderNode, Item, ItemListRequest, ItemListResult, ItemSkeletonResult, LibraryInfo, TagInfo, ViewPrefs } from '../types';
+import type { CategoryInfo, FolderNode, GlobalFilter, Item, ItemListRequest, ItemListResult, ItemSkeletonResult, LibraryInfo, TagInfo, ViewPrefs } from '../types';
 
 /** server 启动状态（GET /app/startup，浏览器无 IPC 时由前端轮询） */
 type StartupInfo = components['schemas']['StartupInfo'];
@@ -113,6 +113,11 @@ export const api = {
   tagUpdate: (name: string, newName: string) =>
     request<void>('POST', '/api/v1/tag/update', { body: { name, new_name: newName } }),
   tagDelete: (name: string) => request<void>('POST', '/api/v1/tag/delete', { body: { name } }),
+
+  /** 全局列表隐藏项：全部素材/根目录/未分类/未标签视图的排除集（子树语义仅文件夹） */
+  globalFilterList: () => request<GlobalFilter>('GET', '/api/v1/global_filter/list'),
+  globalFilterSet: (kind: 'folder' | 'category' | 'tag', name: string, hidden: boolean) =>
+    request<void>('PUT', '/api/v1/global_filter', { body: { kind, name, hidden } }),
 
   /** 视图排序偏好：folder 继承由前端沿父链解析，服务端只存取原始条目 */
   viewPreferences: () => request<ViewPrefs>('GET', '/api/v1/view/preferences'),

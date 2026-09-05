@@ -5,6 +5,7 @@
 
 use crate::core::config::LibraryConfig;
 use crate::core::events::{EventBus, TaskProgress};
+use crate::core::global_filter::GlobalFilter;
 use crate::core::index::ItemIndex;
 use crate::core::item::PaletteColor;
 use crate::core::metadata_store::MetadataStore;
@@ -105,6 +106,7 @@ pub(crate) struct PipelineCtx {
     pub(crate) scanner: LibraryScanner,
     pub(crate) migrator: Arc<TaxonomyMigrator>,
     pub(crate) prefs: Arc<ViewPreferences>,
+    pub(crate) global_filter: Arc<GlobalFilter>,
     pub(crate) worker: Arc<ThumbnailWorker>,
     pub(crate) startup: Arc<StartupState>,
     pub(crate) settings: Settings,

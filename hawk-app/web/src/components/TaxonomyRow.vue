@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
@@ -21,6 +22,9 @@ const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
 const menu = useContextMenu();
 
+/** 全局列表隐藏标记（行尾 eyeOff 图标与右键菜单文案共用） */
+const hidden = computed(() => taxonomy.isHidden(props.kind, props.name));
+
 function onClick() {
   store.setView(props.kind === 'category' ? { kind: 'category', name: props.name } : { kind: 'tag', name: props.name });
 }
@@ -34,6 +38,11 @@ function onContextMenu(e: MouseEvent) {
   menu.open(
     [
       { label: '重命名', action: () => emit('rename', props.name) },
+      {
+        label: hidden.value ? '恢复在全局列表显示' : '不在全局列表显示',
+        title: '隐藏后其下素材不再出现在全部素材/根目录/未分类/未标签列表，进入该维度视图仍可见',
+        action: () => void taxonomy.setHidden(props.kind, props.name, !hidden.value),
+      },
       { label: '刷新缓存', title: `修复该${kindLabel}下素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目`, action: () => void store.refreshCache(props.kind, props.name) },
       {
         label: `删除${kindLabel}`,
@@ -54,6 +63,7 @@ function onContextMenu(e: MouseEvent) {
   <div class="tax-row" :class="{ active, 'drop-target': dropTarget }" :data-name="name" @click="onClick" @contextmenu.prevent.stop="onContextMenu">
     <Icon :name="kind === 'category' ? 'category' : 'tag'" :size="13" />
     <span class="tax-name">{{ name }}</span>
+    <Icon v-if="hidden" name="eyeOff" :size="12" class="tax-hidden" />
     <span class="tax-count">{{ count }}</span>
   </div>
 </template>
@@ -103,6 +113,12 @@ function onContextMenu(e: MouseEvent) {
 
 .tax-count {
   font-size: 11px;
+  color: var(--fg-1);
+}
+
+/* 全局列表隐藏标记（行尾眼睛划线图标） */
+.tax-hidden {
+  flex: none;
   color: var(--fg-1);
 }
 </style>

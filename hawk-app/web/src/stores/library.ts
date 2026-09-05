@@ -8,7 +8,7 @@ import { isUnfilteredView, displayPath, itemKey, nextSelection, resolveSort, sam
 import { hasShell } from '../platform';
 import { loadJSON, loadText, saveJSON, saveText, STORAGE_KEYS } from '../persist';
 import { debounce, errorText } from './util';
-import type { Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, ViewPrefs, ViewState } from '../types';
+import type { GlobalFilter, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, ViewPrefs, ViewState } from '../types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
 const INITIAL_WINDOW = 150;
@@ -27,6 +27,8 @@ export interface TaxonomyHooks {
   refreshTaxonomy(): void;
   /** 目录结构变化 → 防抖刷新文件夹树 */
   refreshFolders(): void;
+  /** 全局列表隐藏集变更（SSE 负载为完整快照）→ 更新隐藏集并重查列表 */
+  onGlobalFilterChanged(filter: GlobalFilter): void;
 }
 let taxonomyHooks: TaxonomyHooks | null = null;
 export function registerTaxonomyHooks(hooks: TaxonomyHooks): void {
@@ -102,6 +104,9 @@ export const useLibraryStore = defineStore('library', () => {
   const historyIndex = ref(-1);
   /** 视图排序偏好（folder/category/tag 作用域；folder 继承沿父链解析） */
   const viewPrefs = ref<ViewPrefs>({});
+  /** 全局列表隐藏集（.hawk/global_filter.toml）：由 taxonomy store 拉取后经 setGlobalFilter 注入
+   * （引用方向 DAG：主 store 不反向引用 taxonomy），listParams 在全局类视图附带排除参数 */
+  const globalFilter = ref<GlobalFilter>({ folders: [], categories: [], tags: [] });
 
   // ---- getters ----
   const isTrash = computed(() => view.value.kind === 'trash');
@@ -141,6 +146,7 @@ export const useLibraryStore = defineStore('library', () => {
       order_by: query.value.orderBy,
       order: query.value.order,
       in_trash: isTrash.value || undefined,
+      ...globalExcludes(),
       folders: view.value.kind === 'folder' ? [view.value.path] : view.value.kind === 'root' ? [''] : undefined,
       folders_exact: view.value.kind === 'root' ? true : undefined,
       without_categories: view.value.kind === 'uncategorized' ? true : undefined,
@@ -148,6 +154,30 @@ export const useLibraryStore = defineStore('library', () => {
       categories: view.value.kind === 'category' ? [view.value.name] : undefined,
       tags: view.value.kind === 'tag' ? [view.value.name] : undefined,
     };
+  }
+
+  /** 全局类视图（全部/根目录/未分类/未标签）应用隐藏排除；维度自身视图与回收站不排除 */
+  function isGlobalView(): boolean {
+    const k = view.value.kind;
+    return k === 'all' || k === 'root' || k === 'uncategorized' || k === 'untagged';
+  }
+
+  /** 隐藏排除参数：仅全局类视图且隐藏集非空时附带（OR 语义：命中任一隐藏维度即排除） */
+  function globalExcludes(): Pick<ItemListRequest, 'exclude_folders' | 'exclude_categories' | 'exclude_tags'> {
+    if (!isGlobalView()) {
+      return {};
+    }
+    const gf = globalFilter.value;
+    return {
+      exclude_folders: gf.folders.length > 0 ? gf.folders : undefined,
+      exclude_categories: gf.categories.length > 0 ? gf.categories : undefined,
+      exclude_tags: gf.tags.length > 0 ? gf.tags : undefined,
+    };
+  }
+
+  /** 隐藏集注入（taxonomy store 拉取/接收事件后调用）：全局类视图下成员可能变化 → 重载骨架 */
+  function setGlobalFilter(gf: GlobalFilter) {
+    globalFilter.value = gf;
   }
 
   function showToast(message: string) {
@@ -819,6 +849,6 @@ export const useLibraryStore = defineStore('library', () => {
     select, selectAll, clearSelection,
     updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, renameLibrary,
     addCategoryToSelected, addTagToSelected, moveSelectedToFolder, setStarForSelected,
-    showToast, applyEvent,
+    showToast, applyEvent, setGlobalFilter,
   };
 });

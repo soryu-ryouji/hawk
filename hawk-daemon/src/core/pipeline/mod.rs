@@ -162,6 +162,7 @@ impl IndexPipeline {
         scanner: LibraryScanner,
         migrator: Arc<TaxonomyMigrator>,
         prefs: Arc<ViewPreferences>,
+        global_filter: Arc<crate::core::global_filter::GlobalFilter>,
         worker: Arc<ThumbnailWorker>,
         startup: Arc<StartupState>,
         settings: Settings,
@@ -180,6 +181,7 @@ impl IndexPipeline {
             scanner,
             migrator,
             prefs,
+            global_filter,
             worker,
             startup,
             settings,
@@ -657,11 +659,20 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             new_name,
             reply,
         } => {
+            // 隐藏集跟随重命名（目标已隐藏时合并）；有变化才广播
+            let filter_changed = ctx.global_filter.rename_category(&old_name, &new_name);
             let result = ctx.migrator.rename_category(&old_name, &new_name);
+            if filter_changed {
+                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+            }
             complete(reply, result);
         }
         Job::CategoryDelete { name, reply } => {
+            let filter_changed = ctx.global_filter.delete_category(&name);
             let result = ctx.migrator.delete_category(&name);
+            if filter_changed {
+                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+            }
             complete(reply, result);
         }
         Job::TagCreate { name, reply } => {
@@ -673,11 +684,19 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             new_name,
             reply,
         } => {
+            let filter_changed = ctx.global_filter.rename_tag(&name, &new_name);
             let result = ctx.migrator.rename_tag(&name, &new_name);
+            if filter_changed {
+                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+            }
             complete(reply, result);
         }
         Job::TagDelete { name, reply } => {
+            let filter_changed = ctx.global_filter.delete_tag(&name);
             let result = ctx.migrator.delete_tag(&name);
+            if filter_changed {
+                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+            }
             complete(reply, result);
         }
         Job::RegistryReload => {

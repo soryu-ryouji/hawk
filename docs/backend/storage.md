@@ -17,6 +17,7 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
     ├── categories.toml ← 分类注册表（参与同步）
     ├── tags.toml       ← 标签注册表（参与同步）
     ├── view.toml       ← 视图偏好：文件夹/分类/标签的排序记忆（参与同步）
+    ├── global_filter.toml ← 全局列表隐藏项：文件夹/分类/标签（参与同步）
     ├── metadata/       ← 素材参数，纯文本（参与同步）
     └── trash/          ← 回收站（本地专用，不参与同步）
 
@@ -53,6 +54,7 @@ cache/<库标识>/
 | `categories.toml` | 是           | 分类注册表（含空分类）     |
 | `tags.toml`       | 是           | 标签注册表（含空标签）     |
 | `view.toml`       | 是           | 视图偏好（排序记忆），扁平 map |
+| `global_filter.toml` | 是        | 全局列表隐藏项（文件夹/分类/标签） |
 | `metadata/`       | 是           | 素材参数，唯一数据源       |
 | `trash/`      | 否           | 回收站，仅本机可恢复       |
 | 库外缩略图/调色板缓存 | 否        | 系统缓存目录，可重建，不进同步盘 |
@@ -174,6 +176,6 @@ size/mtime 复用不再触及该文件 → 永久滞留 `0 × 0`。三层兜底�
 
 ## 实时文件监听
 
-hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 与注册表文件（categories.toml / tags.toml）的变更同样被监听，修改后自动生效。
+hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 与注册表文件（categories.toml / tags.toml / global_filter.toml）的变更同样被监听，修改后自动生效。
 
 文件监听可能静默丢事件（尤其 macOS FSEvents，无溢出错误可捕获），因此另有**周期对账**：默认每 60 秒跑一次轻量全量扫描（复用哈希、不读文件内容），保证最终一致。间隔由环境变量 `HAWK_RESCAN_INTERVAL` 控制（秒，0 关闭）。
