@@ -168,6 +168,13 @@ try {
     });
   const evaljs = async (expression) => {
     const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    // 页面内 JS 异常不抛的话动作步骤会无声跳过（evaljs 返回 undefined），失败被推迟成
+    // 后续 waitFor 的「等待超时」，排障方向全错——这里显式转抛，错误落在真实出错行
+    if (result.exceptionDetails) {
+      const d = result.exceptionDetails;
+      const text = d.exception?.description || d.exception?.value || d.text || 'unknown';
+      throw new Error(`页面脚本异常: ${text}`);
+    }
     return result.result?.value;
   };
   const screenshot = async (name) => {
@@ -704,6 +711,9 @@ try {
   await evaljs(`document.querySelectorAll('.card')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))`);
   check('多选面板出现', await evaljs(`document.querySelector('.multi-title')?.textContent?.includes('已选 2') ?? false`), true);
 
+  // 批量添加标签：输入框为「＋ 展开输入」式（多选面板与单选同构后 v-if 收敛），先点 ＋ 等输入框出现
+  await evaljs(`document.querySelector('.multi .add[title^="添加标签"]')?.click()`);
+  await waitFor(async () => evaljs(`!!document.querySelector('.multi section input')`), 5_000);
   await evaljs(`(() => {
     const input = document.querySelector('.multi section input');
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -721,7 +731,8 @@ try {
   }, 5_000);
   check('批量添加标签生效（服务端）', batchTagOk, true);
 
-  await evaljs(`[...document.querySelectorAll('.multi .batch-btn')].find((b) => b.textContent.includes('添加到分类'))?.click()`);
+  // 分类 ＋ 按钮弹选择框（旧版面板的 .batch-btn 按钮已不存在）；对话框确认后自关，body.click 仅为兑底
+  await evaljs(`document.querySelector('.multi .add[title^="添加到分类"]')?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.dialog input')`), 5_000);
   await evaljs(`(() => {
     const input = document.querySelector('.dialog input');
