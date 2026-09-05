@@ -17,6 +17,10 @@
 - 自由开放：开放的 REST API，方便生态接入
 - 免费
 
+## 截图
+
+![screenshot](./.assets/screenshot_windows_01.png)
+
 ## 路线图
 
 - 1.0 版本
