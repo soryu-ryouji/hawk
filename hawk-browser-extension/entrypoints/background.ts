@@ -10,66 +10,42 @@ const GET_FOLDERS_MESSAGE = 'hawk:get-folders';
 const CREATE_FOLDER_MESSAGE = 'hawk:create-folder';
 const NOTIFY_MESSAGE = 'hawk:notify';
 
-/** 常用文件夹条目（拖拽保存面板展示用） */
-export interface FlatNode {
-  path: string;
-  name: string;
-}
-
-/** 各文件夹累计保存次数（storage.local 持久化，用于「常用」列表） */
+/** 各文件夹最近一次保存的时间戳（storage.local 持久化，用于目录按最近使用排序） */
 type FolderUsage = Record<string, number>;
-const USAGE_KEY = 'folderUsage';
-/** 「常用」列表条数上限 */
-const FREQUENT_LIMIT = 5;
+const USAGE_KEY = 'folderLastUse';
 
-let foldersCache: { folders: FolderNode; frequent: FlatNode[]; at: number } | null = null;
+let foldersCache: { folders: FolderNode; at: number } | null = null;
 const FOLDERS_CACHE_TTL = 30_000;
-
-function flattenTree(root: { path: string; name: string; children: { path: string; name: string; children: unknown[] }[] }): FlatNode[] {
-  const list: FlatNode[] = [];
-  const walk = (children: typeof root.children) => {
-    for (const child of children) {
-      list.push({ path: child.path, name: child.name });
-      walk(child.children as typeof root.children);
-    }
-  };
-  walk(root.children);
-  return list;
-}
 
 async function getUsage(): Promise<FolderUsage> {
   const stored = await browser.storage.local.get(USAGE_KEY);
   return (stored[USAGE_KEY] as FolderUsage | undefined) ?? {};
 }
 
-/** 保存成功后累计次数，并作废缓存让下次「常用」列表重算 */
+/** 保存成功后记录时间戳，并作废缓存让下次面板拿到新排序 */
 async function recordUsage(path: string) {
   const usage = await getUsage();
-  usage[path] = (usage[path] ?? 0) + 1;
+  usage[path] = Date.now();
   await browser.storage.local.set({ [USAGE_KEY]: usage });
   foldersCache = null;
 }
 
-/** 按保存次数取前几个仍存在于库中的文件夹 */
-function computeFrequent(folders: FlatNode[], usage: FolderUsage): FlatNode[] {
-  const byPath = new Map(folders.map((f) => [f.path, f]));
-  return Object.entries(usage)
-    .filter(([path, count]) => count > 0 && byPath.has(path))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, FREQUENT_LIMIT)
-    .map(([path]) => byPath.get(path)!);
+/** 目录按最近使用排序：用过的在前（最近优先），没用过的保持服务端顺序排在后面；每层都排 */
+function sortByLastUse(nodes: FolderNode[], usage: FolderUsage): FolderNode[] {
+  return nodes
+    .map((node) => ({ ...node, children: sortByLastUse(node.children, usage) }))
+    .sort((a, b) => (usage[b.path] ?? 0) - (usage[a.path] ?? 0));
 }
 
-/** 文件夹树 + 常用文件夹（拖拽保存面板展示用） */
-async function getFolders(force = false): Promise<{ folders: FolderNode; frequent: FlatNode[] }> {
+/** 按最近使用排序后的文件夹树（拖拽保存面板展示用） */
+async function getFolders(force = false): Promise<{ folders: FolderNode }> {
   if (!force && foldersCache && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
-    const { folders, frequent } = foldersCache;
-    return { folders, frequent };
+    return { folders: foldersCache.folders };
   }
-  const folders = await fetchFolderList();
-  const frequent = computeFrequent(flattenTree(folders), await getUsage());
-  foldersCache = { folders, frequent, at: Date.now() };
-  return { folders, frequent };
+  const root = await fetchFolderList();
+  const folders = { ...root, children: sortByLastUse(root.children, await getUsage()) };
+  foldersCache = { folders, at: Date.now() };
+  return { folders };
 }
 
 export default defineBackground(() => {

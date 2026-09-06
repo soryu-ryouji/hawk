@@ -1,4 +1,5 @@
-// 拖拽保存（Eagle 式）：按住图片向某个方向拖过阈值后，面板浮在当前指针旁（留大间隙，避免被浏览器的拖拽幽灵图盖住）。
+// 拖拽保存（Eagle 式）：按住图片拖过阈值后，面板锚定在当前指针处向右下展开，左侧大投放区正好压在指针下——
+// 面板出现即可松手存入根目录；右移可投入具体文件夹（目录树按最近使用排序，默认全折叠）。
 // 面板内容：
 //   1. 「常用」文件夹：按保存次数自动统计的快捷投放入口；
 //   2. 文件夹树：默认全折叠，拖拽悬停片刻自动展开，也可点击箭头展开/收起；投到某行存入对应文件夹；
@@ -12,21 +13,18 @@ const GET_FOLDERS_MESSAGE = 'hawk:get-folders';
 const CREATE_FOLDER_MESSAGE = 'hawk:create-folder';
 const NOTIFY_MESSAGE = 'hawk:notify';
 
-/** 拖过多少像素后浮出保存面板（太小会在无意拖动时误触发） */
-const DRAG_THRESHOLD = 60;
-/** 面板边缘与指针的间隙：浏览器的拖拽幽灵图（半透明原图）以指针为中心、随原图大小变化，
- *  间隙必须足够大才不会被幽灵图盖住 */
-const PANEL_GAP = 100;
+/** 拖过多少像素后浮出保存面板：面板出现后指针就落在保存区上，误触发会直接入库，阈值要比一般拖拽更大 */
+const DRAG_THRESHOLD = 80;
+/** Eagle 式锚定：面板出现时指针落在左侧大投放区内（松手即保存到根目录）。
+ *  锚定偏移与 .hawk-drop-panel 的内边距 / .hawk-drop-zone 的宽度保持一致 */
+const ANCHOR_PAD = 14;
+const ZONE_WIDTH = 220;
+const ANCHOR_INSET_X = 40; // 指针距区块左内缘
+const ANCHOR_INSET_Y = 12; // 指针距区块顶内缘
 /** 折叠的文件夹被拖拽悬停多久后自动展开（拖拽期间无法点击，只能靠悬停） */
 const HOVER_EXPAND_DELAY = 700;
 
-/** 常用文件夹条目（get-folders 消息返回） */
-interface FlatNode {
-  path: string;
-  name: string;
-}
-
-/** 文件夹树节点（get-folders 消息返回） */
+/** 文件夹树节点（get-folders 消息返回，已按最近使用排序） */
 interface TreeNode {
   path: string;
   name: string;
@@ -85,29 +83,30 @@ function onDragOver(e: DragEvent) {
   const dx = e.clientX - startX;
   const dy = e.clientY - startY;
   if (Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
-    showPanel(dx, dy, e.clientX, e.clientY);
+    showPanel(e.clientX, e.clientY);
   }
 }
 
-/** 面板浮在指针旁：水平拖在左/右侧，垂直拖在上/下方（另一轴以指针为中心），边缘留 PANEL_GAP 间隙 */
-function positionPanel(dx: number, dy: number, x: number, y: number, w: number, h: number): { left: string; top: string } {
-  const MARGIN = 20;
-  let left: number;
-  let top: number;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    left = dx >= 0 ? x + PANEL_GAP : x - w - PANEL_GAP;
-    top = y - h / 2;
-  } else {
-    left = x - w / 2;
-    top = dy >= 0 ? y + PANEL_GAP : y - h - PANEL_GAP;
+/** Eagle 式锚定：面板自指针处向右下展开，让指针落进左侧大投放区（距区块左内缘 ANCHOR_INSET_X、
+ *  顶内缘 ANCHOR_INSET_Y）——出现即可松手保存到根目录；贴近视口边缘时逐轴翻转，指针始终保持在区块内 */
+function positionPanel(x: number, y: number, w: number, h: number): { left: string; top: string } {
+  const MARGIN = 8;
+  let left = x - ANCHOR_PAD - ANCHOR_INSET_X;
+  let top = y - ANCHOR_PAD - ANCHOR_INSET_Y;
+  left = Math.min(Math.max(left, MARGIN), window.innerWidth - w - MARGIN);
+  // 近右缘被钳制后指针滑到区块右侧 → 翻到指针左侧展开（指针改落在区块右内缘处）
+  if (x > left + ANCHOR_PAD + ZONE_WIDTH) {
+    left = Math.max(x - ANCHOR_PAD - ZONE_WIDTH + ANCHOR_INSET_X, MARGIN);
   }
-  // 视口钳制（左/上最小 20，底部留 20，右侧留 10）
-  left = Math.min(Math.max(left, MARGIN), window.innerWidth - w - 10);
   top = Math.min(Math.max(top, MARGIN), window.innerHeight - h - MARGIN);
+  // 近下缘被钳制后指针落到面板之外 → 翻到指针上方展开（指针改落在区块底内缘处）
+  if (y > top + h) {
+    top = Math.max(y + ANCHOR_PAD + ANCHOR_INSET_Y - h, MARGIN);
+  }
   return { left: `${left}px`, top: `${top}px` };
 }
 
-function showPanel(dx: number, dy: number, x: number, y: number) {
+function showPanel(x: number, y: number) {
   panel = document.createElement('div');
   panel.className = 'hawk-drop-panel';
   panel.style.visibility = 'hidden'; // 先渲染量尺寸，定位后再显示，避免闪烁
@@ -120,7 +119,6 @@ function showPanel(dx: number, dy: number, x: number, y: number) {
       <small>根目录</small>
     </div>
     <div class="hawk-drop-lists">
-      <div class="hawk-drop-frequent" hidden></div>
       <div class="hawk-drop-rows">
         <div class="hawk-drop-hint">加载中…</div>
       </div>
@@ -139,8 +137,8 @@ function showPanel(dx: number, dy: number, x: number, y: number) {
   });
   document.documentElement.appendChild(panel);
 
-  // 量出实际尺寸后按指针位置定位，再显示
-  const pos = positionPanel(dx, dy, x, y, panel.offsetWidth, panel.offsetHeight);
+  // 量出实际尺寸后锚定到指针处，再显示
+  const pos = positionPanel(x, y, panel.offsetWidth, panel.offsetHeight);
   panel.style.left = pos.left;
   panel.style.top = pos.top;
   panel.style.visibility = '';
@@ -153,9 +151,9 @@ async function loadFolders() {
   if (!panel || !rows) {
     return;
   }
-  let data: { folders: TreeNode; frequent: FlatNode[] };
+  let data: { folders: TreeNode };
   try {
-    data = (await browser.runtime.sendMessage({ type: GET_FOLDERS_MESSAGE })) as { folders: TreeNode; frequent: FlatNode[] };
+    data = (await browser.runtime.sendMessage({ type: GET_FOLDERS_MESSAGE })) as { folders: TreeNode };
   } catch {
     rows.innerHTML = '<div class="hawk-drop-hint">加载失败</div>';
     return;
@@ -164,17 +162,15 @@ async function loadFolders() {
     return; // 等待响应期间面板可能已被关闭
   }
   const tree = data && Array.isArray(data.folders?.children) ? data.folders : { path: '', name: '', children: [] };
-  const frequent = data && Array.isArray(data.frequent) ? data.frequent : [];
-  renderFolders(tree, frequent);
+  renderFolders(tree);
 }
 
-/** 渲染「常用」区与文件夹树 */
-function renderFolders(tree: TreeNode, frequent: FlatNode[]) {
+/** 渲染文件夹树（已由 background 按最近使用排序） */
+function renderFolders(tree: TreeNode) {
   if (!panel) {
     return;
   }
   currentTree = tree;
-  renderFrequent(panel.querySelector<HTMLElement>('.hawk-drop-frequent')!, frequent);
   const rows = panel.querySelector<HTMLElement>('.hawk-drop-rows')!;
   rows.innerHTML = '';
   if (tree.children.length === 0) {
@@ -182,29 +178,6 @@ function renderFolders(tree: TreeNode, frequent: FlatNode[]) {
     return;
   }
   renderTreeRows(rows, tree.children, 0);
-}
-
-/** 「常用」：按保存次数排序的快捷投放 chips，可拖入图片 */
-function renderFrequent(container: HTMLElement, frequent: FlatNode[]) {
-  container.innerHTML = '';
-  container.hidden = frequent.length === 0;
-  if (frequent.length === 0) {
-    return;
-  }
-  const title = document.createElement('div');
-  title.className = 'hawk-drop-section-title';
-  title.textContent = '常用';
-  const chips = document.createElement('div');
-  chips.className = 'hawk-drop-chips';
-  for (const folder of frequent) {
-    const chip = document.createElement('div');
-    chip.className = 'hawk-drop-chip';
-    chip.title = folder.path;
-    chip.innerHTML = `${FOLDER_ICON}<span>${escapeHtml(folder.name)}</span>`;
-    makeDroppable(chip, { folderPath: folder.path });
-    chips.appendChild(chip);
-  }
-  container.append(title, chips);
 }
 
 /** 递归渲染树行；只渲染已展开的分支（默认全折叠） */
@@ -447,7 +420,7 @@ function injectStyles() {
 .hawk-drop-zone small {
   font-size: 12px;
 }
-/* 右：常用 + 文件夹树 + 新建区块 */
+/* 右：文件夹树 + 新建区块 */
 .hawk-drop-lists {
   display: flex;
   flex-direction: column;
@@ -480,47 +453,6 @@ function injectStyles() {
 }
 .hawk-drop-rows::-webkit-scrollbar-thumb:hover {
   background-color: #4d5563;
-}
-/* 「常用」：按保存次数排序的快捷投放入口 */
-.hawk-drop-frequent {
-  flex: none;
-  margin-bottom: 8px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #2c313a;
-}
-.hawk-drop-section-title {
-  margin-bottom: 6px;
-  color: #6b7078;
-  font-size: 12px;
-}
-.hawk-drop-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.hawk-drop-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #23272f;
-  color: #b9bdc4;
-  font-size: 12.5px;
-  cursor: default;
-}
-.hawk-drop-chip svg {
-  flex: none;
-  color: #8a8f98;
-}
-.hawk-drop-chip span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.hawk-drop-chip:hover {
-  background: #2a2f39;
 }
 .hawk-drop-row {
   display: flex;
