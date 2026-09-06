@@ -1,12 +1,13 @@
 // 全局快捷键：焦点在输入框时跳过。
 // 空格 展开/关闭预览；←→ 预览中切换图片；方向键 网格中移动选中框；
-// Delete 回收/恢复、Esc 关浮层、Cmd/Ctrl+A 全选。
+// Delete 回收/恢复、Esc 关浮层、Cmd/Ctrl+A 全选、Cmd/Ctrl+C 复制图片。
 import { useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from './useContextMenu';
 import { gridNavRows, markKeyboardNavScroll, moveGridSelection } from './useGridNav';
 import { itemKey } from '../viewLogic';
+import { copyImageToClipboard } from '../clipboard';
 
 export function useShortcuts() {
   const store = useLibraryStore();
@@ -51,6 +52,25 @@ export function useShortcuts() {
       }
       if (store.selection.length > 0) {
         void (store.isTrash ? store.restoreSelected() : store.trashSelected());
+      }
+      return;
+    }
+
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c' && !e.shiftKey && !e.altKey) {
+      // 复制图片：预览中复制当前图；网格中恰好单选时复制选中图。
+      // 多选/无选不拦截——保留浏览器默认的文本复制行为
+      const target = preview.previewId
+        ? preview.previewItem
+        : store.selection.length === 1
+          ? store.primarySelected
+          : null;
+      if (target) {
+        e.preventDefault();
+        void copyImageToClipboard(target.id)
+          .then(() => store.showToast('已复制图片'))
+          .catch((err: unknown) =>
+            store.showToast(`复制图片失败：${err instanceof Error ? err.message : String(err)}`),
+          );
       }
       return;
     }

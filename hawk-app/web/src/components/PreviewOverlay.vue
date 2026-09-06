@@ -2,6 +2,7 @@
 import { computed, onMounted, watch } from 'vue';
 import { useWindowSize } from '@vueuse/core';
 import { api } from '../api/endpoints';
+import { copyImageToClipboard } from '../clipboard';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
 import { useContextMenu } from '../composables/useContextMenu';
@@ -39,51 +40,13 @@ const indexText = computed(() => {
 // 预览展示原图（缩略图是压缩过的 WebP）
 const imageUrl = computed(() => api.fileUrl(props.item.id));
 
-/** 复制图片本体到剪贴板：Web 标准 Clipboard API（Electron 44 已移除主进程 clipboard.writeImage，
- *  渲染进程的 navigator.clipboard 是全端可用路径）；原图经 item/file 拉取。
- *  Chromium 的 clipboard.write 只接受 image/png——jpg/webp/gif 原样写入会抛 NotSupportedError
- *  （此前「复制图片失败」的根因），非 PNG 统一经 canvas 转 PNG（动图取首帧） */
+/** 复制图片本体到剪贴板（右键菜单与 Ctrl/Cmd+C 共用，实现见 clipboard.ts） */
 async function copyImage() {
   try {
-    const blob = await (await fetch(api.fileUrl(props.item.id))).blob();
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': await toPngBlob(blob) })]);
+    await copyImageToClipboard(props.item.id);
     store.showToast('已复制图片');
   } catch (e) {
     store.showToast(`复制图片失败：${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-/** canvas 单边长上限（与 imageEdit 的保守取值一致），超出时等比降采样避免编码失败 */
-const MAX_CANVAS_SIDE = 16384;
-
-/** 任意图片 Blob → PNG Blob：Chromium 剪贴板只收 image/png；动图取首帧，元数据不保留 */
-async function toPngBlob(blob: Blob): Promise<Blob> {
-  if (blob.type === 'image/png') {
-    return blob;
-  }
-  const url = URL.createObjectURL(blob);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('图片解码失败'));
-      el.src = url;
-    });
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    if (!w || !h) {
-      throw new Error('无法确定图片尺寸');
-    }
-    const scale = Math.min(1, MAX_CANVAS_SIDE / Math.max(w, h));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(w * scale));
-    canvas.height = Math.max(1, Math.round(h * scale));
-    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG 编码失败'))), 'image/png'),
-    );
-  } finally {
-    URL.revokeObjectURL(url);
   }
 }
 
