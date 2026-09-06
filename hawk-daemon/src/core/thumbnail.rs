@@ -58,6 +58,20 @@ impl ThumbnailService {
         format_to_ext(format)
     }
 
+    /// 内容喷探：只读文件头部字节判断是否图像格式（魔数比对，与扩展名无关）。
+    /// 非图像文件（视频/文本/配置等）在解码派生前被拦下，避免无谓的整文件读取与
+    /// 周期对账重试。打不开（占用/移动窗口等瞬时状态）时保守视为图像，
+    /// 交给后续解码路径判定——避免给真图像误写空调色板负缓存
+    pub fn is_probably_image(abs_path: &str) -> bool {
+        use std::io::Read;
+        let Ok(mut file) = std::fs::File::open(abs_path) else {
+            return true;
+        };
+        let mut head = [0u8; 64];
+        let n = file.read(&mut head).unwrap_or(0);
+        image::guess_format(&head[..n]).is_ok()
+    }
+
     /// 原图能否被浏览器直接渲染（决定读取端未命中时能否回源原图）
     pub fn is_browser_renderable(abs_path: &str) -> bool {
         DIRECT_ORIGINAL_EXTS.contains(&crate::core::paths::LibraryPaths::ext_of(abs_path).as_str())
@@ -83,6 +97,12 @@ impl ThumbnailService {
             return false;
         }
         if !force && self.exists(hash) {
+            return false;
+        }
+        // 非图像文件（内容喷探）：解码必然失败，不读文件不告警——调色板/宽高的
+        // 空负缓存由扫描与 worker 的同源喷探写入，此处只管缩略图缓存
+        if !Self::is_probably_image(source_abs) {
+            tracing::debug!("跳过非图像文件的缩略图生成 {source_abs}");
             return false;
         }
 

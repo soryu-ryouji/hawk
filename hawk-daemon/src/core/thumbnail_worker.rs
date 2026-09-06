@@ -195,6 +195,16 @@ fn process_job(
     thumbs: &ThumbnailService,
     bus: &EventBus,
 ) {
+    // 非图像文件（内容喷探）：不做任何解码（identify/缩略图/调色板），空数组负缓存
+    // 终止「palette 缺失 → 重派」的周期循环；宽高 0×0 即终态。幂等，重复应用无害
+    if !ThumbnailService::is_probably_image(&job.source_abs) {
+        let _ = deps.jobs.try_fire(Job::Palette {
+            hash: job.hash.clone(),
+            palette: Vec::new(),
+        });
+        return;
+    }
+
     // 补缺失宽高：identify 只解头部，代价小。回写经队列走流水线（单写者），
     // item.updated 由回写侧发出；此处只需记住发生了修复，与缩略图生成合并发事件。
     // 识别失败（非图像/损坏文件）记 debug：非图像文件的宽高合法为 0，对账会周期性重派，warn 会刷屏

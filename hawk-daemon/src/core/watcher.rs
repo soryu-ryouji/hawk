@@ -104,7 +104,7 @@ impl LibraryWatcher {
             stale
         };
         for path in stale {
-            if !self.is_internal(&path) {
+            if !self.is_internal(&path) && !self.is_hidden(&path) {
                 (self.callback)(WatcherEvent::Deleted(path));
             }
         }
@@ -114,6 +114,13 @@ impl LibraryWatcher {
         match self.paths.to_relative(abs) {
             None => true,
             Some(rel) => LibraryPaths::is_internal(&rel),
+        }
+    }
+
+    fn is_hidden(&self, abs: &str) -> bool {
+        match self.paths.to_relative(abs) {
+            None => true,
+            Some(rel) => LibraryPaths::is_hidden(&rel),
         }
     }
 }
@@ -150,8 +157,11 @@ fn dispatch_event(
                 if event.paths.len() >= 2 {
                     let old = normalize(&event.paths[0]);
                     let new = normalize(&event.paths[1]);
-                    if !is_internal_path(paths, &old) && !is_internal_path(paths, &new) {
+                    if !is_excluded_path(paths, &old) && !is_excluded_path(paths, &new) {
                         cb(WatcherEvent::Moved { old, new });
+                    } else {
+                        // 任一端隐藏/内部：两端都可见才配对成 Moved，否则按 upsert/删除收敛
+                        dispatch_rename_result(paths, cb, &old, &new);
                     }
                 }
             }
@@ -177,16 +187,12 @@ fn dispatch_event(
                         old
                     };
                     match old {
-                        Some(old) if !is_internal_path(paths, &old) && !is_internal_path(paths, &new) => {
+                        Some(old) if !is_excluded_path(paths, &old) && !is_excluded_path(paths, &new) => {
                             cb(WatcherEvent::Moved { old, new });
                         }
-                        Some(_) => {
-                            if !is_internal_path(paths, &new) {
-                                dispatch_upsert(paths, cb, &new);
-                            }
-                        }
+                        Some(old) => dispatch_rename_result(paths, cb, &old, &new),
                         None => {
-                            if !is_internal_path(paths, &new) {
+                            if !is_excluded_path(paths, &new) {
                                 dispatch_upsert(paths, cb, &new);
                             }
                         }
@@ -198,7 +204,7 @@ fn dispatch_event(
         EventKind::Remove(_) => {
             for path in event.paths {
                 let abs = normalize(&path);
-                if !is_internal_path(paths, &abs) {
+                if !is_excluded_path(paths, &abs) {
                     cb(WatcherEvent::Deleted(abs));
                 }
             }
@@ -223,7 +229,7 @@ fn flush_stale(paths: &LibraryPaths, cb: &Callback, pending_from: &Arc<Mutex<Has
         stale
     };
     for path in stale {
-        if !is_internal_path(paths, &path) {
+        if !is_excluded_path(paths, &path) {
             cb(WatcherEvent::Deleted(path));
         }
     }
@@ -251,7 +257,7 @@ fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
         cb(WatcherEvent::GlobalFilterChanged);
         return;
     }
-    if is_internal_path(paths, abs) {
+    if is_excluded_path(paths, abs) {
         return;
     }
     // 目录不产生 item 事件,单独上报以驱动 folder.changed(目录删除的信号处理：含内容/有设置的目录
@@ -263,10 +269,23 @@ fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
     cb(WatcherEvent::FileUpsert(abs.to_string()));
 }
 
-fn is_internal_path(paths: &LibraryPaths, abs: &str) -> bool {
+/// 索引无关路径：.hawk 内部或含隐藏组件（.DS_Store、.stfolder 等）。
+/// 这些路径不产生 upsert/移动事件；删除事件同样不发出——
+/// 隐藏项本就不该在索引中，旧残留由扫描的 Remove/消失对账收敛
+fn is_excluded_path(paths: &LibraryPaths, abs: &str) -> bool {
     match paths.to_relative(abs) {
         None => true,
-        Some(rel) => LibraryPaths::is_internal(&rel),
+        Some(rel) => LibraryPaths::is_internal(&rel) || LibraryPaths::is_hidden(&rel),
+    }
+}
+
+/// rename 收尾：new 可见则 upsert，否则（new 隐藏/内部）在 old 可见时按删除处理
+/// ——从索引位置移入隐藏目录不能残留 old 位置的索引
+fn dispatch_rename_result(paths: &LibraryPaths, cb: &Callback, old: &str, new: &str) {
+    if !is_excluded_path(paths, new) {
+        dispatch_upsert(paths, cb, new);
+    } else if !is_excluded_path(paths, old) {
+        cb(WatcherEvent::Deleted(old.to_string()));
     }
 }
 

@@ -272,6 +272,13 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
         return;
     }
 
+    // 非图像文件（内容喷探，与扩展名无关）：不解码不读头部——空数组负缓存随入库
+    // 持久化，终止 palette/宽高的周期对账重试；宽高 0×0 即终态
+    if !ThumbnailService::is_probably_image(&p.abs_path) {
+        p.palette = Some(Vec::new());
+        return;
+    }
+
     match ThumbnailService::decode(&p.abs_path) {
         Some(image) => {
             p.dim = Some((image.width() as i32, image.height() as i32));

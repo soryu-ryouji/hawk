@@ -150,6 +150,15 @@ impl LibraryPaths {
         rel == HAWK_DIR_NAME || rel.starts_with(&format!("{HAWK_DIR_NAME}/"))
     }
 
+    /// 路径含 `.` 开头组件（回收站位置除外）。.DS_Store、.stfolder 等隐藏文件/目录
+    /// 不入索引、不派发解析；已入库的残留位置由扫描的 Remove/消失对账清理
+    pub fn is_hidden(rel: &str) -> bool {
+        if rel.starts_with(TRASH_PREFIX) {
+            return false;
+        }
+        rel.split('/').filter(|s| !s.is_empty()).any(|s| s.starts_with('.'))
+    }
+
     pub fn is_in_trash(rel: &str) -> bool {
         rel.starts_with(TRASH_PREFIX)
     }

@@ -78,6 +78,11 @@ impl LibraryScanner {
                         pending.push(self.paths.trash_dir.clone());
                         continue;
                     }
+                    // 隐藏目录（.stfolder 等）不深入也不进 seen_dirs：
+                    // 消失对账据此清理已入库的残留位置（目录树遍历不到 → 位置必然消失）
+                    if LibraryPaths::is_hidden(&rel) {
+                        continue;
+                    }
                     pending.push(full);
                 }
             }

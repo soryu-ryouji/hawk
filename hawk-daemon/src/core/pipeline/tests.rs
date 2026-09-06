@@ -100,6 +100,15 @@ impl Rig {
         self.root.join(rel).to_string_lossy().to_string()
     }
 
+    /// 缩略图缓存文件路径（仅路径计算，与流水线装配同源的路径规则）
+    fn thumbs_path(&self, hash: &str) -> PathBuf {
+        let paths = LibraryPaths::new(
+            &self.root.to_string_lossy(),
+            Some(self.cache.to_string_lossy().to_string()),
+        );
+        PathBuf::from(ThumbnailService::new(Arc::new(paths)).get_path(hash))
+    }
+
     /// 写一个 8×8 纯色 PNG（真实可解码，worker 后台提炼不会因坏图报错）
     fn write_png(&self, rel: &str, rgb: [u8; 3]) {
         let img = image::RgbImage::from_pixel(8, 8, image::Rgb(rgb));
@@ -461,4 +470,58 @@ async fn batch_metadata_parallel_path() {
     }
     assert_eq!(frames, 1);
     assert_eq!(total_items, 100);
+}
+
+/// 隐藏文件/目录（.stignore、.stfolder、.DS_Store 等）不入索引；
+/// 已入库的隐藏位置由扫描的消失对账清理（隐藏目录不进 seen_dirs → 位置必然消失）
+#[tokio::test]
+async fn scan_skips_hidden_entries_and_reconciles_leftovers() {
+    let rig = Rig::new("hidden-entries");
+    rig.write_png("a.png", [255, 0, 0]);
+    std::fs::create_dir_all(rig.root.join(".stfolder")).unwrap();
+    std::fs::write(rig.root.join(".stfolder/x.txt"), "sync marker").unwrap();
+    std::fs::write(rig.root.join(".stignore"), "// ignore").unwrap();
+    rig.stabilize(".stfolder/x.txt");
+    rig.stabilize(".stignore");
+
+    rig.pipeline.run_scan(false).await.unwrap();
+    assert_eq!(rig.index.count(), 1, "只有正常图像入库");
+    assert!(rig.index.hash_by_location("a.png").is_some());
+    assert!(rig.index.hash_by_location(".stignore").is_none());
+    assert!(rig.index.hash_by_location(".stfolder/x.txt").is_none());
+
+    // 模拟历史版本入库的隐藏残留：直接登记位置后重扫，应被消失对账清掉
+    rig.index
+        .get_or_add_with_location("deadbeef", ".stfolder/x.txt", 1, 1);
+    rig.pipeline.run_scan(false).await.unwrap();
+    assert!(rig.index.hash_by_location(".stfolder/x.txt").is_none(), "隐藏残留位置应被清理");
+    assert_eq!(rig.index.count(), 1);
+}
+
+/// 非图像文件（内容喷探判定）入库但不再解码：调色板写空数组负缓存终止
+/// 周期对账重试、不生成缩略图、宽高保持 0×0 终态
+#[tokio::test]
+async fn non_image_file_gets_empty_palette_cache() {
+    let rig = Rig::new("non-image");
+    rig.write_png("a.png", [255, 0, 0]);
+    std::fs::write(rig.root.join("notes.txt"), "hello hawk").unwrap();
+    std::fs::write(rig.root.join("clip.mp4"), b"\x00\x00\x00\x18ftypmp42").unwrap();
+    rig.stabilize("notes.txt");
+    rig.stabilize("clip.mp4");
+
+    rig.pipeline.run_scan(false).await.unwrap();
+    assert_eq!(rig.index.count(), 3, "非图像文件仍入库（内容寻址），只是不解析");
+
+    for rel in ["notes.txt", "clip.mp4"] {
+        let hash = rig.index.hash_by_location(rel).unwrap();
+        let meta = rig.store.try_get(&hash).expect("元数据应存在");
+        assert_eq!(meta.palette, Some(vec![]), "{rel} 应有空调色板负缓存");
+        assert_eq!(meta.width, 0, "{rel} 宽高保持终态 0");
+        assert!(!rig.thumbs_path(&hash).exists(), "{rel} 不应生成缩略图");
+    }
+
+    // 正常图像不受影响：调色板非空（8×8 纯色）或由 worker 异步补齐，缩略图路径行为不变
+    let hash = rig.index.hash_by_location("a.png").unwrap();
+    let meta = rig.store.try_get(&hash).expect("元数据应存在");
+    assert_ne!(meta.palette, Some(vec![]), "图像不应被误写空负缓存");
 }

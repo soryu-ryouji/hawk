@@ -113,6 +113,10 @@ pub(crate) fn prepare_upsert(
     if LibraryPaths::is_internal(&rel) {
         return PrepareOutcome::Skip;
     }
+    // 隐藏文件（.DS_Store、.stignore 等）：不入库；已入库的残留位置经删除通道清理
+    if LibraryPaths::is_hidden(&rel) {
+        return PrepareOutcome::Remove(rel);
+    }
 
     let in_trash = LibraryPaths::is_in_trash(&rel);
     if !in_trash && ctx.config.is_ignored(&rel) {
