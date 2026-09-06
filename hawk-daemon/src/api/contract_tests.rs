@@ -491,6 +491,46 @@ async fn folder_list_excludes_hidden_dirs() {
     assert!(names.contains(&"普通"), "普通目录应保留: {names:?}");
 }
 
+/// 清理隐藏文件残留后重启（同库重开）不复活：索引摘除同步修剪元数据（do_delete），
+/// 注水也不再接收 hidden/ignore 位置（hydrate_index）——否则残留每次启动从持久层回来
+#[tokio::test]
+async fn cleanup_survives_restart() {
+    let app = test_app("cleanup-restart");
+    let id = app.add_test_item("plain.png", [200, 30, 30]).await;
+    let root = app.library_root();
+    std::fs::rename(root.join("plain.png"), root.join(".stignore")).unwrap();
+    let size = std::fs::metadata(root.join(".stignore")).unwrap().len() as i64;
+    // 真实残留是索引与元数据都带着隐藏路径（历史版本扫描写入）；两处同步构造
+    app.state.index.add_or_update_location(&id, ".stignore", size, 0);
+    app.state.index.remove_location("plain.png");
+    if let Some(mut meta) = app.state.store.try_get(&id) {
+        for p in meta.paths.iter_mut() {
+            if p.path == "plain.png" {
+                p.path = ".stignore".to_string();
+            }
+        }
+        let _ = app.state.store.save(&id, &meta);
+    }
+
+    let (status, bytes) = call(&app.router, "POST", "/api/v1/library/cleanup_index", None).await;
+    assert_eq!(status, StatusCode::OK, "cleanup_index");
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap()["data"]["hidden"], json!(1));
+
+    // 清理经队列异步应用：等索引与元数据都收敛后再重开
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while app.state.index.count() > 0 || app.state.store.find_hash_by_path(".stignore").is_some() {
+        assert!(std::time::Instant::now() < deadline, "清理未收敛");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    // 同库重开：MetadataStore 从持久层注水，残留不应回索引/元数据
+    let base = app.leak();
+    let app2 = test_app_at(base);
+    assert!(!app2.state.index.all_location_paths().contains(&".stignore".to_string()), "重启后隐藏文件不应复活");
+    assert_eq!(app2.state.index.count(), 0);
+    assert!(app2.state.store.find_hash_by_path(".stignore").is_none(), "元数据不应再含该位置");
+}
+
 /// 写端点剧本：准备真实 item 后按依赖顺序调用全部写端点，校验 200 与响应 schema
 #[tokio::test]
 async fn write_endpoints_match_schema() {

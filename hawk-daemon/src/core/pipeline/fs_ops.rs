@@ -28,12 +28,14 @@ pub(crate) fn do_delete(ctx: &PipelineCtx, rel: &str) {
 
     if let Some(hash) = ctx.index.remove_location(rel) {
         note_invalidated(ctx, rel);
+        prune_meta_location(ctx, rel, &hash);
         ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &hash);
     }
 
     for loc in ctx.index.locations_under(&format!("{rel}/")) {
         if let Some(hash) = ctx.index.remove_location(&loc) {
             note_invalidated(ctx, &loc);
+            prune_meta_location(ctx, &loc, &hash);
             ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &hash);
         }
     }
@@ -41,6 +43,27 @@ pub(crate) fn do_delete(ctx: &PipelineCtx, rel: &str) {
     if had_children || prefs_changed || filter_changed {
         ctx.bus
             .publish(ItemEvents::FOLDER_CHANGED, folder_changed_payload(crate::core::events::REASON_EXTERNAL));
+    }
+}
+
+/// 索引位置摘除后同步修剪元数据中的该位置（trash 路径还原为库内路径比对）。
+/// 否则元数据持久层留着该位置，重启注水时会复活条目（cleanup/外部删除/ignore 清理都受影响）；
+/// 位置清空且条目已不在索引时，元数据与缩略图一并删除（同 do_clear_trash 的纪律）
+fn prune_meta_location(ctx: &PipelineCtx, rel: &str, hash: &str) {
+    let lib_path = LibraryPaths::trash_to_library_path(rel);
+    if let Some(mut meta) = ctx.store.try_get(hash) {
+        meta.paths.retain(|p| p.path != lib_path);
+        let result = if meta.paths.is_empty() && !ctx.index.contains(hash) {
+            ctx.store.delete(hash);
+            ctx.thumbs.delete(hash);
+            Ok(())
+        } else {
+            ctx.store.save(hash, &meta)
+        };
+        if let Err(e) = result {
+            // 元数据残留无功能危害（注水过滤兼作兑底），仅记日志
+            tracing::warn!("修剪元数据位置失败（{lib_path}）: {e}");
+        }
     }
 }
 

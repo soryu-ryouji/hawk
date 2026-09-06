@@ -246,19 +246,45 @@ impl IndexPipeline {
         self.ctx.sender.fire(Job::MetadataSync);
     }
 
-    /// 启动注水：内存索引由元数据副本恢复（SQLite 快路径/TOML 回退），就绪无需等待全库扫描
+    /// 启动注水：内存索引由元数据副本恢复（SQLite 快路径/TOML 回退），就绪无需等待全库扫描。
+    /// 位置过过滤：hidden/ignore 命中的历史残留不注水（磁盘文件还在时增量对账不触达，
+    /// 增量快照永远 clean，只能在这里挡）；元数据同步修剪，新副本不再是残留来源
     fn hydrate_index(&self) {
         let entries = self.ctx.store.snapshot();
         for (hash, meta) in &entries {
-            // 无位置的元数据不进索引：item 的存续由位置决定（否则产生零位置 ghost item）
-            if meta.paths.is_empty() {
+            let kept: Vec<_> = meta
+                .paths
+                .iter()
+                .filter(|p| {
+                    let usable = !LibraryPaths::is_hidden(&p.path) && !self.ctx.config.is_ignored(&p.path);
+                    if !usable {
+                        tracing::info!("注水跳过残留位置: {}", p.path);
+                    }
+                    usable
+                })
+                .cloned()
+                .collect();
+            if kept.is_empty() {
+                // 全部位置都是残留（元数据条目已无有效库内位置）：整条删除，不产生 ghost item
+                if !meta.paths.is_empty() {
+                    self.ctx.store.delete(hash);
+                    self.ctx.thumbs.delete(hash);
+                }
                 continue;
             }
+            if kept.len() != meta.paths.len() {
+                let mut trimmed = meta.clone();
+                trimmed.paths = kept.clone();
+                if let Err(e) = self.ctx.store.save(hash, &trimmed) {
+                    tracing::warn!("注水修剪元数据失败（{hash}）: {e}");
+                }
+            }
+            // 无位置的元数据不进索引：item 的存续由位置决定（否则产生零位置 ghost item）
             self.ctx.index.get_or_add(hash);
             self.ctx
                 .index
                 .with_item_mut(hash, |item| item.sync_from(meta));
-            for p in &meta.paths {
+            for p in &kept {
                 self.ctx
                     .index
                     .add_or_update_location(hash, &p.path, p.size, p.modification_time);
