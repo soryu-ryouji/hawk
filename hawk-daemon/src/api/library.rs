@@ -1,10 +1,10 @@
-//! library 端点：info / reindex / rescan / refresh_cache
+//! library 端点：info / reindex / rescan / refresh_cache / cleanup_index
 
 use crate::api::envelope::{success, ApiError, Envelope, JsonBody, SuccessOnly};
 use crate::api::SharedState;
 use crate::core::events::LibraryEvents;
 use crate::core::index::RefreshScope;
-use crate::core::paths::unix_ms;
+use crate::core::paths::{unix_ms, LibraryPaths};
 use axum::extract::State;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(reindex))
         .routes(routes!(rescan))
         .routes(routes!(refresh_cache))
+        .routes(routes!(cleanup_index))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -250,4 +251,80 @@ async fn refresh_cache(
         }
     }
     Ok(Json(Envelope::ok(RefreshCacheResponse { dispatched, removed })))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+struct CleanupIndexResponse {
+    /// 检查的索引位置数（不含回收站）
+    checked: usize,
+    /// 清除的条目总数（= hidden + ignored + missing）
+    removed: usize,
+    /// 隐藏文件（路径任一段以 . 开头，如 .DS_Store、.stignore）
+    hidden: usize,
+    /// ignore 规则命中
+    ignored: usize,
+    /// 源文件已消失的残留（与 refresh_cache 的消失对账同款判定）
+    missing: usize,
+}
+
+/// 索引体检：清除不该在索引里的条目——隐藏文件、ignore 规则命中、源文件已删除的残留。
+/// 只摘索引位置不动磁盘文件；移除经流水线单写者（notify_deleted → do_delete），事件广播后 UI 自动收敛。
+/// 与 refresh_cache 的差异：refresh_cache 只对账源文件消失；本端点还清「文件还在但不该入库」的残留
+/// （早期版本入库的结果——增量扫描靠目录快照跳过 clean 目录，不会再触达它们，只能靠本入口收敛）。
+/// 多路径素材只摘命中位置，其余位置保留时条目仍在。
+#[utoipa::path(
+    post,
+    path = "/api/v1/library/cleanup_index",
+    tags = ["library"],
+    responses((status = 200, description = "OK", body = Envelope<CleanupIndexResponse>))
+)]
+async fn cleanup_index(State(state): State<SharedState>) -> Json<Envelope<CleanupIndexResponse>> {
+    let mut hidden = 0usize;
+    let mut ignored = 0usize;
+    let mut checked = 0usize;
+    // 规则未命中的位置，待 stat 对账源文件存在性
+    let mut rest: Vec<String> = Vec::new();
+    for rel in state.index.all_location_paths() {
+        // 回收站条目不参与清理：恢复与否由用户在 UI 内决定
+        if LibraryPaths::is_in_trash(&rel) {
+            continue;
+        }
+        checked += 1;
+        if LibraryPaths::is_hidden(&rel) {
+            hidden += 1;
+            if let Some(abs) = state.paths.to_absolute(&rel) {
+                state.pipeline.notify_deleted(abs);
+            }
+        } else if state.config.is_ignored(&rel) {
+            ignored += 1;
+            if let Some(abs) = state.paths.to_absolute(&rel) {
+                state.pipeline.notify_deleted(abs);
+            }
+        } else {
+            rest.push(rel);
+        }
+    }
+    // 源文件消失对账（与 reconcile_scope_missing 同款纪律）：
+    // 仅 NotFound 移除，IO/权限错误保守保留，避免网络盘瞬断误删
+    let abs_list: Vec<String> = rest.iter().filter_map(|rel| state.paths.to_absolute(rel)).collect();
+    let missing_abs = tokio::task::spawn_blocking(move || {
+        abs_list
+            .into_iter()
+            .filter(|abs| matches!(std::fs::metadata(abs), Err(e) if e.kind() == std::io::ErrorKind::NotFound))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    let missing = missing_abs.len();
+    for abs in missing_abs {
+        state.pipeline.notify_deleted(abs);
+    }
+    Json(Envelope::ok(CleanupIndexResponse {
+        checked,
+        removed: hidden + ignored + missing,
+        hidden,
+        ignored,
+        missing,
+    }))
 }

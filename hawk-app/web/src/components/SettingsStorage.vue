@@ -86,6 +86,18 @@ async function confirmMigrate() {
     done.value = true;
   }
 }
+
+/** 索引体检按钮状态（结果 toast 由 store 展示） */
+const cleaning = ref(false);
+
+async function runCleanup() {
+  cleaning.value = true;
+  try {
+    await store.cleanupIndex();
+  } finally {
+    cleaning.value = false;
+  }
+}
 </script>
 
 <template>
@@ -113,6 +125,17 @@ async function confirmMigrate() {
       <p class="hint">
         缩略图与索引缓存（派生物，可重建）统一存放在此目录下，各素材库按子目录区分。默认位于系统缓存目录；盘空间紧张时可迁移到其他盘。
       </p>
+    </div>
+
+    <div class="field column">
+      <span class="field-label">索引体检</span>
+      <p class="hint">
+        检查索引中不该存在的条目并清除：`.` 开头的隐藏文件（如 .DS_Store、.stignore）、ignore 规则命中的文件、源文件已删除的残留。
+        只清理索引与界面显示，不会删除磁盘上的文件；正常素材不受影响。
+      </p>
+      <div class="actions-left">
+        <button class="btn" :disabled="cleaning" @click="runCleanup">{{ cleaning ? '正在检查…' : '检查并清理缓存' }}</button>
+      </div>
     </div>
 
     <div class="actions-left">

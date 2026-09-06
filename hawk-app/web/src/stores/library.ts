@@ -711,6 +711,29 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** 索引体检：清除不该在索引里的条目（隐藏文件 / ignore 命中 / 源文件已删的残留），
+   *  只清索引不动磁盘文件；清除项经 item 丢失事件自动从界面消失 */
+  async function cleanupIndex() {
+    try {
+      const res = await api.cleanupIndex();
+      const parts: string[] = [];
+      if (res.removed > 0) {
+        const detail = [
+          res.hidden > 0 ? `隐藏文件 ${res.hidden}` : '',
+          res.ignored > 0 ? `ignore 命中 ${res.ignored}` : '',
+          res.missing > 0 ? `已删文件残留 ${res.missing}` : '',
+        ].filter(Boolean).join('、');
+        parts.push(`已清除 ${res.removed} 个错误条目（${detail}）`);
+        debouncedSkeletonReload(() => void reloadSkeleton());
+      } else {
+        parts.push(`索引完好（检查 ${res.checked} 项，无需清理）`);
+      }
+      showToast(parts.join('，'));
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
   /** 为全部选中项追加分类(内容级：同 hash 多位置只应用一次)。
    *  已有该分类的 id 从已加载详情一次构建（未加载的由服务端空操作跳过，不为过滤拉全量详情） */
   async function addCategoryToSelected(name: string) {
@@ -777,8 +800,18 @@ export const useLibraryStore = defineStore('library', () => {
     }
     try {
       const res = await api.itemBatchUpdate(ids, patch);
+      const parts: string[] = [];
+      if (res.conflicts?.length) {
+        // 同名冲突跳过的项：给出具体文件名与原因，不再只说「未处理」
+        const names = res.conflicts.slice(0, 3).join('、');
+        const more = res.conflicts.length > 3 ? ` 等 ${res.conflicts.length} 个` : '';
+        parts.push(`${names}${more} 因目标文件夹已存在同名文件未移动`);
+      }
       const skipped = res.missing_ids.length;
-      showToast(skipped > 0 ? `${doneText}(${skipped} 个未处理)` : doneText);
+      if (skipped > 0) {
+        parts.push(`${skipped} 个未处理`);
+      }
+      showToast(parts.length > 0 ? `${doneText}（${parts.join('，')}）` : doneText);
       // 批量写可能改变了选择集的共有特性（加/摘标签分类）→ 立即重拉聚合（不等防抖）
       if (selection.value.length > 1) {
         void fetchSelectionAggregate();
@@ -869,7 +902,7 @@ export const useLibraryStore = defineStore('library', () => {
     isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, hasActiveFilters,
     init, setView, correctView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
     select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, renameLibrary,
+    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, cleanupIndex, renameLibrary,
     addCategoryToSelected, addTagToSelected, removeTagFromSelected, removeCategoryFromSelected, moveSelectedToFolder, setStarForSelected,
     showToast, applyEvent, setGlobalFilter,
   };

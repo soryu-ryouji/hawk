@@ -58,6 +58,13 @@ export const api = {
    *  附带消失对账：范围内源文件已删除但索引残留的失效位置会被移除 */
   refreshCache: (type: 'folder' | 'category' | 'tag' | 'library', value?: string) =>
     request<{ dispatched: number; removed: number }>('POST', '/api/v1/library/refresh_cache', { body: { type, value } }),
+  /** 索引体检：清除不该在索引里的条目（隐藏文件 / ignore 命中 / 源文件已删），
+ *  只摘索引位置不动磁盘文件；早期版本入库的残留只能靠此入口收敛 */
+  cleanupIndex: () =>
+    request<{ checked: number; removed: number; hidden: number; ignored: number; missing: number }>(
+      'POST',
+      '/api/v1/library/cleanup_index',
+    ),
 
   folderList: () => request<FolderNode>('GET', '/api/v1/folder/list'),
   folderCreate: (name: string, parentPath?: string) =>
@@ -92,9 +99,10 @@ export const api = {
   // undefined 键会被 JSON.stringify 省略,即「不更新该字段」;置空传空字符串/空数组
   itemUpdate: (id: string, patch: ItemPatch, path?: string) =>
     request<Item>('POST', '/api/v1/item/update', { body: { id, path, ...patch } }),
-  /** 批量更新;missing_ids 为内容不存在或移动冲突的 id(其余字段照常应用) */
+  /** 批量更新;missing_ids 为内容不存在或移动失败的 id(其余字段照常应用);
+   * conflicts 为移动时因目标文件夹同名冲突而跳过的文件名 */
   itemBatchUpdate: (ids: string[], patch: ItemBatchPatch) =>
-    request<{ updated: number; missing_ids: string[] }>('POST', '/api/v1/item/batch_update', { body: { ids, ...patch } }),
+    request<{ updated: number; missing_ids: string[]; conflicts?: string[] }>('POST', '/api/v1/item/batch_update', { body: { ids, ...patch } }),
   /** 选择集共有特性聚合（标签/分类交集；多选面板数据源） */
   itemAggregate: (ids: string[]) =>
     request<{ common_tags: string[]; common_categories: string[] }>('POST', '/api/v1/item/aggregate', { body: { ids } }),

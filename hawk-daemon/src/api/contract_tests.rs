@@ -63,6 +63,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("POST", "/api/v1/library/storage_mode", Some(r#"{"mode":"database"}"#)),
     ("POST", "/api/v1/library/rescan", None),
     ("POST", "/api/v1/library/refresh_cache", Some(r#"{"type":"library"}"#)),
+    ("POST", "/api/v1/library/cleanup_index", None),
     ("POST", "/api/v1/trash/clear", None),
     (
         "PUT",
@@ -376,6 +377,118 @@ async fn success_cases_match_schema() {
         let body = body.map(|s| serde_json::from_str(s).unwrap());
         expect_ok(&app, &spec, method, uri, body).await;
     }
+}
+
+/// cleanup_index：隐藏文件 / 源文件消失的索引残留被清除，正常条目保留，磁盘文件不动。
+/// 残留构造：入库后直接改索引位置 + 磁盘改名（测试装配无 watcher，绕过正常过滤——
+/// 模拟早期版本入库的隐藏文件，如今增量扫描靠目录快照不再触达、只能靠本端点收敛）
+#[tokio::test]
+async fn cleanup_index_removes_stale_entries() {
+    let app = test_app("cleanup");
+    // 正常条目（应保留）
+    let keep_id = app.add_test_item("keep.png", [10, 200, 30]).await;
+    // 隐藏文件残留：入库正常名后把索引位置改为 .stignore，磁盘文件同步改名
+    let hidden_id = app.add_test_item("plain.png", [200, 30, 30]).await;
+    let root = app.library_root();
+    std::fs::rename(root.join("plain.png"), root.join(".stignore")).unwrap();
+    let size = std::fs::metadata(root.join(".stignore")).unwrap().len() as i64;
+    app.state.index.add_or_update_location(&hidden_id, ".stignore", size, 0);
+    app.state.index.remove_location("plain.png");
+    // 源文件消失残留：入库后直接删磁盘文件（无 watcher，索引位置残留）
+    let gone_id = app.add_test_item("gone.png", [30, 30, 200]).await;
+    std::fs::remove_file(root.join("gone.png")).unwrap();
+
+    let (status, bytes) = call(&app.router, "POST", "/api/v1/library/cleanup_index", None).await;
+    assert_eq!(status, StatusCode::OK, "cleanup_index");
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let data = &body["data"];
+    assert_eq!(data["checked"], json!(3));
+    assert_eq!(data["hidden"], json!(1));
+    assert_eq!(data["missing"], json!(1));
+    assert_eq!(data["removed"], json!(2));
+
+    // 清理经流水线单写者异步应用：轮询等待索引收敛
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let paths = app.state.index.all_location_paths();
+        if paths.len() == 1 && paths[0] == "keep.png" {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "索引未收敛: {paths:?}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(app.state.index.count(), 1);
+    assert!(app.state.index.contains(&keep_id));
+    assert!(!app.state.index.contains(&hidden_id));
+    assert!(!app.state.index.contains(&gone_id));
+    // 只清索引不动磁盘：隐藏文件本体仍在
+    assert!(root.join(".stignore").exists());
+}
+
+/// item/add 同名冲突：异内容自动重命名（“名字 2”递增），同内容幂等复用不写文件——不再报 FILE_EXISTS
+#[tokio::test]
+async fn item_add_conflict_renames_and_dedupes() {
+    let app = test_app("add-conflict");
+    let encode = |rgb: [u8; 3]| {
+        let img = image::RgbImage::from_pixel(8, 8, image::Rgb(rgb));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &buf.into_inner())
+    };
+    let add = |name: &str, b64: String| {
+        call_json(
+            &app.router,
+            "POST",
+            "/api/v1/item/add",
+            Some(json!({ "img_base64": b64, "name": name })),
+        )
+    };
+
+    // 异内容同名：第二张自动重命名为 a 2.png（旧版此处报 FILE_EXISTS 409）
+    let (status, _) = add("a", encode([200, 30, 30])).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, bytes) = add("a", encode([30, 30, 200])).await;
+    assert_eq!(status, StatusCode::OK, "同名异内容应自动重命名而非 409");
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["item"]["path"], json!("a 2.png"));
+    assert_eq!(body["data"]["already_existed"], json!(false));
+
+    // 同内容重复保存：幂等复用既有位置，不新增副本
+    let (status, bytes) = add("a", encode([200, 30, 30])).await;
+    assert_eq!(status, StatusCode::OK, "同内容重复保存应幂等成功");
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["item"]["path"], json!("a.png"));
+    assert_eq!(body["data"]["already_existed"], json!(true));
+
+    // 两份文件都在磁盘上
+    let root = app.library_root();
+    assert!(root.join("a.png").is_file());
+    assert!(root.join("a 2.png").is_file());
+}
+
+/// folder/list 建树：隐藏目录（.stfolder 等同步标记）与 ignore 命中的目录不进侧栏；
+/// 普通目录正常递归。目录树来自磁盘枚举，与索引体检（cleanup_index）是两条独立路径
+#[tokio::test]
+async fn folder_list_excludes_hidden_dirs() {
+    let app = test_app("folder-hidden");
+    let root = app.library_root();
+    std::fs::create_dir_all(root.join(".stfolder")).unwrap();
+    std::fs::create_dir_all(root.join("普通")).unwrap();
+    app.state.folder_tree.invalidate(); // 测试直接建目录不经 API，缓存无事件失效，手动作废
+
+    let (status, bytes) = call(&app.router, "GET", "/api/v1/folder/list", None).await;
+    assert_eq!(status, StatusCode::OK, "folder/list");
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let names: Vec<&str> = body["data"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["name"].as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&".stfolder"), "隐藏目录不应出现在侧栏: {names:?}");
+    assert!(names.contains(&"普通"), "普通目录应保留: {names:?}");
 }
 
 /// 写端点剧本：准备真实 item 后按依赖顺序调用全部写端点，校验 200 与响应 schema

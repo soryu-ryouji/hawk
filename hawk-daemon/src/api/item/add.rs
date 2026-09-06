@@ -95,30 +95,62 @@ pub(crate) async fn item_add(
             let bytes = decode_base64(req.img_base64.as_deref().unwrap_or_default())?;
             let ext = ThumbnailService::detect_extension_bytes(&bytes)
                 .ok_or_else(|| ApiError::unsupported_format("无法识别的图像数据"))?;
-            (ext, "image".to_string(), Some(bytes), None)
+            // 无语义文件名：以内容哈希命名（插件保存场景），同名冲突天然消失
+            (ext, content_hash::hash_bytes(&bytes), Some(bytes), None)
         };
     let name = req.name.clone().unwrap_or(default_name);
     if !fs_util::is_valid_name(Some(&name)) {
         return Err(ApiError::invalid_param(format!("非法文件名: {}", req.name.unwrap_or_default())));
     }
 
-    let file_name = if ext.is_empty() { name.clone() } else { format!("{name}.{ext}") };
-    let target_rel = if folder_rel.is_empty() {
-        file_name.clone()
-    } else {
-        format!("{folder_rel}/{file_name}")
-    };
-    let target_abs = state.paths.to_absolute(&target_rel).unwrap();
-    if std::path::Path::new(&target_abs).exists() {
-        return Err(ApiError::file_exists(&target_rel));
-    }
-
-    // 先算哈希判断内容是否已存在(already_existed 语义以写入前为准)
+    // 哈希提前算（目标冲突判定需要比对内容）
     let hash = match (&source_abs, &bytes) {
         (Some(src), _) => content_hash::hash_file(src).map_err(|e| ApiError::internal(format!("计算哈希失败: {e}")))?,
         (None, Some(data)) => content_hash::hash_bytes(data),
         _ => unreachable!(),
     };
+
+    let file_name = if ext.is_empty() { name.clone() } else { format!("{name}.{ext}") };
+    let mut target_rel = if folder_rel.is_empty() {
+        file_name.clone()
+    } else {
+        format!("{folder_rel}/{file_name}")
+    };
+    let mut target_abs = state.paths.to_absolute(&target_rel).unwrap();
+    if std::path::Path::new(&target_abs).exists() {
+        // 目标已存在：同内容 → 幂等复用（不写文件，按既有位置入库应答）；
+        // 异内容 → 自动重命名（“名字 2”、“名字 3”…递增）而非报错
+        let existing_hash = content_hash::hash_file(&target_abs)
+            .map_err(|e| ApiError::internal(format!("计算哈希失败: {e}")))?;
+        if existing_hash == hash {
+            let result = state
+                .pipeline
+                .submit_upsert(target_abs, Some(hash))
+                .await
+                .map_err(ApiError::internal)?
+                .ok_or_else(|| ApiError::internal("索引失败"))?;
+            return Ok(Json(Envelope::ok(ItemAddResponse {
+                item: result.item,
+                already_existed: true,
+                skipped: false,
+            })));
+        }
+        let stem = LibraryPaths::name_of(&file_name).to_string();
+        let mut n = 2u32;
+        loop {
+            let candidate = if ext.is_empty() { format!("{stem} {n}") } else { format!("{stem} {n}.{ext}") };
+            target_rel = if folder_rel.is_empty() { candidate.clone() } else { format!("{folder_rel}/{candidate}") };
+            target_abs = state.paths.to_absolute(&target_rel).unwrap();
+            if !std::path::Path::new(&target_abs).exists() {
+                break;
+            }
+            n += 1;
+            if n > 9999 {
+                return Err(ApiError::file_exists(&target_rel));
+            }
+        }
+    }
+
     let existed_before_write = state.index.contains(&hash);
 
     // skip_existing：内容已在库内（不含回收站——删掉的内容应可重新导入）则跳过，

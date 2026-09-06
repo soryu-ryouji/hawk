@@ -62,7 +62,7 @@ impl ApiError {
         ApiError::new(
             codes::FILE_EXISTS,
             StatusCode::CONFLICT,
-            format!("file already exists: {}", path.as_ref()),
+            format!("目标已存在同名文件: {}", path.as_ref()),
         )
     }
 

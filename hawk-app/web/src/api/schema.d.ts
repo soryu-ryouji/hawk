@@ -582,6 +582,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/cleanup_index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 索引体检：清除不该在索引里的条目——隐藏文件、ignore 规则命中、源文件已删除的残留。
+         *     只摘索引位置不动磁盘文件；移除经流水线单写者（notify_deleted → do_delete），事件广播后 UI 自动收敛。
+         *     与 refresh_cache 的差异：refresh_cache 只对账源文件消失；本端点还清「文件还在但不该入库」的残留
+         *     （早期版本入库的结果——增量扫描靠目录快照跳过 clean 目录，不会再触达它们，只能靠本入口收敛）。
+         *     多路径素材只摘命中位置，其余位置保留时条目仍在。
+         */
+        post: operations["cleanup_index"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/info": {
         parameters: {
             query?: never;
@@ -842,6 +865,18 @@ export interface components {
             name: string;
             new_name: string;
         };
+        CleanupIndexResponse: {
+            /** @description 检查的索引位置数（不含回收站） */
+            checked: number;
+            /** @description 隐藏文件（路径任一段以 . 开头，如 .DS_Store、.stignore） */
+            hidden: number;
+            /** @description ignore 规则命中 */
+            ignored: number;
+            /** @description 源文件已消失的残留（与 refresh_cache 的消失对账同款判定） */
+            missing: number;
+            /** @description 清除的条目总数（= hidden + ignored + missing） */
+            removed: number;
+        };
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_AppInfo: {
             data?: {
@@ -855,6 +890,22 @@ export interface components {
                  *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）
                  */
                 writable: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_CleanupIndexResponse: {
+            data?: {
+                /** @description 检查的索引位置数（不含回收站） */
+                checked: number;
+                /** @description 隐藏文件（路径任一段以 . 开头，如 .DS_Store、.stignore） */
+                hidden: number;
+                /** @description ignore 规则命中 */
+                ignored: number;
+                /** @description 源文件已消失的残留（与 refresh_cache 的消失对账同款判定） */
+                missing: number;
+                /** @description 清除的条目总数（= hidden + ignored + missing） */
+                removed: number;
             };
             status: string;
         };
@@ -916,6 +967,8 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_ItemBatchUpdateResponse: {
             data?: {
+                /** @description 移动时因目标文件夹同名冲突而跳过的文件名（其余失败仍走 missing_ids；前端据此给出明确提示） */
+                conflicts: string[];
                 missing_ids: string[];
                 updated: number;
             };
@@ -1140,6 +1193,8 @@ export interface components {
             star?: number | null;
         };
         ItemBatchUpdateResponse: {
+            /** @description 移动时因目标文件夹同名冲突而跳过的文件名（其余失败仍走 missing_ids；前端据此给出明确提示） */
+            conflicts: string[];
             missing_ids: string[];
             updated: number;
         };
@@ -2186,6 +2241,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_ItemAddResponse"];
+                };
+            };
+        };
+    };
+    cleanup_index: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_CleanupIndexResponse"];
                 };
             };
         };

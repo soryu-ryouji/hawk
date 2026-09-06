@@ -363,7 +363,8 @@ fn structural_node(
                 } else {
                     format!("{rel}/{child_name}")
                 };
-                !config.is_ignored(&child_rel)
+                // 隐藏目录（.stfolder、.git 等同步/工具标记）不进侧栏树
+                !LibraryPaths::is_hidden(&child_rel) && !config.is_ignored(&child_rel)
             })
             .collect();
         dirs.sort_by_key(|e| e.file_name().to_string_lossy().to_lowercase());

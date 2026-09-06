@@ -148,6 +148,8 @@ pub(crate) struct ItemBatchUpdateRequest {
 pub(crate) struct ItemBatchUpdateResponse {
     updated: usize,
     missing_ids: Vec<String>,
+    /// 移动时因目标文件夹同名冲突而跳过的文件名（其余失败仍走 missing_ids；前端据此给出明确提示）
+    conflicts: Vec<String>,
 }
 
 /// 批量更新：标签/分类并集追加，评分/文件夹设置；不存在的 id 记入 missing_ids 不整体失败
@@ -189,6 +191,8 @@ pub(crate) async fn item_batch_update(
     let mut ids = req.ids.clone();
     ids.dedup();
     let mut move_failed: Vec<String> = Vec::new();
+    // 同名冲突跳过的文件名（与 move_failed 分开：前者用户可自行处理，后者是 IO 失败）
+    let mut conflicts: Vec<String> = Vec::new();
 
     // folder_path:逐个移动指定位置(库内;缺省主位置);已在目标处的跳过;无库内位置(全在回收站)的移动不适用,跳过
     if let Some(folder_path) = &req.folder_path {
@@ -215,9 +219,9 @@ pub(crate) async fn item_batch_update(
             if target_abs == source_abs {
                 continue;
             }
-            // 同名冲突不整体失败:跳过该项移动并记入 missing,其余照常
+            // 同名冲突不整体失败:跳过该项移动并记入 conflicts（前端明确提示）,其余照常
             if std::path::Path::new(&target_abs).exists() {
-                move_failed.push(id.clone());
+                conflicts.push(file_name);
                 continue;
             }
             if std::fs::rename(&source_abs, &target_abs).is_err() {
@@ -273,5 +277,6 @@ pub(crate) async fn item_batch_update(
     Ok(Json(Envelope::ok(ItemBatchUpdateResponse {
         updated,
         missing_ids: missing,
+        conflicts,
     })))
 }
