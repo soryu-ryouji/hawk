@@ -1,7 +1,7 @@
 // 后台：右键菜单「保存图片到 hawk」入口，负责与 hawk-daemon 通信并反馈结果。
 // MV3 下 contextMenus 须在 onInstalled 里创建，避免 service worker 重启后重复注册。
 import { browser } from 'wxt/browser';
-import { addItemByBase64, addItemByUrl, createFolder, fetchFolderList, type FolderNode } from '../lib/api';
+import { addItemByBase64, addItemByUrl, createFolder, fetchFolderList, HttpError, type FolderNode } from '../lib/api';
 import { notify } from '../lib/notify';
 
 const MENU_ID = 'hawk-save-image';
@@ -109,7 +109,17 @@ async function saveImage(srcUrl: string, pageUrl?: string, folderPath?: string) 
       // data URL 直接转 base64 提交，无需下载
       await addItemByBase64(srcUrl.slice(srcUrl.indexOf(',') + 1), pageUrl, folderPath);
     } else if (/^https?:\/\//.test(srcUrl)) {
-      await addItemByUrl(srcUrl, pageUrl, folderPath);
+      // 首选浏览器网络栈下载（真实 Chrome TLS 指纹；服务端 ureq/rustls 常被目标站拒连，
+      // 如 “io: unexpected end of file”），转 base64 提交；浏览器拿不到（需页面会话 cookie 等）
+      // 时回退服务端下载兑底
+      try {
+        await addItemByBase64(await downloadAsBase64(srcUrl), pageUrl, folderPath);
+      } catch (e) {
+        if (e instanceof HttpError && (e.status === 404 || e.status === 410)) {
+          throw e; // 资源确定不存在，服务端下载同样拿不到，不再兑底
+        }
+        await addItemByUrl(srcUrl, pageUrl, folderPath);
+      }
     } else {
       throw new Error('不支持的图片地址（blob: 需要页面脚本协助，暂未支持）');
     }
@@ -120,4 +130,19 @@ async function saveImage(srcUrl: string, pageUrl?: string, folderPath?: string) 
   } catch (e) {
     await notify(`保存失败：${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+/** 浏览器网络栈下载并转 base64；分块拼接避免 String.fromCharCode 栈溢出，大图也在 service worker 可承受范围 */
+async function downloadAsBase64(url: string): Promise<string> {
+  const res = await fetch(url, { credentials: 'omit' });
+  if (!res.ok) {
+    throw new HttpError(res.status, `扩展下载失败：HTTP ${res.status}（${new URL(url).host}）`);
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }

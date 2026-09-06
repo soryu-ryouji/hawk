@@ -9,6 +9,42 @@ import { getSettings } from './settings';
 interface Envelope<T> {
   status: string;
   data: T;
+  /** 错误信封时存在：{code, message}（见 hawk-daemon src/api/envelope.rs） */
+  error?: { code?: unknown; message?: unknown };
+}
+
+/** 从错误信封提取 “CODE：message” 形式的详情；无法解析时返回空串 */
+function errorDetail(body: unknown): string {
+  const err = typeof body === 'object' && body !== null ? (body as { error?: unknown }).error : null;
+  if (typeof err !== 'object' || err === null) {
+    return '';
+  }
+  const { code, message } = err as { code?: unknown; message?: unknown };
+  return [typeof code === 'string' ? code : '', typeof message === 'string' ? message : '']
+    .filter(Boolean)
+    .join('：');
+}
+
+/** 带 HTTP 状态码的 API 错误：background 据此判断是否值得用扩展侧下载回退 */
+export class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** 非 2xx 响应转异常：解析错误信封把服务端原因带进消息，否则通知里只有裸状态码 */
+async function responseError(res: Response): Promise<Error> {
+  let detail = '';
+  try {
+    detail = errorDetail(await res.json());
+  } catch {
+    // 响应体不是 JSON（网关错误页等），退回仅状态码
+  }
+  const message = detail ? `hawk-daemon 响应 ${res.status}（${detail}）` : `hawk-daemon 响应 ${res.status}`;
+  return new HttpError(res.status, message);
 }
 
 /** 自动发现的 Token 缓存（token 每次启动随机生成，服务重启后需重新发现） */
@@ -18,11 +54,12 @@ const DISCOVERY_TTL = 60_000;
 async function fetchEnvelope<T>(serverUrl: string, path: string): Promise<T> {
   const res = await fetch(`${serverUrl}${path}`);
   if (!res.ok) {
-    throw new Error(`hawk-daemon 响应 ${res.status}`);
+    throw await responseError(res);
   }
   const envelope = (await res.json()) as Envelope<T>;
   if (envelope.status !== 'success') {
-    throw new Error('hawk-daemon 返回错误');
+    const detail = errorDetail(envelope);
+    throw new Error(detail ? `hawk-daemon 返回错误（${detail}）` : 'hawk-daemon 返回错误');
   }
   return envelope.data;
 }
@@ -60,11 +97,12 @@ async function request<T>(method: string, path: string, body?: unknown, retried 
     return request<T>(method, path, body, true);
   }
   if (!res.ok) {
-    throw new Error(`hawk-daemon 响应 ${res.status}`);
+    throw await responseError(res);
   }
   const envelope = (await res.json()) as Envelope<T>;
   if (envelope.status !== 'success') {
-    throw new Error('hawk-daemon 返回错误');
+    const detail = errorDetail(envelope);
+    throw new Error(detail ? `hawk-daemon 返回错误（${detail}）` : 'hawk-daemon 返回错误');
   }
   return envelope.data;
 }

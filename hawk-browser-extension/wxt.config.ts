@@ -9,8 +9,10 @@ export default defineConfig({
     name: 'hawk 图片收集',
     description: '保存网页图片到 hawk 素材库',
     permissions: ['contextMenus', 'storage', 'notifications'],
-    // 只直连本机 hawk-daemon；扩展后台请求不受 CORS 限制
-    host_permissions: ['http://127.0.0.1:27371/*', 'http://localhost:27371/*'],
+    // 本机 daemon 直连；http(s) 任意源用于图片下载——保存首选浏览器网络栈
+    // （真实 Chrome TLS 指纹；服务端 ureq/rustls 常被目标站拒连，报 “io: unexpected end of file”），
+    // background 下载后转 base64 提交，浏览器拿不到时才由服务端兜底
+    host_permissions: ['http://127.0.0.1:27371/*', 'http://localhost:27371/*', 'http://*/*', 'https://*/*'],
     icons: {
       16: '/icons/16.png',
       32: '/icons/32.png',
