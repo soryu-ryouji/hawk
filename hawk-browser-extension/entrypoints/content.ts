@@ -1,10 +1,11 @@
 // 拖拽保存（Eagle 式）：按住图片拖过阈值后，面板锚定在当前指针处向右下展开，左侧大投放区正好压在指针下——
-// 面板出现即可松手存入根目录；右移可投入具体文件夹（目录树按最近使用排序，默认全折叠）。
+// 面板出现即可松手存入根目录；右移可投入具体文件夹（按最近使用排序）。
 // 面板内容：
-//   1. 「常用」文件夹：按保存次数自动统计的快捷投放入口；
-//   2. 文件夹树：默认全折叠，拖拽悬停片刻自动展开，也可点击箭头展开/收起；投到某行存入对应文件夹；
-//   3. 「＋ 新建文件夹」投放区：把图片拖到上面 → 命名 → 创建文件夹并把图片存入；平时点击也可只建文件夹。
+//   1. 文件夹列表：只显示根目录下的直接子文件夹，不展开层级——拖拽期间 click 被浏览器抑制，
+//      展开项无法收起，干脆不做层级；
+//   2. 「＋ 新建文件夹」投放区：把图片拖到上面 → 命名 → 创建文件夹并把图片存入；平时点击也可只建文件夹。
 // 投到左侧面板存入根目录；Esc 取消。
+// 原生拖拽残影是大图的不透明拷贝，会盖住面板文字 → dragstart 时用 setDragImage 换成小尺寸、半透明轻虚化的缩略图。
 // content script 只负责交互与转发，实际保存/查询/新建经消息交给 background（content script 直连 hawk-daemon 会受 CORS 限制）。
 import { browser } from 'wxt/browser';
 
@@ -21,8 +22,8 @@ const ANCHOR_PAD = 14;
 const ZONE_WIDTH = 220;
 const ANCHOR_INSET_X = 40; // 指针距区块左内缘
 const ANCHOR_INSET_Y = 12; // 指针距区块顶内缘
-/** 折叠的文件夹被拖拽悬停多久后自动展开（拖拽期间无法点击，只能靠悬停） */
-const HOVER_EXPAND_DELAY = 700;
+/** 拖拽残影缩略图的最大宽高（px）；与 .hawk-drag-thumb img 的 max-width/max-height 保持一致 */
+const DRAG_THUMB_MAX = 120;
 
 /** 文件夹树节点（get-folders 消息返回，已按最近使用排序） */
 interface TreeNode {
@@ -34,22 +35,17 @@ interface TreeNode {
 const FOLDER_ICON =
   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
-const CARET_ICON =
-  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="m9 18 6-6-6-6"/></svg>';
 
 let panel: HTMLDivElement | null = null;
 let draggedSrc: string | null = null;
+/** setDragImage 的快照源元素（离屏渲染的小缩略图）；浏览器在 dragstart 之后才截图，须保留到拖拽结束 */
+let dragThumb: HTMLDivElement | null = null;
 let startX = 0;
 let startY = 0;
 let dragging = false;
 let cancelled = false;
 /** 投到「新建文件夹」区块后待保存的图片（命名模式期间面板保留） */
 let pendingSave: { url: string; pageUrl: string } | null = null;
-/** 已展开的文件夹路径（目录默认全折叠，只记录展开项；同页面多次拖拽间保留） */
-const expandedPaths = new Set<string>();
-/** 当前面板展示的文件夹树（展开/收起时据此重绘） */
-let currentTree: TreeNode | null = null;
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -69,11 +65,37 @@ function onDragStart(e: DragEvent) {
   }
   cleanup();
   draggedSrc = src;
+  setDragThumbnail(e, src);
   startX = e.clientX;
   startY = e.clientY;
   dragging = true;
   window.addEventListener('dragend', cleanup, true); // 落在面板之外也要收起
   window.addEventListener('keydown', onKeyDown, true);
+}
+
+/** 用离屏小缩略图替换原生拖拽残影：元素须真实渲染（不能 display:none/opacity:0），
+ *  固定在视口外即可；setDragImage 必须在 dragstart 处理器内同步调用，元素保留到 cleanup 再移除 */
+function setDragThumbnail(e: DragEvent, src: string) {
+  if (!e.dataTransfer) {
+    return;
+  }
+  removeDragThumbnail();
+  const thumb = document.createElement('div');
+  thumb.className = 'hawk-drag-thumb';
+  const img = document.createElement('img');
+  img.src = src;
+  thumb.appendChild(img);
+  document.documentElement.appendChild(thumb);
+  // 读 offsetWidth 强制同步布局，拿到缩略后的实际尺寸；图片未就绪时兜底为中心偏移
+  const w = img.offsetWidth || DRAG_THUMB_MAX;
+  const h = img.offsetHeight || DRAG_THUMB_MAX;
+  e.dataTransfer.setDragImage(thumb, Math.round(w / 2), Math.round(h / 2)); // 指针落在缩略图中心
+  dragThumb = thumb;
+}
+
+function removeDragThumbnail() {
+  dragThumb?.remove();
+  dragThumb = null;
 }
 
 function onDragOver(e: DragEvent) {
@@ -165,102 +187,29 @@ async function loadFolders() {
   renderFolders(tree);
 }
 
-/** 渲染文件夹树（已由 background 按最近使用排序） */
+/** 渲染文件夹列表：只显示根目录下的直接子文件夹（不做层级展开，见文件头注释；已按最近使用排序） */
 function renderFolders(tree: TreeNode) {
   if (!panel) {
     return;
   }
-  currentTree = tree;
   const rows = panel.querySelector<HTMLElement>('.hawk-drop-rows')!;
   rows.innerHTML = '';
   if (tree.children.length === 0) {
     rows.innerHTML = '<div class="hawk-drop-hint">（暂无文件夹）</div>';
     return;
   }
-  renderTreeRows(rows, tree.children, 0);
-}
-
-/** 递归渲染树行；只渲染已展开的分支（默认全折叠） */
-function renderTreeRows(container: HTMLElement, nodes: TreeNode[], depth: number) {
-  for (const node of nodes) {
-    container.appendChild(makeTreeRow(node, depth));
-    if (expandedPaths.has(node.path) && node.children.length > 0) {
-      renderTreeRows(container, node.children, depth + 1);
-    }
+  for (const node of tree.children) {
+    rows.appendChild(makeTreeRow(node));
   }
 }
 
-function makeTreeRow(node: TreeNode, depth: number): HTMLElement {
+function makeTreeRow(node: TreeNode): HTMLElement {
   const row = document.createElement('div');
   row.className = 'hawk-drop-row';
   row.title = node.path;
-  row.style.paddingLeft = `${12 + depth * 16}px`;
-  if (node.children.length > 0) {
-    const caret = document.createElement('span');
-    caret.className = 'hawk-drop-caret';
-    caret.title = expandedPaths.has(node.path) ? '收起' : '展开';
-    caret.innerHTML = CARET_ICON;
-    if (expandedPaths.has(node.path)) {
-      row.classList.add('hawk-open');
-    }
-    caret.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!panel) {
-        return;
-      }
-      if (expandedPaths.has(node.path)) {
-        expandedPaths.delete(node.path);
-      } else {
-        expandedPaths.add(node.path);
-      }
-      rerenderTree();
-    });
-    row.appendChild(caret);
-    armHoverExpand(row, node); // 拖拽中无法点击，靠悬停自动展开
-  } else {
-    const spacer = document.createElement('span');
-    spacer.className = 'hawk-drop-caret-spacer';
-    row.appendChild(spacer);
-  }
   row.insertAdjacentHTML('beforeend', `${FOLDER_ICON}<span class="hawk-drop-row-name">${escapeHtml(node.name)}</span>`);
   makeDroppable(row, { folderPath: node.path });
   return row;
-}
-
-/** 按当前展开状态重绘文件夹树（保持滚动位置） */
-function rerenderTree() {
-  const rows = panel?.querySelector<HTMLElement>('.hawk-drop-rows');
-  if (!rows || !currentTree) {
-    return;
-  }
-  const scrollTop = rows.scrollTop;
-  rows.innerHTML = '';
-  renderTreeRows(rows, currentTree.children, 0);
-  rows.scrollTop = scrollTop;
-}
-
-/** 折叠的文件夹被拖拽悬停一段时间后自动展开 */
-function armHoverExpand(row: HTMLElement, node: TreeNode) {
-  let timer: number | undefined;
-  const clear = () => {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
-  row.addEventListener('dragover', () => {
-    if (timer === undefined && !expandedPaths.has(node.path)) {
-      timer = window.setTimeout(() => {
-        timer = undefined;
-        if (panel && !expandedPaths.has(node.path)) {
-          expandedPaths.add(node.path);
-          rerenderTree();
-        }
-      }, HOVER_EXPAND_DELAY);
-    }
-  });
-  row.addEventListener('dragleave', clear);
-  row.addEventListener('drop', clear);
 }
 
 function escapeHtml(text: string): string {
@@ -357,6 +306,7 @@ function makeDroppable(el: HTMLElement, extra: { folderPath?: string }) {
 }
 
 function cleanup() {
+  removeDragThumbnail(); // 拖拽已结束，残影快照源一并移除（命名模式分支同样适用）
   if (pendingSave) {
     // 命名模式：dragend 会走到这里，但面板要保留等输入，只解除拖拽态
     dragging = false;
@@ -387,6 +337,25 @@ function onKeyDown(e: KeyboardEvent) {
 function injectStyles() {
   const style = document.createElement('style');
   style.textContent = `
+/* 拖拽残影的快照源：离屏渲染的小缩略图；max 尺寸须与 DRAG_THUMB_MAX 一致。
+   opacity / filter 会烘焙进快照 —— 这正是残影半透明 + 轻虚化的实现方式；
+   但不能用来隐身（display:none、opacity:0 快照变空，transform 会位移快照），只能移出视口 */
+.hawk-drag-thumb {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  opacity: 0.1;
+  filter: blur(1.5px);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  background: rgba(22, 24, 29, 0.9);
+}
+.hawk-drag-thumb img {
+  display: block;
+  max-width: 120px;
+  max-height: 120px;
+}
 .hawk-drop-panel {
   position: fixed;
   z-index: 2147483647;
@@ -464,32 +433,6 @@ function injectStyles() {
   white-space: nowrap;
   overflow: hidden;
   cursor: default;
-}
-/* 展开/收起箭头（无子级的行用同宽占位符对齐） */
-.hawk-drop-caret {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  color: #8a8f98;
-  cursor: pointer;
-  transition: transform 0.12s ease;
-}
-.hawk-drop-caret:hover {
-  background: #2a2f39;
-}
-.hawk-drop-caret:hover svg {
-  color: #d6d9de;
-}
-.hawk-drop-row.hawk-open .hawk-drop-caret {
-  transform: rotate(90deg);
-}
-.hawk-drop-caret-spacer {
-  flex: none;
-  width: 16px;
 }
 .hawk-drop-row svg {
   flex: none;
