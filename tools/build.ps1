@@ -1,70 +1,42 @@
-# 发包：构建 hawk 桌面应用的分发包并归置到仓库根目录的 out/（Windows 为免安装 hawk-windows-x64.zip）。
-# -Extensions：附带构建浏览器插件（out/hawk-extension-chrome|firefox/，加载已解压扩展即用）。
-#
-# 用法: ./tools/build.ps1 [-Extensions]
-# 前置: 最新 Node.js 与 Rust 工具链（https://rustup.rs/）
-# 压缩级别（默认 5）: ELECTRON_BUILDER_COMPRESSION_LEVEL=9 ./tools/build.ps1   # 9=最小体积，3=最快
-param([switch]$Extensions)
+# 统一发包入口：--platform 选择目标，转发到对应构建脚本（编译实现只在 build-app / build-extension 一处）。
+# 用法: ./tools/build.ps1 --platform <app|extension> [-Path <输出目录>]
+#   ./tools/build.ps1 --platform app               # 桌面应用 → out/hawk-windows-x64.zip
+#   ./tools/build.ps1 --platform extension         # 浏览器插件 → out/hawk-extension-chrome|firefox/
+#   ./tools/build.ps1 --platform extension --path D:/publish   # 指定输出目录（--path= 写法亦可）
 
 $ErrorActionPreference = 'Stop'
 
-# 兼容 --extensions / -e 写法：双横线不会被绑定为开关名，落在 $args
-if (-not $Extensions -and @($args | Where-Object { $_ -match '^(-e|--extensions)$' }).Count -gt 0) {
-    $Extensions = $true
-}
-
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$AppDir = Join-Path $RepoRoot 'hawk-app'
-$ExtDir = Join-Path $RepoRoot 'hawk-browser-extension'
-$OutDir = Join-Path $RepoRoot 'out'
-
-foreach ($tool in @('node', 'npm', 'cargo')) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "未找到 $tool，请先安装最新的 Node.js 与 Rust 工具链（https://rustup.rs/）"
+$Platform = ''
+$Path = ''
+$argsList = @($args)
+$i = 0
+while ($i -lt $argsList.Count) {
+    $a = [string]$argsList[$i]
+    if ($a -match '^(-Platform|--platform)$') {
+        if ($i + 1 -ge $argsList.Count) { throw "$a 需要参数（app|extension）" }
+        $Platform = [string]$argsList[$i + 1]; $i += 2
+    } elseif ($a -match '^--?platform=(.+)$') {
+        $Platform = $Matches[1]; $i++
+    } elseif ($a -match '^(-Path|--path)$') {
+        if ($i + 1 -ge $argsList.Count) { throw "$a 需要目录参数" }
+        $Path = [string]$argsList[$i + 1]; $i += 2
+    } elseif ($a -match '^--?path=(.+)$') {
+        $Path = $Matches[1]; $i++
+    } else {
+        throw "未知参数: $a（用法: ./tools/build.ps1 --platform <app|extension> [-Path <输出目录>]）"
     }
 }
 
-Push-Location $AppDir
-try {
-    if (-not (Test-Path 'node_modules')) {
-        npm install
-    }
-    npm run pack
-} finally {
-    Pop-Location
+if (-not $Platform) {
+    throw "缺少 --platform（用法: ./tools/build.ps1 --platform <app|extension> [-Path <输出目录>]）"
+}
+if ($Platform -notin @('app', 'extension')) {
+    throw "未知 --platform: $Platform（支持 app|extension）"
 }
 
-$package = Join-Path $AppDir 'dist\hawk-windows-x64.zip'
-if (-not (Test-Path $package)) {
-    throw "打包产物不存在: $package（electron-builder 未产出 hawk-windows-x64.zip）"
+$child = if ($Platform -eq 'app') { 'build-app.ps1' } else { 'build-extension.ps1' }
+if ($Path) {
+    & (Join-Path $PSScriptRoot $child) -Path $Path
+} else {
+    & (Join-Path $PSScriptRoot $child)
 }
-New-Item -ItemType Directory -Force $OutDir | Out-Null
-Copy-Item $package (Join-Path $OutDir 'hawk-windows-x64.zip') -Force
-Write-Host "应用分发包: $OutDir\hawk-windows-x64.zip"
-
-if ($Extensions) {
-    Push-Location $ExtDir
-    try {
-        if (-not (Test-Path 'node_modules')) {
-            npm install
-        }
-        npm run build
-        npm run build:firefox
-    } finally {
-        Pop-Location
-    }
-    $chromeOut = Join-Path $ExtDir '.output\chrome-mv3'
-    $firefoxOut = Join-Path $ExtDir '.output\firefox-mv2'
-    if (-not (Test-Path $chromeOut) -or -not (Test-Path $firefoxOut)) {
-        throw "插件构建产物不存在: .output/chrome-mv3 或 .output/firefox-mv2"
-    }
-    # 插件目录独立，镜像同步避免旧版本残留
-    robocopy $chromeOut (Join-Path $OutDir 'hawk-extension-chrome') /MIR /NFL /NDL /NJH /NJS | Out-Null
-    if ($LASTEXITCODE -gt 7) { throw "复制插件产物失败（robocopy exit $LASTEXITCODE）" }
-    robocopy $firefoxOut (Join-Path $OutDir 'hawk-extension-firefox') /MIR /NFL /NDL /NJH /NJS | Out-Null
-    if ($LASTEXITCODE -gt 7) { throw "复制插件产物失败（robocopy exit $LASTEXITCODE）" }
-    Write-Host "浏览器插件: $OutDir\hawk-extension-chrome、hawk-extension-firefox（浏览器「加载已解压的扩展程序」直接用）"
-}
-
-Write-Host ""
-Write-Host "完成：全部产物已归置到 $OutDir。" -ForegroundColor Green

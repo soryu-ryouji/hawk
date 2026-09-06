@@ -1,7 +1,8 @@
-// 拖拽保存（Eagle 式）：按住图片向某个方向拖过阈值后，面板浮在当前指针旁（留出间隙，不遮挡拖拽预览）。
-// 面板只有两块内容：
-//   1. 文件夹列表：投到某行存入对应文件夹；
-//   2. 「＋ 新建文件夹」投放区：把图片拖到上面 → 命名 → 创建文件夹并把图片存入；平时点击也可只建文件夹。
+// 拖拽保存（Eagle 式）：按住图片向某个方向拖过阈值后，面板浮在当前指针旁（留大间隙，避免被浏览器的拖拽幽灵图盖住）。
+// 面板内容：
+//   1. 「常用」文件夹：按保存次数自动统计的快捷投放入口；
+//   2. 文件夹树：默认全折叠，拖拽悬停片刻自动展开，也可点击箭头展开/收起；投到某行存入对应文件夹；
+//   3. 「＋ 新建文件夹」投放区：把图片拖到上面 → 命名 → 创建文件夹并把图片存入；平时点击也可只建文件夹。
 // 投到左侧面板存入根目录；Esc 取消。
 // content script 只负责交互与转发，实际保存/查询/新建经消息交给 background（content script 直连 hawk-daemon 会受 CORS 限制）。
 import { browser } from 'wxt/browser';
@@ -11,16 +12,33 @@ const GET_FOLDERS_MESSAGE = 'hawk:get-folders';
 const CREATE_FOLDER_MESSAGE = 'hawk:create-folder';
 const NOTIFY_MESSAGE = 'hawk:notify';
 
-/** 拖过多少像素后浮出保存面板 */
-const DRAG_THRESHOLD = 40;
-/** 面板边缘与指针的间隙（Eagle 与指针重叠 20px，视觉上贴着拖拽预览；留间隙更舒适） */
-const PANEL_GAP = 28;
+/** 拖过多少像素后浮出保存面板（太小会在无意拖动时误触发） */
+const DRAG_THRESHOLD = 60;
+/** 面板边缘与指针的间隙：浏览器的拖拽幽灵图（半透明原图）以指针为中心、随原图大小变化，
+ *  间隙必须足够大才不会被幽灵图盖住 */
+const PANEL_GAP = 100;
+/** 折叠的文件夹被拖拽悬停多久后自动展开（拖拽期间无法点击，只能靠悬停） */
+const HOVER_EXPAND_DELAY = 700;
 
+/** 常用文件夹条目（get-folders 消息返回） */
 interface FlatNode {
   path: string;
   name: string;
-  depth: number;
 }
+
+/** 文件夹树节点（get-folders 消息返回） */
+interface TreeNode {
+  path: string;
+  name: string;
+  children: TreeNode[];
+}
+
+const FOLDER_ICON =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+const CARET_ICON =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="m9 18 6-6-6-6"/></svg>';
 
 let panel: HTMLDivElement | null = null;
 let draggedSrc: string | null = null;
@@ -30,6 +48,10 @@ let dragging = false;
 let cancelled = false;
 /** 投到「新建文件夹」区块后待保存的图片（命名模式期间面板保留） */
 let pendingSave: { url: string; pageUrl: string } | null = null;
+/** 已展开的文件夹路径（目录默认全折叠，只记录展开项；同页面多次拖拽间保留） */
+const expandedPaths = new Set<string>();
+/** 当前面板展示的文件夹树（展开/收起时据此重绘） */
+let currentTree: TreeNode | null = null;
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -98,6 +120,7 @@ function showPanel(dx: number, dy: number, x: number, y: number) {
       <small>根目录</small>
     </div>
     <div class="hawk-drop-lists">
+      <div class="hawk-drop-frequent" hidden></div>
       <div class="hawk-drop-rows">
         <div class="hawk-drop-hint">加载中…</div>
       </div>
@@ -130,34 +153,141 @@ async function loadFolders() {
   if (!panel || !rows) {
     return;
   }
-  let folders: FlatNode[];
+  let data: { folders: TreeNode; frequent: FlatNode[] };
   try {
-    folders = (await browser.runtime.sendMessage({ type: GET_FOLDERS_MESSAGE })) as FlatNode[];
+    data = (await browser.runtime.sendMessage({ type: GET_FOLDERS_MESSAGE })) as { folders: TreeNode; frequent: FlatNode[] };
   } catch {
     rows.innerHTML = '<div class="hawk-drop-hint">加载失败</div>';
     return;
   }
-  renderRows(rows, Array.isArray(folders) ? folders : []);
+  if (!panel) {
+    return; // 等待响应期间面板可能已被关闭
+  }
+  const tree = data && Array.isArray(data.folders?.children) ? data.folders : { path: '', name: '', children: [] };
+  const frequent = data && Array.isArray(data.frequent) ? data.frequent : [];
+  renderFolders(tree, frequent);
 }
 
-function renderRows(container: HTMLElement, folders: FlatNode[]) {
-  container.innerHTML = '';
-  if (folders.length === 0) {
-    container.innerHTML = '<div class="hawk-drop-hint">（暂无文件夹）</div>';
+/** 渲染「常用」区与文件夹树 */
+function renderFolders(tree: TreeNode, frequent: FlatNode[]) {
+  if (!panel) {
     return;
   }
-  const icon =
-    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
-  for (const folder of folders) {
-    const row = document.createElement('div');
-    row.className = 'hawk-drop-row';
-    row.title = folder.path;
-    row.style.paddingLeft = `${12 + folder.depth * 16}px`;
-    row.innerHTML = `${icon}<span class="hawk-drop-row-name">${escapeHtml(folder.name)}</span>`;
-    makeDroppable(row, { folderPath: folder.path });
-    container.appendChild(row);
+  currentTree = tree;
+  renderFrequent(panel.querySelector<HTMLElement>('.hawk-drop-frequent')!, frequent);
+  const rows = panel.querySelector<HTMLElement>('.hawk-drop-rows')!;
+  rows.innerHTML = '';
+  if (tree.children.length === 0) {
+    rows.innerHTML = '<div class="hawk-drop-hint">（暂无文件夹）</div>';
+    return;
   }
+  renderTreeRows(rows, tree.children, 0);
+}
+
+/** 「常用」：按保存次数排序的快捷投放 chips，可拖入图片 */
+function renderFrequent(container: HTMLElement, frequent: FlatNode[]) {
+  container.innerHTML = '';
+  container.hidden = frequent.length === 0;
+  if (frequent.length === 0) {
+    return;
+  }
+  const title = document.createElement('div');
+  title.className = 'hawk-drop-section-title';
+  title.textContent = '常用';
+  const chips = document.createElement('div');
+  chips.className = 'hawk-drop-chips';
+  for (const folder of frequent) {
+    const chip = document.createElement('div');
+    chip.className = 'hawk-drop-chip';
+    chip.title = folder.path;
+    chip.innerHTML = `${FOLDER_ICON}<span>${escapeHtml(folder.name)}</span>`;
+    makeDroppable(chip, { folderPath: folder.path });
+    chips.appendChild(chip);
+  }
+  container.append(title, chips);
+}
+
+/** 递归渲染树行；只渲染已展开的分支（默认全折叠） */
+function renderTreeRows(container: HTMLElement, nodes: TreeNode[], depth: number) {
+  for (const node of nodes) {
+    container.appendChild(makeTreeRow(node, depth));
+    if (expandedPaths.has(node.path) && node.children.length > 0) {
+      renderTreeRows(container, node.children, depth + 1);
+    }
+  }
+}
+
+function makeTreeRow(node: TreeNode, depth: number): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'hawk-drop-row';
+  row.title = node.path;
+  row.style.paddingLeft = `${12 + depth * 16}px`;
+  if (node.children.length > 0) {
+    const caret = document.createElement('span');
+    caret.className = 'hawk-drop-caret';
+    caret.title = expandedPaths.has(node.path) ? '收起' : '展开';
+    caret.innerHTML = CARET_ICON;
+    if (expandedPaths.has(node.path)) {
+      row.classList.add('hawk-open');
+    }
+    caret.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!panel) {
+        return;
+      }
+      if (expandedPaths.has(node.path)) {
+        expandedPaths.delete(node.path);
+      } else {
+        expandedPaths.add(node.path);
+      }
+      rerenderTree();
+    });
+    row.appendChild(caret);
+    armHoverExpand(row, node); // 拖拽中无法点击，靠悬停自动展开
+  } else {
+    const spacer = document.createElement('span');
+    spacer.className = 'hawk-drop-caret-spacer';
+    row.appendChild(spacer);
+  }
+  row.insertAdjacentHTML('beforeend', `${FOLDER_ICON}<span class="hawk-drop-row-name">${escapeHtml(node.name)}</span>`);
+  makeDroppable(row, { folderPath: node.path });
+  return row;
+}
+
+/** 按当前展开状态重绘文件夹树（保持滚动位置） */
+function rerenderTree() {
+  const rows = panel?.querySelector<HTMLElement>('.hawk-drop-rows');
+  if (!rows || !currentTree) {
+    return;
+  }
+  const scrollTop = rows.scrollTop;
+  rows.innerHTML = '';
+  renderTreeRows(rows, currentTree.children, 0);
+  rows.scrollTop = scrollTop;
+}
+
+/** 折叠的文件夹被拖拽悬停一段时间后自动展开 */
+function armHoverExpand(row: HTMLElement, node: TreeNode) {
+  let timer: number | undefined;
+  const clear = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+  row.addEventListener('dragover', () => {
+    if (timer === undefined && !expandedPaths.has(node.path)) {
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        if (panel && !expandedPaths.has(node.path)) {
+          expandedPaths.add(node.path);
+          rerenderTree();
+        }
+      }, HOVER_EXPAND_DELAY);
+    }
+  });
+  row.addEventListener('dragleave', clear);
+  row.addEventListener('drop', clear);
 }
 
 function escapeHtml(text: string): string {
@@ -317,31 +447,117 @@ function injectStyles() {
 .hawk-drop-zone small {
   font-size: 12px;
 }
-/* 右：文件夹列表 + 新建区块 */
+/* 右：常用 + 文件夹树 + 新建区块 */
 .hawk-drop-lists {
   display: flex;
   flex-direction: column;
   width: 250px;
-  max-height: 330px;
+  /* 比原先更高，减少滚动；iframe 内以视口为上限 */
+  max-height: min(440px, calc(100vh - 80px));
 }
 .hawk-drop-rows {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   overflow-y: auto;
   padding-right: 2px;
+  /* 细滚动条：Firefox 走 scrollbar-*，Chromium/Safari 走 ::-webkit-scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: #3a4150 transparent;
+}
+.hawk-drop-rows::-webkit-scrollbar {
+  width: 8px;
+}
+.hawk-drop-rows::-webkit-scrollbar-track {
+  background: transparent;
+}
+.hawk-drop-rows::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #3a4150;
+  background-clip: padding-box;
+}
+.hawk-drop-rows::-webkit-scrollbar-thumb:hover {
+  background-color: #4d5563;
+}
+/* 「常用」：按保存次数排序的快捷投放入口 */
+.hawk-drop-frequent {
+  flex: none;
+  margin-bottom: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2c313a;
+}
+.hawk-drop-section-title {
+  margin-bottom: 6px;
+  color: #6b7078;
+  font-size: 12px;
+}
+.hawk-drop-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hawk-drop-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #23272f;
+  color: #b9bdc4;
+  font-size: 12.5px;
+  cursor: default;
+}
+.hawk-drop-chip svg {
+  flex: none;
+  color: #8a8f98;
+}
+.hawk-drop-chip span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.hawk-drop-chip:hover {
+  background: #2a2f39;
 }
 .hawk-drop-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 8px 10px;
   border-radius: 8px;
   font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   cursor: default;
+}
+/* 展开/收起箭头（无子级的行用同宽占位符对齐） */
+.hawk-drop-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: #8a8f98;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.hawk-drop-caret:hover {
+  background: #2a2f39;
+}
+.hawk-drop-caret:hover svg {
+  color: #d6d9de;
+}
+.hawk-drop-row.hawk-open .hawk-drop-caret {
+  transform: rotate(90deg);
+}
+.hawk-drop-caret-spacer {
+  flex: none;
+  width: 16px;
 }
 .hawk-drop-row svg {
   flex: none;

@@ -83,10 +83,10 @@ cd hawk
 ./tools/install.ps1 -Path D:/Tools/hawk   # Windows → 指定目录
 ./tools/install.sh               # macOS → /Applications/hawk.app；Linux → out/hawk-linux-x64.AppImage
 
-# 发包：产出分发包到 out/
-./tools/build.ps1      # Windows → out/hawk-windows-x64.zip
-./tools/build.sh       # macOS → out/hawk-mac-<arch>.zip；Linux → out/hawk-linux-x64.AppImage
-./tools/build.ps1 -Extensions    # 附带浏览器插件（out/hawk-extension-chrome|firefox/，加载已解压扩展即用）
+# 发包：产出分发包到 out/（统一入口 --platform 选目标，--path 指定输出目录；也可直接调 build-app / build-extension）
+./tools/build.ps1 --platform app           # Windows：桌面应用 → out/hawk-windows-x64.zip
+./tools/build.sh --platform app            # macOS → out/hawk-mac-<arch>.zip；Linux → out/hawk-linux-x64.AppImage
+./tools/build.ps1 --platform extension     # 浏览器插件 → out/hawk-extension-chrome|firefox/（加载已解压扩展即用）
 ```
 
 首次运行自动安装 npm 依赖并完成全量构建（前端 + Rust 后端 + electron-builder，约几分钟）。

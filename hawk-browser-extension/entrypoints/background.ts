@@ -1,7 +1,7 @@
 // 后台：右键菜单「保存图片到 hawk」入口，负责与 hawk-daemon 通信并反馈结果。
 // MV3 下 contextMenus 须在 onInstalled 里创建，避免 service worker 重启后重复注册。
 import { browser } from 'wxt/browser';
-import { addItemByBase64, addItemByUrl, createFolder, fetchFolderList } from '../lib/api';
+import { addItemByBase64, addItemByUrl, createFolder, fetchFolderList, type FolderNode } from '../lib/api';
 import { notify } from '../lib/notify';
 
 const MENU_ID = 'hawk-save-image';
@@ -10,35 +10,66 @@ const GET_FOLDERS_MESSAGE = 'hawk:get-folders';
 const CREATE_FOLDER_MESSAGE = 'hawk:create-folder';
 const NOTIFY_MESSAGE = 'hawk:notify';
 
-/** 扁平化文件夹树（拖拽保存面板展示用） */
+/** 常用文件夹条目（拖拽保存面板展示用） */
 export interface FlatNode {
   path: string;
   name: string;
-  depth: number;
 }
 
-let foldersCache: { folders: FlatNode[]; at: number } | null = null;
+/** 各文件夹累计保存次数（storage.local 持久化，用于「常用」列表） */
+type FolderUsage = Record<string, number>;
+const USAGE_KEY = 'folderUsage';
+/** 「常用」列表条数上限 */
+const FREQUENT_LIMIT = 5;
+
+let foldersCache: { folders: FolderNode; frequent: FlatNode[]; at: number } | null = null;
 const FOLDERS_CACHE_TTL = 30_000;
 
 function flattenTree(root: { path: string; name: string; children: { path: string; name: string; children: unknown[] }[] }): FlatNode[] {
   const list: FlatNode[] = [];
-  const walk = (children: typeof root.children, depth: number) => {
+  const walk = (children: typeof root.children) => {
     for (const child of children) {
-      list.push({ path: child.path, name: child.name, depth });
-      walk(child.children as typeof root.children, depth + 1);
+      list.push({ path: child.path, name: child.name });
+      walk(child.children as typeof root.children);
     }
   };
-  walk(root.children, 0);
+  walk(root.children);
   return list;
 }
 
-async function getFolders(force = false): Promise<FlatNode[]> {
+async function getUsage(): Promise<FolderUsage> {
+  const stored = await browser.storage.local.get(USAGE_KEY);
+  return (stored[USAGE_KEY] as FolderUsage | undefined) ?? {};
+}
+
+/** 保存成功后累计次数，并作废缓存让下次「常用」列表重算 */
+async function recordUsage(path: string) {
+  const usage = await getUsage();
+  usage[path] = (usage[path] ?? 0) + 1;
+  await browser.storage.local.set({ [USAGE_KEY]: usage });
+  foldersCache = null;
+}
+
+/** 按保存次数取前几个仍存在于库中的文件夹 */
+function computeFrequent(folders: FlatNode[], usage: FolderUsage): FlatNode[] {
+  const byPath = new Map(folders.map((f) => [f.path, f]));
+  return Object.entries(usage)
+    .filter(([path, count]) => count > 0 && byPath.has(path))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, FREQUENT_LIMIT)
+    .map(([path]) => byPath.get(path)!);
+}
+
+/** 文件夹树 + 常用文件夹（拖拽保存面板展示用） */
+async function getFolders(force = false): Promise<{ folders: FolderNode; frequent: FlatNode[] }> {
   if (!force && foldersCache && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
-    return foldersCache.folders;
+    const { folders, frequent } = foldersCache;
+    return { folders, frequent };
   }
-  const folders = flattenTree(await fetchFolderList());
-  foldersCache = { folders, at: Date.now() };
-  return folders;
+  const folders = await fetchFolderList();
+  const frequent = computeFrequent(flattenTree(folders), await getUsage());
+  foldersCache = { folders, frequent, at: Date.now() };
+  return { folders, frequent };
 }
 
 export default defineBackground(() => {
@@ -105,6 +136,9 @@ async function saveImage(srcUrl: string, pageUrl?: string, folderPath?: string) 
       await addItemByUrl(srcUrl, pageUrl, folderPath);
     } else {
       throw new Error('不支持的图片地址（blob: 需要页面脚本协助，暂未支持）');
+    }
+    if (folderPath) {
+      void recordUsage(folderPath).catch(() => {}); // 计入常用统计，失败不影响保存结果
     }
     await notify('已保存到 hawk');
   } catch (e) {

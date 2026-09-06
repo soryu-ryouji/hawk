@@ -70,7 +70,7 @@ main 分支出现 `feat` / `fix` 开头的提交即触发（先过质量门禁�
 
 ## 手动构建（不经 CI）
 
-`tools/build.sh` / `tools/install.sh`（以及 `npm run pack`）在本机构建：产物**没有** sha256 边车、不上传 Release，仅本机使用；`build-info.json` 写入本机 git HEAD—— nightly 通道检查时会与本机 sha 比较，无实际意义。自动更新链路（含边车校验）只对 GitHub Release 上的产物生效。
+`tools/build-app.sh` / `tools/install.sh`（以及 `npm run pack`）在本机构建：产物**没有** sha256 边车、不上传 Release，仅本机使用；`build-info.json` 写入本机 git HEAD—— nightly 通道检查时会与本机 sha 比较，无实际意义。自动更新链路（含边车校验）只对 GitHub Release 上的产物生效。
 
 ## 常见问题
 
