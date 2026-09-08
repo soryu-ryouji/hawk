@@ -598,6 +598,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 - `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`），Windows 额外携带更新辅助程序 hawk-update.exe（`win.extraResources` 与顶层追加合并非覆盖，hawk-update 只写在平台级条目里、mac/linux 产物不带；`npm run test:resources` 回归验证，见 `scripts/build-update.mjs`）；`files` 含 `build-info.json`（打包前由 `scripts/stamp-build.mjs` 写入 git sha，CI 注入 `HAWK_SHA`；自动更新比较 nightly 新旧用）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
 - 产物名统一「产品-平台-架构」，不带版本号：Windows `hawk-windows-x64.zip`（绿色解压即用）/ macOS `hawk.app` 目录（CI 双架构打包为 `hawk-mac-<arch>.zip` 发布，不做 dmg）/ Linux `hawk-linux-x64.AppImage`
+- AppImage 用静态运行时（`toolsets.appimage: "1.0.3"`，Runtime 20251108）：默认工具集（`0.0.0`）的 runtime 动态链接 `libfuse.so.2`，Fedora 44 / Ubuntu 24.04+ 等只带 libfuse3 的发行版启动即报 `dlopen(): error loading libfuse.so.2`；静态 runtime 不依赖该库（仍走内核 FUSE 挂载，`unshare -Ur` 探测失败时 AppRun 自动补 `--no-sandbox`）。上游修复见 electron-builder#9598
 - CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
 
 ## 应用自动更新

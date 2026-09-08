@@ -104,14 +104,15 @@ jobs:
 
       - run: npm ci
 
-      # electron 发行包与 electron-builder 工具（7zip 等）缓存：免每次 ~100MB 下载
+      # electron 发行包与 electron-builder 工具（7zip、AppImage runtime 等）缓存：免每次 ~100MB 下载
+      # key 含 electron-builder.yml：打包工具集（如 AppImage 静态 runtime）变化时自动失效重建
       - name: Cache electron & builder tools
         uses: actions/cache@v6
         with:
           path: |
             ~/.cache/electron
             ~/.cache/electron-builder
-          key: tools-linux-x64-${{ hashFiles('hawk-app/package-lock.json') }}
+          key: tools-linux-x64-${{ hashFiles('hawk-app/package-lock.json', 'hawk-app/electron-builder.yml') }}
 
       # web 构建（vue-tsc + 主进程 tsc + vite）与单元测试
       - run: npm run build

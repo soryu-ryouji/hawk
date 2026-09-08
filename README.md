@@ -81,7 +81,7 @@ cd hawk
 # 本机安装：构建应用并安装到本机
 ./tools/install.ps1              # Windows → out/（免安装目录，hawk.exe 就地可运行）
 ./tools/install.ps1 -Path D:/Tools/hawk   # Windows → 指定目录
-./tools/install.sh               # macOS → /Applications/hawk.app；Linux → out/hawk-linux-x64.AppImage
+./tools/install.sh               # macOS → /Applications/hawk.app；Linux → ~/.local/bin/hawk + 桌面启动器
 
 # 发包：产出分发包到 out/（统一入口 --platform 选目标，--path 指定输出目录；也可直接调 build-app / build-extension）
 ./tools/build.ps1 --platform app           # Windows：桌面应用 → out/hawk-windows-x64.zip
@@ -90,6 +90,7 @@ cd hawk
 ```
 
 首次运行自动安装 npm 依赖并完成全量构建（前端 + Rust 后端 + electron-builder，约几分钟）。
+Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/hawk`，启动器写入 `~/.local/share/applications/hawk.desktop`（图标进 hicolor），GNOME 应用列表搜索 hawk 即可启动；构建产物同时留在 `out/`。
 开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；发版流程见 [docs/release.md](docs/release.md)（CI 定义在 [ci.yml](.github/workflows/ci.yml)）。
 
 ## 文档

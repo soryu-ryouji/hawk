@@ -38,6 +38,13 @@ win:
   extraResources:
     - from: resources/hawk-update
       to: hawk-update
+# AppImage 运行时工具集：默认 0.0.0 是动态链接 libfuse.so.2 的老 runtime，Fedora 44 / Ubuntu 24.04+
+# 等只带 libfuse3 的发行版启动即报 "dlopen(): error loading libfuse.so.2"；1.0.3（Runtime 20251108）
+# 为静态 runtime，不依赖该库（仍走内核 FUSE 挂载；userns 不可用时 AppRun 自动补 --no-sandbox）。
+# 上游用它修复 electron-builder#9598。
+toolsets:
+  appimage: "1.0.3"
+
 linux:
   target: AppImage
   # AppImage 的 ${arch} 会被映射为 x86_64（AppImage 生态命名），与 win/mac 的 x64 不一致——
