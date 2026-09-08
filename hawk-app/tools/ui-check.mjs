@@ -185,6 +185,14 @@ try {
   await send('Page.enable');
   await send('Runtime.enable');
 
+  // loadURL 期间 CDP target 的 URL 已显示为目标地址，但提交文档可能还是 about:blank
+  // （opaque origin），此时访问 localStorage 抛 SecurityError（慢 runner 上偶发）。
+  // 以「localStorage 可访问」为就绪信号，等文档真正提交到应用 origin 再开始操作。
+  await waitFor(async () => {
+    await evaljs(`localStorage.getItem('__ui_check_probe')`);
+    return true;
+  }, 30_000);
+
   // 视图记忆存于 localStorage（Electron 用户目录跨运行保留），先清掉再重载，保证每轮自检从干净状态开始
   await evaljs(`localStorage.clear()`);
   await send('Page.reload');
