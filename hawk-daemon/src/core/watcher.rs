@@ -163,6 +163,17 @@ fn dispatch_event(
                         // 任一端隐藏/内部：两端都可见才配对成 Moved，否则按 upsert/删除收敛
                         dispatch_rename_result(paths, cb, &old, &new);
                     }
+                } else if let Some(path) = event.paths.first() {
+                    // macOS FSEvents 的 rename 无法配对：旧/新路径各发一条单路径 Name(Any)。
+                    // 以磁盘现状定端：路径已不在 = 旧端（进配对等待，超时按删除）；存在 = 新端
+                    // （配对为移动，否则入库）——临时文件 + rename 落盘（Finder/ditto/原子保存）
+                    // 的新名字由此入库
+                    let abs = normalize(path);
+                    if std::path::Path::new(&abs).exists() {
+                        pair_or_upsert(paths, cb, pending_from, abs);
+                    } else {
+                        pending_from.lock().unwrap().insert(abs, Instant::now());
+                    }
                 }
             }
             RenameMode::From => {
@@ -175,28 +186,7 @@ fn dispatch_event(
             }
             RenameMode::To => {
                 if let Some(path) = event.paths.first() {
-                    let new = normalize(path);
-                    // 与滞留的 From 配对（rename 对在时间上相邻；并发多 rename 错配由
-                    // 幂等流水线 + 超时 flush 兜底自愈）
-                    let old = {
-                        let mut pending = pending_from.lock().unwrap();
-                        let old = pending.keys().next().cloned();
-                        if let Some(old) = &old {
-                            pending.remove(old);
-                        }
-                        old
-                    };
-                    match old {
-                        Some(old) if !is_excluded_path(paths, &old) && !is_excluded_path(paths, &new) => {
-                            cb(WatcherEvent::Moved { old, new });
-                        }
-                        Some(old) => dispatch_rename_result(paths, cb, &old, &new),
-                        None => {
-                            if !is_excluded_path(paths, &new) {
-                                dispatch_upsert(paths, cb, &new);
-                            }
-                        }
-                    }
+                    pair_or_upsert(paths, cb, pending_from, normalize(path));
                 }
             }
             _ => {}
@@ -210,6 +200,36 @@ fn dispatch_event(
             }
         }
         _ => {}
+    }
+}
+
+/// 新路径出现（rename 的新端）：与滞留的旧端配对（rename 对在时间上相邻；并发多 rename
+/// 错配由幂等流水线 + 超时 flush 兜底自愈）；无旧端则按新建入库。
+/// 来源：其他平台的 RenameMode::To 与 macOS FSEvents 单路径 Name(Any) 的新端
+fn pair_or_upsert(
+    paths: &LibraryPaths,
+    cb: &Callback,
+    pending_from: &Arc<Mutex<HashMap<String, Instant>>>,
+    new: String,
+) {
+    let old = {
+        let mut pending = pending_from.lock().unwrap();
+        let old = pending.keys().next().cloned();
+        if let Some(old) = &old {
+            pending.remove(old);
+        }
+        old
+    };
+    match old {
+        Some(old) if !is_excluded_path(paths, &old) && !is_excluded_path(paths, &new) => {
+            cb(WatcherEvent::Moved { old, new });
+        }
+        Some(old) => dispatch_rename_result(paths, cb, &old, &new),
+        None => {
+            if !is_excluded_path(paths, &new) {
+                dispatch_upsert(paths, cb, &new);
+            }
+        }
     }
 }
 
@@ -297,3 +317,111 @@ fn normalize_str(s: &str) -> String {
     s.replace('\\', "/")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// 记录回调：收集派发的事件
+    fn recorder() -> (Callback, Arc<Mutex<Vec<WatcherEvent>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let cb: Callback = Arc::new(move |e| sink.lock().unwrap().push(e));
+        (cb, events)
+    }
+
+    /// 临时库装配（watcher 只用到路径规则与磁盘现状，不需要完整流水线）
+    fn rig(name: &str) -> (LibraryPaths, PathBuf) {
+        let base = std::env::temp_dir().join(format!("hawk-watcher-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let paths = LibraryPaths::new(base.to_str().unwrap(), None);
+        paths.ensure_layout();
+        (paths, base)
+    }
+
+    /// macOS FSEvents 的 rename 事件：单路径 Modify(Name(Any))
+    fn name_event(path: &str) -> Event {
+        Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any))).add_path(PathBuf::from(path))
+    }
+
+    fn rel(path: &str) -> String {
+        path.replace('\\', "/")
+    }
+
+    /// 临时文件 + rename 落盘（Finder/ditto/原子保存）：新名字路径的事件必须入库
+    #[test]
+    fn single_path_rename_upserts_materialized_file() {
+        let (paths, root) = rig("rename-upsert");
+        let file = root.join("a.png");
+        std::fs::write(&file, b"x").unwrap();
+        let (cb, events) = recorder();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+
+        dispatch_event(&paths, &cb, &pending, name_event(file.to_str().unwrap()));
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], WatcherEvent::FileUpsert(p) if p.ends_with("a.png")));
+    }
+
+    /// 旧路径（已不存在）进配对，新路径（存在）配对成 Moved——元数据随位置跟随，不重算哈希
+    #[test]
+    fn single_path_rename_pairs_into_move() {
+        let (paths, root) = rig("rename-pair");
+        let old = root.join("b.png");
+        let new = root.join("b2.png");
+        std::fs::write(&new, b"x").unwrap();
+        let (cb, events) = recorder();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+
+        dispatch_event(&paths, &cb, &pending, name_event(old.to_str().unwrap()));
+        assert!(events.lock().unwrap().is_empty(), "旧端不应立即产生事件");
+
+        dispatch_event(&paths, &cb, &pending, name_event(new.to_str().unwrap()));
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], WatcherEvent::Moved { old: o, new: n } if o.ends_with("b.png") && n.ends_with("b2.png")),
+            "{events:?}"
+        );
+    }
+
+    /// 移出库/删除：旧端无配对，超时后按删除收敛
+    #[test]
+    fn single_path_rename_flushes_stale_as_deleted() {
+        let (paths, root) = rig("rename-delete");
+        let gone = root.join("c.png");
+        let (cb, events) = recorder();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+
+        dispatch_event(&paths, &cb, &pending, name_event(gone.to_str().unwrap()));
+        pending
+            .lock()
+            .unwrap()
+            .insert(rel(gone.to_str().unwrap()), Instant::now() - RENAME_PAIR_TIMEOUT);
+        flush_stale(&paths, &cb, &pending);
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], WatcherEvent::Deleted(p) if p.ends_with("c.png")));
+    }
+
+    /// 隐藏端不产生事件：临时文件名（.BC.T_xxx 等）与可见新名字配对时按 upsert 收敛
+    #[test]
+    fn single_path_rename_from_hidden_temp_upserts_new_name() {
+        let (paths, root) = rig("rename-hidden");
+        let temp = root.join(".BC.T_abc");
+        let file = root.join("d.png");
+        std::fs::write(&file, b"x").unwrap();
+        let (cb, events) = recorder();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+
+        dispatch_event(&paths, &cb, &pending, name_event(temp.to_str().unwrap()));
+        dispatch_event(&paths, &cb, &pending, name_event(file.to_str().unwrap()));
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], WatcherEvent::FileUpsert(p) if p.ends_with("d.png")), "{events:?}");
+    }
+}

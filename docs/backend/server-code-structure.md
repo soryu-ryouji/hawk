@@ -44,7 +44,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | ---- | ---- |
 | `src/main.rs` | 进程入口（薄壳，~30 行）：`Cli::parse_args` → `--dump-openapi` 分流（打印 schema 后退出）→ tracing 初始化 → `bootstrap::run`。组装与启动编排全部在 bootstrap |
 | `src/bootstrap.rs` | 组件图组装与启动编排（组合根）：`build_state` 直接构造 `api::AppState`（单一共享状态对象，按依赖分层分段：存储底座 → 索引流水线 → 分类与视图偏好 → 缩略图 → LAN；db/store/scanner/migrator 是构造中间件不进组件图；worker.attach 回流接线须在 start 前）；`run` 按序执行：`resolve_port` 试绑 27371（占用回退动态分配）→ `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `pipeline.start()`（注水/消费线程/worker/周期对账）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore 变化 → 强制重扫；[web] 变化 → LAN 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
-| `src/settings.rs` | 启动设置（解析层/配置层分离）：`Cli` 用 clap derive 声明全部 CLI（`--library`/`--port`/`--web-dist`/`--cache-parent`/`--dump-openapi`，每项支持同名 `HAWK_*` env 回退、CLI 优先，未知参数/非法值报错 exit 2，`--dump-openapi` 豁免 library 必填）；`Settings::from_cli` 承接业务校验（库目录为空/不存在 exit 2）与 env-only 参数——token 只走 `HAWK_TOKEN`（避免出现在进程列表，未传入时生成随机值并打印 stdout），`HAWK_RESCAN_INTERVAL` 对账间隔（默认 60s，0 关闭） |
+| `src/settings.rs` | 启动设置（解析层/配置层分离）：`Cli` 用 clap derive 声明全部 CLI（`--library`/`--port`/`--web-dist`/`--cache-parent`/`--dump-openapi`，每项支持同名 `HAWK_*` env 回退、CLI 优先，未知参数/非法值报错 exit 2，`--dump-openapi` 豁免 library 必填）；`Settings::from_cli` 承接业务校验（库目录为空/不存在 exit 2）与 env-only 参数——token 只走 `HAWK_TOKEN`（避免出现在进程列表，未传入时生成随机值并打印 stdout），`HAWK_RESCAN_INTERVAL` 元数据对账间隔（默认 60s，0 关闭） |
 
 ### api/ —— HTTP 层
 
@@ -90,7 +90,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/core/global_filter.rs` | 全局列表隐藏项注册表（`.hawk/global_filter.toml`，参与同步）：folders/categories/tags 三个列表；端点直接读写（同 view_prefs，不过流水线），级联跟随（文件夹移动/删除、分类/标签改名删除）由流水线对应 Job 调用；变更广播 `global_filter.changed` |
 | `src/core/registry_file.rs` | 注册表文件持久化公共件：原子写（临时文件 + rename）、字符串列表键解析（trim/去空/去重/小写排序）与格式化；taxonomy/global_filter/view_prefs 共用 |
 | `src/core/scanner.rs` | 目录遍历（只读目录项，不读文件内容）：`walk_directory`（跳过 `.hawk` 内部、只深入 trash 子树、库内应用 ignore）；`walk_directory_stats`（产出 目录 → (mtime, 直接子项数) 供增量扫描快照对比，隐藏目录不深入不进结果——消失对账据此清理其下残留位置，枚举失败置 `walk_incomplete`——调用方据此跳过消失对账防误删）；`walk_files_in_directory`（增量深入时只枚举直接文件，隐藏文件交给 upsert 判定 Remove 清理） |
-| `src/core/watcher.rs` | 文件监听（notify 封装）：原生粒度事件折叠为 FileSystemWatcher 语义（Create → upsert；Data/Metadata 修改 → 文件 upsert；Remove → Deleted；目录 → FolderCreated）；rename 的 From/To **配对带 300ms 超时兜底**（滞留 From 按删除处理，150ms ticker 周期 flush + 事件到达顺带 flush；并发多 rename 错配由幂等流水线 + 超时兜底自愈）；config.toml / categories.toml / tags.toml / view.toml 单独上报驱动热更；缓冲 Overflow → 全量扫描兜底；`.hawk` 内部（回收站除外）不产生索引事件 |
+| `src/core/watcher.rs` | 文件监听（notify 封装）：原生粒度事件折叠为 FileSystemWatcher 语义（Create → upsert；Data/Metadata 修改 → 文件 upsert；Remove → Deleted；目录 → FolderCreated）；rename 的 From/To **配对带 300ms 超时兜底**（滞留 From 按删除处理，150ms ticker 周期 flush + 事件到达顺带 flush；并发多 rename 错配由幂等流水线 + 超时兜底自愈）；**macOS FSEvents 的 rename 只有单路径 `Name(Any)`（旧/新各发一条）**：以磁盘现状定端——路径已不在 = 旧端（进配对等待），存在 = 新端（配对为 Moved，无旧端则 upsert）——临时文件 + rename 落盘（Finder/ditto 复制、编辑器原子保存）的新名字由此入库；config.toml / categories.toml / tags.toml / view.toml 单独上报驱动热更；缓冲 Overflow → 全量扫描兜底；`.hawk` 内部（回收站除外）不产生索引事件 |
 | `src/core/startup.rs` | 启动状态：进度快照（phase/processed/total）、就绪标志、失败原因。`/health`、就绪网关与 `app/startup` 端点的共同数据源 |
 
 ### IndexPipeline 详解
