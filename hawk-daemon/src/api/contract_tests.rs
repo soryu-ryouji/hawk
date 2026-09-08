@@ -169,7 +169,8 @@ fn test_app_at(base: PathBuf) -> TestApp {
         library_root: root_str,
         port: 0,
         token: TOKEN.to_string(),
-        rescan_interval_seconds: 0, // 关闭周期对账：测试只断言显式驱动的行为
+        reconcile_interval_seconds: 0, // 关闭周期对账/兜底扫描：测试只断言显式驱动的行为
+        fs_rescan_interval_seconds: 0,
         cache_parent: None,
         web_dist: None,
     };

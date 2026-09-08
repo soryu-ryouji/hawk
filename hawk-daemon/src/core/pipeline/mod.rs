@@ -235,16 +235,38 @@ impl IndexPipeline {
         self.ctx.worker.start();
 
         // 周期对账:只跑元数据对账(.hawk/ 内 TOML,轻量);文件系统变更由 watcher 实时事件 + 启动扫描收敛
-        if self.ctx.settings.rescan_interval_seconds > 0 {
+        if self.ctx.settings.reconcile_interval_seconds > 0 {
             let ctx = self.ctx.clone();
             self.ctx.runtime.spawn(async move {
                 let mut ticker = tokio::time::interval(Duration::from_secs(
-                    ctx.settings.rescan_interval_seconds,
+                    ctx.settings.reconcile_interval_seconds,
                 ));
                 ticker.tick().await; // 立即 tick 的一次丢弃
                 loop {
                     ticker.tick().await;
                     ctx.sender.fire(Job::MetadataSync);
+                }
+            });
+        }
+
+        // 文件系统兜底扫描：监听静默丢事件时的最终一致性保证。force_walk 强制遍历全部文件
+        // （复用哈希、不读内容）——目录快照只能发现增删改名，漏掉的内容变更只有全量 stat 能收敛；
+        // 间隔默认 900s，与手动刷新共用同一套 runner/会话机制（在途请求自动合并）
+        if self.ctx.settings.fs_rescan_interval_seconds > 0 {
+            let ctx = self.ctx.clone();
+            self.ctx.runtime.spawn(async move {
+                let mut ticker = tokio::time::interval(Duration::from_secs(
+                    ctx.settings.fs_rescan_interval_seconds,
+                ));
+                ticker.tick().await; // 立即 tick 的一次丢弃
+                loop {
+                    ticker.tick().await;
+                    tracing::info!("周期兜底扫描（监听漏事件收敛）");
+                    ctx.sender.fire(Job::ScanStart {
+                        full: false,
+                        force_walk: true,
+                        reply: None,
+                    });
                 }
             });
         }

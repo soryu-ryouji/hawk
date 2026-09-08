@@ -200,4 +200,4 @@ size/mtime 复用不再触及该文件 → 永久滞留 `0 × 0`。三层兜底�
 
 hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 与注册表文件（categories.toml / tags.toml / global_filter.toml）的变更同样被监听，修改后自动生效。
 
-文件监听可能静默丢事件（尤其 macOS FSEvents，无溢出错误可捕获）：运行期变更由 watcher 实时事件收敛，停机期间的变更由启动扫描收敛，监听缓冲溢出（notify 报错）自动触发全量扫描兑底，必要时可手动 `POST /api/v1/library/rescan` 强制遍历。`HAWK_RESCAN_INTERVAL`（默认 60s）只控制**元数据对账**（`.hawk/metadata/` 的外部变更并入）的周期，不跑文件系统扫描——全库扫描仅在启动、溢出兑底与手动触发时执行。
+文件监听可能静默丢事件（尤其 macOS FSEvents，无溢出错误可捕获），最终一致由四层兜底：**周期兜底扫描**（`HAWK_FS_RESCAN_INTERVAL`，默认 900s，0 关闭；强制遍历全部文件、按 size/mtime 复用哈希不读内容——目录快照只能发现增删改名，漏掉的内容变更只有全量 stat 能收敛）、启动扫描（停机期间变更）、监听缓冲溢出（notify 报错自动触发全量扫描）、手动 `POST /api/v1/library/rescan`。**元数据对账**是另一条线（`HAWK_RECONCILE_INTERVAL`，默认 60s，0 关闭）：只并入 `.hawk/metadata/` 的外部变更，不跑文件系统扫描。

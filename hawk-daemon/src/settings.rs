@@ -46,8 +46,11 @@ pub struct Settings {
     pub library_root: String,
     pub port: u16,
     pub token: String,
-    /// 周期对账扫描间隔（秒），0 关闭。文件监听可能静默丢事件，周期扫描保证最终一致
-    pub rescan_interval_seconds: u64,
+    /// 元数据对账间隔（秒），0 关闭：`.hawk/metadata/` 的外部变更（网盘同步等）并入
+    pub reconcile_interval_seconds: u64,
+    /// 文件系统兜底扫描间隔（秒），0 关闭：监听可能静默丢事件（尤其 macOS FSEvents），
+    /// 周期强制遍历（复用哈希、不读文件内容）保证最终一致；默认 900s，代价是遍历目录与 stat
+    pub fs_rescan_interval_seconds: u64,
     /// 全局缓存父目录（桌面端设置面板配置，主进程经 --cache-parent 传入）；None 用系统缓存目录
     pub cache_parent: Option<String>,
     /// 局域网 web 查看托管的前端静态文件目录（Electron 传入 web/dist）；不存在则不托管
@@ -80,10 +83,14 @@ impl Settings {
             library_root: library,
             port: cli.port,
             token,
-            rescan_interval_seconds: std::env::var("HAWK_RESCAN_INTERVAL")
+            reconcile_interval_seconds: std::env::var("HAWK_RECONCILE_INTERVAL")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(60),
+            fs_rescan_interval_seconds: std::env::var("HAWK_FS_RESCAN_INTERVAL")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(900),
             cache_parent: cli.cache_parent,
             web_dist: cli.web_dist,
         }
