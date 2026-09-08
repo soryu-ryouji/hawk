@@ -107,6 +107,6 @@ hawk/
 ├── hawk-app/                ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 ├── hawk-browser-extension/  ← 浏览器插件（Chrome/Firefox，WXT）
 ├── hawk-remote/             ← Rust 远程访问客户端（可选进程，见 docs/backend/remote-access.md，规划中）
-├── tools/                   ← 仓库级脚本（构建/安装/冒烟/性能压测）
+├── tools/                   ← 仓库级脚本（构建/安装/冒烟/性能压测/文档链接检查）
 └── docs/                    ← 设计文档
 ```

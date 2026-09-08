@@ -46,7 +46,9 @@ jobs:
         with:
           workspaces: hawk-daemon
 
-      # 静态门禁先行：格式与 lint 不过就不必跑测试（省 CI 时间）
+      # 静态门禁先行：格式/文档链接/lint 不过就不必跑测试（省 CI 时间）
+      - run: python3 tools/check-docs.py
+
       - run: cargo fmt --check
         working-directory: hawk-daemon
 

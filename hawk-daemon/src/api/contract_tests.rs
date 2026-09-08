@@ -364,6 +364,58 @@ fn openapi_json_in_sync() {
     );
 }
 
+/// 文档-代码契约：docs/backend/server-rest-api-v1.md 必须覆盖全部端点与 SSE 事件，
+/// 且不得提及不存在的端点——API 文档靠人维护，漂移由这条测试兜住
+/// （历史上 library/cleanup_index 与 library.updated 事件都曾漏记）
+#[test]
+fn api_doc_covers_routes_and_events() {
+    let spec = spec();
+    let doc = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../docs/backend/server-rest-api-v1.md"
+    ))
+    .expect("API 文档存在");
+
+    // 正向：schema 的每个端点在文档中出现
+    for path in spec["paths"].as_object().unwrap().keys() {
+        assert!(doc.contains(path.as_str()), "API 文档缺少端点 {path}");
+    }
+    // 反向：文档提及的 /api/v1/... 端点都必须在 schema 中
+    for path in mentioned_paths(&doc) {
+        assert!(
+            spec["paths"].get(&path).is_some(),
+            "API 文档提及了不存在的端点 {path}"
+        );
+    }
+    // SSE 事件名
+    let events = spec["components"]["schemas"]["SseEvents"]["properties"]
+        .as_object()
+        .expect("SseEvents schema 存在");
+    for name in events.keys() {
+        assert!(doc.contains(name.as_str()), "API 文档缺少 SSE 事件 {name}");
+    }
+}
+
+/// 提取文档中形如 `/api/v1/xxx` 的端点引用（小写字母/下划线/斜杠）
+fn mentioned_paths(doc: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut rest = doc;
+    while let Some(i) = rest.find("/api/v1/") {
+        rest = &rest[i..];
+        let end = rest
+            .char_indices()
+            .find(|(_, c)| !(c.is_ascii_lowercase() || *c == '_' || *c == '/'))
+            .map(|(i, _)| i)
+            .unwrap_or(rest.len());
+        let path = rest[..end].trim_end_matches('/');
+        if path.len() > "/api/v1".len() {
+            out.insert(path.to_string());
+        }
+        rest = &rest[end..];
+    }
+    out
+}
+
 /// 完备性：openapi.json 声明的端点集必须恰好等于四类归类的并集
 #[test]
 fn openapi_endpoints_all_classified() {
