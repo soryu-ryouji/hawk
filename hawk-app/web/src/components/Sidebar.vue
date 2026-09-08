@@ -26,25 +26,16 @@ const navFilter = ref('');
 const navKeyword = computed(() => navFilter.value.trim().toLowerCase());
 
 const filteredCategories = computed(() =>
-  navKeyword.value
-    ? taxonomy.categories.filter((c) => c.name.toLowerCase().includes(navKeyword.value))
-    : taxonomy.categories,
+  navKeyword.value ? taxonomy.categories.filter((c) => c.name.toLowerCase().includes(navKeyword.value)) : taxonomy.categories,
 );
-const filteredTags = computed(() =>
-  navKeyword.value
-    ? taxonomy.tagList.filter((t) => t.name.toLowerCase().includes(navKeyword.value))
-    : taxonomy.tagList,
-);
+const filteredTags = computed(() => (navKeyword.value ? taxonomy.tagList.filter((t) => t.name.toLowerCase().includes(navKeyword.value)) : taxonomy.tagList));
 
 /** 文件夹树是否存在匹配（空态提示用；树节点的可见性判断在 FolderTreeNode 内） */
 const hasFolderMatch = computed(() => {
-  const walk = (nodes: FolderNode[]): boolean =>
-    nodes.some((n) => n.name.toLowerCase().includes(navKeyword.value) || walk(n.children));
+  const walk = (nodes: FolderNode[]): boolean => nodes.some((n) => n.name.toLowerCase().includes(navKeyword.value) || walk(n.children));
   return walk(taxonomy.folders?.children ?? []);
 });
-const noNavMatch = computed(
-  () => !!navKeyword.value && !hasFolderMatch.value && !filteredCategories.value.length && !filteredTags.value.length,
-);
+const noNavMatch = computed(() => !!navKeyword.value && !hasFolderMatch.value && !filteredCategories.value.length && !filteredTags.value.length);
 
 /** 顶部拖拽条双击切换最大化（与 TitleBar 一致；条内无交互控件，无需排除判断） */
 function onHeadDblClick() {
@@ -374,10 +365,9 @@ function onFolderTreeDrop(e: DragEvent) {
 }
 
 @media (hover: hover) {
-
-.panel-toggle:hover {
-  background: var(--bg-3);
-}
+  .panel-toggle:hover {
+    background: var(--bg-3);
+  }
 }
 
 .sidebar-body {
@@ -421,10 +411,9 @@ body.touch .library-name.in-body {
 }
 
 @media (hover: hover) {
-
-.library-name:hover {
-  background: var(--bg-2);
-}
+  .library-name:hover {
+    background: var(--bg-2);
+  }
 }
 
 .library-name.static {
@@ -476,11 +465,10 @@ body.touch .library-name.in-body {
 }
 
 @media (hover: hover) {
-
-.add:hover {
-  color: var(--accent);
-  background: transparent;
-}
+  .add:hover {
+    color: var(--accent);
+    background: transparent;
+  }
 }
 
 .entry {
@@ -492,10 +480,9 @@ body.touch .library-name.in-body {
 }
 
 @media (hover: hover) {
-
-.entry:hover {
-  background: var(--bg-2);
-}
+  .entry:hover {
+    background: var(--bg-2);
+  }
 }
 
 .entry.active {
@@ -558,5 +545,4 @@ body.touch .library-name.in-body {
   color: var(--fg-1);
   text-align: center;
 }
-
 </style>

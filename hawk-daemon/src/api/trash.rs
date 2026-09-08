@@ -21,7 +21,11 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     responses((status = 200, description = "OK", body = SuccessOnly))
 )]
 async fn trash_clear(State(state): State<SharedState>) -> Result<Json<SuccessOnly>, ApiError> {
-    state.pipeline.submit_clear_trash().await.map_err(ApiError::internal)?;
+    state
+        .pipeline
+        .submit_clear_trash()
+        .await
+        .map_err(ApiError::internal)?;
 
     let entries = match std::fs::read_dir(&state.paths.trash_dir) {
         Ok(e) => e,

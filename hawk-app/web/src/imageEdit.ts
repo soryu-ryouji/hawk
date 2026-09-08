@@ -183,9 +183,7 @@ export async function rotateImage(source: Blob, angle: RotateAngle, ext: string)
 
     const mime = MIME_BY_EXT[ext] ?? 'image/png';
     // PNG 无损不传 quality;JPEG/WebP 固定 0.92(原图质量不可读,重编码一次代损)
-    let blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, mime, mime === 'image/png' ? undefined : 0.92),
-    );
+    let blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mime, mime === 'image/png' ? undefined : 0.92));
     if (!blob) {
       throw new Error('图像编码失败');
     }

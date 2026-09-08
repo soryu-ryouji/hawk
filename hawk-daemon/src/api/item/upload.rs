@@ -59,11 +59,9 @@ pub(crate) async fn item_upload(
                 );
             }
             "skip_existing" => {
-                skip_existing = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::invalid_param(format!("读取 skip_existing 失败: {e}")))?
-                    == "true";
+                skip_existing = field.text().await.map_err(|e| {
+                    ApiError::invalid_param(format!("读取 skip_existing 失败: {e}"))
+                })? == "true";
             }
             "file" => {
                 // 文件名只取最后一段（防跨目录写入），扩展名决定入库类型（与 path 导入同语义：不眼内容）
@@ -87,24 +85,33 @@ pub(crate) async fn item_upload(
     };
 
     if !folder_rel.is_empty() && !LibraryPaths::is_valid_library_path(Some(&folder_rel)) {
-        return Err(ApiError::invalid_param(format!("非法文件夹路径: {folder_rel}")));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件夹路径: {folder_rel}"
+        )));
     }
     let folder_abs = if folder_rel.is_empty() {
         state.paths.root.clone()
     } else {
         state.paths.to_absolute(&folder_rel).unwrap()
     };
-    std::fs::create_dir_all(&folder_abs).map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
+    std::fs::create_dir_all(&folder_abs)
+        .map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
 
     let stem = name_override.unwrap_or_else(|| LibraryPaths::name_of(&filename).to_string());
     if !fs_util::is_valid_name(Some(&stem)) {
         return Err(ApiError::invalid_param(format!("非法文件名: {filename}")));
     }
     let ext = LibraryPaths::ext_of(&filename);
-    let file_name = if ext.is_empty() { stem.clone() } else { format!("{stem}.{ext}") };
+    let file_name = if ext.is_empty() {
+        stem.clone()
+    } else {
+        format!("{stem}.{ext}")
+    };
     // 扩展名白名单（.hawk/config.toml 的 extensions）：白名单外的格式直接拒绝
     if !state.config.is_extension_included(&file_name) {
-        return Err(ApiError::unsupported_format(format!("扩展名不在素材库可见格式白名单内: {file_name}")));
+        return Err(ApiError::unsupported_format(format!(
+            "扩展名不在素材库可见格式白名单内: {file_name}"
+        )));
     }
     let target_rel = if folder_rel.is_empty() {
         file_name.clone()
@@ -122,7 +129,10 @@ pub(crate) async fn item_upload(
 
     // skip_existing：内容已在库内则跳过（不写文件、不追加路径）；仅回收站存在时不跳过
     if skip_existing && state.index.has_library_location(&hash) {
-        let dto = state.index.get_dto(&hash).ok_or_else(|| ApiError::internal("索引失败"))?;
+        let dto = state
+            .index
+            .get_dto(&hash)
+            .ok_or_else(|| ApiError::internal("索引失败"))?;
         return Ok(Json(Envelope::ok(ItemAddResponse {
             item: dto,
             already_existed: true,

@@ -81,10 +81,7 @@ export interface UpdateInfo {
 export const UPDATE_CANCELLED = 'UPDATE_CANCELLED';
 
 /** 更新包下载进度事件 */
-export type UpdateProgress =
-  | { phase: 'downloading'; received: number; total: number }
-  | { phase: 'verifying' }
-  | { phase: 'ready' };
+export type UpdateProgress = { phase: 'downloading'; received: number; total: number } | { phase: 'verifying' } | { phase: 'ready' };
 
 /** server 就绪事件负载（冷启动/换库/应用设置重启都会到达，restart 会换端口） */
 export interface ServerConn {

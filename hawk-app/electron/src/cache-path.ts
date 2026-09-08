@@ -29,12 +29,7 @@ export function defaultCacheParent(platform: string, env: NodeJS.ProcessEnv): st
 /** 新缓存父目录校验：返回错误文案或 null（合法）。
  *  只拦「缓存在库内」（必然污染索引）；「库在缓存父目录内」无害（拼接的库子目录与库同级），
  *  与 daemon 的 cache_location_error（拼接后判定）语义对齐 */
-export function validateCacheParent(
-  newParent: string,
-  currentParent: string,
-  libraryRoot: string | null,
-  platform: string,
-): string | null {
+export function validateCacheParent(newParent: string, currentParent: string, libraryRoot: string | null, platform: string): string | null {
   const target = normalizeSlashes(newParent.trim());
   if (!target || target === '.') {
     return '请选择缓存目录';

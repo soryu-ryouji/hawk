@@ -27,17 +27,13 @@ export function initApi(): ApiConfig | null {
   const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
   const search = new URLSearchParams(location.search);
   // Electron 壳必须经 hash 注入（dev 也可用 VITE_HAWK_API）；纯浏览器则假定页面由 hawk-daemon 托管（同源）
-  const api =
-    hash.get('api') ||
-    (import.meta.env.VITE_HAWK_API as string | undefined) ||
-    (!hasShell ? location.origin : null);
+  const api = hash.get('api') || (import.meta.env.VITE_HAWK_API as string | undefined) || (!hasShell ? location.origin : null);
   if (!api) {
     config = null;
     return null;
   }
   // token 优先级：hash（Electron 注入）> ?token= 查询参数 > 本地存储（按 api 地址隔离，记住上次验证通过的 token）
-  const token =
-    hash.get('token') || search.get('token') || loadText(tokenStorageKey(api)) || '';
+  const token = hash.get('token') || search.get('token') || loadText(tokenStorageKey(api)) || '';
   config = { api, token };
   return config;
 }
@@ -74,11 +70,7 @@ export function apiConfig(): ApiConfig {
 }
 
 /** 统一请求：信封解包，status==='error' 或 HTTP 非 2xx 时抛 ApiError */
-export async function request<T>(
-  method: string,
-  path: string,
-  opts?: { body?: unknown; query?: Record<string, string> },
-): Promise<T> {
+export async function request<T>(method: string, path: string, opts?: { body?: unknown; query?: Record<string, string> }): Promise<T> {
   const { api, token } = apiConfig();
   const url = new URL(api + path);
   for (const [key, value] of Object.entries(opts?.query ?? {})) {
@@ -108,11 +100,7 @@ export async function request<T>(
   } | null;
 
   if (!res.ok || !envelope || envelope.status === 'error') {
-    throw new ApiError(
-      envelope?.error?.code ?? 'INTERNAL',
-      envelope?.error?.message ?? `HTTP ${res.status}`,
-      res.status,
-    );
+    throw new ApiError(envelope?.error?.code ?? 'INTERNAL', envelope?.error?.message ?? `HTTP ${res.status}`, res.status);
   }
   return envelope.data as T;
 }

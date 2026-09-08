@@ -41,7 +41,11 @@ pub(crate) fn do_metadata_sync(ctx: &PipelineCtx) {
                 continue;
             }
         };
-        if mtimes.get(hash).map(|known| *known == mtime).unwrap_or(false) {
+        if mtimes
+            .get(hash)
+            .map(|known| *known == mtime)
+            .unwrap_or(false)
+        {
             continue;
         }
         if ctx.store.apply_external_toml(hash, &file, mtime) {
@@ -78,7 +82,11 @@ pub(crate) fn do_metadata_sync(ctx: &PipelineCtx) {
         if ctx.store.palette_negative_cached(&hash) {
             continue;
         }
-        if ctx.index.with_item_mut(&hash, |item| item.width == 0).unwrap_or(false) {
+        if ctx
+            .index
+            .with_item_mut(&hash, |item| item.width == 0)
+            .unwrap_or(false)
+        {
             if let Some(abs) = ctx.index.main_source_abs(&hash, &ctx.paths) {
                 ctx.worker.enqueue_palette(&hash, &abs);
             }

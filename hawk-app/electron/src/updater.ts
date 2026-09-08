@@ -100,9 +100,7 @@ function semverNewer(remote: number[], local: number[] | null): boolean {
 
 async function fetchRelease(channel: CheckableChannel): Promise<Release> {
   const url =
-    channel === 'stable'
-      ? `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`
-      : `https://api.github.com/repos/${UPDATE_REPO}/releases/tags/nightly`;
+    channel === 'stable' ? `https://api.github.com/repos/${UPDATE_REPO}/releases/latest` : `https://api.github.com/repos/${UPDATE_REPO}/releases/tags/nightly`;
   const res = await fetch(url, {
     headers: { accept: 'application/vnd.github+json', 'user-agent': 'hawk-app' },
     signal: AbortSignal.timeout(15000),

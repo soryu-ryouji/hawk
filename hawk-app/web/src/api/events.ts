@@ -41,8 +41,7 @@ export function connectEvents(handlers: EventHandlers): () => void {
     hadError = true;
   };
 
-  const listen = <T>(type: string, fn: (data: T) => void) =>
-    source.addEventListener(type, (e) => fn(JSON.parse((e as MessageEvent).data as string) as T));
+  const listen = <T>(type: string, fn: (data: T) => void) => source.addEventListener(type, (e) => fn(JSON.parse((e as MessageEvent).data as string) as T));
 
   listen<Item>('item.added', handlers.onAdded);
   listen<{ ids: string[] }>('items.added', (d) => handlers.onItemsAdded(d.ids));

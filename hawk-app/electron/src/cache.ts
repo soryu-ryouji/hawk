@@ -10,9 +10,7 @@ import { IPC } from './ipc-contract';
 /** 当前缓存父目录（未配置时为系统默认） */
 export function currentCacheParent(): { current: string; isDefault: boolean } {
   const configured = readConfig().cacheParent;
-  return configured
-    ? { current: configured, isDefault: false }
-    : { current: defaultCacheParent(process.platform, process.env), isDefault: true };
+  return configured ? { current: configured, isDefault: false } : { current: defaultCacheParent(process.platform, process.env), isDefault: true };
 }
 
 /** 迁移缓存父目录：返回 null 表示成功；返回错误文案表示失败（配置未切换，server 已按原路径重启） */
@@ -36,8 +34,7 @@ export async function changeCacheParent(newParent: string): Promise<string | nul
   stopServer();
 
   // 启动屏进度：migrate 伪帧（daemon 未运行，由主进程代发）
-  const progress = (processed: number, total: number) =>
-    getMainWindow()?.webContents.send(IPC.serverProgress, { phase: 'migrate', processed, total });
+  const progress = (processed: number, total: number) => getMainWindow()?.webContents.send(IPC.serverProgress, { phase: 'migrate', processed, total });
 
   try {
     migrateDir(current, target, progress);

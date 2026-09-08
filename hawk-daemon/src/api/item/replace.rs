@@ -29,7 +29,9 @@ pub(crate) async fn item_replace(
 ) -> Result<Json<Envelope<ItemDto>>, ApiError> {
     let loc = find_location(&state, &req.id, req.path.as_deref(), None)?;
     if loc.in_trash {
-        return Err(ApiError::invalid_param("回收站中的文件不支持内容替换,请先恢复"));
+        return Err(ApiError::invalid_param(
+            "回收站中的文件不支持内容替换,请先恢复",
+        ));
     }
 
     let bytes = decode_base64(&req.img_base64)?;
@@ -47,7 +49,10 @@ pub(crate) async fn item_replace(
     let hash = content_hash::hash_bytes(&bytes);
     if hash == req.id {
         // 内容未变化(幂等):不触发漂移,直接返回当前投影
-        let dto = state.index.get_dto(&req.id).ok_or_else(|| ApiError::item_not_found(&req.id))?;
+        let dto = state
+            .index
+            .get_dto(&req.id)
+            .ok_or_else(|| ApiError::item_not_found(&req.id))?;
         return Ok(Json(Envelope::ok(dto)));
     }
 
@@ -57,10 +62,13 @@ pub(crate) async fn item_replace(
         let target = target_abs.clone();
         let data = bytes.clone();
         move || {
-            let mtime = std::fs::metadata(&target).ok().and_then(|m| m.modified().ok());
+            let mtime = std::fs::metadata(&target)
+                .ok()
+                .and_then(|m| m.modified().ok());
             std::fs::write(&target, &data).map_err(|e| format!("写回文件失败: {e}"))?;
             if let Some(mtime) = mtime {
-                let _ = filetime::set_file_mtime(&target, filetime::FileTime::from_system_time(mtime));
+                let _ =
+                    filetime::set_file_mtime(&target, filetime::FileTime::from_system_time(mtime));
             }
             Ok::<(), String>(())
         }

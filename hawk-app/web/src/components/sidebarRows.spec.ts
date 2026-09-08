@@ -9,16 +9,17 @@ import { createPinia, setActivePinia } from 'pinia';
 // jsdom 无 matchMedia；library store 浏览器端分支（useMediaQuery）需要
 window.matchMedia =
   window.matchMedia ??
-  ((query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener() {},
-    removeListener() {},
-    addEventListener() {},
-    removeEventListener() {},
-    dispatchEvent: () => false,
-  }) as MediaQueryList);
+  ((query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList);
 
 const mocks = vi.hoisted(() => ({
   globalFilterSet: vi.fn(() => Promise.resolve()),

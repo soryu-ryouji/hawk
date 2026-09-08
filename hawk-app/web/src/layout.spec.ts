@@ -3,12 +3,10 @@
 import { describe, expect, it } from 'vitest';
 import { CARD_BORDER, CARD_META_H, GRID_GAP, layoutRows, type SkeletonLike } from './layout';
 
-const sk = (items: Array<[string, number, number]>): SkeletonLike[] =>
-  items.map(([id, width, height]) => ({ id, width, height, star: 0 }));
+const sk = (items: Array<[string, number, number]>): SkeletonLike[] => items.map(([id, width, height]) => ({ id, width, height, star: 0 }));
 
 /** 行内图片总宽 + 间隙（行宽占用校验用） */
-const rowWidth = (row: ReturnType<typeof layoutRows>[number]) =>
-  row.cells.reduce((sum, c) => sum + c.width, 0) + (row.cells.length - 1) * GRID_GAP;
+const rowWidth = (row: ReturnType<typeof layoutRows>[number]) => row.cells.reduce((sum, c) => sum + c.width, 0) + (row.cells.length - 1) * GRID_GAP;
 
 describe('layoutRows', () => {
   it('空骨架返回空布局', () => {
@@ -57,11 +55,7 @@ describe('layoutRows', () => {
   });
 
   it('行宽绝不超出容器（每行校验）', () => {
-    const items: Array<[string, number, number]> = Array.from({ length: 30 }, (_, i) => [
-      `i${i}`,
-      200 + ((i * 137) % 800),
-      200,
-    ]);
+    const items: Array<[string, number, number]> = Array.from({ length: 30 }, (_, i) => [`i${i}`, 200 + ((i * 137) % 800), 200]);
     const rows = layoutRows(sk(items), 760, 160);
     expect(rows.length).toBeGreaterThan(1);
     for (const row of rows) {

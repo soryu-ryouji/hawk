@@ -74,14 +74,20 @@ impl LanSupervisor {
     /// 常驻任务：唤醒 → 收敛 → 等待下一轮
     pub async fn run(self: Arc<Self>, state: SharedState) {
         // (端口, serve 任务, 优雅关停信号)
-        let mut current: Option<(u16, tokio::task::JoinHandle<()>, tokio::sync::oneshot::Sender<()>)> = None;
+        let mut current: Option<(
+            u16,
+            tokio::task::JoinHandle<()>,
+            tokio::sync::oneshot::Sender<()>,
+        )> = None;
         loop {
             let web = state.config.current().web;
             let desired = if web.enabled && web.token.is_some() {
                 Some(web.port)
             } else {
                 if web.enabled && web.token.is_none() {
-                    tracing::warn!("[web] enabled 但缺少 token，局域网查看未启动（在设置面板配置 token）");
+                    tracing::warn!(
+                        "[web] enabled 但缺少 token，局域网查看未启动（在设置面板配置 token）"
+                    );
                 }
                 None
             };
@@ -292,7 +298,11 @@ async fn put_lan(
             "启用局域网查看需要填写访问 token",
         ));
     }
-    if new_web.enabled && new_web.writable && new_web.separate_write_token && new_web.write_token.is_none() {
+    if new_web.enabled
+        && new_web.writable
+        && new_web.separate_write_token
+        && new_web.write_token.is_none()
+    {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
             axum::http::StatusCode::BAD_REQUEST,
@@ -302,10 +312,13 @@ async fn put_lan(
 
     let old_web = state.config.current().web;
     let epoch0 = state.lan.snapshot_epoch().0;
-    state
-        .config
-        .update_web(&new_web)
-        .map_err(|e| ApiError::new(codes::INTERNAL, axum::http::StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    state.config.update_web(&new_web).map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
     state.lan.wake();
 
     if let Err(err) = wait_converged(&state, &new_web, epoch0).await {

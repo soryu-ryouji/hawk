@@ -1,0 +1,7 @@
+node_modules
+dist
+out
+build
+web/dist
+web/src/api/schema.d.ts
+package-lock.json

@@ -36,7 +36,8 @@ impl LibraryScanner {
                         pending.push(self.paths.trash_dir.clone());
                         continue;
                     }
-                    let in_trash = is_trash_subtree || LibraryPaths::is_in_trash(&format!("{rel}/"));
+                    let in_trash =
+                        is_trash_subtree || LibraryPaths::is_in_trash(&format!("{rel}/"));
                     if !in_trash && self.config.is_ignored(&rel) {
                         continue;
                     }
@@ -53,7 +54,10 @@ impl LibraryScanner {
 
     /// 产出全库目录及 (mtime, 直接子项数)——增量扫描的快照对比输入。
     /// entries 为原始直接子项数（不过 ignore）：快照对比追求「任何变化都触发深入」
-    pub fn walk_directory_stats(&self, walk_incomplete: &std::sync::atomic::AtomicBool) -> Vec<(String, i64, i64)> {
+    pub fn walk_directory_stats(
+        &self,
+        walk_incomplete: &std::sync::atomic::AtomicBool,
+    ) -> Vec<(String, i64, i64)> {
         let mut out = Vec::new();
         let mut pending = vec![self.paths.root.clone()];
         while let Some(dir) = pending.pop() {

@@ -108,14 +108,24 @@ pub fn serialize(meta: &ItemMetadata) -> String {
     if !meta.tags.is_empty() {
         sb.push_str("tags = [");
         sb.push_str(
-            &meta.tags.iter().map(|t| toml_string(t)).collect::<Vec<_>>().join(", "),
+            &meta
+                .tags
+                .iter()
+                .map(|t| toml_string(t))
+                .collect::<Vec<_>>()
+                .join(", "),
         );
         sb.push_str("]\n");
     }
     if !meta.categories.is_empty() {
         sb.push_str("categories = [");
         sb.push_str(
-            &meta.categories.iter().map(|c| toml_string(c)).collect::<Vec<_>>().join(", "),
+            &meta
+                .categories
+                .iter()
+                .map(|c| toml_string(c))
+                .collect::<Vec<_>>()
+                .join(", "),
         );
         sb.push_str("]\n");
     }
@@ -176,7 +186,10 @@ pub fn toml_string(value: &str) -> String {
 
 /// 只识别 64 位小写 hex 命名的元数据文件（同步冲突副本等一律忽略）
 pub fn is_valid_hash_file_name(name: &str) -> bool {
-    name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    name.len() == 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 #[cfg(test)]

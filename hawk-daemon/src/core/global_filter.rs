@@ -9,7 +9,9 @@
 
 use crate::core::events::EventBus;
 use crate::core::paths::LibraryPaths;
-use crate::core::registry_file::{atomic_write, format_string_list, parse_string_list, sort_entries};
+use crate::core::registry_file::{
+    atomic_write, format_string_list, parse_string_list, sort_entries,
+};
 use std::sync::RwLock;
 
 /// 隐藏集变更事件：负载为完整快照（GlobalFilterSnapshot），客户端据此重拉/就地替换并重查列表
@@ -54,7 +56,9 @@ impl GlobalFilter {
     }
 
     pub fn set_category_hidden(&self, name: &str, hidden: bool) -> bool {
-        set_locked(&self.file, &self.categories, name, hidden, || self.snapshot())
+        set_locked(&self.file, &self.categories, name, hidden, || {
+            self.snapshot()
+        })
     }
 
     pub fn set_tag_hidden(&self, name: &str, hidden: bool) -> bool {
@@ -83,7 +87,12 @@ impl GlobalFilter {
         }
         if changed {
             sort_entries(&mut folders);
-            save(&self.file, &folders, &self.categories.read().unwrap(), &self.tags.read().unwrap());
+            save(
+                &self.file,
+                &folders,
+                &self.categories.read().unwrap(),
+                &self.tags.read().unwrap(),
+            );
         }
         changed
     }
@@ -96,14 +105,21 @@ impl GlobalFilter {
         folders.retain(|f| f != dir && !f.starts_with(&prefix));
         let changed = folders.len() != before;
         if changed {
-            save(&self.file, &folders, &self.categories.read().unwrap(), &self.tags.read().unwrap());
+            save(
+                &self.file,
+                &folders,
+                &self.categories.read().unwrap(),
+                &self.tags.read().unwrap(),
+            );
         }
         changed
     }
 
     /// 分类重命名跟随；目标已隐藏时合并（去重）
     pub fn rename_category(&self, old_name: &str, new_name: &str) -> bool {
-        rename_locked(&self.file, &self.categories, old_name, new_name, || self.snapshot())
+        rename_locked(&self.file, &self.categories, old_name, new_name, || {
+            self.snapshot()
+        })
     }
 
     pub fn delete_category(&self, name: &str) -> bool {
@@ -111,7 +127,9 @@ impl GlobalFilter {
     }
 
     pub fn rename_tag(&self, old_name: &str, new_name: &str) -> bool {
-        rename_locked(&self.file, &self.tags, old_name, new_name, || self.snapshot())
+        rename_locked(&self.file, &self.tags, old_name, new_name, || {
+            self.snapshot()
+        })
     }
 
     pub fn delete_tag(&self, name: &str) -> bool {
@@ -178,7 +196,12 @@ fn set_locked(
     }
     drop(entries);
     let snapshot = snap();
-    save(file, &snapshot.folders, &snapshot.categories, &snapshot.tags);
+    save(
+        file,
+        &snapshot.folders,
+        &snapshot.categories,
+        &snapshot.tags,
+    );
     true
 }
 
@@ -200,7 +223,12 @@ fn rename_locked(
     sort_entries(&mut entries);
     drop(entries);
     let snapshot = snap();
-    save(file, &snapshot.folders, &snapshot.categories, &snapshot.tags);
+    save(
+        file,
+        &snapshot.folders,
+        &snapshot.categories,
+        &snapshot.tags,
+    );
     true
 }
 
@@ -217,7 +245,12 @@ fn delete_locked(
     entries.retain(|e| e != name);
     drop(entries);
     let snapshot = snap();
-    save(file, &snapshot.folders, &snapshot.categories, &snapshot.tags);
+    save(
+        file,
+        &snapshot.folders,
+        &snapshot.categories,
+        &snapshot.tags,
+    );
     true
 }
 
@@ -257,7 +290,8 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> (std::path::PathBuf, GlobalFilter) {
-        let dir = std::env::temp_dir().join(format!("hawk-gfilter-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("hawk-gfilter-test-{name}-{}", std::process::id()));
         let root = dir.join("lib");
         std::fs::create_dir_all(root.join(".hawk")).unwrap();
         let paths = LibraryPaths::new(root.to_str().unwrap(), None);
@@ -301,12 +335,17 @@ mod tests {
         assert!(filter.rename_folder_prefix("posters", ".hawk/trash/posters"));
         let snap = filter.snapshot();
         assert!(snap.folders.contains(&".hawk/trash/posters".to_string()));
-        assert!(snap.folders.contains(&".hawk/trash/posters/2024".to_string()));
+        assert!(snap
+            .folders
+            .contains(&".hawk/trash/posters/2024".to_string()));
         assert!(snap.folders.contains(&"other".to_string()));
 
         // 恢复时回归
         assert!(filter.rename_folder_prefix(".hawk/trash/posters", "posters"));
-        assert!(filter.snapshot().folders.contains(&"posters/2024".to_string()));
+        assert!(filter
+            .snapshot()
+            .folders
+            .contains(&"posters/2024".to_string()));
 
         // 删除：前缀范围内清除，其余保留
         assert!(filter.delete_folder_prefix("posters"));

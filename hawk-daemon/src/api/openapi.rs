@@ -10,12 +10,30 @@ use utoipa::{PartialSchema, ToSchema};
 pub fn attach_extra_schemas(doc: &mut utoipa::openapi::OpenApi) {
     let components = doc.components.get_or_insert_with(Default::default);
     for (name, schema) in [
-        (crate::api::events::SseEvents::name(), crate::api::events::SseEvents::schema()),
-        (crate::api::events::ItemsAddedPayload::name(), crate::api::events::ItemsAddedPayload::schema()),
-        (crate::api::events::ItemsUpdatedPayload::name(), crate::api::events::ItemsUpdatedPayload::schema()),
-        (crate::api::events::ItemIdPayload::name(), crate::api::events::ItemIdPayload::schema()),
-        (crate::api::events::FolderChangedPayload::name(), crate::api::events::FolderChangedPayload::schema()),
-        (crate::core::events::TaskProgress::name(), crate::core::events::TaskProgress::schema()),
+        (
+            crate::api::events::SseEvents::name(),
+            crate::api::events::SseEvents::schema(),
+        ),
+        (
+            crate::api::events::ItemsAddedPayload::name(),
+            crate::api::events::ItemsAddedPayload::schema(),
+        ),
+        (
+            crate::api::events::ItemsUpdatedPayload::name(),
+            crate::api::events::ItemsUpdatedPayload::schema(),
+        ),
+        (
+            crate::api::events::ItemIdPayload::name(),
+            crate::api::events::ItemIdPayload::schema(),
+        ),
+        (
+            crate::api::events::FolderChangedPayload::name(),
+            crate::api::events::FolderChangedPayload::schema(),
+        ),
+        (
+            crate::core::events::TaskProgress::name(),
+            crate::core::events::TaskProgress::schema(),
+        ),
     ] {
         components.schemas.insert(name.into_owned(), schema);
     }

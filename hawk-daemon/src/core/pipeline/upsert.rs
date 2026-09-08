@@ -76,7 +76,8 @@ pub(crate) fn do_upsert(
 
     // 复验:哈希计算期间文件被继续写入(慢速来源常见)时,不得以半截内容入库,
     // 延迟重试直至写入稳定;API 提交(knownHash)信任调用方,维持原语义
-    if known_hash.is_none() && pending.reused_hash.is_none() && file_changed_since_prepare(&pending) {
+    if known_hash.is_none() && pending.reused_hash.is_none() && file_changed_since_prepare(&pending)
+    {
         if allow_defer && attempt < MAX_DEBOUNCE_ATTEMPTS {
             defer_upsert(ctx, pending.abs_path.clone(), attempt);
             return Ok(None);
@@ -300,16 +301,21 @@ pub(crate) fn apply_upsert(
 
     // 索引更新;创建即在同一锁内携带位置（零位置 item 不对并发查询可见）；
     // 尺寸为派生信息,索引时从文件读取(扫描路径已在并行哈希阶段预取)
-    let (created, added_location) = ctx
-        .index
-        .get_or_add_with_location(hash, &pending.rel, pending.size, pending.mtime);
+    let (created, added_location) =
+        ctx.index
+            .get_or_add_with_location(hash, &pending.rel, pending.size, pending.mtime);
     ctx.index.with_item_mut(hash, |item| item.sync_from(&meta));
 
     // 宽高持久化入 TOML（按 storage.md 的设计意图落盘）
     let mut dim_persisted = false;
-    let needs_dim = ctx.index.with_item_mut(hash, |item| item.width == 0).unwrap_or(false);
+    let needs_dim = ctx
+        .index
+        .with_item_mut(hash, |item| item.width == 0)
+        .unwrap_or(false);
     if needs_dim {
-        let dim = pending.dim.or_else(|| ThumbnailService::identify(&pending.abs_path));
+        let dim = pending
+            .dim
+            .or_else(|| ThumbnailService::identify(&pending.abs_path));
         if let Some((w, h)) = dim {
             ctx.index.with_item_mut(hash, |item| {
                 item.width = w;
@@ -328,7 +334,8 @@ pub(crate) fn apply_upsert(
             Some(batch) => batch.stage(&ctx.bus, hash),
             None => {
                 if let Some(dto) = ctx.index.get_dto(hash) {
-                    ctx.bus.publish(ItemEvents::ADDED, serde_json::to_value(&dto).unwrap());
+                    ctx.bus
+                        .publish(ItemEvents::ADDED, serde_json::to_value(&dto).unwrap());
                 }
             }
         }
@@ -350,10 +357,7 @@ pub(crate) fn apply_upsert(
         session.touched.lock().unwrap().insert(pending.rel.clone());
     }
 
-    let dto = ctx
-        .index
-        .get_dto(hash)
-        .expect("入库后索引必含该 item");
+    let dto = ctx.index.get_dto(hash).expect("入库后索引必含该 item");
     Ok(UpsertResult {
         item: dto,
         already_existed: !created,

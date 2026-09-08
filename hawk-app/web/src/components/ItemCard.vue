@@ -8,10 +8,7 @@ import { useLongPress } from '../composables/useLongPress';
 import { CARD_BORDER, CARD_META_H } from '../layout';
 import type { Item } from '../types';
 
-const props = withDefaults(
-  defineProps<{ item: Item; selected: boolean; width?: number; height?: number }>(),
-  { width: 0, height: 0 },
-);
+const props = withDefaults(defineProps<{ item: Item; selected: boolean; width?: number; height?: number }>(), { width: 0, height: 0 });
 const emit = defineEmits<{
   select: [item: Item, e: MouseEvent];
   open: [item: Item];
@@ -31,9 +28,7 @@ watch(
 
 /** 齐行网格传入的单元尺寸（宽高比与图片一致，图片完整显示不裁切） */
 const thumbStyle = computed(() =>
-  props.width && props.height
-    ? { width: props.width + 'px', height: props.height + 'px' }
-    : { width: '100%', aspectRatio: '1' },
+  props.width && props.height ? { width: props.width + 'px', height: props.height + 'px' } : { width: '100%', aspectRatio: '1' },
 );
 
 /** 卡片宽度锁定为缩略图宽度：长名称不得撑开卡片（名称走 ellipsis 截断）。
@@ -91,14 +86,7 @@ function onClick(e: MouseEvent) {
     @dragstart="onDragStart"
   >
     <div class="thumb" :style="thumbStyle">
-      <img
-        v-if="!thumbFailed"
-        :src="thumbSrc"
-        :alt="item.name"
-        loading="lazy"
-        draggable="false"
-        @error="thumbFailed = true"
-      />
+      <img v-if="!thumbFailed" :src="thumbSrc" :alt="item.name" loading="lazy" draggable="false" @error="thumbFailed = true" />
       <div v-else class="placeholder">{{ item.ext || '?' }}</div>
       <span v-if="Number(item.star) > 0" class="star">★{{ item.star }}</span>
     </div>

@@ -276,12 +276,7 @@ useDragImport();
   <!-- 启动/引导/门页/错误：单页内的前置阶段；无边框窗口下仍需拖拽区与窗口控制按钮 -->
   <div v-if="phase !== 'ready'" class="standalone">
     <div class="drag-bar"><WindowControls /></div>
-    <StartingScreen
-      v-if="phase === 'starting' || phase === 'error'"
-      :progress="progress"
-      :error="phase === 'error' ? bootError : null"
-      @quit="quitApp"
-    />
+    <StartingScreen v-if="phase === 'starting' || phase === 'error'" :progress="progress" :error="phase === 'error' ? bootError : null" @quit="quitApp" />
     <SetupScreen v-else-if="phase === 'setup'" @selected="phase = 'starting'" />
     <ConnectScreen v-else-if="phase === 'connect'" @connect="onConnected" />
   </div>
@@ -292,11 +287,7 @@ useDragImport();
     class="app"
     :class="{ 'no-panels': !store.sidebarVisible, mobile: narrow, 'drawer-open': narrow && store.sidebarVisible }"
     :style="{
-      gridTemplateColumns: narrow
-        ? 'minmax(0, 1fr)'
-        : store.sidebarVisible
-          ? `${sidebarWidth}px minmax(0, 1fr) ${inspectorWidth}px`
-          : '0 minmax(0, 1fr) 0',
+      gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : store.sidebarVisible ? `${sidebarWidth}px minmax(0, 1fr) ${inspectorWidth}px` : '0 minmax(0, 1fr) 0',
     }"
   >
     <!-- display:contents 包裹层仅用于移动端「导航后收起抽屉」的点击委托，不改变网格布局 -->
@@ -324,12 +315,7 @@ useDragImport();
 
     <!-- 侧栏宽度拖拽手柄：4px 命中区紧贴分界线右侧，避开左侧面板的滚动条 -->
     <template v-if="store.sidebarVisible && !narrow">
-      <div
-        class="col-resize-handle"
-        :class="{ active: dragSide === 'left' }"
-        :style="{ left: `${sidebarWidth}px` }"
-        @mousedown.prevent="startResize('left')"
-      />
+      <div class="col-resize-handle" :class="{ active: dragSide === 'left' }" :style="{ left: `${sidebarWidth}px` }" @mousedown.prevent="startResize('left')" />
       <div
         class="col-resize-handle"
         :class="{ active: dragSide === 'right' }"
@@ -338,12 +324,7 @@ useDragImport();
       />
     </template>
 
-    <PreviewOverlay
-      v-if="preview.previewItem"
-      :item="preview.previewItem"
-      @close="preview.closePreview()"
-      @navigate="preview.navigatePreview($event)"
-    />
+    <PreviewOverlay v-if="preview.previewItem" :item="preview.previewItem" @close="preview.closePreview()" @navigate="preview.navigatePreview($event)" />
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
     <ImageEditDialog v-if="preview.editorTarget" :item="preview.editorTarget" @close="preview.closeEditor()" />
     <SettingsDialog v-if="showSettings" @close="showSettings = false" @logout="logoutToken" />
@@ -356,21 +337,13 @@ useDragImport();
       <!-- 导入进度：拖拽落下即显示（收集文件阶段为不定态），逐个处理完推进 -->
       <div v-if="importer.importProgress" class="import-progress">
         <span class="import-progress-text">
-          {{
-            importer.importProgress.total > 0
-              ? `正在导入 ${importer.importProgress.done} / ${importer.importProgress.total}`
-              : '正在收集文件…'
-          }}
+          {{ importer.importProgress.total > 0 ? `正在导入 ${importer.importProgress.done} / ${importer.importProgress.total}` : '正在收集文件…' }}
         </span>
         <div class="import-progress-track">
           <div
             class="import-progress-bar"
             :class="{ indeterminate: importer.importProgress.total === 0 }"
-            :style="
-              importer.importProgress.total > 0
-                ? { width: `${(importer.importProgress.done / importer.importProgress.total) * 100}%` }
-                : undefined
-            "
+            :style="importer.importProgress.total > 0 ? { width: `${(importer.importProgress.done / importer.importProgress.total) * 100}%` } : undefined"
           />
         </div>
       </div>

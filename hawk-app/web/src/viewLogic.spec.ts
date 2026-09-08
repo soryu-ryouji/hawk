@@ -223,7 +223,10 @@ describe('commonStarOf', () => {
 
 describe('selectionTotalSize', () => {
   it('按条目 key 累加骨架 size；未命中按 0', () => {
-    const sizes = new Map([[itemKey('x', 'a.png'), 100], [itemKey('x', 'b.png'), 200]]);
+    const sizes = new Map([
+      [itemKey('x', 'a.png'), 100],
+      [itemKey('x', 'b.png'), 200],
+    ]);
     expect(selectionTotalSize([itemKey('x', 'a.png'), itemKey('x', 'b.png')], sizes)).toBe(300);
     expect(selectionTotalSize([itemKey('x', 'a.png'), itemKey('ghost', 'g.png')], sizes)).toBe(100);
     expect(selectionTotalSize([], sizes)).toBe(0);

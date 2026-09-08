@@ -76,7 +76,10 @@ impl ItemIndex {
     /// 锁内投影指定位置的 DTO（同内容多位置时按 path 定位；path 缺省等同 get_dto 主位置口径）
     pub fn get_dto_at(&self, hash: &str, path: Option<&str>) -> Option<ItemDto> {
         let inner = read_inner!(self);
-        let item = inner.by_hash.get(hash).filter(|i| !i.locations.is_empty())?;
+        let item = inner
+            .by_hash
+            .get(hash)
+            .filter(|i| !i.locations.is_empty())?;
         let trash_view = !item.has_library_locations();
         let loc = match path {
             None => item.main_location(trash_view)?,
@@ -91,7 +94,11 @@ impl ItemIndex {
     /// 宽高是否尚未解析（0 × 0）。只读访问，缩略图 worker 的补宽高闸门用
     pub fn dim_is_zero(&self, hash: &str) -> bool {
         let inner = read_inner!(self);
-        inner.by_hash.get(hash).map(|i| i.width == 0).unwrap_or(false)
+        inner
+            .by_hash
+            .get(hash)
+            .map(|i| i.width == 0)
+            .unwrap_or(false)
     }
 
     /// 取得或创建 item（不存在时创建并登记）。返回是否新建。仅限流水线(单写者)与测试
@@ -131,20 +138,26 @@ impl ItemIndex {
                 },
             );
         }
-        let item = inner.by_hash.get_mut(hash).expect("get_or_add_with_location: item must exist");
-        let added_location = if let Some(loc) = item.locations.iter_mut().find(|l| l.path == location_path) {
-            loc.size = size;
-            loc.modification_time = mtime;
-            false
-        } else {
-            item.locations.push(ItemLocation {
-                path: location_path.to_string(),
-                size,
-                modification_time: mtime,
-            });
-            inner.hash_by_location.insert(location_path.to_string(), hash.to_string());
-            true
-        };
+        let item = inner
+            .by_hash
+            .get_mut(hash)
+            .expect("get_or_add_with_location: item must exist");
+        let added_location =
+            if let Some(loc) = item.locations.iter_mut().find(|l| l.path == location_path) {
+                loc.size = size;
+                loc.modification_time = mtime;
+                false
+            } else {
+                item.locations.push(ItemLocation {
+                    path: location_path.to_string(),
+                    size,
+                    modification_time: mtime,
+                });
+                inner
+                    .hash_by_location
+                    .insert(location_path.to_string(), hash.to_string());
+                true
+            };
         (created, added_location)
     }
 
@@ -155,9 +168,18 @@ impl ItemIndex {
     }
 
     /// 登记/刷新一个位置。返回是否为新增位置
-    pub fn add_or_update_location(&self, hash: &str, location_path: &str, size: i64, mtime: i64) -> bool {
+    pub fn add_or_update_location(
+        &self,
+        hash: &str,
+        location_path: &str,
+        size: i64,
+        mtime: i64,
+    ) -> bool {
         let mut inner = write_inner!(self);
-        let item = inner.by_hash.get_mut(hash).expect("add_or_update_location: item must exist");
+        let item = inner
+            .by_hash
+            .get_mut(hash)
+            .expect("add_or_update_location: item must exist");
         if let Some(loc) = item.locations.iter_mut().find(|l| l.path == location_path) {
             loc.size = size;
             loc.modification_time = mtime;
@@ -168,7 +190,9 @@ impl ItemIndex {
                 size,
                 modification_time: mtime,
             });
-            inner.hash_by_location.insert(location_path.to_string(), hash.to_string());
+            inner
+                .hash_by_location
+                .insert(location_path.to_string(), hash.to_string());
             true
         }
     }
@@ -190,16 +214,30 @@ impl ItemIndex {
     pub fn move_location(&self, old_path: &str, new_path: &str) -> Option<String> {
         let mut inner = write_inner!(self);
         let hash = inner.hash_by_location.remove(old_path)?;
-        inner.hash_by_location.insert(new_path.to_string(), hash.clone());
-        let item = inner.by_hash.get_mut(&hash).expect("move_location: item must exist");
-        let loc = item.locations.iter_mut().find(|l| l.path == old_path).expect("move_location: location must exist");
+        inner
+            .hash_by_location
+            .insert(new_path.to_string(), hash.clone());
+        let item = inner
+            .by_hash
+            .get_mut(&hash)
+            .expect("move_location: item must exist");
+        let loc = item
+            .locations
+            .iter_mut()
+            .find(|l| l.path == old_path)
+            .expect("move_location: location must exist");
         loc.path = new_path.to_string();
         Some(hash)
     }
 
     /// 位置定位并返回不可变快照:缺省为主位置(want_trash=false 取首个库内位置,true 取首个回收站位置);
     /// 指定 path 时按视图匹配(回收站位置以其原库内路径匹配)
-    pub fn find_location(&self, hash: &str, path: Option<&str>, want_trash: Option<bool>) -> Option<LocationSnapshot> {
+    pub fn find_location(
+        &self,
+        hash: &str,
+        path: Option<&str>,
+        want_trash: Option<bool>,
+    ) -> Option<LocationSnapshot> {
         let inner = read_inner!(self);
         let item = inner.by_hash.get(hash)?;
         let loc = match path {
@@ -213,7 +251,8 @@ impl ItemIndex {
                     .or_else(|| item.locations.first()),
             },
             Some(p) => item.locations.iter().find(|l| {
-                (want_trash.is_none() || l.in_trash() == want_trash.unwrap()) && (l.path == p || l.library_path() == p)
+                (want_trash.is_none() || l.in_trash() == want_trash.unwrap())
+                    && (l.path == p || l.library_path() == p)
             }),
         }?;
         Some(LocationSnapshot {
@@ -236,7 +275,10 @@ impl ItemIndex {
     }
 
     pub fn hash_by_location(&self, location_path: &str) -> Option<String> {
-        read_inner!(self).hash_by_location.get(location_path).cloned()
+        read_inner!(self)
+            .hash_by_location
+            .get(location_path)
+            .cloned()
     }
 
     /// 指定 item 的全部位置快照（want_trash 过滤，None 为全部）：
@@ -270,7 +312,11 @@ impl ItemIndex {
     /// 指定 item 是否还有库内位置（回收站视图判定用）
     pub fn has_library_location(&self, hash: &str) -> bool {
         let inner = read_inner!(self);
-        inner.by_hash.get(hash).map(|i| i.has_library_locations()).unwrap_or(false)
+        inner
+            .by_hash
+            .get(hash)
+            .map(|i| i.has_library_locations())
+            .unwrap_or(false)
     }
 
     /// 指定 item 的库内位置数（事件转换判定用）
@@ -333,7 +379,10 @@ impl ItemIndex {
                 names.insert(t.clone());
             }
         }
-        names.into_iter().map(|n| (n.clone(), counts.get(&n).copied().unwrap_or(0))).collect()
+        names
+            .into_iter()
+            .map(|n| (n.clone(), counts.get(&n).copied().unwrap_or(0)))
+            .collect()
     }
 
     /// 一批 item 的标签/分类交集（多选面板的共有特性聚合）。不在索引的 id 静默跳过；
@@ -343,20 +392,25 @@ impl ItemIndex {
         let mut tags: Option<Vec<String>> = None;
         let mut categories: Option<Vec<String>> = None;
         for hash in hashes {
-            let Some(item) = inner.by_hash.get(hash) else { continue };
+            let Some(item) = inner.by_hash.get(hash) else {
+                continue;
+            };
             tags = Some(match tags {
                 None => item.tags.clone(),
                 Some(prev) => prev.into_iter().filter(|t| item.tags.contains(t)).collect(),
             });
             categories = Some(match categories {
                 None => item.categories.clone(),
-                Some(prev) => prev.into_iter().filter(|c| item.categories.contains(c)).collect(),
+                Some(prev) => prev
+                    .into_iter()
+                    .filter(|c| item.categories.contains(c))
+                    .collect(),
             });
         }
         let mut tags = tags.unwrap_or_default();
         let mut categories = categories.unwrap_or_default();
-        tags.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-        categories.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        tags.sort_by_key(|a| a.to_lowercase());
+        categories.sort_by_key(|a| a.to_lowercase());
         (tags, categories)
     }
 
@@ -471,7 +525,11 @@ impl ItemIndex {
             RefreshScope::Folder(f) => inner
                 .by_hash
                 .values()
-                .filter(|i| i.locations.iter().any(|l| !l.in_trash() && loc_in_folder(l, f, false)))
+                .filter(|i| {
+                    i.locations
+                        .iter()
+                        .any(|l| !l.in_trash() && loc_in_folder(l, f, false))
+                })
                 .map(|i| (i.id.clone(), i.width))
                 .collect::<Vec<_>>(),
             RefreshScope::Category(c) => inner
@@ -516,7 +574,11 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
     }
     if let Some(categories) = &q.categories {
         if !categories.is_empty() {
-            let match_all = q.categories_match.as_deref().map(|m| m.eq_ignore_ascii_case("all")).unwrap_or(false);
+            let match_all = q
+                .categories_match
+                .as_deref()
+                .map(|m| m.eq_ignore_ascii_case("all"))
+                .unwrap_or(false);
             items.retain(|i| {
                 if match_all {
                     categories.iter().all(|c| i.categories.contains(c))
@@ -544,16 +606,30 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
     }
     if let Some(annotation) = &q.annotation {
         if !annotation.is_empty() {
-            items.retain(|i| i.annotation.as_deref().map(|a| a.to_lowercase().contains(&annotation.to_lowercase())).unwrap_or(false));
+            items.retain(|i| {
+                i.annotation
+                    .as_deref()
+                    .map(|a| a.to_lowercase().contains(&annotation.to_lowercase()))
+                    .unwrap_or(false)
+            });
         }
     }
     if let Some(url) = &q.url {
         if !url.is_empty() {
-            items.retain(|i| i.url.as_deref().map(|u| u.to_lowercase().contains(&url.to_lowercase())).unwrap_or(false));
+            items.retain(|i| {
+                i.url
+                    .as_deref()
+                    .map(|u| u.to_lowercase().contains(&url.to_lowercase()))
+                    .unwrap_or(false)
+            });
         }
     }
     if let Some(color) = q.color {
-        items.retain(|i| i.palette.iter().any(|p| delta_e_squared(p.lab, color) <= COLOR_MATCH_THRESHOLD_SQUARED));
+        items.retain(|i| {
+            i.palette
+                .iter()
+                .any(|p| delta_e_squared(p.lab, color) <= COLOR_MATCH_THRESHOLD_SQUARED)
+        });
     }
 
     // 位置级展开：只保留本视图侧位置，再按位置属性过滤
@@ -576,7 +652,11 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
     if let Some(exclude) = &q.exclude_folders {
         if !exclude.is_empty() {
             // 子树整体剔除；空字符串（库根）命中一切，无排除语义，防御性跳过
-            entries.retain(|(_, l)| !exclude.iter().any(|f| !f.is_empty() && loc_in_folder(l, f, false)));
+            entries.retain(|(_, l)| {
+                !exclude
+                    .iter()
+                    .any(|f| !f.is_empty() && loc_in_folder(l, f, false))
+            });
         }
     }
     if let Some(ext) = &q.ext {
@@ -614,18 +694,33 @@ fn cmp_sort_key(a: &SortKey, b: &SortKey) -> Ordering {
 /// 锁外排序。主键同值时按 (id, path) 字典序打破平局：排序不稳定 + 两次独立查询（骨架/视口窗口）
 /// 的次序必须逐位一致，否则按 offset 取窗口会错位；同内容多位置的排序键相同，须再按 path 决胜。
 /// desc 反转整个比较结果（含平局决胜）
-fn sort_keyed<T>(entries: &mut [(SortKey, String, T)], q: &ItemQuery, path_of: impl Fn(&T) -> &str) {
-    let desc = !q.order.as_deref().map(|o| o.eq_ignore_ascii_case("asc")).unwrap_or(false);
+fn sort_keyed<T>(
+    entries: &mut [(SortKey, String, T)],
+    q: &ItemQuery,
+    path_of: impl Fn(&T) -> &str,
+) {
+    let desc = !q
+        .order
+        .as_deref()
+        .map(|o| o.eq_ignore_ascii_case("asc"))
+        .unwrap_or(false);
     entries.sort_by(|a, b| {
         let c = cmp_sort_key(&a.0, &b.0)
             .then_with(|| a.1.cmp(&b.1))
             .then_with(|| path_of(&a.2).cmp(path_of(&b.2)));
-        if desc { c.reverse() } else { c }
+        if desc {
+            c.reverse()
+        } else {
+            c
+        }
     });
 }
 
 fn matches_keyword(item: &Item, loc: &ItemLocation, keyword: &str) -> bool {
-    if LibraryPaths::name_of(loc.library_path()).to_lowercase().contains(&keyword.to_lowercase()) {
+    if LibraryPaths::name_of(loc.library_path())
+        .to_lowercase()
+        .contains(&keyword.to_lowercase())
+    {
         return true;
     }
     item.annotation

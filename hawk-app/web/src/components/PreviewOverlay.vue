@@ -79,9 +79,7 @@ function onMenu(e: MouseEvent) {
       : []),
     { label: '复制图片', action: () => void copyImage() },
     // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口;viewer 下禁用
-    ...(isRotatableImage(props.item.ext) && !store.viewerMode
-      ? [{ label: '编辑图片…', action: () => preview.openEditor(props.item) }]
-      : []),
+    ...(isRotatableImage(props.item.ext) && !store.viewerMode ? [{ label: '编辑图片…', action: () => preview.openEditor(props.item) }] : []),
     ...(!store.viewerMode ? [{ separator: true, label: '' }] : []),
     ...(!store.viewerMode ? [{ label: '删除图片', danger: true, action: () => void trashCurrent() }] : []),
   ];
@@ -117,10 +115,22 @@ const gestures = useZoomPan({
   onLongPress: (e) => onMenu(e),
 });
 const {
-  scale, tx, ty, dragging,
-  swipeAnim, swipeX,
-  pullActive, pullAnim, pullY,
-  onWheel, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onDblClick, onGestureClick,
+  scale,
+  tx,
+  ty,
+  dragging,
+  swipeAnim,
+  swipeX,
+  pullActive,
+  pullAnim,
+  pullY,
+  onWheel,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onDblClick,
+  onGestureClick,
 } = gestures;
 
 // 预加载相邻原图：内容寻址 immutable，浏览器缓存命中——carousel 拖动时邻图已解码，切换零等待
@@ -161,11 +171,14 @@ const overlayStyle = computed(() => {
   return { background: `rgba(0, 0, 0, ${(0.85 * dim).toFixed(3)})` };
 });
 
-watch(() => itemKey(props.item.id, props.item.path), () => {
-  // 切图复位：手势状态机清零（手指通常已抬起，兜底防泄漏）+ 相邻预加载
-  gestures.reset();
-  preloadNeighbors();
-});
+watch(
+  () => itemKey(props.item.id, props.item.path),
+  () => {
+    // 切图复位：手势状态机清零（手指通常已抬起，兜底防泄漏）+ 相邻预加载
+    gestures.reset();
+    preloadNeighbors();
+  },
+);
 
 /** 平移模式图像显示区域命中测试：基准 90vw/90vh object-fit: contain，transform 以元素中心为原点 */
 function pointInImage(px: number, py: number): boolean {
@@ -309,11 +322,10 @@ function pointInImage(px: number, py: number): boolean {
 }
 
 @media (hover: hover) {
-
-.close:hover {
-  color: #fff;
-  background: transparent;
-}
+  .close:hover {
+    color: #fff;
+    background: transparent;
+  }
 }
 
 .pager {
@@ -336,11 +348,10 @@ function pointInImage(px: number, py: number): boolean {
 }
 
 @media (hover: hover) {
-
-.page-btn:hover {
-  color: #fff;
-  background: transparent;
-}
+  .page-btn:hover {
+    color: #fff;
+    background: transparent;
+  }
 }
 
 .page-index {
@@ -349,5 +360,4 @@ function pointInImage(px: number, py: number): boolean {
   text-align: center;
   user-select: none;
 }
-
 </style>

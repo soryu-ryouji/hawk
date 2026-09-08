@@ -82,18 +82,16 @@ impl ThumbnailWorker {
     }
 
     /// 装配协作者：索引只读访问 + 回流通道。必须在 start 之前调用（main 装配流水线后接线）
-    pub fn attach(
-        &self,
-        index: Arc<ItemIndex>,
-        store: Arc<MetadataStore>,
-        jobs: JobSender,
-    ) {
+    pub fn attach(&self, index: Arc<ItemIndex>, store: Arc<MetadataStore>, jobs: JobSender) {
         *self.deps.lock().unwrap() = Some(WorkerDeps { index, store, jobs });
     }
 
     /// 积压快照(排队 + 生成中)；task.progress 事件与 app/status 端点共用
     pub fn backlog(&self) -> (i32, i32) {
-        (self.queued.load(Ordering::SeqCst), self.active.load(Ordering::SeqCst))
+        (
+            self.queued.load(Ordering::SeqCst),
+            self.active.load(Ordering::SeqCst),
+        )
     }
 
     pub fn start(self: &Arc<Self>) {
@@ -113,7 +111,7 @@ impl ThumbnailWorker {
             .map(|n| n.get())
             .unwrap_or(4) as i32
             / 2)
-            .clamp(2, 12);
+        .clamp(2, 12);
         for _ in 0..parallelism {
             let rx = self.rx.clone();
             let inflight = self.inflight.clone();
@@ -189,12 +187,7 @@ impl ThumbJob {
     }
 }
 
-fn process_job(
-    job: &ThumbJob,
-    deps: &WorkerDeps,
-    thumbs: &ThumbnailService,
-    bus: &EventBus,
-) {
+fn process_job(job: &ThumbJob, deps: &WorkerDeps, thumbs: &ThumbnailService, bus: &EventBus) {
     // 非图像文件（内容喷探）：不做任何解码（identify/缩略图/调色板），空数组负缓存
     // 终止「palette 缺失 → 重派」的周期循环；宽高 0×0 即终态。幂等，重复应用无害
     if !ThumbnailService::is_probably_image(&job.source_abs) {
@@ -224,7 +217,10 @@ fn process_job(
                 dim_fixed = true;
             }
             None => {
-                tracing::debug!("宽高识别失败 {source}: 非图像或损坏文件，0 宽高保持", source = job.source_abs);
+                tracing::debug!(
+                    "宽高识别失败 {source}: 非图像或损坏文件，0 宽高保持",
+                    source = job.source_abs
+                );
             }
         }
     }

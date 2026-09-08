@@ -41,8 +41,10 @@ pub(crate) fn do_delete(ctx: &PipelineCtx, rel: &str) {
     }
 
     if had_children || prefs_changed || filter_changed {
-        ctx.bus
-            .publish(ItemEvents::FOLDER_CHANGED, folder_changed_payload(crate::core::events::REASON_EXTERNAL));
+        ctx.bus.publish(
+            ItemEvents::FOLDER_CHANGED,
+            folder_changed_payload(crate::core::events::REASON_EXTERNAL),
+        );
     }
 }
 
@@ -74,7 +76,8 @@ pub(crate) fn do_move(ctx: &Arc<PipelineCtx>, old_abs: &str, new_abs: &str) -> R
     let new_rel = ctx.paths.to_relative(new_abs);
     let new_usable = new_rel.as_ref().is_some_and(|r| {
         // 目标为回收站恒可用（可回收）；库内目标须在 ignore 与扩展名白名单内
-        !LibraryPaths::is_internal(r) && (LibraryPaths::is_in_trash(r) || ctx.config.is_file_included(r))
+        !LibraryPaths::is_internal(r)
+            && (LibraryPaths::is_in_trash(r) || ctx.config.is_file_included(r))
     });
     let Some(new_rel) = new_rel.filter(|_| new_usable) else {
         do_delete(ctx, &old_rel);
@@ -96,13 +99,18 @@ pub(crate) fn do_move(ctx: &Arc<PipelineCtx>, old_abs: &str, new_abs: &str) -> R
     Ok(())
 }
 
-pub(crate) fn do_dir_move(ctx: &Arc<PipelineCtx>, old_abs: &str, new_abs: &str) -> Result<(), String> {
+pub(crate) fn do_dir_move(
+    ctx: &Arc<PipelineCtx>,
+    old_abs: &str,
+    new_abs: &str,
+) -> Result<(), String> {
     let Some(old_rel) = ctx.paths.to_relative(old_abs) else {
         return Ok(());
     };
     let new_rel = ctx.paths.to_relative(new_abs);
     let new_usable = new_rel.as_ref().is_some_and(|r| {
-        !LibraryPaths::is_internal(r) && (LibraryPaths::is_in_trash(&format!("{r}/")) || !ctx.config.is_ignored(r))
+        !LibraryPaths::is_internal(r)
+            && (LibraryPaths::is_in_trash(&format!("{r}/")) || !ctx.config.is_ignored(r))
     });
     let Some(new_rel) = new_rel.filter(|_| new_usable) else {
         do_delete(ctx, &old_rel);
@@ -131,8 +139,10 @@ pub(crate) fn do_dir_move(ctx: &Arc<PipelineCtx>, old_abs: &str, new_abs: &str) 
     }
 
     // 目录移动后目录结构必然变化,广播 folder.changed(folder/list 全量建树,客户端重拉即可)
-    ctx.bus
-        .publish(ItemEvents::FOLDER_CHANGED, folder_changed_payload(crate::core::events::REASON_EXTERNAL));
+    ctx.bus.publish(
+        ItemEvents::FOLDER_CHANGED,
+        folder_changed_payload(crate::core::events::REASON_EXTERNAL),
+    );
 
     // 目录下可能有监听遗漏的文件,补扫新位置
     if std::path::Path::new(new_abs).is_dir() {
@@ -176,13 +186,17 @@ fn move_one(ctx: &PipelineCtx, old_rel: &str, new_rel: &str) -> Result<Option<St
 /// 清空回收站:清理位置与对应元数据、缩略图(库内仍有引用的内容除外)。物理删除由 API 层完成
 pub(crate) fn do_clear_trash(ctx: &PipelineCtx) -> Result<(), String> {
     // 回收站内的 folder: 排序偏好随清空一并移除
-    ctx.prefs
-        .delete_prefix(&format!("{}/{}", LibraryPaths::HAWK_DIR_NAME, LibraryPaths::TRASH_DIR_NAME));
+    ctx.prefs.delete_prefix(&format!(
+        "{}/{}",
+        LibraryPaths::HAWK_DIR_NAME,
+        LibraryPaths::TRASH_DIR_NAME
+    ));
     // 回收站内的隐藏文件夹条目同款清除
-    if ctx
-        .global_filter
-        .delete_folder_prefix(&format!("{}/{}", LibraryPaths::HAWK_DIR_NAME, LibraryPaths::TRASH_DIR_NAME))
-    {
+    if ctx.global_filter.delete_folder_prefix(&format!(
+        "{}/{}",
+        LibraryPaths::HAWK_DIR_NAME,
+        LibraryPaths::TRASH_DIR_NAME
+    )) {
         crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
     }
 
@@ -209,7 +223,8 @@ pub(crate) fn do_clear_trash(ctx: &PipelineCtx) -> Result<(), String> {
             }
         }
         if item_gone {
-            ctx.bus.publish(ItemEvents::REMOVED, serde_json::json!({ "id": hash }));
+            ctx.bus
+                .publish(ItemEvents::REMOVED, serde_json::json!({ "id": hash }));
         } else if let Some(dto) = ctx.index.get_dto(&hash) {
             ItemEvents::publish_changed(&ctx.bus, &dto);
         }

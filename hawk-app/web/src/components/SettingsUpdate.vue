@@ -48,18 +48,12 @@ onMounted(() => {
     <div class="field">
       <span class="field-label">当前版本</span>
       <!-- 开发态显示「开发版」：package.json 保持下个发布版本，不追加 dev 后缀（避免发版前忘改回） -->
-      <span class="update-current">{{
-        !buildSha ? '…' : buildSha === 'dev' ? '开发版' : `v${appVersion} · ${buildSha.slice(0, 7)}`
-      }}</span>
+      <span class="update-current">{{ !buildSha ? '…' : buildSha === 'dev' ? '开发版' : `v${appVersion} · ${buildSha.slice(0, 7)}` }}</span>
     </div>
 
     <div class="field column">
       <span class="field-label">更新通道</span>
-      <SelectBox
-        :model-value="updater.channel.value"
-        :options="channelOptions"
-        @update:model-value="updater.setChannel($event as UpdateChannel)"
-      />
+      <SelectBox :model-value="updater.channel.value" :options="channelOptions" @update:model-value="updater.setChannel($event as UpdateChannel)" />
       <p class="hint">{{ channelHint }}</p>
     </div>
 
@@ -101,30 +95,17 @@ onMounted(() => {
       <div class="update-actions">
         <button
           :disabled="
-            updater.channel.value === 'off' ||
-            updater.phase.value === 'checking' ||
-            updater.phase.value === 'downloading' ||
-            updater.phase.value === 'ready'
+            updater.channel.value === 'off' || updater.phase.value === 'checking' || updater.phase.value === 'downloading' || updater.phase.value === 'ready'
           "
           @click="void updater.check()"
         >
           检查更新
         </button>
-        <button
-          v-if="updater.phase.value === 'available'"
-          class="primary"
-          @click="void updater.download()"
-        >
-          下载并安装
-        </button>
+        <button v-if="updater.phase.value === 'available'" class="primary" @click="void updater.download()">下载并安装</button>
         <button v-if="updater.phase.value === 'downloading'" @click="void updater.cancel()">取消下载</button>
-        <button v-if="updater.phase.value === 'ready'" class="primary" @click="void updater.install()">
-          重启并安装
-        </button>
+        <button v-if="updater.phase.value === 'ready'" class="primary" @click="void updater.install()">重启并安装</button>
       </div>
-      <p v-if="updater.phase.value === 'ready'" class="hint">
-        安装包已下载。重启后自动完成安装；已打开的局域网查看页在重启后刷新即可。
-      </p>
+      <p v-if="updater.phase.value === 'ready'" class="hint">安装包已下载。重启后自动完成安装；已打开的局域网查看页在重启后刷新即可。</p>
     </div>
   </div>
 </template>

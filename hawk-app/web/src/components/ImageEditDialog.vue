@@ -106,8 +106,24 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <div class="confirm-text">图片已修改，是否保存？</div>
           <div class="confirm-actions">
             <button @click="confirming = false">取消</button>
-            <button class="discard" @click="confirming = false; emit('close')">不保存</button>
-            <button class="primary" @click="confirming = false; void saveAndClose()">保存</button>
+            <button
+              class="discard"
+              @click="
+                confirming = false;
+                emit('close');
+              "
+            >
+              不保存
+            </button>
+            <button
+              class="primary"
+              @click="
+                confirming = false;
+                void saveAndClose();
+              "
+            >
+              保存
+            </button>
           </div>
         </div>
       </div>
@@ -158,11 +174,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 }
 
 @media (hover: hover) {
-
-.bar-btn:hover:not(:disabled) {
-  color: #fff;
-  background: transparent;
-}
+  .bar-btn:hover:not(:disabled) {
+    color: #fff;
+    background: transparent;
+  }
 }
 
 .bar-btn:disabled {
@@ -197,11 +212,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 }
 
 @media (hover: hover) {
-
-.close:hover {
-  color: #fff;
-  background: transparent;
-}
+  .close:hover {
+    color: #fff;
+    background: transparent;
+  }
 }
 
 .confirm-mask {

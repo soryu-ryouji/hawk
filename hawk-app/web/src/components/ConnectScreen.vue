@@ -41,13 +41,7 @@ async function submit() {
     <img class="logo" :src="'./icon.png'" alt="hawk" />
     <div class="connect-card">
       <div class="title">连接素材库</div>
-      <input
-        v-model="token"
-        type="password"
-        placeholder="输入访问 token"
-        autocomplete="off"
-        @keydown.enter="submit"
-      />
+      <input v-model="token" type="password" placeholder="输入访问 token" autocomplete="off" @keydown.enter="submit" />
       <div v-if="error" class="error">{{ error }}</div>
       <button class="primary" :disabled="busy || !token.trim()" @click="submit">
         {{ busy ? '连接中…' : '连接' }}

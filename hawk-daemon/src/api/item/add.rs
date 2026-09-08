@@ -46,12 +46,17 @@ pub(crate) async fn item_add(
     JsonBody(req): JsonBody<ItemAddRequest>,
 ) -> Result<Json<Envelope<ItemAddResponse>>, ApiError> {
     if req.path.is_none() && req.url.is_none() && req.img_base64.is_none() {
-        return Err(ApiError::invalid_param("path、url、img_base64 必须提供其一"));
+        return Err(ApiError::invalid_param(
+            "path、url、img_base64 必须提供其一",
+        ));
     }
 
     let folder_rel = req.folder_path.clone().unwrap_or_default();
     if !folder_rel.is_empty() && !LibraryPaths::is_valid_library_path(Some(&folder_rel)) {
-        return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", req.folder_path.unwrap_or_default())));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件夹路径: {}",
+            req.folder_path.unwrap_or_default()
+        )));
     }
 
     // 导入时目标目录不存在则自动创建
@@ -60,7 +65,8 @@ pub(crate) async fn item_add(
     } else {
         state.paths.to_absolute(&folder_rel).unwrap()
     };
-    std::fs::create_dir_all(&folder_abs).map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
+    std::fs::create_dir_all(&folder_abs)
+        .map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
 
     // 获取内容来源:本地文件直接引用,url/base64 内容在内存中
     let (ext, default_name, bytes, source_abs): (String, String, Option<Vec<u8>>, Option<String>) =
@@ -69,16 +75,20 @@ pub(crate) async fn item_add(
             if !source.is_file() {
                 return Err(ApiError::invalid_param(format!("文件不存在: {path}")));
             }
-            let file_name = source.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let file_name = source
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             let ext = LibraryPaths::ext_of(&file_name);
             let stem = LibraryPaths::name_of(&file_name).to_string();
             (ext, stem, None, Some(crate::core::paths::full_path(path)))
         } else if let Some(url) = &req.url {
-            let uri = url::Url::parse(url).map_err(|_| ApiError::invalid_param(format!("非法 URL: {url}")))?;
+            let uri = url::Url::parse(url)
+                .map_err(|_| ApiError::invalid_param(format!("非法 URL: {url}")))?;
             let bytes = download(url).await?;
             let segment = uri
                 .path_segments()
-                .and_then(|s| s.last().map(str::to_string))
+                .and_then(|mut s| s.next_back().map(str::to_string))
                 .unwrap_or_default();
             let decoded = percent_decode(&segment);
             let ext = LibraryPaths::ext_of(&decoded);
@@ -89,7 +99,11 @@ pub(crate) async fn item_add(
                 ext
             };
             let stem = LibraryPaths::name_of(&decoded).to_string();
-            let default_name = if stem.is_empty() { "download".to_string() } else { stem };
+            let default_name = if stem.is_empty() {
+                "download".to_string()
+            } else {
+                stem
+            };
             (ext, default_name, Some(bytes), None)
         } else {
             let bytes = decode_base64(req.img_base64.as_deref().unwrap_or_default())?;
@@ -100,21 +114,31 @@ pub(crate) async fn item_add(
         };
     let name = req.name.clone().unwrap_or(default_name);
     if !fs_util::is_valid_name(Some(&name)) {
-        return Err(ApiError::invalid_param(format!("非法文件名: {}", req.name.unwrap_or_default())));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件名: {}",
+            req.name.unwrap_or_default()
+        )));
     }
 
     // 哈希提前算（目标冲突判定需要比对内容）
     let hash = match (&source_abs, &bytes) {
-        (Some(src), _) => content_hash::hash_file(src).map_err(|e| ApiError::internal(format!("计算哈希失败: {e}")))?,
+        (Some(src), _) => content_hash::hash_file(src)
+            .map_err(|e| ApiError::internal(format!("计算哈希失败: {e}")))?,
         (None, Some(data)) => content_hash::hash_bytes(data),
         _ => unreachable!(),
     };
 
-    let file_name = if ext.is_empty() { name.clone() } else { format!("{name}.{ext}") };
+    let file_name = if ext.is_empty() {
+        name.clone()
+    } else {
+        format!("{name}.{ext}")
+    };
     // 扩展名白名单（.hawk/config.toml 的 extensions）：白名单外的格式直接拒绝，
     // 避免写盘后又被入库判定剔除（用户得到明确反馈而非「索引失败」）
     if !state.config.is_extension_included(&file_name) {
-        return Err(ApiError::unsupported_format(format!("扩展名不在素材库可见格式白名单内: {file_name}")));
+        return Err(ApiError::unsupported_format(format!(
+            "扩展名不在素材库可见格式白名单内: {file_name}"
+        )));
     }
     let mut target_rel = if folder_rel.is_empty() {
         file_name.clone()
@@ -143,8 +167,16 @@ pub(crate) async fn item_add(
         let stem = LibraryPaths::name_of(&file_name).to_string();
         let mut n = 2u32;
         loop {
-            let candidate = if ext.is_empty() { format!("{stem} {n}") } else { format!("{stem} {n}.{ext}") };
-            target_rel = if folder_rel.is_empty() { candidate.clone() } else { format!("{folder_rel}/{candidate}") };
+            let candidate = if ext.is_empty() {
+                format!("{stem} {n}")
+            } else {
+                format!("{stem} {n}.{ext}")
+            };
+            target_rel = if folder_rel.is_empty() {
+                candidate.clone()
+            } else {
+                format!("{folder_rel}/{candidate}")
+            };
             target_abs = state.paths.to_absolute(&target_rel).unwrap();
             if !std::path::Path::new(&target_abs).exists() {
                 break;
@@ -161,7 +193,10 @@ pub(crate) async fn item_add(
     // skip_existing：内容已在库内（不含回收站——删掉的内容应可重新导入）则跳过，
     // 不写文件也不追加路径（多路径副本是重复导入的磁盘占用来源）
     if req.skip_existing && state.index.has_library_location(&hash) {
-        let dto = state.index.get_dto(&hash).ok_or_else(|| ApiError::internal("索引失败"))?;
+        let dto = state
+            .index
+            .get_dto(&hash)
+            .ok_or_else(|| ApiError::internal("索引失败"))?;
         return Ok(Json(Envelope::ok(ItemAddResponse {
             item: dto,
             already_existed: true,
@@ -180,7 +215,9 @@ pub(crate) async fn item_add(
                 preserve_times(src, &target);
                 Ok::<(), String>(())
             }
-            (None, Some(data)) => std::fs::write(&target, data).map_err(|e| format!("写入文件失败: {e}")),
+            (None, Some(data)) => {
+                std::fs::write(&target, data).map_err(|e| format!("写入文件失败: {e}"))
+            }
             _ => unreachable!(),
         }
     })
@@ -197,7 +234,11 @@ pub(crate) async fn item_add(
         .ok_or_else(|| ApiError::internal("索引失败"))?;
 
     // 附带的素材参数写入元数据;website(来源网页)记录为 Item.url,下载用的 url 不覆盖它
-    if req.tags.is_some() || req.annotation.is_some() || req.website.is_some() || req.categories.is_some() {
+    if req.tags.is_some()
+        || req.annotation.is_some()
+        || req.website.is_some()
+        || req.categories.is_some()
+    {
         let categories = normalize_categories(req.categories.as_deref())?;
         let tags = req.tags.clone();
         let annotation = req.annotation.clone();
@@ -255,7 +296,9 @@ async fn download(url: &str) -> Result<Vec<u8>, ApiError> {
 }
 
 fn percent_decode(input: &str) -> String {
-    percent_encoding::percent_decode_str(input).decode_utf8_lossy().to_string()
+    percent_encoding::percent_decode_str(input)
+        .decode_utf8_lossy()
+        .to_string()
 }
 
 /// path 导入保留原文件的创建时间与修改时间（File.Copy 默认会重置）

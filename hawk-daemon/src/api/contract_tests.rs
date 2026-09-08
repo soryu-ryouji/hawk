@@ -53,16 +53,28 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ),
     ("GET", "/api/v1/item/count", None),
     ("GET", "/api/v1/library/info", None),
-    ("PATCH", "/api/v1/library/info", Some(r#"{"name":"契约测试库"}"#)),
+    (
+        "PATCH",
+        "/api/v1/library/info",
+        Some(r#"{"name":"契约测试库"}"#),
+    ),
     ("GET", "/api/v1/tag/list", None),
     ("GET", "/api/v1/view/preferences", None),
     ("POST", "/api/v1/item/list", Some("{}")),
     ("POST", "/api/v1/item/aggregate", Some(r#"{"ids":["x"]}"#)),
     ("POST", "/api/v1/item/skeleton", Some("{}")),
     ("POST", "/api/v1/library/reindex", None),
-    ("POST", "/api/v1/library/storage_mode", Some(r#"{"mode":"database"}"#)),
+    (
+        "POST",
+        "/api/v1/library/storage_mode",
+        Some(r#"{"mode":"database"}"#),
+    ),
     ("POST", "/api/v1/library/rescan", None),
-    ("POST", "/api/v1/library/refresh_cache", Some(r#"{"type":"library"}"#)),
+    (
+        "POST",
+        "/api/v1/library/refresh_cache",
+        Some(r#"{"type":"library"}"#),
+    ),
     ("POST", "/api/v1/library/cleanup_index", None),
     ("POST", "/api/v1/trash/clear", None),
     (
@@ -117,7 +129,8 @@ struct TestApp {
 }
 
 fn test_app(name: &str) -> TestApp {
-    let base = std::env::temp_dir().join(format!("hawk-contract-test-{name}-{}", std::process::id()));
+    let base =
+        std::env::temp_dir().join(format!("hawk-contract-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     test_app_at(base)
 }
@@ -199,7 +212,11 @@ fn test_app_at(base: PathBuf) -> TestApp {
     });
     let router = build_router(state.clone());
     state.folder_tree.spawn_invalidation(&state.bus);
-    TestApp { base, router, state }
+    TestApp {
+        base,
+        router,
+        state,
+    }
 }
 
 impl Drop for TestApp {
@@ -247,7 +264,12 @@ impl TestApp {
 }
 
 /// 发起请求（携带 admin token 与环回 Host 头），返回状态码与响应体字节
-async fn call(router: &axum::Router, method: &str, uri: &str, body: Option<(&str, Vec<u8>)>) -> (StatusCode, Vec<u8>) {
+async fn call(
+    router: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<(&str, Vec<u8>)>,
+) -> (StatusCode, Vec<u8>) {
     let (content_type, bytes) = match body {
         Some((ct, b)) => (ct.to_string(), b),
         None => ("application/json".to_string(), Vec::new()),
@@ -268,7 +290,12 @@ async fn call(router: &axum::Router, method: &str, uri: &str, body: Option<(&str
     (status, bytes.to_vec())
 }
 
-async fn call_json(router: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Vec<u8>) {
+async fn call_json(
+    router: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Vec<u8>) {
     call(
         router,
         method,
@@ -311,9 +338,12 @@ async fn expect_ok(app: &TestApp, spec: &Value, method: &str, uri: &str, body: O
     };
     let validator = jsonschema::validator_for(&wrapper)
         .unwrap_or_else(|e| panic!("schema 编译失败 {method} {path}: {e}"));
-    let body_json: Value =
-        serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("响应非 JSON {method} {uri}: {e}"));
-    let errors: Vec<String> = validator.iter_errors(&body_json).map(|e| e.to_string()).collect();
+    let body_json: Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|e| panic!("响应非 JSON {method} {uri}: {e}"));
+    let errors: Vec<String> = validator
+        .iter_errors(&body_json)
+        .map(|e| e.to_string())
+        .collect();
     assert!(
         errors.is_empty(),
         "响应不符合契约 {method} {uri}:\n{}\n响应体: {body_json}",
@@ -347,7 +377,10 @@ fn openapi_endpoints_all_classified() {
 
     let mut covered = BTreeSet::new();
     for group in [
-        SUCCESS_CASES.iter().map(|(m, u, _)| (*m, u.split('?').next().unwrap())).collect::<Vec<_>>(),
+        SUCCESS_CASES
+            .iter()
+            .map(|(m, u, _)| (*m, u.split('?').next().unwrap()))
+            .collect::<Vec<_>>(),
         WRITE_SCRIPT.to_vec(),
         ROUTE_ONLY.to_vec(),
         SSE_ENDPOINTS.to_vec(),
@@ -392,7 +425,9 @@ async fn cleanup_index_removes_stale_entries() {
     let root = app.library_root();
     std::fs::rename(root.join("plain.png"), root.join(".stignore")).unwrap();
     let size = std::fs::metadata(root.join(".stignore")).unwrap().len() as i64;
-    app.state.index.add_or_update_location(&hidden_id, ".stignore", size, 0);
+    app.state
+        .index
+        .add_or_update_location(&hidden_id, ".stignore", size, 0);
     app.state.index.remove_location("plain.png");
     // 源文件消失残留：入库后直接删磁盘文件（无 watcher，索引位置残留）
     let gone_id = app.add_test_item("gone.png", [30, 30, 200]).await;
@@ -414,7 +449,10 @@ async fn cleanup_index_removes_stale_entries() {
         if paths.len() == 1 && paths[0] == "keep.png" {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "索引未收敛: {paths:?}");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "索引未收敛: {paths:?}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     assert_eq!(app.state.index.count(), 1);
@@ -435,7 +473,7 @@ async fn item_add_conflict_renames_and_dedupes() {
         image::DynamicImage::ImageRgb8(img)
             .write_to(&mut buf, image::ImageFormat::Png)
             .unwrap();
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &buf.into_inner())
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.into_inner())
     };
     let add = |name: &str, b64: String| {
         call_json(
@@ -487,7 +525,10 @@ async fn folder_list_excludes_hidden_dirs() {
         .iter()
         .map(|n| n["name"].as_str().unwrap())
         .collect();
-    assert!(!names.contains(&".stfolder"), "隐藏目录不应出现在侧栏: {names:?}");
+    assert!(
+        !names.contains(&".stfolder"),
+        "隐藏目录不应出现在侧栏: {names:?}"
+    );
     assert!(names.contains(&"普通"), "普通目录应保留: {names:?}");
 }
 
@@ -501,7 +542,9 @@ async fn cleanup_survives_restart() {
     std::fs::rename(root.join("plain.png"), root.join(".stignore")).unwrap();
     let size = std::fs::metadata(root.join(".stignore")).unwrap().len() as i64;
     // 真实残留是索引与元数据都带着隐藏路径（历史版本扫描写入）；两处同步构造
-    app.state.index.add_or_update_location(&id, ".stignore", size, 0);
+    app.state
+        .index
+        .add_or_update_location(&id, ".stignore", size, 0);
     app.state.index.remove_location("plain.png");
     if let Some(mut meta) = app.state.store.try_get(&id) {
         for p in meta.paths.iter_mut() {
@@ -514,7 +557,10 @@ async fn cleanup_survives_restart() {
 
     let (status, bytes) = call(&app.router, "POST", "/api/v1/library/cleanup_index", None).await;
     assert_eq!(status, StatusCode::OK, "cleanup_index");
-    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap()["data"]["hidden"], json!(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap()["data"]["hidden"],
+        json!(1)
+    );
 
     // 清理经队列异步应用：等索引与元数据都收敛后再重开
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -526,9 +572,19 @@ async fn cleanup_survives_restart() {
     // 同库重开：MetadataStore 从持久层注水，残留不应回索引/元数据
     let base = app.leak();
     let app2 = test_app_at(base);
-    assert!(!app2.state.index.all_location_paths().contains(&".stignore".to_string()), "重启后隐藏文件不应复活");
+    assert!(
+        !app2
+            .state
+            .index
+            .all_location_paths()
+            .contains(&".stignore".to_string()),
+        "重启后隐藏文件不应复活"
+    );
     assert_eq!(app2.state.index.count(), 0);
-    assert!(app2.state.store.find_hash_by_path(".stignore").is_none(), "元数据不应再含该位置");
+    assert!(
+        app2.state.store.find_hash_by_path(".stignore").is_none(),
+        "元数据不应再含该位置"
+    );
 }
 
 /// 写端点剧本：准备真实 item 后按依赖顺序调用全部写端点，校验 200 与响应 schema
@@ -539,41 +595,172 @@ async fn write_endpoints_match_schema() {
     let id = app.add_test_item("a.png", [200, 30, 30]).await;
 
     // 读：详情 / 原图 / 缩略图（回源原图）
-    expect_ok(&app, &spec, "GET", &format!("/api/v1/item/detail?id={id}"), None).await;
-    let (status, bytes) = call(&app.router, "GET", &format!("/api/v1/item/file?id={id}"), None).await;
+    expect_ok(
+        &app,
+        &spec,
+        "GET",
+        &format!("/api/v1/item/detail?id={id}"),
+        None,
+    )
+    .await;
+    let (status, bytes) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/file?id={id}"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "item/file");
     assert!(!bytes.is_empty(), "item/file 响应为空");
-    let (status, bytes) = call(&app.router, "GET", &format!("/api/v1/item/thumbnail?id={id}"), None).await;
+    let (status, bytes) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/thumbnail?id={id}"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "item/thumbnail");
     assert!(!bytes.is_empty(), "item/thumbnail 响应为空");
 
     // 元数据写
-    expect_ok(&app, &spec, "POST", "/api/v1/item/update", Some(json!({"id": id, "star": 5, "tags": ["契约标记"]}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/item/batch_update", Some(json!({"ids": [id], "add_categories": ["契约分类"]}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/item/refresh_thumbnail", Some(json!({"id": id}))).await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/item/update",
+        Some(json!({"id": id, "star": 5, "tags": ["契约标记"]})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/item/batch_update",
+        Some(json!({"ids": [id], "add_categories": ["契约分类"]})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/item/refresh_thumbnail",
+        Some(json!({"id": id})),
+    )
+    .await;
 
     // 内容替换：同内容幂等（哈希不变，直接返回当前投影）
     let same_bytes = std::fs::read(app.library_root().join("a.png")).unwrap();
     let same_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &same_bytes);
-    expect_ok(&app, &spec, "POST", "/api/v1/item/replace", Some(json!({"id": id, "img_base64": same_b64}))).await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/item/replace",
+        Some(json!({"id": id, "img_base64": same_b64})),
+    )
+    .await;
 
     // 分类 / 标签生命周期
-    expect_ok(&app, &spec, "POST", "/api/v1/category/create", Some(json!({"name": "剧本分类"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/category/update", Some(json!({"name": "剧本分类", "new_name": "剧本分类2"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/category/delete", Some(json!({"name": "剧本分类2"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/tag/create", Some(json!({"name": "剧本标签"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/tag/update", Some(json!({"name": "剧本标签", "new_name": "剧本标签2"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/tag/delete", Some(json!({"name": "剧本标签2"}))).await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/category/create",
+        Some(json!({"name": "剧本分类"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/category/update",
+        Some(json!({"name": "剧本分类", "new_name": "剧本分类2"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/category/delete",
+        Some(json!({"name": "剧本分类2"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/tag/create",
+        Some(json!({"name": "剧本标签"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/tag/update",
+        Some(json!({"name": "剧本标签", "new_name": "剧本标签2"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/tag/delete",
+        Some(json!({"name": "剧本标签2"})),
+    )
+    .await;
 
     // 文件夹生命周期（delete 入回收站后 restore 放回）
-    expect_ok(&app, &spec, "POST", "/api/v1/folder/create", Some(json!({"name": "剧本目录"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/folder/update", Some(json!({"path": "剧本目录", "name": "剧本目录2"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/folder/delete", Some(json!({"path": "剧本目录2"}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/folder/restore", Some(json!({"path": "剧本目录2"}))).await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/folder/create",
+        Some(json!({"name": "剧本目录"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/folder/update",
+        Some(json!({"path": "剧本目录", "name": "剧本目录2"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/folder/delete",
+        Some(json!({"path": "剧本目录2"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/folder/restore",
+        Some(json!({"path": "剧本目录2"})),
+    )
+    .await;
 
     // 回收站往返
-    expect_ok(&app, &spec, "POST", "/api/v1/item/delete", Some(json!({"id": id}))).await;
-    expect_ok(&app, &spec, "POST", "/api/v1/item/restore", Some(json!({"id": id}))).await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/item/delete",
+        Some(json!({"id": id})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/item/restore",
+        Some(json!({"id": id})),
+    )
+    .await;
 
     // 入库两通道：base64 导入新内容 + multipart 上传
     let png_b = {
@@ -585,7 +772,14 @@ async fn write_endpoints_match_schema() {
         buf.into_inner()
     };
     let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png_b);
-    expect_ok(&app, &spec, "POST", "/api/v1/item/add", Some(json!({"img_base64": b64, "name": "b"}))).await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/item/add",
+        Some(json!({"img_base64": b64, "name": "b"})),
+    )
+    .await;
 
     let boundary = "contract-boundary";
     let mut multipart = Vec::new();
@@ -608,8 +802,15 @@ async fn write_endpoints_match_schema() {
     let body_json: Value = serde_json::from_slice(&bytes).unwrap();
     let wrapper = response_schema(&spec, "POST", "/api/v1/item/upload").unwrap();
     let validator = jsonschema::validator_for(&wrapper).unwrap();
-    let errors: Vec<String> = validator.iter_errors(&body_json).map(|e| e.to_string()).collect();
-    assert!(errors.is_empty(), "item/upload 响应不符合契约:\n{}", errors.join("\n"));
+    let errors: Vec<String> = validator
+        .iter_errors(&body_json)
+        .map(|e| e.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "item/upload 响应不符合契约:\n{}",
+        errors.join("\n")
+    );
 }
 
 /// 路由存在：ROUTE_ONLY 端点发请求，断言非路由缺失。
@@ -619,7 +820,14 @@ async fn route_only_endpoints_exist() {
     let app = test_app("route");
     for (method, path) in ROUTE_ONLY {
         let body = matches!(*method, "POST" | "PUT" | "DELETE").then_some("{}");
-        let (status, bytes) = call(&app.router, method, path, body.map(str::as_bytes).map(|b| ("application/json", b.to_vec()))).await;
+        let (status, bytes) = call(
+            &app.router,
+            method,
+            path,
+            body.map(str::as_bytes)
+                .map(|b| ("application/json", b.to_vec())),
+        )
+        .await;
         if status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED {
             let is_error_envelope = serde_json::from_slice::<Value>(&bytes)
                 .map(|v| v["status"] == "error")
@@ -659,8 +867,7 @@ async fn sse_events_match_schema() {
     .into_iter()
     .collect();
     assert_eq!(
-        declared,
-        implemented,
+        declared, implemented,
         "SseEvents schema 与 ItemEvents 常量不一致（增删事件请同步两侧）"
     );
 
@@ -686,7 +893,10 @@ async fn sse_events_match_schema() {
         "allOf": [spec["components"]["schemas"]["SseEvents"]["properties"]["item.added"].clone()],
     });
     let validator = jsonschema::validator_for(&wrapper).unwrap();
-    let errors: Vec<String> = validator.iter_errors(&event.payload).map(|e| e.to_string()).collect();
+    let errors: Vec<String> = validator
+        .iter_errors(&event.payload)
+        .map(|e| e.to_string())
+        .collect();
     assert!(
         errors.is_empty(),
         "item.added 载荷不符合契约:\n{}\n载荷: {}",
@@ -713,7 +923,13 @@ async fn global_filter_exclusion() {
     assert_eq!(status, StatusCode::OK, "item/update 挂分类标签");
 
     // 端点读写：标记后可从 list 读回；取消后消失
-    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "folder", "name": "积压", "hidden": true}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "PUT",
+        "/api/v1/global_filter",
+        Some(json!({"kind": "folder", "name": "积压", "hidden": true})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "PUT global_filter folder");
     let (_, bytes) = call_json(&app.router, "GET", "/api/v1/global_filter/list", None).await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
@@ -744,16 +960,34 @@ async fn global_filter_exclusion() {
     assert_eq!(total, 1, "文件夹自身视图不过滤自身");
 
     // 取消隐藏
-    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "folder", "name": "积压", "hidden": false}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "PUT",
+        "/api/v1/global_filter",
+        Some(json!({"kind": "folder", "name": "积压", "hidden": false})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "PUT global_filter 取消隐藏");
     let (_, bytes) = call_json(&app.router, "GET", "/api/v1/global_filter/list", None).await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["folders"], json!([]), "取消后列表为空");
 
     // 非法参数：空路径 / 非法维度
-    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "folder", "name": "", "hidden": true}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "PUT",
+        "/api/v1/global_filter",
+        Some(json!({"kind": "folder", "name": "", "hidden": true})),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "空文件夹路径应 400");
-    let (status, _) = call_json(&app.router, "PUT", "/api/v1/global_filter", Some(json!({"kind": "other", "name": "x", "hidden": true}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "PUT",
+        "/api/v1/global_filter",
+        Some(json!({"kind": "other", "name": "x", "hidden": true})),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法维度应 400");
 }
 
@@ -774,15 +1008,41 @@ async fn folder_tree_cache_stays_fresh() {
 
     assert!(child_names(&app).await.is_empty(), "空库无子目录");
     // 建目录 → 立即可见（首个 folder/list 填充缓存，create 端点内失效）
-    let (status, _) = call_json(&app.router, "POST", "/api/v1/folder/create", Some(json!({"name": "甲"}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/folder/create",
+        Some(json!({"name": "甲"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(child_names(&app).await, vec!["甲".to_string()], "创建后立即可见");
+    assert_eq!(
+        child_names(&app).await,
+        vec!["甲".to_string()],
+        "创建后立即可见"
+    );
     // 重命名 → 跟随
-    let (status, _) = call_json(&app.router, "POST", "/api/v1/folder/update", Some(json!({"path": "甲", "name": "乙"}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/folder/update",
+        Some(json!({"path": "甲", "name": "乙"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(child_names(&app).await, vec!["乙".to_string()], "重命名后跟随");
+    assert_eq!(
+        child_names(&app).await,
+        vec!["乙".to_string()],
+        "重命名后跟随"
+    );
     // 删除 → 消失
-    let (status, _) = call_json(&app.router, "POST", "/api/v1/folder/delete", Some(json!({"path": "乙"}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/folder/delete",
+        Some(json!({"path": "乙"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(child_names(&app).await.is_empty(), "删除后不再出现");
 }
@@ -797,12 +1057,27 @@ async fn folder_delete_missing_dir_is_idempotent() {
     // 先拉一次文件夹树（缓存填充，含「幽灵」），再外部删除整个目录（模拟资源管理器操作）
     let (_, bytes) = call_json(&app.router, "GET", "/api/v1/folder/list", None).await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(body["data"]["children"][0]["name"], json!("幽灵"), "缓存应含新目录");
+    assert_eq!(
+        body["data"]["children"][0]["name"],
+        json!("幽灵"),
+        "缓存应含新目录"
+    );
     std::fs::remove_dir_all(app.library_root().join("幽灵")).unwrap();
 
     // 删除不存在的目录：成功而非 FOLDER_NOT_FOUND
-    let (status, bytes) = call_json(&app.router, "POST", "/api/v1/folder/delete", Some(json!({"path": "幽灵"}))).await;
-    assert_eq!(status, StatusCode::OK, "幂等删除应成功: {}", String::from_utf8_lossy(&bytes));
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/folder/delete",
+        Some(json!({"path": "幽灵"})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "幂等删除应成功: {}",
+        String::from_utf8_lossy(&bytes)
+    );
 
     // 索引位置经 Delete job 按前缀清除（notify_deleted 为火忘任务，轮询索引收敛）
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -832,12 +1107,29 @@ async fn storage_mode_migration_roundtrip() {
     assert_eq!(info_mode(&app).await, "database");
 
     let id = app.add_test_item("a.png", [1, 1, 1]).await;
-    let (status, _) = call_json(&app.router, "POST", "/api/v1/item/update", Some(json!({"id": id, "tags": ["迁移标记"]}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/update",
+        Some(json!({"id": id, "tags": ["迁移标记"]})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // database → toml：TOML 落盘且含标签
-    let (status, bytes) = call_json(&app.router, "POST", "/api/v1/library/storage_mode", Some(json!({"mode": "toml"}))).await;
-    assert_eq!(status, StatusCode::OK, "迁移到 toml: {}", String::from_utf8_lossy(&bytes));
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/library/storage_mode",
+        Some(json!({"mode": "toml"})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "迁移到 toml: {}",
+        String::from_utf8_lossy(&bytes)
+    );
     let toml_file = app.library_root().join(format!(".hawk/metadata/{id}.toml"));
     let text = std::fs::read_to_string(&toml_file).expect("迁移后 TOML 应存在");
     assert!(text.contains("迁移标记"));
@@ -846,12 +1138,24 @@ async fn storage_mode_migration_roundtrip() {
     let base = app.leak();
     let app2 = test_app_at(base.clone());
     assert_eq!(info_mode(&app2).await, "toml");
-    let (_, bytes) = call_json(&app2.router, "GET", &format!("/api/v1/item/detail?id={id}"), None).await;
+    let (_, bytes) = call_json(
+        &app2.router,
+        "GET",
+        &format!("/api/v1/item/detail?id={id}"),
+        None,
+    )
+    .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["tags"], json!(["迁移标记"]));
 
     // toml → database：metadata.db 建立、TOML 清除
-    let (status, _) = call_json(&app2.router, "POST", "/api/v1/library/storage_mode", Some(json!({"mode": "database"}))).await;
+    let (status, _) = call_json(
+        &app2.router,
+        "POST",
+        "/api/v1/library/storage_mode",
+        Some(json!({"mode": "database"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(!toml_file.exists(), "切回数据库后旧 TOML 应删除");
     assert!(app2.library_root().join(".hawk/metadata.db").exists());
@@ -860,7 +1164,13 @@ async fn storage_mode_migration_roundtrip() {
     let base = app2.leak();
     let app3 = test_app_at(base.clone());
     assert_eq!(info_mode(&app3).await, "database");
-    let (_, bytes) = call_json(&app3.router, "GET", &format!("/api/v1/item/detail?id={id}"), None).await;
+    let (_, bytes) = call_json(
+        &app3.router,
+        "GET",
+        &format!("/api/v1/item/detail?id={id}"),
+        None,
+    )
+    .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["tags"], json!(["迁移标记"]));
 
@@ -874,19 +1184,49 @@ async fn aggregate_and_batch_remove() {
     let id_a = app.add_test_item("a.png", [11, 11, 11]).await;
     let id_b = app.add_test_item("b.png", [12, 12, 12]).await;
     // a: 共有+独有；b: 共有+另一独有 + 分类
-    call_json(&app.router, "POST", "/api/v1/item/update", Some(json!({"id": id_a, "tags": ["共有", "仅A"], "categories": ["共有分类"]}))).await;
-    call_json(&app.router, "POST", "/api/v1/item/update", Some(json!({"id": id_b, "tags": ["共有", "仅B"], "categories": ["共有分类", "仅B分类"]}))).await;
+    call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/update",
+        Some(json!({"id": id_a, "tags": ["共有", "仅A"], "categories": ["共有分类"]})),
+    )
+    .await;
+    call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/update",
+        Some(json!({"id": id_b, "tags": ["共有", "仅B"], "categories": ["共有分类", "仅B分类"]})),
+    )
+    .await;
 
     // 交集：tags=[共有]，categories=[共有分类]
-    let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": [id_a, id_b]}))).await;
+    let (_, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/aggregate",
+        Some(json!({"ids": [id_a, id_b]})),
+    )
+    .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["common_tags"], json!(["共有"]));
     assert_eq!(body["data"]["common_categories"], json!(["共有分类"]));
 
     // 空 ids 报错；不存在的 id 静默跳过
-    let (status, _) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": []}))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/aggregate",
+        Some(json!({"ids": []})),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": ["ghost"]}))).await;
+    let (_, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/aggregate",
+        Some(json!({"ids": ["ghost"]})),
+    )
+    .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["common_tags"], json!([]));
 
@@ -898,14 +1238,31 @@ async fn aggregate_and_batch_remove() {
         Some(json!({"ids": [id_a, id_b], "remove_tags": ["共有"], "remove_categories": ["共有分类"]})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
-    let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/aggregate", Some(json!({"ids": [id_a, id_b]}))).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let (_, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/aggregate",
+        Some(json!({"ids": [id_a, id_b]})),
+    )
+    .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["common_tags"], json!([]), "共有标签应已摘除");
     assert_eq!(body["data"]["common_categories"], json!([]));
 
     // 各自的独有标签不受影响
-    let (_, bytes) = call_json(&app.router, "GET", &format!("/api/v1/item/detail?id={id_a}"), None).await;
+    let (_, bytes) = call_json(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/detail?id={id_a}"),
+        None,
+    )
+    .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["tags"], json!(["仅A"]));
 }

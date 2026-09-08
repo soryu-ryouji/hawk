@@ -47,9 +47,7 @@ function resolveServerCommand(): { command: string; args: string[] } {
     // 多个产物并存时按 mtime 取最新（与 scripts/gen-types.mjs 同策略）——固定优先级会
     // 在交叉产物过期时静默用旧 daemon，与 gen-types 选中的二进制版本不一致
     const candidates = [
-      ...(RUST_TARGET[`${process.platform}-${process.arch}`]
-        ? [path.join(targetDir, RUST_TARGET[`${process.platform}-${process.arch}`], 'release')]
-        : []),
+      ...(RUST_TARGET[`${process.platform}-${process.arch}`] ? [path.join(targetDir, RUST_TARGET[`${process.platform}-${process.arch}`], 'release')] : []),
       path.join(targetDir, 'release'),
       path.join(targetDir, 'debug'),
     ];
@@ -108,24 +106,23 @@ function startServer(libPath: string, address: string, token: string): ServerHan
   const cacheParent = readConfig().cacheParent;
   const spawnArgs = [
     ...args,
-    '--library', libPath,
-    '--port', String(new URL(address).port),
-    '--web-dist', webDistDir(),
+    '--library',
+    libPath,
+    '--port',
+    String(new URL(address).port),
+    '--web-dist',
+    webDistDir(),
     ...(cacheParent ? ['--cache-parent', cacheParent] : []),
   ];
   // 闭包级标志：有意停止（换库/应用设置重启）时抑制 exit 广播——旧子进程终止可能晚于
   // 新 server 的拉起，全局标志会被新一轮复位，造成误报异常退出
   let intentionalExit = false;
-  const child = spawn(
-    command,
-    spawnArgs,
-    {
-      env: { ...process.env, HAWK_TOKEN: token },
-      stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错
-      // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
-      windowsHide: true,
-    },
-  );
+  const child = spawn(command, spawnArgs, {
+    env: { ...process.env, HAWK_TOKEN: token },
+    stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错
+    // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
+    windowsHide: true,
+  });
 
   let stderrTail = '';
   let poll: ReturnType<typeof setInterval> | undefined;

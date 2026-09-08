@@ -40,7 +40,9 @@ impl From<&ViewSort> for ViewSortDto {
     tags = ["view"],
     responses((status = 200, description = "OK", body = Envelope<HashMap<String, ViewSortDto>>))
 )]
-async fn preferences(State(state): State<SharedState>) -> Json<Envelope<HashMap<String, ViewSortDto>>> {
+async fn preferences(
+    State(state): State<SharedState>,
+) -> Json<Envelope<HashMap<String, ViewSortDto>>> {
     let snapshot = state.prefs.snapshot();
     let dto: HashMap<String, ViewSortDto> = snapshot
         .iter()
@@ -71,8 +73,9 @@ async fn preference_put(
 ) -> Result<Json<SuccessOnly>, ApiError> {
     let scope = try_parse_scope(&req.scope)
         .ok_or_else(|| ApiError::invalid_param(format!("非法作用域: {}", req.scope)))?;
-    let sort = try_normalize_sort(&req.order_by, &req.order)
-        .ok_or_else(|| ApiError::invalid_param(format!("非法排序值: {}/{}", req.order_by, req.order)))?;
+    let sort = try_normalize_sort(&req.order_by, &req.order).ok_or_else(|| {
+        ApiError::invalid_param(format!("非法排序值: {}/{}", req.order_by, req.order))
+    })?;
     state.prefs.set(&scope, sort);
     Ok(success())
 }

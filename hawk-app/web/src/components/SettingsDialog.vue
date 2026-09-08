@@ -99,44 +99,12 @@ async function save() {
         <div class="dialog-main">
           <!-- 左侧导航：桌面（外观/局域网/更新）与局域网 web 端（外观/连接）；窄屏折叠为顶部横向页签 -->
           <nav class="nav">
-            <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">
-              外观
-            </button>
-            <button class="nav-item" :class="{ active: section === 'hiding' }" @click="section = 'hiding'">
-              隐藏项
-            </button>
-            <button
-              v-if="hasShell"
-              class="nav-item"
-              :class="{ active: section === 'lan' }"
-              @click="section = 'lan'"
-            >
-              局域网
-            </button>
-            <button
-              v-if="hasShell"
-              class="nav-item"
-              :class="{ active: section === 'storage' }"
-              @click="section = 'storage'"
-            >
-              存储
-            </button>
-            <button
-              v-if="hasShell"
-              class="nav-item"
-              :class="{ active: section === 'update' }"
-              @click="section = 'update'"
-            >
-              更新
-            </button>
-            <button
-              v-else
-              class="nav-item"
-              :class="{ active: section === 'connection' }"
-              @click="section = 'connection'"
-            >
-              连接
-            </button>
+            <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">外观</button>
+            <button class="nav-item" :class="{ active: section === 'hiding' }" @click="section = 'hiding'">隐藏项</button>
+            <button v-if="hasShell" class="nav-item" :class="{ active: section === 'lan' }" @click="section = 'lan'">局域网</button>
+            <button v-if="hasShell" class="nav-item" :class="{ active: section === 'storage' }" @click="section = 'storage'">存储</button>
+            <button v-if="hasShell" class="nav-item" :class="{ active: section === 'update' }" @click="section = 'update'">更新</button>
+            <button v-else class="nav-item" :class="{ active: section === 'connection' }" @click="section = 'connection'">连接</button>
           </nav>
 
           <!-- 分区保活挂载（v-show）：LAN 字段编辑与更新下载进度切分区不丢；web 端不挂载 LAN/更新 -->
@@ -226,11 +194,10 @@ async function save() {
 }
 
 @media (hover: hover) {
-
-.nav-item:hover {
-  background: var(--bg-3);
-  color: var(--fg-0);
-}
+  .nav-item:hover {
+    background: var(--bg-3);
+    color: var(--fg-0);
+  }
 }
 
 .nav-item.active {

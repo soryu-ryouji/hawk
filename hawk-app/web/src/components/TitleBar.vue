@@ -30,7 +30,7 @@ function openPicker() {
 }
 
 function onPicked(e: Event) {
-  const files = [...(e.target as HTMLInputElement).files ?? []];
+  const files = [...((e.target as HTMLInputElement).files ?? [])];
   (e.target as HTMLInputElement).value = '';
   if (files.length) {
     void importer.importFiles(files);
@@ -98,9 +98,7 @@ const SORT_OPTIONS: { label: string; orderBy: QueryState['orderBy']; order: 'asc
   { label: '评分 ↑', orderBy: 'star', order: 'asc' },
 ];
 
-const currentSortLabel = computed(
-  () => SORT_OPTIONS.find((o) => o.orderBy === store.query.orderBy && o.order === store.query.order)?.label ?? '',
-);
+const currentSortLabel = computed(() => SORT_OPTIONS.find((o) => o.orderBy === store.query.orderBy && o.order === store.query.order)?.label ?? '');
 
 /** 排序按钮：弹出菜单设置字段与方向（锚点模式：从按钮下方展开，不遮挡按钮）；有自有设置时附「跟随父级/恢复默认」 */
 function openSortMenu(e: MouseEvent) {
@@ -169,11 +167,7 @@ function onDblClick(e: MouseEvent) {
           <button class="crumb" @click="store.setView({ kind: 'all' })">全部素材</button>
           <template v-for="(seg, i) in breadcrumb.segs" :key="seg.path">
             <Icon name="chevronRight" :size="12" class="sep" />
-            <button
-              class="crumb"
-              :class="{ current: i === breadcrumb.segs.length - 1 }"
-              @click="store.setView({ kind: breadcrumb.kind, path: seg.path })"
-            >
+            <button class="crumb" :class="{ current: i === breadcrumb.segs.length - 1 }" @click="store.setView({ kind: breadcrumb.kind, path: seg.path })">
               {{ seg.name }}
             </button>
           </template>
@@ -191,14 +185,7 @@ function onDblClick(e: MouseEvent) {
       <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="导入文件" @click="openPicker">
         <Icon name="upload" :size="14" />
       </button>
-      <input
-        v-if="!hasShell && !store.viewerMode"
-        ref="pickerInput"
-        type="file"
-        multiple
-        class="file-picker"
-        @change="onPicked"
-      />
+      <input v-if="!hasShell && !store.viewerMode" ref="pickerInput" type="file" multiple class="file-picker" @change="onPicked" />
 
       <!-- 刷新缓存：仅浏览器端显示——Electron 端走右键菜单「刷新缓存（整库）」，只读查看不可写 -->
       <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="刷新缓存（重新扫描素材库）" @click="store.refreshLibrary()">
@@ -345,11 +332,10 @@ function onDblClick(e: MouseEvent) {
 }
 
 @media (hover: hover) {
-
-.bar-btn:hover {
-  background: var(--bg-3);
-  color: var(--fg-0);
-}
+  .bar-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg-0);
+  }
 }
 
 .bar-btn:disabled {
@@ -390,11 +376,10 @@ function onDblClick(e: MouseEvent) {
 }
 
 @media (hover: hover) {
-
-.crumb:hover {
-  background: var(--bg-3);
-  color: var(--fg-0);
-}
+  .crumb:hover {
+    background: var(--bg-3);
+    color: var(--fg-0);
+  }
 }
 
 .crumb.current {
@@ -411,5 +396,4 @@ function onDblClick(e: MouseEvent) {
   font-size: 12px;
   white-space: nowrap;
 }
-
 </style>

@@ -60,9 +60,6 @@ pub(crate) struct IdQuery {
 
 pub(crate) use add::ItemAddResponse;
 
-
-
-
 fn find_location(
     state: &SharedState,
     id: &str,
@@ -85,7 +82,9 @@ pub(crate) fn decode_base64(input: &str) -> Result<Vec<u8>, ApiError> {
 }
 
 /// 分类名校验归一 + 去重（add/update/batch_update 共用）
-pub(crate) fn normalize_categories(raw: Option<&[String]>) -> Result<Option<Vec<String>>, ApiError> {
+pub(crate) fn normalize_categories(
+    raw: Option<&[String]>,
+) -> Result<Option<Vec<String>>, ApiError> {
     let Some(raw) = raw else { return Ok(None) };
     let mut out = Vec::new();
     for name in raw {

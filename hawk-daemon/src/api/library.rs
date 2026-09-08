@@ -91,10 +91,18 @@ async fn storage_mode_set(
     let target = match body.mode.as_str() {
         "database" => crate::core::metadata_store::StorageMode::Db,
         "toml" => crate::core::metadata_store::StorageMode::Toml,
-        other => return Err(ApiError::invalid_param(format!("非法存储方案: {other}（支持 database/toml）"))),
+        other => {
+            return Err(ApiError::invalid_param(format!(
+                "非法存储方案: {other}（支持 database/toml）"
+            )))
+        }
     };
     if state.store.mode() != target {
-        state.pipeline.submit_storage_migrate(target).await.map_err(ApiError::internal)?;
+        state
+            .pipeline
+            .submit_storage_migrate(target)
+            .await
+            .map_err(ApiError::internal)?;
     }
     Ok(success())
 }
@@ -179,7 +187,11 @@ async fn reconcile_scope_missing(state: &SharedState, scope: &RefreshScope) -> u
     // 范围内库内位置快照（folder 前缀含子目录，空串 = 全库；category/tag 按成员位置；library 含回收站）
     let rels: Vec<String> = match scope {
         RefreshScope::Folder(f) => {
-            let prefix = if f.is_empty() { String::new() } else { format!("{f}/") };
+            let prefix = if f.is_empty() {
+                String::new()
+            } else {
+                format!("{f}/")
+            };
             state.index.locations_under(&prefix)
         }
         RefreshScope::Category(_) | RefreshScope::Tag(_) => state
@@ -250,7 +262,10 @@ async fn refresh_cache(
             }
         }
     }
-    Ok(Json(Envelope::ok(RefreshCacheResponse { dispatched, removed })))
+    Ok(Json(Envelope::ok(RefreshCacheResponse {
+        dispatched,
+        removed,
+    })))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -307,7 +322,10 @@ async fn cleanup_index(State(state): State<SharedState>) -> Json<Envelope<Cleanu
     }
     // 源文件消失对账（与 reconcile_scope_missing 同款纪律）：
     // 仅 NotFound 移除，IO/权限错误保守保留，避免网络盘瞬断误删
-    let abs_list: Vec<String> = rest.iter().filter_map(|rel| state.paths.to_absolute(rel)).collect();
+    let abs_list: Vec<String> = rest
+        .iter()
+        .filter_map(|rel| state.paths.to_absolute(rel))
+        .collect();
     let missing_abs = tokio::task::spawn_blocking(move || {
         abs_list
             .into_iter()

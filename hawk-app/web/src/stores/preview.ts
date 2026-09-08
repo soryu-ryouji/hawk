@@ -111,8 +111,18 @@ export const usePreviewStore = defineStore('preview', () => {
   }
 
   return {
-    previewId, previewItem, previewIndex, previewNavId, openPreview, closePreview, navigatePreview,
-    hidePreviewClose, setHidePreviewClose,
-    editorTarget, openEditor, closeEditor, saveImageEdit,
+    previewId,
+    previewItem,
+    previewIndex,
+    previewNavId,
+    openPreview,
+    closePreview,
+    navigatePreview,
+    hidePreviewClose,
+    setHidePreviewClose,
+    editorTarget,
+    openEditor,
+    closeEditor,
+    saveImageEdit,
   };
 });

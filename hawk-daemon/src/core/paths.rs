@@ -99,9 +99,13 @@ impl LibraryPaths {
         let gitignore = join_path(&self.hawk_dir, ".gitignore");
         let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
         let lines: Vec<&str> = existing.lines().collect();
-        if !lines.iter().any(|l| *l == "trash/") {
+        if !lines.contains(&"trash/") {
             use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&gitignore) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&gitignore)
+            {
                 let _ = writeln!(f, "trash/");
             }
         }
@@ -135,7 +139,10 @@ impl LibraryPaths {
             return None;
         }
         let abs = full_path(&join_path(&self.root, &segments.join("/")));
-        if abs == self.root || abs.starts_with(&(self.root.clone() + "/")) || abs.starts_with(&(self.root.clone() + "\\")) {
+        if abs == self.root
+            || abs.starts_with(&(self.root.clone() + "/"))
+            || abs.starts_with(&(self.root.clone() + "\\"))
+        {
             Some(abs)
         } else {
             None
@@ -156,7 +163,9 @@ impl LibraryPaths {
         if rel.starts_with(TRASH_PREFIX) {
             return false;
         }
-        rel.split('/').filter(|s| !s.is_empty()).any(|s| s.starts_with('.'))
+        rel.split('/')
+            .filter(|s| !s.is_empty())
+            .any(|s| s.starts_with('.'))
     }
 
     pub fn is_in_trash(rel: &str) -> bool {
@@ -307,7 +316,10 @@ fn default_cache_parent() -> String {
     }
     #[cfg(target_os = "macos")]
     {
-        format!("{}/Library/Application Support", std::env::var("HOME").unwrap_or_default())
+        format!(
+            "{}/Library/Application Support",
+            std::env::var("HOME").unwrap_or_default()
+        )
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -375,7 +387,10 @@ mod tests {
         // 父目录覆盖：库子目录在其下拼接
         let paths = LibraryPaths::new("/data/library", Some("/fast/cache".to_string()));
         assert!(paths.cache_dir.starts_with("/fast/cache/library_"));
-        assert_eq!(paths.thumbnails_dir, format!("{}/thumbnails", paths.cache_dir));
+        assert_eq!(
+            paths.thumbnails_dir,
+            format!("{}/thumbnails", paths.cache_dir)
+        );
         assert_eq!(paths.index_db_file, format!("{}/index.db", paths.cache_dir));
         assert!(paths.cache_location_error().is_none());
 
@@ -425,7 +440,10 @@ mod tests {
 
     #[test]
     fn name_and_ext() {
-        assert_eq!(LibraryPaths::name_of("posters/sunset-photo.jpg"), "sunset-photo");
+        assert_eq!(
+            LibraryPaths::name_of("posters/sunset-photo.jpg"),
+            "sunset-photo"
+        );
         assert_eq!(LibraryPaths::ext_of("posters/sunset-photo.JPG"), "jpg");
         assert_eq!(LibraryPaths::ext_of("noext"), "");
         assert_eq!(LibraryPaths::name_of(".hidden"), ".hidden");

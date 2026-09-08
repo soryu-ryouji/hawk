@@ -24,7 +24,7 @@ body,
 }
 
 body {
-  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
   font-size: 13px;
   color: var(--fg-0);
   background: var(--bg-0);
@@ -72,10 +72,9 @@ button {
 }
 
 @media (hover: hover) {
-
-button:hover {
-  background: var(--bg-3);
-}
+  button:hover {
+    background: var(--bg-3);
+  }
 }
 
 button.danger {
@@ -108,9 +107,9 @@ body.dialog-open .inspector-head {
 
 /* 悬停变亮：提示当前落在滚动条上、可以拖动 */
 @media (hover: hover) {
-::-webkit-scrollbar-thumb:hover {
-  background: #4a4a4f;
-}
+  ::-webkit-scrollbar-thumb:hover {
+    background: #4a4a4f;
+  }
 }
 
 /* 布局骨架（Eagle 式）：左右栏通高不被顶栏隔断，顶栏只覆盖中间内容区。
@@ -124,9 +123,9 @@ body.dialog-open .inspector-head {
   grid-template-columns: 220px 1fr 280px;
   grid-template-rows: 40px auto 1fr;
   grid-template-areas:
-    "sidebar titlebar inspector"
-    "sidebar filterbar inspector"
-    "sidebar main inspector";
+    'sidebar titlebar inspector'
+    'sidebar filterbar inspector'
+    'sidebar main inspector';
 }
 
 /* 侧栏开关同时显隐左右两栏（Eagle 式）；列宽由内联 style 统一处理 */
@@ -210,9 +209,9 @@ body.col-resizing {
 .app.mobile {
   grid-template-columns: 1fr;
   grid-template-areas:
-    "titlebar"
-    "filterbar"
-    "main";
+    'titlebar'
+    'filterbar'
+    'main';
 }
 
 /* 侧栏变抽屉：默认滑出视口，drawer-open 时滑入 */
@@ -324,9 +323,18 @@ body.mobile .bar button {
 }
 
 @keyframes task-slide {
-  0% { width: 20%; margin-left: 0; }
-  50% { width: 40%; margin-left: 60%; }
-  100% { width: 20%; margin-left: 0; }
+  0% {
+    width: 20%;
+    margin-left: 0;
+  }
+  50% {
+    width: 40%;
+    margin-left: 60%;
+  }
+  100% {
+    width: 20%;
+    margin-left: 0;
+  }
 }
 
 .task-bar-text {

@@ -106,7 +106,9 @@ function applyStarToAll(value: number) {
       />
     </div>
 
-    <p class="multi-title">已选 <b>{{ store.selection.length }}</b> 个文件</p>
+    <p class="multi-title">
+      已选 <b>{{ store.selection.length }}</b> 个文件
+    </p>
 
     <template v-if="!store.viewerMode">
       <section>
@@ -124,7 +126,10 @@ function applyStarToAll(value: number) {
             class="tag-input"
             placeholder="标签名（应用到全部选中）"
             @keydown.enter.prevent="commitTag"
-            @keydown.esc.prevent="tagInput = ''; tagEditing = false"
+            @keydown.esc.prevent="
+              tagInput = '';
+              tagEditing = false;
+            "
             @blur="commitTag"
           />
           <button v-else class="add" title="添加标签（应用到全部选中）" @click="startTagEdit">＋</button>
@@ -292,9 +297,8 @@ function applyStarToAll(value: number) {
 }
 
 @media (hover: hover) {
-
-.folder-value:hover {
-  border-color: var(--accent);
-}
+  .folder-value:hover {
+    border-color: var(--accent);
+  }
 }
 </style>

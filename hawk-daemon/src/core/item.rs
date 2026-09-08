@@ -100,14 +100,20 @@ impl Item {
 
     /// 投影为 API 的 Item 对象（主位置口径：事件载荷/单条 detail 缺省用）。回收站视图的 paths 展示原库内路径（恢复目标）。
     pub fn to_dto(&self, trash_view: bool) -> ItemDto {
-        let main = self.main_location(trash_view).expect("to_dto: item must have a location in the view");
+        let main = self
+            .main_location(trash_view)
+            .expect("to_dto: item must have a location in the view");
         self.to_dto_at(main, trash_view)
     }
 
     /// 投影指定位置的 DTO：同内容多位置各自成卡（name/ext/size/mtime 取该位置），
     /// paths/folders 仍投影该视图侧的全部位置（检查器展示同内容的完整分布）。
     pub fn to_dto_at(&self, loc: &ItemLocation, trash_view: bool) -> ItemDto {
-        let locations: Vec<&ItemLocation> = self.locations.iter().filter(|l| l.in_trash() == trash_view).collect();
+        let locations: Vec<&ItemLocation> = self
+            .locations
+            .iter()
+            .filter(|l| l.in_trash() == trash_view)
+            .collect();
         let paths: Vec<String> = locations
             .iter()
             .map(|l| {
@@ -164,7 +170,7 @@ pub struct PaletteColorDto {
 }
 
 /// API 的 Item 对象（snake_case）
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Serialize, utoipa::ToSchema, Default)]
 pub struct ItemDto {
     pub id: String,
     /// 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径）
@@ -229,28 +235,3 @@ pub struct ItemQuery {
     pub offset: i32,
     pub limit: i32,
 }
-
-impl Default for ItemDto {
-    fn default() -> Self {
-        ItemDto {
-            id: String::new(),
-            path: String::new(),
-            name: String::new(),
-            ext: String::new(),
-            width: 0,
-            height: 0,
-            size: 0,
-            url: None,
-            tags: Vec::new(),
-            categories: Vec::new(),
-            paths: Vec::new(),
-            folders: Vec::new(),
-            star: 0,
-            annotation: None,
-            modification_time: 0,
-            palette: Vec::new(),
-        }
-    }
-}
-
-

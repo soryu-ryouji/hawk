@@ -153,7 +153,10 @@ pub(crate) async fn item_skeleton(
     let query = build_query(req)?;
     let (items, total_size) = state.index.query_skeleton(&query);
     dispatch_dim_heal(&state, items.iter().map(|i| (i.id.as_str(), i.width)));
-    Ok(Json(Envelope::ok(ItemSkeletonResponse { items, total_size })))
+    Ok(Json(Envelope::ok(ItemSkeletonResponse {
+        items,
+        total_size,
+    })))
 }
 
 /// 读取端宽高自愈的判定：0 宽高且未被负缓存标记为「已探测的非可解码图像」。

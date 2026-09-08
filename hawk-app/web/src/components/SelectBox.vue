@@ -18,9 +18,7 @@ const triggerRef = ref<HTMLElement | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 const pos = ref({ x: 0, y: 0, width: 0 });
 
-const currentLabel = computed(
-  () => props.options.find((o) => o.value === props.modelValue)?.label ?? '',
-);
+const currentLabel = computed(() => props.options.find((o) => o.value === props.modelValue)?.label ?? '');
 
 async function openList(): Promise<void> {
   if (props.disabled || open.value) {
@@ -33,9 +31,7 @@ async function openList(): Promise<void> {
   const list = listRef.value!;
   const gap = 4;
   // 下方放不下且上方空间足够时向上翻转
-  const up =
-    rect.bottom + gap + list.offsetHeight > window.innerHeight &&
-    rect.top - gap - list.offsetHeight > 0;
+  const up = rect.bottom + gap + list.offsetHeight > window.innerHeight && rect.top - gap - list.offsetHeight > 0;
   pos.value = {
     x: rect.left,
     y: up ? rect.top - gap - list.offsetHeight : rect.bottom + gap,
@@ -97,9 +93,7 @@ function onArrow(dir: 1 | -1): void {
   }
   highlighted.value = (highlighted.value + dir + n) % n;
   void nextTick(() => {
-    listRef.value
-      ?.querySelectorAll('.option')
-      [highlighted.value]?.scrollIntoView({ block: 'nearest' });
+    listRef.value?.querySelectorAll('.option')[highlighted.value]?.scrollIntoView({ block: 'nearest' });
   });
 }
 
@@ -136,9 +130,7 @@ onBeforeUnmount(() => {
     @keydown.space.prevent="onConfirm"
     @keydown.esc.prevent.stop="close"
   >
-    <span class="value" :class="{ placeholder: !currentLabel }">{{
-      currentLabel || placeholder || '请选择'
-    }}</span>
+    <span class="value" :class="{ placeholder: !currentLabel }">{{ currentLabel || placeholder || '请选择' }}</span>
     <svg
       class="arrow"
       width="12"
@@ -154,12 +146,7 @@ onBeforeUnmount(() => {
     </svg>
   </button>
   <Teleport to="body">
-    <div
-      v-if="open"
-      ref="listRef"
-      class="list"
-      :style="{ left: pos.x + 'px', top: pos.y + 'px', width: pos.width + 'px' }"
-    >
+    <div v-if="open" ref="listRef" class="list" :style="{ left: pos.x + 'px', top: pos.y + 'px', width: pos.width + 'px' }">
       <button
         v-for="(opt, i) in options"
         :key="opt.value"
@@ -194,9 +181,9 @@ onBeforeUnmount(() => {
 
 /* 输入类控件 hover 不变色（覆盖全局 button:hover），聚焦/展开才亮 accent 边框 */
 @media (hover: hover) {
-.trigger:hover {
-  background: var(--bg-2);
-}
+  .trigger:hover {
+    background: var(--bg-2);
+  }
 }
 
 .trigger:focus,

@@ -106,13 +106,19 @@ impl ViewPreferences {
                 return;
             }
         };
-        let Some(table) = table.as_table() else { return };
+        let Some(table) = table.as_table() else {
+            return;
+        };
         for (key, value) in table {
-            let Some(section) = value.as_table() else { continue };
+            let Some(section) = value.as_table() else {
+                continue;
+            };
             let order_by = section.get("order_by").and_then(|v| v.as_str());
             let order = section.get("order").and_then(|v| v.as_str());
             match (order_by, order) {
-                (Some(ob), Some(o)) => match try_parse_scope(key).and_then(|scope| try_normalize_sort(ob, o).map(|s| (scope, s))) {
+                (Some(ob), Some(o)) => match try_parse_scope(key)
+                    .and_then(|scope| try_normalize_sort(ob, o).map(|s| (scope, s)))
+                {
                     Some((scope, sort)) => {
                         entries.insert(scope, sort);
                     }
@@ -134,7 +140,8 @@ pub fn try_parse_scope(raw: &str) -> Option<String> {
         return Some(format!("folder:{path}"));
     }
     if let Some(name) = raw.strip_prefix("category:") {
-        return crate::core::taxonomy::normalize_category_name(Some(name)).map(|n| format!("category:{n}"));
+        return crate::core::taxonomy::normalize_category_name(Some(name))
+            .map(|n| format!("category:{n}"));
     }
     if let Some(name) = raw.strip_prefix("tag:") {
         let name = name.trim();
@@ -153,7 +160,10 @@ pub fn try_normalize_sort(order_by: &str, order: &str) -> Option<ViewSort> {
     if !ORDER_BY_WHITELIST.contains(&ob.as_str()) || !ORDER_WHITELIST.contains(&o.as_str()) {
         return None;
     }
-    Some(ViewSort { order_by: ob, order: o })
+    Some(ViewSort {
+        order_by: ob,
+        order: o,
+    })
 }
 
 fn save_locked(file: &str, entries: &HashMap<String, ViewSort>) {
@@ -179,9 +189,18 @@ mod tests {
     #[test]
     fn scope_parsing() {
         assert_eq!(try_parse_scope("folder:"), Some("folder:".to_string()));
-        assert_eq!(try_parse_scope("folder:posters/2024"), Some("folder:posters/2024".to_string()));
-        assert_eq!(try_parse_scope("category: 海报 "), Some("category:海报".to_string()));
-        assert_eq!(try_parse_scope("tag:nature"), Some("tag:nature".to_string()));
+        assert_eq!(
+            try_parse_scope("folder:posters/2024"),
+            Some("folder:posters/2024".to_string())
+        );
+        assert_eq!(
+            try_parse_scope("category: 海报 "),
+            Some("category:海报".to_string())
+        );
+        assert_eq!(
+            try_parse_scope("tag:nature"),
+            Some("tag:nature".to_string())
+        );
         assert_eq!(try_parse_scope("folder:.hawk/x"), None);
         assert_eq!(try_parse_scope("folder:a/../b"), None);
         assert_eq!(try_parse_scope("category:a/b"), None);

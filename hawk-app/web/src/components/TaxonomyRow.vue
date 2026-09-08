@@ -43,7 +43,11 @@ function onContextMenu(e: MouseEvent) {
         title: '隐藏后其下素材不再出现在全部素材/根目录/未分类/未标签列表，进入该维度视图仍可见',
         action: () => void taxonomy.setHidden(props.kind, props.name, !hidden.value),
       },
-      { label: '刷新缓存', title: `修复该${kindLabel}下素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目`, action: () => void store.refreshCache(props.kind, props.name) },
+      {
+        label: '刷新缓存',
+        title: `修复该${kindLabel}下素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目`,
+        action: () => void store.refreshCache(props.kind, props.name),
+      },
       {
         label: `删除${kindLabel}`,
         danger: true,
@@ -80,10 +84,9 @@ function onContextMenu(e: MouseEvent) {
 }
 
 @media (hover: hover) {
-
-.tax-row:hover {
-  background: var(--bg-2);
-}
+  .tax-row:hover {
+    background: var(--bg-2);
+  }
 }
 
 .tax-row.active {

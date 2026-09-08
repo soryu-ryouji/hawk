@@ -26,18 +26,13 @@ async fn events(State(state): State<SharedState>) -> Response {
     let mut rx = state.bus.subscribe();
     // lagged（消费跟不上）/总线关闭 → 结束流（断开订阅，客户端重连全量对齐）
     let stream = async_stream::stream! {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    let frame = axum::body::Bytes::from(format!(
-                        "event: {}\ndata: {}\n\n",
-                        event.kind,
-                        serde_json::to_string(&event.payload).unwrap()
-                    ));
-                    yield Ok::<axum::body::Bytes, std::convert::Infallible>(frame);
-                }
-                Err(_) => break,
-            }
+        while let Ok(event) = rx.recv().await {
+            let frame = axum::body::Bytes::from(format!(
+                "event: {}\ndata: {}\n\n",
+                event.kind,
+                serde_json::to_string(&event.payload).unwrap()
+            ));
+            yield Ok::<axum::body::Bytes, std::convert::Infallible>(frame);
         }
     };
     Response::builder()

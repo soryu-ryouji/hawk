@@ -33,7 +33,9 @@ pub(crate) async fn item_update(
     let loc = find_location(&state, &req.id, req.path.as_deref(), None)?;
 
     if loc.in_trash && (req.name.is_some() || req.folder_path.is_some()) {
-        return Err(ApiError::invalid_param("回收站中的文件不支持改名/移动,请先恢复"));
+        return Err(ApiError::invalid_param(
+            "回收站中的文件不支持改名/移动,请先恢复",
+        ));
     }
 
     if let Some(name) = &req.name {
@@ -41,17 +43,30 @@ pub(crate) async fn item_update(
             return Err(ApiError::invalid_param(format!("非法文件名: {name}")));
         }
         let ext = LibraryPaths::ext_of(&loc.library_path);
-        let file_name = if ext.is_empty() { name.clone() } else { format!("{name}.{ext}") };
+        let file_name = if ext.is_empty() {
+            name.clone()
+        } else {
+            format!("{name}.{ext}")
+        };
         let dir = LibraryPaths::dir_of(&loc.path);
-        let target_rel = if dir.is_empty() { file_name.clone() } else { format!("{dir}/{file_name}") };
+        let target_rel = if dir.is_empty() {
+            file_name.clone()
+        } else {
+            format!("{dir}/{file_name}")
+        };
         if target_rel != loc.path {
             let source_abs = state.paths.to_absolute(&loc.path).unwrap();
             let target_abs = state.paths.to_absolute(&target_rel).unwrap();
             if std::path::Path::new(&target_abs).exists() {
                 return Err(ApiError::file_exists(&target_rel));
             }
-            std::fs::rename(&source_abs, &target_abs).map_err(|e| ApiError::internal(format!("重命名失败: {e}")))?;
-            state.pipeline.submit_move(source_abs, target_abs).await.map_err(ApiError::internal)?;
+            std::fs::rename(&source_abs, &target_abs)
+                .map_err(|e| ApiError::internal(format!("重命名失败: {e}")))?;
+            state
+                .pipeline
+                .submit_move(source_abs, target_abs)
+                .await
+                .map_err(ApiError::internal)?;
         }
     }
 
@@ -60,7 +75,9 @@ pub(crate) async fn item_update(
             state.paths.root.clone()
         } else {
             if !LibraryPaths::is_valid_library_path(Some(folder_path)) {
-                return Err(ApiError::invalid_param(format!("非法文件夹路径: {folder_path}")));
+                return Err(ApiError::invalid_param(format!(
+                    "非法文件夹路径: {folder_path}"
+                )));
             }
             let abs = state.paths.to_absolute(folder_path).unwrap();
             if !std::path::Path::new(&abs).is_dir() {
@@ -70,7 +87,12 @@ pub(crate) async fn item_update(
         };
         // name 分支可能已移动过文件:按移动后的最新位置再移动(改名+移动同请求时基于新文件名计算目标)
         let current = find_location(&state, &req.id, req.path.as_deref(), None)?;
-        let file_name = current.path.rsplit('/').next().unwrap_or(&current.path).to_string();
+        let file_name = current
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&current.path)
+            .to_string();
         let target_abs = format!("{folder_abs}/{file_name}");
         let source_abs = state.paths.to_absolute(&current.path).unwrap();
         if target_abs != source_abs {
@@ -82,8 +104,13 @@ pub(crate) async fn item_update(
                 };
                 return Err(ApiError::file_exists(rel));
             }
-            std::fs::rename(&source_abs, &target_abs).map_err(|e| ApiError::internal(format!("移动失败: {e}")))?;
-            state.pipeline.submit_move(source_abs, target_abs).await.map_err(ApiError::internal)?;
+            std::fs::rename(&source_abs, &target_abs)
+                .map_err(|e| ApiError::internal(format!("移动失败: {e}")))?;
+            state
+                .pipeline
+                .submit_move(source_abs, target_abs)
+                .await
+                .map_err(ApiError::internal)?;
         }
     }
 
@@ -93,7 +120,12 @@ pub(crate) async fn item_update(
         }
     }
 
-    if req.tags.is_some() || req.star.is_some() || req.categories.is_some() || req.annotation.is_some() || req.url.is_some() {
+    if req.tags.is_some()
+        || req.star.is_some()
+        || req.categories.is_some()
+        || req.annotation.is_some()
+        || req.url.is_some()
+    {
         let categories = normalize_categories(req.categories.as_deref())?;
         let tags = req.tags.clone();
         let star = req.star;
@@ -122,7 +154,10 @@ pub(crate) async fn item_update(
             .map_err(ApiError::internal)?;
     }
 
-    let dto = state.index.get_dto(&req.id).ok_or_else(|| ApiError::item_not_found(&req.id))?;
+    let dto = state
+        .index
+        .get_dto(&req.id)
+        .ok_or_else(|| ApiError::item_not_found(&req.id))?;
     Ok(Json(Envelope::ok(dto)))
 }
 
@@ -200,7 +235,9 @@ pub(crate) async fn item_batch_update(
             state.paths.root.clone()
         } else {
             if !LibraryPaths::is_valid_library_path(Some(folder_path)) {
-                return Err(ApiError::invalid_param(format!("非法文件夹路径: {folder_path}")));
+                return Err(ApiError::invalid_param(format!(
+                    "非法文件夹路径: {folder_path}"
+                )));
             }
             let abs = state.paths.to_absolute(folder_path).unwrap();
             if !std::path::Path::new(&abs).is_dir() {
@@ -209,7 +246,11 @@ pub(crate) async fn item_batch_update(
             abs
         };
         for (i, id) in ids.iter().enumerate() {
-            let path = req.paths.as_ref().and_then(|ps| ps.get(i)).and_then(|p| p.as_deref());
+            let path = req
+                .paths
+                .as_ref()
+                .and_then(|ps| ps.get(i))
+                .and_then(|p| p.as_deref());
             let Some(loc) = state.index.find_location(id, path, Some(false)) else {
                 continue;
             };
@@ -228,14 +269,23 @@ pub(crate) async fn item_batch_update(
                 move_failed.push(id.clone());
                 continue;
             }
-            state.pipeline.submit_move(source_abs, target_abs).await.map_err(ApiError::internal)?;
+            state
+                .pipeline
+                .submit_move(source_abs, target_abs)
+                .await
+                .map_err(ApiError::internal)?;
         }
     }
 
     // 元数据:标签/分类并集追加或移除、评分设置;一次提交,由流水线批量应用(单写者)
     let mut updated = 0;
     let mut missing: Vec<String> = move_failed;
-    if req.add_tags.is_some() || add_categories.is_some() || req.remove_tags.is_some() || req.remove_categories.is_some() || req.star.is_some() {
+    if req.add_tags.is_some()
+        || add_categories.is_some()
+        || req.remove_tags.is_some()
+        || req.remove_categories.is_some()
+        || req.star.is_some()
+    {
         let add_tags = req.add_tags.clone();
         let remove_tags = req.remove_tags.clone();
         let remove_categories = req.remove_categories.clone();

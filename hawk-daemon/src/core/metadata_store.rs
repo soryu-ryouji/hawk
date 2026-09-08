@@ -47,7 +47,10 @@ pub fn detect_storage_mode(paths: &LibraryPaths) -> StorageMode {
     }
     let db_exists = std::path::Path::new(&paths.metadata_db_file).is_file();
     let toml_exists = std::fs::read_dir(&paths.metadata_dir)
-        .map(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().ends_with(".toml")))
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| e.file_name().to_string_lossy().ends_with(".toml"))
+        })
         .unwrap_or(false);
     match (db_exists, toml_exists) {
         (true, true) => {
@@ -90,14 +93,21 @@ impl MetadataStore {
     }
 
     /// 显式指定模式（测试用）；None = 按 detect_storage_mode 探测
-    pub fn with_mode(paths: LibraryPaths, startup: &StartupState, mode: Option<StorageMode>) -> MetadataStore {
+    pub fn with_mode(
+        paths: LibraryPaths,
+        startup: &StartupState,
+        mode: Option<StorageMode>,
+    ) -> MetadataStore {
         let mode = mode.unwrap_or_else(|| detect_storage_mode(&paths));
         // 清理另一模式的残留（迁移/切换中断的收尾；此刻两个 db 均未打开，删除无占用问题）
         match mode {
             StorageMode::Db => {
                 // 系统缓存 index.db 在 Db 模式不使用：删除避免误读陈旧镜像
                 if std::fs::remove_file(&paths.index_db_file).is_ok() {
-                    tracing::info!("已删除缓存镜像（数据库模式不使用）: {}", paths.index_db_file);
+                    tracing::info!(
+                        "已删除缓存镜像（数据库模式不使用）: {}",
+                        paths.index_db_file
+                    );
                 }
                 // 迁移残留的 TOML（db 已是完整快照，残留只会干扰探测）
                 if let Ok(rd) = std::fs::read_dir(&paths.metadata_dir) {
@@ -195,12 +205,23 @@ impl MetadataStore {
 
     /// 全部元数据条目快照（批量迁移用）
     pub fn snapshot(&self) -> Vec<(String, ItemMetadata)> {
-        self.inner.lock().unwrap().by_hash.iter().map(|(h, m)| (h.clone(), m.clone())).collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .by_hash
+            .iter()
+            .map(|(h, m)| (h.clone(), m.clone()))
+            .collect()
     }
 
     /// 按库内路径反查所属内容哈希（元数据 paths 记录）
     pub fn find_hash_by_path(&self, library_path: &str) -> Option<String> {
-        self.inner.lock().unwrap().hash_by_path.get(library_path).cloned()
+        self.inner
+            .lock()
+            .unwrap()
+            .hash_by_path
+            .get(library_path)
+            .cloned()
     }
 
     /// 调色板缺失（未提炼）的 hash 列表——派生缓存的自愈依据。
@@ -274,7 +295,11 @@ impl MetadataStore {
             || inner
                 .pending_since
                 .is_some_and(|t| t.elapsed() >= CACHE_FLUSH_AFTER);
-        let batch = if due { std::mem::take(&mut inner.pending_db) } else { Vec::new() };
+        let batch = if due {
+            std::mem::take(&mut inner.pending_db)
+        } else {
+            Vec::new()
+        };
         inner.pending_since = if due { None } else { inner.pending_since };
         drop(inner);
         if !batch.is_empty() {
@@ -326,10 +351,19 @@ impl MetadataStore {
 
     /// 权威层批量持久化（两模式分发）：Db → 单事务 strict 写（mtime 记 0，无 TOML 源文件可言）；
     /// Toml → 并行小文件落盘。返回（成功项含 mtime，失败 hash 列表）
-    pub fn persist_batch(&self, entries: &[(String, ItemMetadata)]) -> (Vec<(String, ItemMetadata, i64)>, Vec<String>) {
+    pub fn persist_batch(
+        &self,
+        entries: &[(String, ItemMetadata)],
+    ) -> (Vec<(String, ItemMetadata, i64)>, Vec<String>) {
         match self.mode {
             StorageMode::Db => match self.db.save_batch_strict(entries) {
-                Ok(()) => (entries.iter().map(|(h, m)| (h.clone(), m.clone(), 0)).collect(), Vec::new()),
+                Ok(()) => (
+                    entries
+                        .iter()
+                        .map(|(h, m)| (h.clone(), m.clone(), 0))
+                        .collect(),
+                    Vec::new(),
+                ),
                 Err(e) => {
                     tracing::error!("元数据数据库批量写入失败: {e}");
                     (Vec::new(), entries.iter().map(|(h, _)| h.clone()).collect())
@@ -338,7 +372,6 @@ impl MetadataStore {
             StorageMode::Toml => write_toml_batch(&self.paths, entries),
         }
     }
-
 
     /// 批量应用内存副本。Toml 模式：先冲刷待冲刷缓冲再写缓存单事务（避免旧值覆盖新值）；
     /// Db 模式：权威层已由 persist_batch 写完，此处只刷内存
@@ -371,7 +404,12 @@ impl MetadataStore {
             let mut inner = self.inner.lock().unwrap();
             if let Some(meta) = inner.by_hash.remove(hash) {
                 for p in &meta.paths {
-                    if inner.hash_by_path.get(&p.path).map(|h| h == hash).unwrap_or(false) {
+                    if inner
+                        .hash_by_path
+                        .get(&p.path)
+                        .map(|h| h == hash)
+                        .unwrap_or(false)
+                    {
                         inner.hash_by_path.remove(&p.path);
                     }
                 }
@@ -388,7 +426,12 @@ impl MetadataStore {
             let mut inner = self.inner.lock().unwrap();
             if let Some(meta) = inner.by_hash.remove(hash) {
                 for p in &meta.paths {
-                    if inner.hash_by_path.get(&p.path).map(|h| h == hash).unwrap_or(false) {
+                    if inner
+                        .hash_by_path
+                        .get(&p.path)
+                        .map(|h| h == hash)
+                        .unwrap_or(false)
+                    {
                         inner.hash_by_path.remove(&p.path);
                     }
                 }
@@ -473,7 +516,8 @@ fn rebuild_path_index(inner: &mut MetadataInner, hash: &str, meta: &ItemMetadata
 fn write_toml_file(paths: &LibraryPaths, hash: &str, meta: &ItemMetadata) -> Result<i64, String> {
     let file = format!("{}/{hash}.toml", paths.metadata_dir);
     let tmp = format!("{file}.tmp");
-    std::fs::write(&tmp, metadata::serialize(meta)).map_err(|e| format!("元数据 TOML 写入失败 {tmp}: {e}"))?;
+    std::fs::write(&tmp, metadata::serialize(meta))
+        .map_err(|e| format!("元数据 TOML 写入失败 {tmp}: {e}"))?;
     if let Err(e) = std::fs::rename(&tmp, &file) {
         let _ = std::fs::remove_file(&tmp);
         return Err(format!("元数据 TOML 替换失败 {file}: {e}"));
@@ -483,7 +527,10 @@ fn write_toml_file(paths: &LibraryPaths, hash: &str, meta: &ItemMetadata) -> Res
 
 /// 批量 TOML 落盘：大批量时多线程并行（不同 hash 不同文件，写入互相独立）。
 /// 单条失败不中断整批：失败 hash 记入返回值第二分量并 tracing 记录
-fn write_toml_batch(paths: &LibraryPaths, entries: &[(String, ItemMetadata)]) -> (Vec<(String, ItemMetadata, i64)>, Vec<String>) {
+fn write_toml_batch(
+    paths: &LibraryPaths,
+    entries: &[(String, ItemMetadata)],
+) -> (Vec<(String, ItemMetadata, i64)>, Vec<String>) {
     /// 低于该阈值走串行（线程开销不值得）
     const PARALLEL_THRESHOLD: usize = 64;
     /// 写线程上限（机械盘/杀软环境下更多线程无收益）
@@ -577,7 +624,10 @@ pub fn migrate_authority(
 }
 
 /// TOML 全量解析（缓存缺失时的权威回退路径）
-fn load_all_from_toml(paths: &LibraryPaths, startup: &StartupState) -> Vec<(String, ItemMetadata, i64)> {
+fn load_all_from_toml(
+    paths: &LibraryPaths,
+    startup: &StartupState,
+) -> Vec<(String, ItemMetadata, i64)> {
     let mut entries = Vec::new();
     let dir = &paths.metadata_dir;
     let read_dir = match std::fs::read_dir(dir) {
@@ -626,15 +676,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hawk-bench-meta-{}", std::process::id()));
         let root = dir.join("lib");
         std::fs::create_dir_all(root.join(".hawk/metadata")).unwrap();
-        let paths = LibraryPaths::new(root.to_str().unwrap(), Some(dir.join("cache").to_string_lossy().to_string()));
+        let paths = LibraryPaths::new(
+            root.to_str().unwrap(),
+            Some(dir.join("cache").to_string_lossy().to_string()),
+        );
         let startup = StartupState::default();
         let store = MetadataStore::with_mode(paths.clone(), &startup, Some(StorageMode::Toml));
 
         const N: usize = 2000;
         let entries: Vec<(String, ItemMetadata)> = (0..N)
             .map(|i| {
-                let mut meta = ItemMetadata::default();
-                meta.tags = vec!["基准".to_string()];
+                let meta = ItemMetadata {
+                    tags: vec!["基准".to_string()],
+                    ..Default::default()
+                };
                 (format!("{i:064x}"), meta)
             })
             .collect();
@@ -667,14 +722,20 @@ mod tests {
         // 数据库模式对照：单事务落盘
         let root_db = dir.join("lib-db");
         std::fs::create_dir_all(root_db.join(".hawk/metadata")).unwrap();
-        let paths_db = LibraryPaths::new(root_db.to_str().unwrap(), Some(dir.join("cache-db").to_string_lossy().to_string()));
+        let paths_db = LibraryPaths::new(
+            root_db.to_str().unwrap(),
+            Some(dir.join("cache-db").to_string_lossy().to_string()),
+        );
         let store_db = MetadataStore::with_mode(paths_db, &startup, Some(StorageMode::Db));
         let t3 = Instant::now();
         let (ok_db, failed_db) = store_db.persist_batch(&entries);
         let db_time = t3.elapsed();
         assert_eq!(ok_db.len(), N);
         assert!(failed_db.is_empty());
-        println!("数据库单事务 {N} 条: {db_time:?}（vs 串行 {:.1}x）", serial.as_secs_f64() / db_time.as_secs_f64());
+        println!(
+            "数据库单事务 {N} 条: {db_time:?}（vs 串行 {:.1}x）",
+            serial.as_secs_f64() / db_time.as_secs_f64()
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -8,9 +8,7 @@ const emit = defineEmits<{ confirm: [path: string]; cancel: [] }>();
 
 const taxonomy = useTaxonomyStore();
 const selected = ref('');
-const folderOptions = computed(() =>
-  taxonomy.flatFolders.map((f) => ({ value: f.path, label: f.label })),
-);
+const folderOptions = computed(() => taxonomy.flatFolders.map((f) => ({ value: f.path, label: f.label })));
 </script>
 
 <template>

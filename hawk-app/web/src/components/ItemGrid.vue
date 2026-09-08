@@ -291,10 +291,7 @@ function onMenu(item: Item, e: MouseEvent) {
 
 <template>
   <div ref="gridRef" class="grid-scroll" @scroll.passive="onScroll">
-    <EmptyState
-      v-if="!store.loading && store.total === 0"
-      :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'"
-    />
+    <EmptyState v-if="!store.loading && store.total === 0" :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'" />
 
     <div v-if="totalHeight > 0" class="grid" :style="{ height: `${totalHeight}px`, '--grid-gap': `${GRID_GAP}px` }">
       <div v-for="row in renderedRows" :key="row.key" class="row" :style="{ transform: `translateY(${row.y}px)` }">

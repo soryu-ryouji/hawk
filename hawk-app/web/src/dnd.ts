@@ -71,7 +71,5 @@ export function isFilesDrag(e: DragEvent): boolean {
 /** drop 侧：取出目录/文件 entry 列表（文件夹递归展开由 importer 的收集逻辑负责）；
  *  只能在 drop 处理器内同步调用（dataTransfer 生命周期所限），返回的 entry 可异步遍历 */
 export function droppedEntries(e: DragEvent): FileSystemEntry[] {
-  return [...(e.dataTransfer?.items ?? [])]
-    .map((item) => item.webkitGetAsEntry())
-    .filter((entry): entry is FileSystemEntry => entry !== null);
+  return [...(e.dataTransfer?.items ?? [])].map((item) => item.webkitGetAsEntry()).filter((entry): entry is FileSystemEntry => entry !== null);
 }

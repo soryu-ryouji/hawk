@@ -48,7 +48,9 @@ pub(crate) async fn item_thumbnail(
     let decodable = ThumbnailService::identify(&source).is_some();
     if ThumbnailService::is_browser_renderable(&source) && decodable {
         state.worker.enqueue_thumbs(&q.id, &source);
-        let content_type = mime_guess::from_path(&source).first_or_octet_stream().to_string();
+        let content_type = mime_guess::from_path(&source)
+            .first_or_octet_stream()
+            .to_string();
         return serve_file(source, content_type, true).await;
     }
     if decodable {
@@ -65,7 +67,10 @@ pub(crate) async fn item_thumbnail(
     params(IdQuery),
     responses((status = 200, description = "原图二进制", content_type = "application/octet-stream", body = Vec<u8>))
 )]
-pub(crate) async fn item_file(State(state): State<SharedState>, Query(q): Query<IdQuery>) -> Result<Response, ApiError> {
+pub(crate) async fn item_file(
+    State(state): State<SharedState>,
+    Query(q): Query<IdQuery>,
+) -> Result<Response, ApiError> {
     let file = state
         .index
         .main_source_abs(&q.id, &state.paths)
@@ -73,11 +78,17 @@ pub(crate) async fn item_file(State(state): State<SharedState>, Query(q): Query<
     if !std::path::Path::new(&file).is_file() {
         return Err(ApiError::item_not_found(format!("file {}", q.id)));
     }
-    let content_type = mime_guess::from_path(&file).first_or_octet_stream().to_string();
+    let content_type = mime_guess::from_path(&file)
+        .first_or_octet_stream()
+        .to_string();
     serve_file(file, content_type, true).await
 }
 
-async fn serve_file(file: String, content_type: String, immutable: bool) -> Result<Response, ApiError> {
+async fn serve_file(
+    file: String,
+    content_type: String,
+    immutable: bool,
+) -> Result<Response, ApiError> {
     use tokio::io::AsyncReadExt;
     let f = tokio::fs::File::open(&file)
         .await

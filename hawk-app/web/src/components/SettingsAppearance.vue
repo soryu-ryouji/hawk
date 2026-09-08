@@ -70,11 +70,7 @@ function onHidePreviewClose(e: Event) {
 
     <div v-if="hasShell" class="field column">
       <span class="field-label">关闭行为</span>
-      <SelectBox
-        :model-value="closeAction"
-        :options="closeOptions"
-        @update:model-value="onCloseActionChange($event as CloseAction)"
-      />
+      <SelectBox :model-value="closeAction" :options="closeOptions" @update:model-value="onCloseActionChange($event as CloseAction)" />
       <p class="hint">关闭到托盘：窗口驻留系统托盘、后台服务保持运行；从托盘菜单或再次启动唤起。</p>
     </div>
   </div>

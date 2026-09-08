@@ -28,12 +28,7 @@ export function consumeKeyboardNavScroll(): boolean {
  * 方向键移动选中：左右为线性前后（跨行连续），上下按视觉列中心对齐取最近项。
  * 无可达目标返回 null；无当前选中时返回第一项。
  */
-export function moveGridSelection(
-  rows: GridNavCell[][],
-  currentId: string | null,
-  dx: number,
-  dy: number,
-): string | null {
+export function moveGridSelection(rows: GridNavCell[][], currentId: string | null, dx: number, dy: number): string | null {
   if (rows.length === 0) {
     return null;
   }

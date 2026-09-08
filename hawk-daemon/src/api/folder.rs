@@ -78,7 +78,10 @@ async fn folder_create(
     Json(req): Json<FolderCreateRequest>,
 ) -> Result<Json<Envelope<FolderNode>>, ApiError> {
     if !fs_util::is_valid_name(Some(&req.name)) {
-        return Err(ApiError::invalid_param(format!("非法文件夹名称: {}", req.name)));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件夹名称: {}",
+            req.name
+        )));
     }
     let parent_rel = req.parent_path.unwrap_or_default();
     let parent_abs = resolve_existing_dir(&state.paths, &parent_rel)?;
@@ -86,7 +89,8 @@ async fn folder_create(
     if std::path::Path::new(&target_abs).is_dir() {
         return Err(ApiError::file_exists(join_rel(&parent_rel, &req.name)));
     }
-    std::fs::create_dir(&target_abs).map_err(|e| ApiError::internal(format!("创建目录失败: {e}")))?;
+    std::fs::create_dir(&target_abs)
+        .map_err(|e| ApiError::internal(format!("创建目录失败: {e}")))?;
     state.folder_tree.invalidate();
     // 目录结构变化广播(folder.changed):本端操作 + 其他客户端的 SSE 刷新统一走事件
     state.pipeline.notify_folder_changed(REASON_EXTERNAL);
@@ -111,7 +115,10 @@ async fn folder_update(
     Json(req): Json<FolderUpdateRequest>,
 ) -> Result<Json<Envelope<FolderNode>>, ApiError> {
     if !LibraryPaths::is_valid_library_path(Some(&req.path)) {
-        return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", req.path)));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件夹路径: {}",
+            req.path
+        )));
     }
     let dir_abs = state.paths.to_absolute(&req.path).unwrap();
     if !std::path::Path::new(&dir_abs).is_dir() {
@@ -123,10 +130,16 @@ async fn folder_update(
         .clone()
         .unwrap_or_else(|| req.path.rsplit('/').next().unwrap_or(&req.path).to_string());
     if !fs_util::is_valid_name(Some(&new_name)) {
-        return Err(ApiError::invalid_param(format!("非法文件夹名称: {}", req.name.clone().unwrap_or_default())));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件夹名称: {}",
+            req.name.clone().unwrap_or_default()
+        )));
     }
 
-    let new_parent_rel = req.parent_path.clone().unwrap_or_else(|| LibraryPaths::dir_of(&req.path).to_string());
+    let new_parent_rel = req
+        .parent_path
+        .clone()
+        .unwrap_or_else(|| LibraryPaths::dir_of(&req.path).to_string());
     let new_parent_abs = resolve_existing_dir(&state.paths, &new_parent_rel)?;
     let target_rel = join_rel(&new_parent_rel, &new_name);
     if target_rel == req.path {
@@ -146,7 +159,8 @@ async fn folder_update(
         return Err(ApiError::file_exists(&target_rel));
     }
 
-    std::fs::rename(&dir_abs, &target_abs).map_err(|e| ApiError::internal(format!("移动目录失败: {e}")))?;
+    std::fs::rename(&dir_abs, &target_abs)
+        .map_err(|e| ApiError::internal(format!("移动目录失败: {e}")))?;
     state.folder_tree.invalidate();
     state
         .pipeline
@@ -175,7 +189,10 @@ async fn folder_delete(
     Json(req): Json<FolderPathRequest>,
 ) -> Result<Json<SuccessOnly>, ApiError> {
     if !LibraryPaths::is_valid_library_path(Some(&req.path)) {
-        return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", req.path)));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件夹路径: {}",
+            req.path
+        )));
     }
     let dir_abs = state.paths.to_absolute(&req.path).unwrap();
     if !std::path::Path::new(&dir_abs).is_dir() {
@@ -189,7 +206,8 @@ async fn folder_delete(
 
     let trash_abs = fs_util::find_free_trash_path(&state.paths, &req.path, true);
     fs_util::ensure_parent_dir(&trash_abs);
-    std::fs::rename(&dir_abs, &trash_abs).map_err(|e| ApiError::internal(format!("移入回收站失败: {e}")))?;
+    std::fs::rename(&dir_abs, &trash_abs)
+        .map_err(|e| ApiError::internal(format!("移入回收站失败: {e}")))?;
     state.folder_tree.invalidate();
     state
         .pipeline
@@ -212,7 +230,10 @@ async fn folder_restore(
     Json(req): Json<FolderPathRequest>,
 ) -> Result<Json<SuccessOnly>, ApiError> {
     if !LibraryPaths::is_valid_library_path(Some(&req.path)) {
-        return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", req.path)));
+        return Err(ApiError::invalid_param(format!(
+            "非法文件夹路径: {}",
+            req.path
+        )));
     }
     let trash_abs = join(&state.paths.trash_dir, &req.path);
     if !std::path::Path::new(&trash_abs).is_dir() {
@@ -223,7 +244,8 @@ async fn folder_restore(
         return Err(ApiError::file_exists(&req.path));
     }
     fs_util::ensure_parent_dir(&target_abs);
-    std::fs::rename(&trash_abs, &target_abs).map_err(|e| ApiError::internal(format!("恢复目录失败: {e}")))?;
+    std::fs::rename(&trash_abs, &target_abs)
+        .map_err(|e| ApiError::internal(format!("恢复目录失败: {e}")))?;
     state.folder_tree.invalidate();
     state
         .pipeline
@@ -249,7 +271,10 @@ struct CacheInner {
 impl FolderTreeCache {
     pub fn new() -> FolderTreeCache {
         FolderTreeCache {
-            inner: RwLock::new(CacheInner { tree: None, generation: 0 }),
+            inner: RwLock::new(CacheInner {
+                tree: None,
+                generation: 0,
+            }),
         }
     }
 
@@ -286,7 +311,11 @@ impl FolderTreeCache {
 
     /// 取目录结构树（count 未填）：命中返回克隆；未命中现建并回填。
     /// 建树在锁外进行（IO 不堵失效/并发读）；建树期间发生失效则本次结果不回填缓存
-    pub fn get_or_build(&self, paths: &LibraryPaths, config: &Arc<crate::core::config::LibraryConfig>) -> FolderNode {
+    pub fn get_or_build(
+        &self,
+        paths: &LibraryPaths,
+        config: &Arc<crate::core::config::LibraryConfig>,
+    ) -> FolderNode {
         if let Some(tree) = &self.inner.read().unwrap().tree {
             return clone_node(tree);
         }
@@ -343,7 +372,12 @@ fn structural_node(
     let rel = paths.to_relative(abs_dir).unwrap_or_default();
     let is_root = rel.is_empty();
     let name = if is_root {
-        abs_dir.trim_end_matches('/').rsplit('/').next().unwrap_or(abs_dir).to_string()
+        abs_dir
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(abs_dir)
+            .to_string()
     } else {
         rel.rsplit('/').next().unwrap_or(&rel).to_string()
     };

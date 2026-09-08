@@ -59,7 +59,7 @@ fn median_cut(pixels: &[[u8; 3]]) -> Vec<PaletteColor> {
             if bx.len() < 2 {
                 continue;
             }
-            for ch in 0..3 {
+            for (ch, _) in pixels[bx[0]].iter().enumerate().take(3) {
                 let mut min = u8::MAX;
                 let mut max = u8::MIN;
                 for &idx in bx {
@@ -78,7 +78,13 @@ fn median_cut(pixels: &[[u8; 3]]) -> Vec<PaletteColor> {
         let Some(i) = best else { break };
         let bx = boxes.remove(i);
         let mut sorted = bx;
-        sorted.sort_by_key(|&idx| (pixels[idx][best_channel], pixels[idx][(best_channel + 1) % 3], pixels[idx][(best_channel + 2) % 3]));
+        sorted.sort_by_key(|&idx| {
+            (
+                pixels[idx][best_channel],
+                pixels[idx][(best_channel + 1) % 3],
+                pixels[idx][(best_channel + 2) % 3],
+            )
+        });
         let mid = sorted.len() / 2;
         let (a, b) = sorted.split_at(mid);
         boxes.push(a.to_vec());
@@ -139,7 +145,11 @@ mod tests {
         let mut img = image::RgbaImage::new(8, 8);
         for y in 0..8 {
             for x in 0..8 {
-                let c = if x < 4 { image::Rgba([255, 0, 0, 255]) } else { image::Rgba([0, 0, 255, 255]) };
+                let c = if x < 4 {
+                    image::Rgba([255, 0, 0, 255])
+                } else {
+                    image::Rgba([0, 0, 255, 255])
+                };
                 img.put_pixel(x, y, c);
             }
         }
@@ -161,7 +171,11 @@ mod tests {
         let mut img = image::RgbaImage::new(16, 16);
         for y in 0..16 {
             for x in 0..16 {
-                img.put_pixel(x, y, image::Rgba([(x * 16) as u8, (y * 16) as u8, 128, 255]));
+                img.put_pixel(
+                    x,
+                    y,
+                    image::Rgba([(x * 16) as u8, (y * 16) as u8, 128, 255]),
+                );
             }
         }
         let palette = extract_from_rgba(&img);

@@ -26,7 +26,9 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     tags = ["global_filter"],
     responses((status = 200, description = "OK", body = Envelope<GlobalFilterSnapshot>))
 )]
-async fn global_filter_list(State(state): State<SharedState>) -> Json<Envelope<GlobalFilterSnapshot>> {
+async fn global_filter_list(
+    State(state): State<SharedState>,
+) -> Json<Envelope<GlobalFilterSnapshot>> {
     Json(Envelope::ok(state.global_filter.snapshot()))
 }
 
@@ -55,7 +57,10 @@ async fn global_filter_put(
     let changed = match req.kind.as_str() {
         "folder" => {
             if req.name.is_empty() || !LibraryPaths::is_valid_library_path(Some(&req.name)) {
-                return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", req.name)));
+                return Err(ApiError::invalid_param(format!(
+                    "非法文件夹路径: {}",
+                    req.name
+                )));
             }
             state.global_filter.set_folder_hidden(&req.name, req.hidden)
         }
@@ -71,7 +76,11 @@ async fn global_filter_put(
             }
             state.global_filter.set_tag_hidden(name, req.hidden)
         }
-        other => return Err(ApiError::invalid_param(format!("非法维度: {other}（支持 folder/category/tag）"))),
+        other => {
+            return Err(ApiError::invalid_param(format!(
+                "非法维度: {other}（支持 folder/category/tag）"
+            )))
+        }
     };
     if changed {
         publish_changed(&state.bus, &state.global_filter.snapshot());

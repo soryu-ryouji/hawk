@@ -41,9 +41,7 @@ function subtreeMatches(node: FolderNode): boolean {
 const visible = computed(() => !props.filter || subtreeMatches(props.node));
 const forcedExpand = computed(() => !!props.filter && props.node.children.some(subtreeMatches));
 /** 展开箭头：筛选态下只有含匹配后代时才出现（否则点开是空链） */
-const hasVisibleChildren = computed(() =>
-  props.filter ? props.node.children.some(subtreeMatches) : props.node.children.length > 0,
-);
+const hasVisibleChildren = computed(() => (props.filter ? props.node.children.some(subtreeMatches) : props.node.children.length > 0));
 
 function isActive() {
   return store.view.kind === 'folder' && store.view.path === props.node.path;
@@ -91,7 +89,11 @@ function onContextMenu(e: MouseEvent) {
         title: '隐藏后其中（含子目录）素材不再出现在全部素材/根目录/未分类/未标签列表，进入该文件夹仍可见',
         action: () => void taxonomy.setHidden('folder', props.node.path, !hidden.value),
       },
-      { label: '刷新缓存', title: '修复该文件夹（含子目录）缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目', action: () => void store.refreshCache('folder', props.node.path, props.node.name) },
+      {
+        label: '刷新缓存',
+        title: '修复该文件夹（含子目录）缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目',
+        action: () => void store.refreshCache('folder', props.node.path, props.node.name),
+      },
       { separator: true, label: '' },
       {
         label: '删除（移入回收站）',
@@ -157,42 +159,19 @@ function onDrop(e: DragEvent) {
       @dragover="onDragOver"
       @drop="onDrop"
     >
-      <span
-        v-if="hasVisibleChildren"
-        class="arrow"
-        :class="{ expanded: expanded || forcedExpand }"
-        @click.stop="expanded = !expanded"
-        >▸</span
-      >
+      <span v-if="hasVisibleChildren" class="arrow" :class="{ expanded: expanded || forcedExpand }" @click.stop="expanded = !expanded">▸</span>
       <span v-else class="arrow-placeholder" />
       <template v-if="editing !== 'rename'">
         <span class="name">{{ node.name }}</span>
         <Icon v-if="hidden" name="eyeOff" :size="12" class="node-hidden" />
       </template>
-      <input
-        v-else
-        v-model="editText"
-        v-focus
-        class="edit"
-        @keydown.enter="submitEdit"
-        @keydown.esc="editing = false"
-        @blur="submitEdit"
-        @click.stop
-      />
+      <input v-else v-model="editText" v-focus class="edit" @keydown.enter="submitEdit" @keydown.esc="editing = false" @blur="submitEdit" @click.stop />
       <span v-if="editing !== 'rename'" class="count">{{ node.count || '' }}</span>
     </div>
 
     <div v-if="editing === 'create'" class="node" :style="{ paddingLeft: 12 + (depth + 1) * 14 + 'px' }">
       <span class="arrow-placeholder" />
-      <input
-        v-model="editText"
-        v-focus
-        class="edit"
-        placeholder="新文件夹名称"
-        @keydown.enter="submitEdit"
-        @keydown.esc="editing = false"
-        @blur="submitEdit"
-      />
+      <input v-model="editText" v-focus class="edit" placeholder="新文件夹名称" @keydown.enter="submitEdit" @keydown.esc="editing = false" @blur="submitEdit" />
     </div>
 
     <template v-if="expanded || forcedExpand">
@@ -212,10 +191,9 @@ function onDrop(e: DragEvent) {
 }
 
 @media (hover: hover) {
-
-.node:hover {
-  background: var(--bg-2);
-}
+  .node:hover {
+    background: var(--bg-2);
+  }
 }
 
 .node.active {
@@ -271,7 +249,6 @@ function onDrop(e: DragEvent) {
   flex: none;
   color: var(--fg-1);
 }
-
 
 .edit {
   flex: 1;

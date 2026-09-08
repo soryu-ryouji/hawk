@@ -46,6 +46,13 @@ jobs:
         with:
           workspaces: hawk-daemon
 
+      # 静态门禁先行：格式与 lint 不过就不必跑测试（省 CI 时间）
+      - run: cargo fmt --check
+        working-directory: hawk-daemon
+
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: hawk-daemon
+
       - run: cargo test
         working-directory: hawk-daemon
 
@@ -83,6 +90,10 @@ jobs:
 
       # web 构建（vue-tsc + 主进程 tsc + vite）与单元测试
       - run: npm run build
+      - run: npm run lint
+
+      - run: npm run format:check
+
       - run: npm run test:unit
 
       # 主进程/preload 与 daemon 构建（pack 与 ui-check 的产物来源）

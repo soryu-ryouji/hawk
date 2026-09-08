@@ -32,12 +32,7 @@ function openRatingMenu(e: MouseEvent) {
 
 <template>
   <div class="filterbar">
-    <button
-      class="chip"
-      :class="{ active: store.query.star !== undefined }"
-      title="评分筛选"
-      @click="openRatingMenu"
-    >
+    <button class="chip" :class="{ active: store.query.star !== undefined }" title="评分筛选" @click="openRatingMenu">
       <Icon name="star" :size="13" />
       <span>{{ store.query.star !== undefined ? `${store.query.star} 星` : '评分' }}</span>
     </button>
@@ -73,10 +68,9 @@ function openRatingMenu(e: MouseEvent) {
 }
 
 @media (hover: hover) {
-
-.chip:hover {
-  color: var(--fg-0);
-}
+  .chip:hover {
+    color: var(--fg-0);
+  }
 }
 
 /* 条件激活的 chip 高亮（评分已定值/颜色筛选中） */
@@ -99,10 +93,9 @@ function openRatingMenu(e: MouseEvent) {
 }
 
 @media (hover: hover) {
-
-.color-chip .clear:hover {
-  color: var(--danger);
-  background: transparent;
-}
+  .color-chip .clear:hover {
+    color: var(--danger);
+    background: transparent;
+  }
 }
 </style>

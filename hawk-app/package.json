@@ -25,7 +25,10 @@
     "test:update": "node tools/test-update.mjs",
     "test:resources": "node tools/test-resources.mjs",
     "pack": "npm run build && npm run build:electron && npm run build:server && npm run build:update && node scripts/pack.mjs",
-    "pack:dir": "npm run build && npm run build:electron && npm run build:server && npm run build:update && node scripts/pack.mjs --dir"
+    "pack:dir": "npm run build && npm run build:electron && npm run build:server && npm run build:update && node scripts/pack.mjs --dir",
+    "lint": "eslint web/src electron/src",
+    "format": "prettier --write \"web/src/**/*.{ts,vue,css}\" \"electron/src/**/*.ts\"",
+    "format:check": "prettier --check \"web/src/**/*.{ts,vue,css}\" \"electron/src/**/*.ts\""
   },
   "dependencies": {
     "@vueuse/core": "^14.4.0",
@@ -33,17 +36,24 @@
     "vue": "^3.5.41"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.0",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.11.0",
+    "globals": "^17.12.0",
     "jsdom": "^30.0.1",
     "openapi-typescript": "^7.13.0",
     "playwright-core": "^1.57.0",
+    "prettier": "^3.9.6",
     "smol-toml": "^1.8.0",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
     "vite": "^8.2.2",
     "vitest": "^4.1.11",
     "vue-tsc": "^3.3.11"

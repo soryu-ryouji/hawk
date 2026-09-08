@@ -122,9 +122,7 @@ async function runCleanup() {
     <div class="field column">
       <span class="field-label">缓存目录</span>
       <span class="cache-path">{{ current || '…' }}</span>
-      <p class="hint">
-        缩略图与索引缓存（派生物，可重建）统一存放在此目录下，各素材库按子目录区分。默认位于系统缓存目录；盘空间紧张时可迁移到其他盘。
-      </p>
+      <p class="hint">缩略图与索引缓存（派生物，可重建）统一存放在此目录下，各素材库按子目录区分。默认位于系统缓存目录；盘空间紧张时可迁移到其他盘。</p>
     </div>
 
     <div class="field column">
@@ -147,7 +145,8 @@ async function runCleanup() {
     <!-- 迁移确认：整体搬迁 + 服务重启的事前说明 -->
     <div v-if="pending" class="migrate-confirm">
       <p>
-        将缓存迁移到 <b>{{ pending }}</b>？现有缓存将整体搬迁（先复制后删除），期间后台服务会重启，素材库短暂不可用。
+        将缓存迁移到 <b>{{ pending }}</b
+        >？现有缓存将整体搬迁（先复制后删除），期间后台服务会重启，素材库短暂不可用。
       </p>
       <div class="actions-left">
         <button class="btn danger" @click="confirmMigrate">开始迁移</button>
@@ -158,8 +157,8 @@ async function runCleanup() {
     <!-- 存储方案切换确认：全量迁移 + 自动重启 -->
     <div v-if="pendingMode" class="migrate-confirm">
       <p>
-        切换为<b>{{ pendingMode === 'database' ? '数据库' : '配置文件' }}</b>方案？
-        全部元数据将迁移到新存储（原数据迁移完成后自动删除），随后后台服务自动重启，素材库短暂不可用。
+        切换为<b>{{ pendingMode === 'database' ? '数据库' : '配置文件' }}</b
+        >方案？ 全部元数据将迁移到新存储（原数据迁移完成后自动删除），随后后台服务自动重启，素材库短暂不可用。
       </p>
       <div class="actions-left">
         <button class="btn danger" :disabled="switching" @click="confirmSwitch">{{ switching ? '正在迁移…' : '切换并重启' }}</button>

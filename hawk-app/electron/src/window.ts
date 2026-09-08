@@ -53,9 +53,7 @@ export function createWindow(): void {
     backgroundColor: '#1e1e1e',
     // macOS：隐藏系统标题栏但保留原生红绿灯（悬停 glyph、失焦置灰、全屏行为由系统保证），
     // trafficLightPosition 按 40px 标题栏垂直居中；Windows/Linux：无边框，窗口控制由前端自绘
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 12, y: 14 } }
-      : { frame: false }),
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 12, y: 14 } } : { frame: false }),
     // 开发态 / Linux 的窗口图标；打包后各平台图标由 electron-builder 嵌入
     icon: APP_ICON,
     webPreferences: {
@@ -111,11 +109,7 @@ export function createTray(): void {
   tray = new Tray(image.resize({ width: size, height: size }));
   tray.setToolTip('hawk');
   tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: '打开 hawk', click: showMainWindow },
-      { type: 'separator' },
-      { label: '退出', click: () => app.quit() },
-    ]),
+    Menu.buildFromTemplate([{ label: '打开 hawk', click: showMainWindow }, { type: 'separator' }, { label: '退出', click: () => app.quit() }]),
   );
   // 左键单击托盘图标唤起（Windows/Linux 惯例；macOS 上以右键菜单为主，左键唤起也无碍）
   tray.on('click', showMainWindow);

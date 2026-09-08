@@ -165,9 +165,7 @@ export const useLibraryStore = defineStore('library', () => {
   const canGoBack = computed(() => historyIndex.value > 0);
   const canGoForward = computed(() => historyIndex.value >= 0 && historyIndex.value < viewHistory.value.length - 1);
   const currentFolderPath = computed(() => (view.value.kind === 'folder' ? view.value.path : null));
-  const selectedItems = computed(
-    () => selection.value.map((id) => details.value.get(id)).filter((i): i is Item => !!i),
-  );
+  const selectedItems = computed(() => selection.value.map((id) => details.value.get(id)).filter((i): i is Item => !!i));
   const primarySelected = computed(() => selectedItems.value.at(-1) ?? null);
   /** 当前视图名称（检查器「分区状态」标题） */
   const viewTitle = computed(() => {
@@ -631,7 +629,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /** 删除单个文件位置（Inspector 文件位置列表）：item 其余位置保留；
- *  删除后经 SSE item.updated 就地刷新，最后一个库内位置被删时按整项回收 */
+   *  删除后经 SSE item.updated 就地刷新，最后一个库内位置被删时按整项回收 */
   async function deleteLocation(id: string, path: string) {
     try {
       await api.itemDelete(id, path);
@@ -722,7 +720,9 @@ export const useLibraryStore = defineStore('library', () => {
           res.hidden > 0 ? `隐藏文件 ${res.hidden}` : '',
           res.ignored > 0 ? `ignore 命中 ${res.ignored}` : '',
           res.missing > 0 ? `已删文件残留 ${res.missing}` : '',
-        ].filter(Boolean).join('、');
+        ]
+          .filter(Boolean)
+          .join('、');
         parts.push(`已清除 ${res.removed} 个错误条目（${detail}）`);
         debouncedSkeletonReload(() => void reloadSkeleton());
       } else {
@@ -737,9 +737,7 @@ export const useLibraryStore = defineStore('library', () => {
   /** 为全部选中项追加分类(内容级：同 hash 多位置只应用一次)。
    *  已有该分类的 id 从已加载详情一次构建（未加载的由服务端空操作跳过，不为过滤拉全量详情） */
   async function addCategoryToSelected(name: string) {
-    const existing = new Set(
-      [...details.value.values()].filter((i) => i.categories.includes(name)).map((i) => i.id),
-    );
+    const existing = new Set([...details.value.values()].filter((i) => i.categories.includes(name)).map((i) => i.id));
     const ids = selectionUniqueIds().filter((id) => !existing.has(id));
     await batchUpdate(ids, { add_categories: [name] }, '已添加分类');
     taxonomyHooks?.refreshTaxonomy();
@@ -747,9 +745,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   /** 为全部选中项追加标签(同 addCategoryToSelected 的过滤策略) */
   async function addTagToSelected(tag: string) {
-    const existing = new Set(
-      [...details.value.values()].filter((i) => i.tags.includes(tag)).map((i) => i.id),
-    );
+    const existing = new Set([...details.value.values()].filter((i) => i.tags.includes(tag)).map((i) => i.id));
     const ids = selectionUniqueIds().filter((id) => !existing.has(id));
     await batchUpdate(ids, { add_tags: [tag] }, '已添加标签');
     taxonomyHooks?.refreshTaxonomy();
@@ -876,9 +872,10 @@ export const useLibraryStore = defineStore('library', () => {
         if (p.task === 'thumbnail') {
           taskBacklog.value = p.pending + p.active > 0 ? { pending: p.pending, active: p.active } : null;
         } else if (p.task === 'index') {
-          indexProgress.value = p.pending + p.active > 0
-            ? { pending: p.pending, active: p.active, phase: p.phase ?? null, processed: p.processed ?? null, total: p.total ?? null }
-            : null;
+          indexProgress.value =
+            p.pending + p.active > 0
+              ? { pending: p.pending, active: p.active, phase: p.phase ?? null, processed: p.processed ?? null, total: p.total ?? null }
+              : null;
         }
         break;
       }
@@ -898,12 +895,71 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   return {
-    view, query, skeleton, details, total, totalSize, viewTitle, loading, windowLoading, selection, selectionSet, skeletonSizeMap, skeletonIndexMap, selectionAggregate, library, thumbSize, setUserThumbSize, searchText, toast, deleteLocation, taskBacklog, indexProgress, sidebarVisible, filterBarVisible, viewerMode, viewPrefs,
-    isTrash, canGoBack, canGoForward, currentFolderPath, selectedItems, primarySelected, hasActiveFilters,
-    init, setView, correctView, goBack, goForward, toggleSidebar, toggleFilterBar, setQuery, resetSort, submitSearch, resetList, ensureWindow, reloadSkeleton,
-    select, selectAll, clearSelection,
-    updateItem, trashSelected, restoreSelected, clearTrash, refreshLibrary, refreshCache, cleanupIndex, renameLibrary,
-    addCategoryToSelected, addTagToSelected, removeTagFromSelected, removeCategoryFromSelected, moveSelectedToFolder, setStarForSelected,
-    showToast, applyEvent, setGlobalFilter,
+    view,
+    query,
+    skeleton,
+    details,
+    total,
+    totalSize,
+    viewTitle,
+    loading,
+    windowLoading,
+    selection,
+    selectionSet,
+    skeletonSizeMap,
+    skeletonIndexMap,
+    selectionAggregate,
+    library,
+    thumbSize,
+    setUserThumbSize,
+    searchText,
+    toast,
+    deleteLocation,
+    taskBacklog,
+    indexProgress,
+    sidebarVisible,
+    filterBarVisible,
+    viewerMode,
+    viewPrefs,
+    isTrash,
+    canGoBack,
+    canGoForward,
+    currentFolderPath,
+    selectedItems,
+    primarySelected,
+    hasActiveFilters,
+    init,
+    setView,
+    correctView,
+    goBack,
+    goForward,
+    toggleSidebar,
+    toggleFilterBar,
+    setQuery,
+    resetSort,
+    submitSearch,
+    resetList,
+    ensureWindow,
+    reloadSkeleton,
+    select,
+    selectAll,
+    clearSelection,
+    updateItem,
+    trashSelected,
+    restoreSelected,
+    clearTrash,
+    refreshLibrary,
+    refreshCache,
+    cleanupIndex,
+    renameLibrary,
+    addCategoryToSelected,
+    addTagToSelected,
+    removeTagFromSelected,
+    removeCategoryFromSelected,
+    moveSelectedToFolder,
+    setStarForSelected,
+    showToast,
+    applyEvent,
+    setGlobalFilter,
   };
 });

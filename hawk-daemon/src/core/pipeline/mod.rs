@@ -19,19 +19,19 @@ mod derived;
 mod fs_ops;
 mod reconcile;
 mod scan;
-mod upsert;
 #[cfg(test)]
 mod tests;
+mod upsert;
 
-pub use ctx::{BatchMetadataResult, UpsertResult};
 pub(crate) use ctx::JobSender;
+pub use ctx::{BatchMetadataResult, UpsertResult};
 
 use crate::core::config::LibraryConfig;
 use crate::core::events::{EventBus, TaskProgress};
 use crate::core::index::ItemIndex;
 use crate::core::item::PaletteColor;
-use crate::core::metadata_store::MetadataStore;
 use crate::core::metadata::ItemMetadata;
+use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::scanner::LibraryScanner;
 use crate::core::startup::StartupState;
@@ -218,7 +218,12 @@ impl IndexPipeline {
     pub fn start(&self) {
         self.hydrate_index();
 
-        let rx = self.rx.lock().unwrap().take().expect("pipeline 只能启动一次");
+        let rx = self
+            .rx
+            .lock()
+            .unwrap()
+            .take()
+            .expect("pipeline 只能启动一次");
         let ctx = self.ctx.clone();
         std::thread::Builder::new()
             .name("hawk-index-pipeline".to_string())
@@ -231,8 +236,9 @@ impl IndexPipeline {
         if self.ctx.settings.rescan_interval_seconds > 0 {
             let ctx = self.ctx.clone();
             self.ctx.runtime.spawn(async move {
-                let mut ticker =
-                    tokio::time::interval(Duration::from_secs(ctx.settings.rescan_interval_seconds));
+                let mut ticker = tokio::time::interval(Duration::from_secs(
+                    ctx.settings.rescan_interval_seconds,
+                ));
                 ticker.tick().await; // 立即 tick 的一次丢弃
                 loop {
                     ticker.tick().await;
@@ -256,8 +262,8 @@ impl IndexPipeline {
                 .paths
                 .iter()
                 .filter(|p| {
-                    let usable =
-                        !LibraryPaths::is_hidden(&p.path) && self.ctx.config.is_file_included(&p.path);
+                    let usable = !LibraryPaths::is_hidden(&p.path)
+                        && self.ctx.config.is_file_included(&p.path);
                     if !usable {
                         tracing::info!("注水跳过残留位置: {}", p.path);
                     }
@@ -388,7 +394,11 @@ impl IndexPipeline {
     // ---------- 入口:API / 启动(等待处理完成) ----------
 
     /// 入库提交。known_hash 为调用方已算好的内容哈希(如 item/add)，提供时流水线跳过重算
-    pub async fn submit_upsert(&self, abs: String, known_hash: Option<String>) -> Result<Option<UpsertResult>, String> {
+    pub async fn submit_upsert(
+        &self,
+        abs: String,
+        known_hash: Option<String>,
+    ) -> Result<Option<UpsertResult>, String> {
         let (tx, rx) = oneshot::channel();
         let job = Job::Upsert {
             abs,
@@ -429,7 +439,11 @@ impl IndexPipeline {
 
     pub async fn submit_clear_trash(&self) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
-        if !self.ctx.sender.try_fire(Job::ClearTrash { reply: Some(tx) }) {
+        if !self
+            .ctx
+            .sender
+            .try_fire(Job::ClearTrash { reply: Some(tx) })
+        {
             return Err("索引队列已满".to_string());
         }
         await_reply(rx).await
@@ -497,7 +511,11 @@ impl IndexPipeline {
         await_reply(rx).await
     }
 
-    pub async fn submit_category_update(&self, old_name: String, new_name: String) -> Result<(), String> {
+    pub async fn submit_category_update(
+        &self,
+        old_name: String,
+        new_name: String,
+    ) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         if !self.ctx.sender.try_fire(Job::CategoryUpdate {
             old_name,
@@ -555,7 +573,10 @@ impl IndexPipeline {
     }
 
     /// 存储方案迁移（数据库 ⇄ 配置文件）：单写者内完成全量迁移；成功后调用方引导重启
-    pub async fn submit_storage_migrate(&self, target: crate::core::metadata_store::StorageMode) -> Result<(), String> {
+    pub async fn submit_storage_migrate(
+        &self,
+        target: crate::core::metadata_store::StorageMode,
+    ) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         if !self.ctx.sender.try_fire(Job::StorageMigrate {
             target,
@@ -584,7 +605,8 @@ async fn await_reply<T>(rx: oneshot::Receiver<Result<T, String>>) -> Result<T, S
 fn consumer_loop(ctx: Arc<PipelineCtx>, rx: std::sync::mpsc::Receiver<Job>) {
     while let Ok(job) = rx.recv() {
         ctx.queued_jobs.fetch_sub(1, Ordering::SeqCst);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process_job(&ctx, job)));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process_job(&ctx, job)));
         if result.is_err() {
             // 等待中的 API 调用方会因 oneshot 发送端被丢弃而收到 500，不会挂起
             tracing::error!("索引任务处理 panic（已跳过该任务）");
@@ -592,7 +614,9 @@ fn consumer_loop(ctx: Arc<PipelineCtx>, rx: std::sync::mpsc::Receiver<Job>) {
 
         // 监听事件丢失兜底:不内联扫描(事件风暴期会反复全库扫描),
         // 改为入队去重的扫描任务——扫描本身会把全部待处理文件入库,一次即可收敛
-        if ctx.overflow.swap(false, Ordering::SeqCst) && !ctx.scan_scheduled.swap(true, Ordering::SeqCst) {
+        if ctx.overflow.swap(false, Ordering::SeqCst)
+            && !ctx.scan_scheduled.swap(true, Ordering::SeqCst)
+        {
             tracing::info!("检测到事件丢失,排队对账扫描");
             ctx.sender.fire(Job::ScanStart {
                 full: false,
@@ -617,7 +641,14 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             reply,
             attempt,
         } => {
-            let result = upsert::do_upsert(ctx, &abs, force_hash, known_hash.as_deref(), attempt, reply.is_some());
+            let result = upsert::do_upsert(
+                ctx,
+                &abs,
+                force_hash,
+                known_hash.as_deref(),
+                attempt,
+                reply.is_some(),
+            );
             complete(reply, result);
         }
         Job::Delete { abs } => {
@@ -656,7 +687,11 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             let result = fs_ops::do_clear_trash(ctx);
             complete(reply, result);
         }
-        Job::Metadata { hash, mutate, reply } => {
+        Job::Metadata {
+            hash,
+            mutate,
+            reply,
+        } => {
             let result = ctx.migrator.apply_metadata(&hash, mutate).map(|_| ());
             complete(reply, result);
         }
@@ -667,7 +702,9 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
         } => {
             let result = (|| {
                 let mut missing = Vec::new();
-                let updated = ctx.migrator.apply_metadata_batch(&hashes, &mut *mutate, &mut missing)?;
+                let updated =
+                    ctx.migrator
+                        .apply_metadata_batch(&hashes, &mut *mutate, &mut missing)?;
                 Ok(BatchMetadataResult {
                     updated,
                     missing_ids: missing,
@@ -696,8 +733,10 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             derived::do_fix_dim(ctx, &hash, w, h);
         }
         Job::FolderHint { reason } => {
-            ctx.bus
-                .publish(ItemEvents::FOLDER_CHANGED, crate::core::events::folder_changed_payload(&reason));
+            ctx.bus.publish(
+                ItemEvents::FOLDER_CHANGED,
+                crate::core::events::folder_changed_payload(&reason),
+            );
         }
         Job::CategoryCreate { name, reply } => {
             ctx.migrator.register_category(&name);
@@ -712,7 +751,10 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             let filter_changed = ctx.global_filter.rename_category(&old_name, &new_name);
             let result = ctx.migrator.rename_category(&old_name, &new_name);
             if filter_changed {
-                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+                crate::core::global_filter::publish_changed(
+                    &ctx.bus,
+                    &ctx.global_filter.snapshot(),
+                );
             }
             complete(reply, result);
         }
@@ -720,7 +762,10 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             let filter_changed = ctx.global_filter.delete_category(&name);
             let result = ctx.migrator.delete_category(&name);
             if filter_changed {
-                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+                crate::core::global_filter::publish_changed(
+                    &ctx.bus,
+                    &ctx.global_filter.snapshot(),
+                );
             }
             complete(reply, result);
         }
@@ -736,7 +781,10 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             let filter_changed = ctx.global_filter.rename_tag(&name, &new_name);
             let result = ctx.migrator.rename_tag(&name, &new_name);
             if filter_changed {
-                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+                crate::core::global_filter::publish_changed(
+                    &ctx.bus,
+                    &ctx.global_filter.snapshot(),
+                );
             }
             complete(reply, result);
         }
@@ -744,12 +792,19 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             let filter_changed = ctx.global_filter.delete_tag(&name);
             let result = ctx.migrator.delete_tag(&name);
             if filter_changed {
-                crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
+                crate::core::global_filter::publish_changed(
+                    &ctx.bus,
+                    &ctx.global_filter.snapshot(),
+                );
             }
             complete(reply, result);
         }
         Job::StorageMigrate { target, reply } => {
-            let result = crate::core::metadata_store::migrate_authority(&ctx.paths, &ctx.store.snapshot(), target);
+            let result = crate::core::metadata_store::migrate_authority(
+                &ctx.paths,
+                &ctx.store.snapshot(),
+                target,
+            );
             complete(reply, result);
         }
         Job::RegistryReload => {

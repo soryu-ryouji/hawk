@@ -91,11 +91,10 @@
 }
 
 @media (hover: hover) {
-
-.inspector-scope .chip .remove:hover {
-  color: var(--danger);
-  background: transparent;
-}
+  .inspector-scope .chip .remove:hover {
+    color: var(--danger);
+    background: transparent;
+  }
 }
 
 .inspector-scope .add {
@@ -118,12 +117,11 @@
 }
 
 @media (hover: hover) {
-
-.inspector-scope .jump:hover {
-  color: var(--accent);
-  background: transparent;
-  text-decoration: underline;
-}
+  .inspector-scope .jump:hover {
+    color: var(--accent);
+    background: transparent;
+    text-decoration: underline;
+  }
 }
 
 .inspector-scope .info {
@@ -165,16 +163,14 @@
 }
 
 @media (hover: hover) {
-
-.inspector-scope .finder:hover {
-  color: var(--accent);
-  background: transparent;
-}
+  .inspector-scope .finder:hover {
+    color: var(--accent);
+    background: transparent;
+  }
 }
 
 @media (hover: hover) {
-
-.inspector-scope .danger-btn:hover {
-  color: var(--danger);
-}
+  .inspector-scope .danger-btn:hover {
+    color: var(--danger);
+  }
 }

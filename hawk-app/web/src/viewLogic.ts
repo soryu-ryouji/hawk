@@ -145,10 +145,7 @@ export function locationSetChangedOf(skelPaths: readonly string[], updated: Pick
 }
 
 /** item.updated 的分类/标签维度变化判定（内容级，与位置无关） */
-export function taxonomyChanged(
-  prev: Pick<Item, 'tags' | 'categories'>,
-  updated: Pick<Item, 'tags' | 'categories'>,
-): boolean {
+export function taxonomyChanged(prev: Pick<Item, 'tags' | 'categories'>, updated: Pick<Item, 'tags' | 'categories'>): boolean {
   return !sameNameSet(prev.tags, updated.tags) || !sameNameSet(prev.categories, updated.categories);
 }
 

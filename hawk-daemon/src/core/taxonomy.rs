@@ -5,9 +5,9 @@ use crate::core::events::EventBus;
 use crate::core::index::ItemIndex;
 use crate::core::item::ItemDto;
 use crate::core::metadata::ItemMetadata;
-use crate::core::registry_file::sort_entries;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
+use crate::core::registry_file::sort_entries;
 use std::sync::RwLock;
 
 /// 分类名称校验（扁平，无层级）：trim；空或含斜杠/反斜杠为非法
@@ -36,7 +36,13 @@ fn load_registry(file: &str, key: &str) -> Vec<String> {
 }
 
 fn save_registry(file: &str, key: &str, entries: &[String]) {
-    crate::core::registry_file::atomic_write(file, &format!("{}\n", crate::core::registry_file::format_string_list(key, entries)));
+    crate::core::registry_file::atomic_write(
+        file,
+        &format!(
+            "{}\n",
+            crate::core::registry_file::format_string_list(key, entries)
+        ),
+    );
 }
 
 /// 分类/标签注册表共用骨架：持久化空名字（先建后放），写入只发生在索引流水线
@@ -208,7 +214,13 @@ impl ItemEvents {
     }
 
     /// 位置进出回收站后的事件:首个库内位置进回收站 → trashed;首个回收站位置回归 → restored;其余 updated
-    pub fn publish_transition(bus: &EventBus, index: &ItemIndex, hash: &str, was_in_trash: bool, now_in_trash: bool) {
+    pub fn publish_transition(
+        bus: &EventBus,
+        index: &ItemIndex,
+        hash: &str,
+        was_in_trash: bool,
+        now_in_trash: bool,
+    ) {
         let library_count = index.library_location_count(hash);
         if !was_in_trash && now_in_trash && library_count == 0 {
             bus.publish(Self::TRASHED, serde_json::json!({ "id": hash }));
@@ -333,7 +345,13 @@ impl TaxonomyMigrator {
             let replaced: Vec<String> = meta
                 .categories
                 .iter()
-                .map(|c| if c == old_name { new_name.to_string() } else { c.clone() })
+                .map(|c| {
+                    if c == old_name {
+                        new_name.to_string()
+                    } else {
+                        c.clone()
+                    }
+                })
                 .collect();
             meta.categories = dedup_preserve_order(&replaced);
             batch.push((hash, meta));
@@ -363,7 +381,19 @@ impl TaxonomyMigrator {
             if !meta.tags.iter().any(|t| t == name) {
                 continue;
             }
-            meta.tags = dedup_preserve_order(&meta.tags.iter().map(|t| if t == name { new_name.to_string() } else { t.clone() }).collect::<Vec<_>>());
+            meta.tags = dedup_preserve_order(
+                &meta
+                    .tags
+                    .iter()
+                    .map(|t| {
+                        if t == name {
+                            new_name.to_string()
+                        } else {
+                            t.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            );
             batch.push((hash, meta));
         }
         self.finish_cascade(batch)
@@ -387,7 +417,11 @@ impl TaxonomyMigrator {
     /// （内存+SQLite 单事务）→ 注册表登记 → 索引同步 → ChangeBatcher 发事件」——
     /// 长批量（数万条落盘以十秒计）期间客户端渐进可见，而不是全部写完才动。
     /// 落盘失败的 hash 记入 failed_out，返回实际更新数
-    fn finish_metadata_batch(&self, batch: Vec<(String, ItemMetadata)>, failed_out: &mut Vec<String>) -> usize {
+    fn finish_metadata_batch(
+        &self,
+        batch: Vec<(String, ItemMetadata)>,
+        failed_out: &mut Vec<String>,
+    ) -> usize {
         let mut changed = ChangeBatcher::new(&self.bus);
         let mut updated = 0;
         for slice in batch.chunks(1000) {
@@ -430,7 +464,10 @@ struct ChangeBatcher<'a> {
 
 impl<'a> ChangeBatcher<'a> {
     fn new(bus: &'a EventBus) -> ChangeBatcher<'a> {
-        ChangeBatcher { bus, buf: Vec::new() }
+        ChangeBatcher {
+            bus,
+            buf: Vec::new(),
+        }
     }
 
     fn push(&mut self, dto: ItemDto) {

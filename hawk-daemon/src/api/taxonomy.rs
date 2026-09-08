@@ -61,7 +61,7 @@ async fn category_list(State(state): State<SharedState>) -> Json<Envelope<Vec<Ta
             names.push(n.clone());
         }
     }
-    names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    names.sort_by_key(|a| a.to_lowercase());
     Json(Envelope::ok(
         names
             .into_iter()
@@ -90,7 +90,11 @@ async fn category_create(
     if category_exists(&state, &name) {
         return Err(ApiError::category_exists(&name));
     }
-    state.pipeline.submit_category_create(name).await.map_err(ApiError::internal)?;
+    state
+        .pipeline
+        .submit_category_create(name)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(success())
 }
 
@@ -140,7 +144,11 @@ async fn category_delete(
     if !category_exists(&state, &name) {
         return Err(ApiError::category_not_found(&name));
     }
-    state.pipeline.submit_category_delete(name).await.map_err(ApiError::internal)?;
+    state
+        .pipeline
+        .submit_category_delete(name)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(success())
 }
 
@@ -160,7 +168,7 @@ async fn tag_list(State(state): State<SharedState>) -> Json<Envelope<Vec<TaxonIn
             names.push(n.clone());
         }
     }
-    names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    names.sort_by_key(|a| a.to_lowercase());
     Json(Envelope::ok(
         names
             .into_iter()
@@ -185,7 +193,11 @@ async fn tag_create(
     JsonBody(req): JsonBody<CategoryCreateRequest>,
 ) -> Result<Json<SuccessOnly>, ApiError> {
     let name = normalize_tag(&req.name)?;
-    state.pipeline.submit_tag_create(name).await.map_err(ApiError::internal)?;
+    state
+        .pipeline
+        .submit_tag_create(name)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(success())
 }
 
@@ -232,7 +244,11 @@ async fn tag_delete(
     if !tag_exists(&state, &name) {
         return Err(ApiError::tag_not_found(&name));
     }
-    state.pipeline.submit_tag_delete(name).await.map_err(ApiError::internal)?;
+    state
+        .pipeline
+        .submit_tag_delete(name)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(success())
 }
 

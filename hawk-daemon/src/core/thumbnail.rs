@@ -33,7 +33,10 @@ impl ThumbnailService {
     }
 
     pub fn get_path(&self, hash: &str) -> String {
-        format!("{}/{}/{}.webp", self.paths.thumbnails_dir, THUMBNAIL_SIZE, hash)
+        format!(
+            "{}/{}/{}.webp",
+            self.paths.thumbnails_dir, THUMBNAIL_SIZE, hash
+        )
     }
     pub fn exists(&self, hash: &str) -> bool {
         std::path::Path::new(&self.get_path(hash)).is_file()
@@ -44,9 +47,9 @@ impl ThumbnailService {
     /// （如 .png 实为 JPEG）也能识别，否则这类素材永久滞留 0×0
     pub fn identify(abs_path: &str) -> Option<(i32, i32)> {
         image::ImageReader::open(abs_path)
-            .ok()? 
+            .ok()?
             .with_guessed_format()
-            .ok()? 
+            .ok()?
             .into_dimensions()
             .ok()
             .map(|(w, h)| (w as i32, h as i32))
@@ -82,9 +85,9 @@ impl ThumbnailService {
     /// with_guessed_format：按内容喷探格式，扩展名错位文件同样可解码
     pub fn decode(source_abs: &str) -> Option<image::DynamicImage> {
         let image = image::ImageReader::open(source_abs)
-            .ok()? 
+            .ok()?
             .with_guessed_format()
-            .ok()? 
+            .ok()?
             .decode()
             .ok()?;
         Some(image::DynamicImage::ImageRgba8(image.to_rgba8()))
@@ -133,7 +136,8 @@ impl ThumbnailService {
         if let Err(e) = resizer.resize(
             image,
             &mut dst,
-            &fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)),
+            &fr::ResizeOptions::new()
+                .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)),
         ) {
             tracing::debug!("缩略图缩放失败 {hash}: {e}");
             return false;

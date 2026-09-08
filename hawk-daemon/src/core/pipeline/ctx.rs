@@ -65,7 +65,11 @@ impl JobSender {
         queued_jobs: Arc<AtomicI32>,
         overflow: Arc<AtomicBool>,
     ) -> JobSender {
-        JobSender { tx, queued_jobs, overflow }
+        JobSender {
+            tx,
+            queued_jobs,
+            overflow,
+        }
     }
 
     /// 尽力入队；成功返回 true，队列满/已断开置溢出标记并返回 false
@@ -185,6 +189,8 @@ pub(crate) fn publish_index_progress(ctx: &PipelineCtx, force: bool) {
         return;
     }
     ctx.progress_idle.store(idle, Ordering::SeqCst);
-    ctx.bus
-        .publish(crate::core::taxonomy::ItemEvents::TASK_PROGRESS, serde_json::to_value(progress).unwrap());
+    ctx.bus.publish(
+        crate::core::taxonomy::ItemEvents::TASK_PROGRESS,
+        serde_json::to_value(progress).unwrap(),
+    );
 }

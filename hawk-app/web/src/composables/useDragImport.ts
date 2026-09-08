@@ -30,11 +30,7 @@ export function useDragImport() {
       if (!dt) {
         return;
       }
-      if (
-        store.viewerMode ||
-        store.isTrash ||
-        (dt.types.includes(ITEMS_MIME) && !(event.target as HTMLElement).closest('.sidebar'))
-      ) {
+      if (store.viewerMode || store.isTrash || (dt.types.includes(ITEMS_MIME) && !(event.target as HTMLElement).closest('.sidebar'))) {
         dt.dropEffect = 'none';
       }
     },

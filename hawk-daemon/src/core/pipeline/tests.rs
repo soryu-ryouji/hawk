@@ -18,7 +18,6 @@ struct Rig {
     pipeline: IndexPipeline,
     index: Arc<ItemIndex>,
     store: Arc<MetadataStore>,
-    config: Arc<LibraryConfig>,
     bus: EventBus,
 }
 
@@ -51,7 +50,8 @@ impl Rig {
             .with_env_filter(tracing_subscriber::EnvFilter::new("debug"))
             .with_test_writer()
             .try_init();
-        let base = std::env::temp_dir().join(format!("hawk-pipeline-test-{name}-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("hawk-pipeline-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("library");
         let cache = base.join("cache");
@@ -62,7 +62,11 @@ impl Rig {
         let paths = LibraryPaths::new(&root_str, Some(cache.to_string_lossy().to_string()));
         paths.ensure_layout();
         if !extensions.is_empty() {
-            let list = extensions.iter().map(|e| format!("\"{e}\"")).collect::<Vec<_>>().join(", ");
+            let list = extensions
+                .iter()
+                .map(|e| format!("\"{e}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
             std::fs::write(&paths.config_file, format!("extensions = [{list}]\n")).unwrap();
         }
         let config = Arc::new(LibraryConfig::new(paths.clone()));
@@ -94,7 +98,7 @@ impl Rig {
         };
         let pipeline = IndexPipeline::new(
             paths.clone(),
-            config.clone(),
+            config,
             store.clone(),
             index.clone(),
             thumbs,
@@ -111,7 +115,14 @@ impl Rig {
         pipeline.start();
         startup.mark_ready();
 
-        Rig { root, cache, pipeline, index, store, config, bus }
+        Rig {
+            root,
+            cache,
+            pipeline,
+            index,
+            store,
+            bus,
+        }
     }
 
     fn abs(&self, rel: &str) -> String {
@@ -169,13 +180,21 @@ async fn upsert_is_idempotent() {
     let rig = Rig::new("upsert-idempotent");
     rig.write_png("a.png", [255, 0, 0]);
 
-    let first = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap();
+    let first = rig
+        .pipeline
+        .submit_upsert(rig.abs("a.png"), None)
+        .await
+        .unwrap();
     let first = first.expect("首次 upsert 应入库");
     let id = first.item.id.clone();
     assert_eq!(rig.index.count(), 1);
 
     // watcher 重发事件（同一路径重复 upsert）：不新增 item、不新增位置
-    let again = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap();
+    let again = rig
+        .pipeline
+        .submit_upsert(rig.abs("a.png"), None)
+        .await
+        .unwrap();
     assert!(again.is_some());
     assert_eq!(rig.index.count(), 1);
     assert_eq!(rig.index.library_location_count(&id), 1);
@@ -183,7 +202,11 @@ async fn upsert_is_idempotent() {
     // 同内容复制到另一路径：内容寻址收敛到同一 item，仅多登记一个位置；
     // count 为位置级口径（同内容两位置 = 两个文件）
     rig.copy_file("a.png", "b.png");
-    let third = rig.pipeline.submit_upsert(rig.abs("b.png"), None).await.unwrap();
+    let third = rig
+        .pipeline
+        .submit_upsert(rig.abs("b.png"), None)
+        .await
+        .unwrap();
     let third = third.expect("同内容新路径应登记位置");
     assert_eq!(third.item.id, id, "同内容应收敛为同一 item");
     assert_eq!(rig.index.count(), 2);
@@ -200,7 +223,10 @@ async fn same_content_locations_expand_in_query() {
     rig.pipeline.run_scan(false).await.unwrap();
 
     // 全部视图：两个位置各成一条，名称各自
-    let base_q = || crate::core::item::ItemQuery { limit: 50, ..Default::default() };
+    let base_q = || crate::core::item::ItemQuery {
+        limit: 50,
+        ..Default::default()
+    };
     let (items, total, _) = rig.index.query(&base_q());
     assert_eq!(total, 2);
     let mut names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
@@ -287,7 +313,11 @@ async fn move_preserves_identity_and_metadata() {
     let rig = Rig::new("move-inherit");
     rig.write_png("a.png", [0, 0, 255]);
 
-    let res = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap();
+    let res = rig
+        .pipeline
+        .submit_upsert(rig.abs("a.png"), None)
+        .await
+        .unwrap();
     let id = res.expect("upsert 应入库").item.id;
 
     // 写入元数据（标签），随后改名——移动必须继承同一性与元数据
@@ -296,13 +326,19 @@ async fn move_preserves_identity_and_metadata() {
         .await
         .unwrap();
     std::fs::rename(rig.abs("a.png"), rig.abs("b.png")).unwrap();
-    rig.pipeline.submit_move(rig.abs("a.png"), rig.abs("b.png")).await.unwrap();
+    rig.pipeline
+        .submit_move(rig.abs("a.png"), rig.abs("b.png"))
+        .await
+        .unwrap();
 
     // hash 不变、标签保留、位置已切换到新路径（库内相对路径）
     assert!(rig.index.contains(&id));
     let meta = rig.store.try_get(&id).expect("元数据应保留");
     assert_eq!(meta.tags, vec!["风景".to_string()]);
-    let loc = rig.index.find_location(&id, None, None).expect("位置应存在");
+    let loc = rig
+        .index
+        .find_location(&id, None, None)
+        .expect("位置应存在");
     assert_eq!(loc.path, "b.png");
     assert!(rig.index.hash_by_location("b.png").is_some());
     assert!(rig.index.hash_by_location("a.png").is_none());
@@ -315,14 +351,24 @@ async fn move_onto_existing_content_merges_locations() {
     rig.write_png("a.png", [255, 255, 0]);
     rig.copy_file("a.png", "b.png");
 
-    let first = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap();
+    let first = rig
+        .pipeline
+        .submit_upsert(rig.abs("a.png"), None)
+        .await
+        .unwrap();
     let id = first.expect("upsert 应入库").item.id;
-    rig.pipeline.submit_upsert(rig.abs("b.png"), None).await.unwrap();
+    rig.pipeline
+        .submit_upsert(rig.abs("b.png"), None)
+        .await
+        .unwrap();
     assert_eq!(rig.index.library_location_count(&id), 2);
 
     // a.png 改名为 c.png：位置从 a 切到 c，b 位置不受影响
     std::fs::rename(rig.abs("a.png"), rig.abs("c.png")).unwrap();
-    rig.pipeline.submit_move(rig.abs("a.png"), rig.abs("c.png")).await.unwrap();
+    rig.pipeline
+        .submit_move(rig.abs("a.png"), rig.abs("c.png"))
+        .await
+        .unwrap();
     assert_eq!(rig.index.library_location_count(&id), 2);
     assert!(rig.index.hash_by_location("c.png").is_some());
     assert!(rig.index.hash_by_location("b.png").is_some());
@@ -335,15 +381,24 @@ async fn move_onto_existing_content_merges_locations() {
 async fn delete_dir_publishes_folder_changed() {
     let rig = Rig::new("delete-dir-fcevent");
     rig.write_png("f.png", [9, 9, 9]);
-    rig.pipeline.submit_upsert(rig.abs("f.png"), None).await.unwrap();
+    rig.pipeline
+        .submit_upsert(rig.abs("f.png"), None)
+        .await
+        .unwrap();
     std::fs::create_dir_all(rig.abs("d")).unwrap();
     rig.write_png("d/a.png", [1, 2, 3]);
-    rig.pipeline.submit_upsert(rig.abs("d/a.png"), None).await.unwrap();
+    rig.pipeline
+        .submit_upsert(rig.abs("d/a.png"), None)
+        .await
+        .unwrap();
 
     let mut rx = rig.bus.subscribe();
     // 纯文件删除：无 folder.changed（随后的 upsert 屏障保证 Delete 已处理完）
     rig.pipeline.notify_deleted(rig.abs("f.png"));
-    rig.pipeline.submit_upsert(rig.abs("f.png"), None).await.unwrap();
+    rig.pipeline
+        .submit_upsert(rig.abs("f.png"), None)
+        .await
+        .unwrap();
     let mut file_delete_fired = false;
     loop {
         match rx.try_recv() {
@@ -378,8 +433,22 @@ async fn batch_metadata_skips_noop_and_batches_events() {
     let rig = Rig::new("batch-noop");
     rig.write_png("a.png", [5, 5, 5]);
     rig.write_png("b.png", [6, 6, 6]);
-    let id_a = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap().unwrap().item.id;
-    let id_b = rig.pipeline.submit_upsert(rig.abs("b.png"), None).await.unwrap().unwrap().item.id;
+    let id_a = rig
+        .pipeline
+        .submit_upsert(rig.abs("a.png"), None)
+        .await
+        .unwrap()
+        .unwrap()
+        .item
+        .id;
+    let id_b = rig
+        .pipeline
+        .submit_upsert(rig.abs("b.png"), None)
+        .await
+        .unwrap()
+        .unwrap()
+        .item
+        .id;
 
     // 先给 a 打上标签（b 无标签）
     rig.pipeline
@@ -428,15 +497,34 @@ async fn tag_delete_cascade_batches_events() {
     let rig = Rig::new("tag-cascade-batch");
     rig.write_png("a.png", [7, 7, 7]);
     rig.write_png("b.png", [8, 8, 8]);
-    let id_a = rig.pipeline.submit_upsert(rig.abs("a.png"), None).await.unwrap().unwrap().item.id;
-    let id_b = rig.pipeline.submit_upsert(rig.abs("b.png"), None).await.unwrap().unwrap().item.id;
+    let id_a = rig
+        .pipeline
+        .submit_upsert(rig.abs("a.png"), None)
+        .await
+        .unwrap()
+        .unwrap()
+        .item
+        .id;
+    let id_b = rig
+        .pipeline
+        .submit_upsert(rig.abs("b.png"), None)
+        .await
+        .unwrap()
+        .unwrap()
+        .item
+        .id;
     rig.pipeline
-        .submit_batch_metadata(vec![id_a.clone(), id_b.clone()], |m| m.tags.push("待删".to_string()))
+        .submit_batch_metadata(vec![id_a.clone(), id_b.clone()], |m| {
+            m.tags.push("待删".to_string())
+        })
         .await
         .unwrap();
 
     let mut rx = rig.bus.subscribe();
-    rig.pipeline.submit_tag_delete("待删".to_string()).await.unwrap();
+    rig.pipeline
+        .submit_tag_delete("待删".to_string())
+        .await
+        .unwrap();
 
     let mut items_updated_ids: Vec<String> = Vec::new();
     let mut single_updated = false;
@@ -455,10 +543,18 @@ async fn tag_delete_cascade_batches_events() {
     items_updated_ids.sort();
     let mut expected = vec![id_a, id_b];
     expected.sort();
-    assert_eq!(items_updated_ids, expected, "两个命中项应合并进 items.updated");
+    assert_eq!(
+        items_updated_ids, expected,
+        "两个命中项应合并进 items.updated"
+    );
 
     // 元数据与索引已清除该标签
-    assert!(rig.store.try_get(&items_updated_ids[0]).unwrap().tags.is_empty());
+    assert!(rig
+        .store
+        .try_get(&items_updated_ids[0])
+        .unwrap()
+        .tags
+        .is_empty());
 }
 
 /// 大批量元数据应用（≥64 条触发并行落盘路径，Toml 模式）：全部应用、TOML 落盘、事件合并发布
@@ -470,7 +566,14 @@ async fn batch_metadata_parallel_path() {
     for i in 0..100u8 {
         let rel = format!("p/{i}.png");
         rig.write_png(&rel, [i, 10, 10]);
-        let id = rig.pipeline.submit_upsert(rig.abs(&rel), None).await.unwrap().unwrap().item.id;
+        let id = rig
+            .pipeline
+            .submit_upsert(rig.abs(&rel), None)
+            .await
+            .unwrap()
+            .unwrap()
+            .item
+            .id;
         ids.push(id);
     }
 
@@ -529,7 +632,10 @@ async fn scan_skips_hidden_entries_and_reconciles_leftovers() {
     rig.index
         .get_or_add_with_location("deadbeef", ".stfolder/x.txt", 1, 1);
     rig.pipeline.run_scan(false).await.unwrap();
-    assert!(rig.index.hash_by_location(".stfolder/x.txt").is_none(), "隐藏残留位置应被清理");
+    assert!(
+        rig.index.hash_by_location(".stfolder/x.txt").is_none(),
+        "隐藏残留位置应被清理"
+    );
     assert_eq!(rig.index.count(), 1);
 }
 
@@ -545,7 +651,11 @@ async fn non_image_file_gets_empty_palette_cache() {
     rig.stabilize("clip.mp4");
 
     rig.pipeline.run_scan(false).await.unwrap();
-    assert_eq!(rig.index.count(), 3, "非图像文件仍入库（内容寻址），只是不解析");
+    assert_eq!(
+        rig.index.count(),
+        3,
+        "非图像文件仍入库（内容寻址），只是不解析"
+    );
 
     for rel in ["notes.txt", "clip.mp4"] {
         let hash = rig.index.hash_by_location(rel).unwrap();

@@ -20,11 +20,7 @@ const emit = defineEmits<{ pick: [path: string]; close: [] }>();
 
 const taxonomy = useTaxonomyStore();
 const panelEl = ref<HTMLElement | null>(null);
-onClickOutside(
-  panelEl,
-  () => emit('close'),
-  { ignore: [computed(() => props.trigger)] },
-);
+onClickOutside(panelEl, () => emit('close'), { ignore: [computed(() => props.trigger)] });
 onMounted(() => panelEl.value?.focus());
 
 // 面板内按键不透传给全局快捷键（Delete/Backspace 不误删素材）；Esc 关闭
@@ -91,7 +87,14 @@ function pick(path: string) {
     >
       <div class="picker-title">选择所在文件夹</div>
       <div class="root-row" :class="{ active: current === '' }" @click="pick('')">（根目录）</div>
-      <div v-for="row in rows" :key="row.path" class="node" :class="{ active: row.path === current }" :style="{ paddingLeft: 12 + row.depth * 14 + 'px' }" @click="pick(row.path)">
+      <div
+        v-for="row in rows"
+        :key="row.path"
+        class="node"
+        :class="{ active: row.path === current }"
+        :style="{ paddingLeft: 12 + row.depth * 14 + 'px' }"
+        @click="pick(row.path)"
+      >
         <span v-if="row.hasChildren" class="arrow" :class="{ expanded: expanded.has(row.path) }" @click.stop="toggle(row.path)">▸</span>
         <span v-else class="arrow-placeholder" />
         <span class="name">{{ row.name }}</span>
@@ -133,11 +136,10 @@ function pick(path: string) {
 }
 
 @media (hover: hover) {
-
-.root-row:hover,
-.node:hover {
-  background: var(--bg-2);
-}
+  .root-row:hover,
+  .node:hover {
+    background: var(--bg-2);
+  }
 }
 
 .root-row.active,

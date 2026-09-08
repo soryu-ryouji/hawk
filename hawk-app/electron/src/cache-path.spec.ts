@@ -23,14 +23,10 @@ describe('pathKey', () => {
 
 describe('defaultCacheParent', () => {
   it('win32 走 LOCALAPPDATA', () => {
-    expect(defaultCacheParent('win32', { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' } as NodeJS.ProcessEnv)).toBe(
-      'C:/Users/u/AppData/Local/hawk/cache',
-    );
+    expect(defaultCacheParent('win32', { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' } as NodeJS.ProcessEnv)).toBe('C:/Users/u/AppData/Local/hawk/cache');
   });
   it('macOS / linux 平台路径', () => {
-    expect(defaultCacheParent('darwin', { HOME: '/Users/u' } as NodeJS.ProcessEnv)).toBe(
-      '/Users/u/Library/Application Support/hawk/cache',
-    );
+    expect(defaultCacheParent('darwin', { HOME: '/Users/u' } as NodeJS.ProcessEnv)).toBe('/Users/u/Library/Application Support/hawk/cache');
     expect(defaultCacheParent('linux', { HOME: '/home/u' } as NodeJS.ProcessEnv)).toBe('/home/u/.local/share/hawk/cache');
     expect(defaultCacheParent('linux', { XDG_DATA_HOME: '/xdg' } as NodeJS.ProcessEnv)).toBe('/xdg/hawk/cache');
   });

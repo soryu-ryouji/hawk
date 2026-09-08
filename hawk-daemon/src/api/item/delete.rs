@@ -42,8 +42,13 @@ pub(crate) async fn item_delete(
         let source_abs = state.paths.to_absolute(&loc.path).unwrap();
         let trash_abs = fs_util::find_free_trash_path(&state.paths, &loc.path, false);
         fs_util::ensure_parent_dir(&trash_abs);
-        std::fs::rename(&source_abs, &trash_abs).map_err(|e| ApiError::internal(format!("移入回收站失败: {e}")))?;
-        state.pipeline.submit_move(source_abs, trash_abs).await.map_err(ApiError::internal)?;
+        std::fs::rename(&source_abs, &trash_abs)
+            .map_err(|e| ApiError::internal(format!("移入回收站失败: {e}")))?;
+        state
+            .pipeline
+            .submit_move(source_abs, trash_abs)
+            .await
+            .map_err(ApiError::internal)?;
     }
     Ok(success())
 }
@@ -86,8 +91,13 @@ pub(crate) async fn item_restore(
         }
         let source_abs = state.paths.to_absolute(&loc.path).unwrap();
         fs_util::ensure_parent_dir(&target_abs);
-        std::fs::rename(&source_abs, &target_abs).map_err(|e| ApiError::internal(format!("恢复失败: {e}")))?;
-        state.pipeline.submit_move(source_abs, target_abs).await.map_err(ApiError::internal)?;
+        std::fs::rename(&source_abs, &target_abs)
+            .map_err(|e| ApiError::internal(format!("恢复失败: {e}")))?;
+        state
+            .pipeline
+            .submit_move(source_abs, target_abs)
+            .await
+            .map_err(ApiError::internal)?;
         restored += 1;
     }
     if restored == 0 {

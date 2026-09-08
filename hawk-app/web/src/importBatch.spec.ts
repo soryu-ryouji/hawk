@@ -56,13 +56,7 @@ describe('runImportBatch', () => {
       { item: 'b', skipExisting: true },
       { item: 'c', skipExisting: true },
     ]);
-    expect(log.progress).toEqual([
-      { total: 3, done: 0 },
-      { total: 3, done: 1 },
-      { total: 3, done: 2 },
-      { total: 3, done: 3 },
-      null,
-    ]);
+    expect(log.progress).toEqual([{ total: 3, done: 0 }, { total: 3, done: 1 }, { total: 3, done: 2 }, { total: 3, done: 3 }, null]);
     expect(log.summary).toEqual([{ added: 3, existed: 0, skipped: 0, failed: 0 }]);
     expect(log.asks).toBe(0);
   });

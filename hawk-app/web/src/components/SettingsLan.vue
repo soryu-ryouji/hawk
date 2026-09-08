@@ -163,11 +163,7 @@ defineExpose({ save, busy });
             <p class="hint">关闭时访问 token 兼具读写权限；开启后访问 token 仅可浏览，修改需另签发可写 token。</p>
           </div>
           <label class="switch" title="拆分只读 token 与可写 token">
-            <input
-              :checked="separate"
-              type="checkbox"
-              @change="toggleSeparate(($event.target as HTMLInputElement).checked)"
-            />
+            <input :checked="separate" type="checkbox" @change="toggleSeparate(($event.target as HTMLInputElement).checked)" />
             <span class="track" />
           </label>
         </div>
@@ -213,26 +209,14 @@ defineExpose({ save, busy });
           <span class="field-label">访问地址</span>
           <ul class="addrs">
             <li v-for="ip in addresses" :key="ip">
-              <a
-                :href="portValid ? `http://${ip}:${port.trim()}` : undefined"
-                target="_blank"
-                rel="noreferrer"
-                >http://{{ ip }}:{{ port }}</a
-              >
-              <button
-                class="icon-btn"
-                :disabled="!portValid"
-                title="复制地址"
-                @click="copy(`http://${ip}:${port.trim()}`)"
-              >
+              <a :href="portValid ? `http://${ip}:${port.trim()}` : undefined" target="_blank" rel="noreferrer">http://{{ ip }}:{{ port }}</a>
+              <button class="icon-btn" :disabled="!portValid" title="复制地址" @click="copy(`http://${ip}:${port.trim()}`)">
                 <Icon name="copy" :size="13" />
               </button>
             </li>
             <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
           </ul>
-          <p class="hint">
-            在浏览器打开地址并输入访问 token 即可查看；首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。
-          </p>
+          <p class="hint">在浏览器打开地址并输入访问 token 即可查看；首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。</p>
         </div>
       </div>
     </template>

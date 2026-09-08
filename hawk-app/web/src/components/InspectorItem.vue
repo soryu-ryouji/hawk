@@ -261,7 +261,9 @@ function searchColor(color: string) {
 
       <section>
         <div class="section-title">文件位置</div>
-        <button v-for="path in item.paths" :key="path" class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(parentFolderViewOf(path))">{{ path }}</button>
+        <button v-for="path in item.paths" :key="path" class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(parentFolderViewOf(path))">
+          {{ path }}
+        </button>
         <span v-if="!item.paths?.length" class="ro-empty">—</span>
       </section>
     </div>
@@ -411,7 +413,9 @@ function searchColor(color: string) {
 }
 
 .swatch.active {
-  box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 4px var(--accent);
+  box-shadow:
+    0 0 0 2px var(--bg-2),
+    0 0 0 4px var(--accent);
 }
 
 .folder-row {
@@ -441,9 +445,8 @@ function searchColor(color: string) {
 }
 
 @media (hover: hover) {
-
-.folder-value:hover {
-  border-color: var(--accent);
-}
+  .folder-value:hover {
+    border-color: var(--accent);
+  }
 }
 </style>

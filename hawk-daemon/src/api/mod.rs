@@ -7,12 +7,12 @@ use crate::core::index::ItemIndex;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::pipeline::IndexPipeline;
-use crate::settings::Settings;
 use crate::core::startup::StartupState;
 use crate::core::taxonomy::{CategoryRegistry, TagRegistry};
 use crate::core::thumbnail::ThumbnailService;
 use crate::core::thumbnail_worker::ThumbnailWorker;
 use crate::core::view_prefs::ViewPreferences;
+use crate::settings::Settings;
 use axum::response::IntoResponse;
 use std::sync::Arc;
 
@@ -33,14 +33,15 @@ pub mod web_dist;
 #[cfg(test)]
 mod contract_tests;
 
-
 /// 重建 OpenAPI 文档并序列化为 pretty JSON（LF 行尾）——/openapi/v1.json 与 --dump-openapi 共用
 pub fn build_openapi_json() -> String {
     let (_router, mut doc) = api_router();
     openapi::attach_extra_schemas(&mut doc);
     doc.info.title = "hawk-daemon | v1".to_string();
     doc.info.version = "1.0.0".to_string();
-    doc.servers = Some(vec![utoipa::openapi::Server::new("http://127.0.0.1:27371/")]);
+    doc.servers = Some(vec![utoipa::openapi::Server::new(
+        "http://127.0.0.1:27371/",
+    )]);
     let mut value = serde_json::to_value(&doc).expect("OpenAPI 文档序列化失败");
     strip_schema_defaults(&mut value);
     let mut json = serde_json::to_string_pretty(&value).expect("OpenAPI 文档序列化失败");
@@ -127,7 +128,10 @@ pub fn api_router() -> (axum::Router<SharedState>, utoipa::openapi::OpenApi) {
 pub fn build_router(state: SharedState) -> axum::Router {
     let (api_routes, _doc) = api_router();
     axum::Router::new()
-        .route("/openapi/v1.json", axum::routing::get(openapi::openapi_schema))
+        .route(
+            "/openapi/v1.json",
+            axum::routing::get(openapi::openapi_schema),
+        )
         .merge(api_routes)
         .fallback(web_dist::serve)
         .with_state(state.clone())
@@ -135,14 +139,20 @@ pub fn build_router(state: SharedState) -> axum::Router {
         // base64 内容替换都会超过默认值；端点全部 token 鉴权，局域网/本机场景风险可控
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
         // axum 中后注册的 layer 在外层：请求依次经过 cors → auth → ready_gate
-        .layer(axum::middleware::from_fn_with_state(state.clone(), ready_gate))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            ready_gate,
+        ))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
         .layer(axum::middleware::from_fn(cors))
 }
 
 /// CORS 全放开（localhost 工具，token 兜底）；唯一例外：token 发现端点不带 CORS 头
 /// （跨源网页 JS 读不到响应，只有持 host_permissions 的扩展能读）
-async fn cors(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+async fn cors(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
     use axum::http::header;
     let is_token_discovery = req.uri().path() == "/api/v1/app/token";
     // 预检短路：OPTIONS 不携带凭据、不执行任何操作，直接 204 + 放开头（跨源 dev 前端
@@ -291,10 +301,7 @@ async fn ready_gate(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let path = req.uri().path();
-    if !state.startup.is_ready()
-        && path.starts_with("/api/")
-        && path != "/api/v1/app/startup"
-    {
+    if !state.startup.is_ready() && path.starts_with("/api/") && path != "/api/v1/app/startup" {
         return envelope::ApiError::new(
             envelope::codes::NOT_READY,
             axum::http::StatusCode::SERVICE_UNAVAILABLE,

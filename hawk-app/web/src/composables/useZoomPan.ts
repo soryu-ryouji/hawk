@@ -141,11 +141,7 @@ export function useZoomPan(opts: ZoomPanOptions) {
       return;
     }
     const now = Date.now();
-    if (
-      lastTap &&
-      now - lastTap.time <= DOUBLE_TAP_MS &&
-      Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) <= DOUBLE_TAP_RADIUS
-    ) {
+    if (lastTap && now - lastTap.time <= DOUBLE_TAP_MS && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) <= DOUBLE_TAP_RADIUS) {
       lastTap = null;
       doubleTap();
       return;
@@ -367,10 +363,23 @@ export function useZoomPan(opts: ZoomPanOptions) {
   }
 
   return {
-    scale, tx, ty, dragging,
-    swiping, swipeAnim, swipeX,
-    pullActive, pullAnim, pullY,
+    scale,
+    tx,
+    ty,
+    dragging,
+    swiping,
+    swipeAnim,
+    swipeX,
+    pullActive,
+    pullAnim,
+    pullY,
     reset,
-    onWheel, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onDblClick, onGestureClick,
+    onWheel,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    onPointerCancel,
+    onDblClick,
+    onGestureClick,
   };
 }

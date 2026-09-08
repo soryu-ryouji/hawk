@@ -38,9 +38,7 @@ watch(open, async (visible) => {
   const panel = panelRef.value!;
   const gap = 4;
   // 下方放不下且上方空间足够时向上翻转
-  const up =
-    rect.bottom + gap + panel.offsetHeight > window.innerHeight &&
-    rect.top - gap - panel.offsetHeight > 0;
+  const up = rect.bottom + gap + panel.offsetHeight > window.innerHeight && rect.top - gap - panel.offsetHeight > 0;
   pos.value = {
     x: rect.left,
     y: up ? rect.top - gap - panel.offsetHeight : rect.bottom + gap,
@@ -159,49 +157,30 @@ onBeforeUnmount(() => {
 <template>
   <!-- 单根 button：父 scoped 的 .library-name 规则与 in-head/in-body 显隐类均依赖根元素继承；
        Teleport 置于 button 内（不产生实际 DOM），仅为保住单根结构 -->
-  <button
-    ref="triggerRef"
-    class="library-name"
-    :class="{ open }"
-    :title="store.library?.path + '（点击切换素材库）'"
-    @click="open = !open"
-    @dblclick.stop
-  >
+  <button ref="triggerRef" class="library-name" :class="{ open }" :title="store.library?.path + '（点击切换素材库）'" @click="open = !open" @dblclick.stop>
     <Icon name="library" />
     <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
     <Icon name="chevronDown" :size="12" class="lib-chev" />
     <Teleport to="body">
-      <div
-        v-if="open"
-        ref="panelRef"
-        class="lib-panel"
-        :style="{ left: pos.x + 'px', top: pos.y + 'px', width: pos.width + 'px' }"
-      >
-      <button
-        v-for="lib in libraries"
-        :key="lib.path"
-        type="button"
-        class="lib-item"
-        :class="{ selected: lib.path === current, disabled: !lib.exists }"
-        :title="lib.path"
-        @click="switchTo(lib)"
-      >
-        <span class="check">{{ lib.path === current ? '✓' : '' }}</span>
-        <span class="label">{{ lib.exists ? lib.name : `${lib.name}（已删除）` }}</span>
+      <div v-if="open" ref="panelRef" class="lib-panel" :style="{ left: pos.x + 'px', top: pos.y + 'px', width: pos.width + 'px' }">
         <button
+          v-for="lib in libraries"
+          :key="lib.path"
           type="button"
-          class="more"
-          title="更多操作"
-          @click.stop="openItemMenu(lib, $event)"
+          class="lib-item"
+          :class="{ selected: lib.path === current, disabled: !lib.exists }"
+          :title="lib.path"
+          @click="switchTo(lib)"
         >
-          ···
+          <span class="check">{{ lib.path === current ? '✓' : '' }}</span>
+          <span class="label">{{ lib.exists ? lib.name : `${lib.name}（已删除）` }}</span>
+          <button type="button" class="more" title="更多操作" @click.stop="openItemMenu(lib, $event)">···</button>
         </button>
-      </button>
-      <div class="separator" />
-      <button type="button" class="lib-item" @click="pickFolder">
-        <span class="check" />
-        <span class="label">打开文件夹…</span>
-      </button>
+        <div class="separator" />
+        <button type="button" class="lib-item" @click="pickFolder">
+          <span class="check" />
+          <span class="label">打开文件夹…</span>
+        </button>
       </div>
     </Teleport>
     <!-- Teleport 不产生实际 DOM：置于 button 内保住单根结构（父 scoped 显隐类依赖根元素继承） -->
@@ -260,10 +239,9 @@ onBeforeUnmount(() => {
 }
 
 @media (hover: hover) {
-
-.lib-item:hover {
-  background: color-mix(in srgb, var(--accent) 35%, transparent);
-}
+  .lib-item:hover {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
 }
 
 .lib-item.disabled {
@@ -298,17 +276,15 @@ onBeforeUnmount(() => {
 }
 
 @media (hover: hover) {
-
-.lib-item:hover .more {
-  visibility: visible;
-}
+  .lib-item:hover .more {
+    visibility: visible;
+  }
 }
 
 @media (hover: hover) {
-
-.lib-item .more:hover {
-  color: var(--accent);
-}
+  .lib-item .more:hover {
+    color: var(--accent);
+  }
 }
 
 .separator {

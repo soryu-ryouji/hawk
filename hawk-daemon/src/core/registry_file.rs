@@ -18,9 +18,17 @@ pub fn parse_string_list(value: &toml::Value, key: &str) -> Vec<String> {
     let mut out: Vec<String> = value
         .get(key)
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
-    out = out.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    out = out
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     out.dedup();
     sort_entries(&mut out);
     out
@@ -31,13 +39,17 @@ pub fn format_string_list(key: &str, entries: &[String]) -> String {
     format!(
         "{} = [{}]",
         key,
-        entries.iter().map(|e| toml_string(e)).collect::<Vec<_>>().join(", ")
+        entries
+            .iter()
+            .map(|e| toml_string(e))
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }
 
 /// 列表条目序的单一来源：小写字典序（大小写不敏感）
-pub fn sort_entries(entries: &mut Vec<String>) {
-    entries.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+pub fn sort_entries(entries: &mut [String]) {
+    entries.sort_by_key(|a| a.to_lowercase());
 }
 
 #[cfg(test)]
@@ -47,7 +59,10 @@ mod tests {
     #[test]
     fn parse_normalizes() {
         let value: toml::Value = toml::from_str(r#"tags = [" b ", "a", "", "a"]"#).unwrap();
-        assert_eq!(parse_string_list(&value, "tags"), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            parse_string_list(&value, "tags"),
+            vec!["a".to_string(), "b".to_string()]
+        );
         assert!(parse_string_list(&value, "missing").is_empty());
         let bad: toml::Value = toml::from_str(r#"tags = "notalist""#).unwrap();
         assert!(parse_string_list(&bad, "tags").is_empty());
@@ -55,7 +70,10 @@ mod tests {
 
     #[test]
     fn format_escapes() {
-        assert_eq!(format_string_list("tags", &["a".to_string()]), r#"tags = ["a"]"#);
+        assert_eq!(
+            format_string_list("tags", &["a".to_string()]),
+            r#"tags = ["a"]"#
+        );
         assert_eq!(
             format_string_list("tags", &["带\"引号".to_string()]),
             r#"tags = ["带\"引号"]"#

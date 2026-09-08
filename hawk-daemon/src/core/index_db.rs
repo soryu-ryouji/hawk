@@ -58,7 +58,9 @@ impl IndexDb {
                 db
             }
             Err(e) => {
-                tracing::error!("元数据缓存打开失败，退化为纯 TOML 模式（仅影响启动与查询速度）: {e}");
+                tracing::error!(
+                    "元数据缓存打开失败，退化为纯 TOML 模式（仅影响启动与查询速度）: {e}"
+                );
                 IndexDb {
                     conn: Mutex::new(None),
                     poisoned: Mutex::new(false),
@@ -95,7 +97,8 @@ impl IndexDb {
         match result {
             Ok(()) => {
                 self.write_meta(HYDRATED_KEY, "1");
-                self.hydrated.store(true, std::sync::atomic::Ordering::SeqCst);
+                self.hydrated
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 tracing::info!("元数据缓存已注水 {} 条", entries.len());
             }
             Err(e) => self.poison(&format!("元数据缓存注水失败，保持未注水状态: {e}")),
@@ -145,7 +148,10 @@ impl IndexDb {
     pub fn item_count(&self) -> usize {
         let conn = self.conn.lock().unwrap();
         conn.as_ref()
-            .and_then(|c| c.query_row("SELECT COUNT(*) FROM items", [], |row| row.get::<_, i64>(0)).ok())
+            .and_then(|c| {
+                c.query_row("SELECT COUNT(*) FROM items", [], |row| row.get::<_, i64>(0))
+                    .ok()
+            })
             .unwrap_or(0) as usize
     }
 
@@ -200,10 +206,18 @@ impl IndexDb {
                 }
             }
         }
-        load_child_rows(conn, "SELECT hash, tag FROM tags", &mut items, |meta, value| meta.tags.push(value))?;
-        load_child_rows(conn, "SELECT hash, category FROM categories", &mut items, |meta, value| {
-            meta.categories.push(value)
-        })?;
+        load_child_rows(
+            conn,
+            "SELECT hash, tag FROM tags",
+            &mut items,
+            |meta, value| meta.tags.push(value),
+        )?;
+        load_child_rows(
+            conn,
+            "SELECT hash, category FROM categories",
+            &mut items,
+            |meta, value| meta.categories.push(value),
+        )?;
 
         Ok(items.into_iter().map(|(h, (m, t))| (h, m, t)).collect())
     }
@@ -272,7 +286,11 @@ impl IndexDb {
         let result = (|| -> rusqlite::Result<HashMap<String, (i64, i64)>> {
             let mut stmt = conn.prepare("SELECT path, mtime, entries FROM folders")?;
             let rows = stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
             })?;
             let mut out = HashMap::new();
             for row in rows {
@@ -322,7 +340,9 @@ impl IndexDb {
         let conn = guard.as_ref()?;
         let result = (|| -> rusqlite::Result<HashMap<String, i64>> {
             let mut stmt = conn.prepare("SELECT hash, source_mtime FROM items")?;
-            let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
             let mut out = HashMap::new();
             for row in rows {
                 let (hash, mtime) = row?;
@@ -359,7 +379,8 @@ impl IndexDb {
             self.poison(&format!("缓存清空失败: {e}"));
         }
         self.write_meta(HYDRATED_KEY, "0");
-        self.hydrated.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.hydrated
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn init_schema(&self) {
@@ -409,11 +430,18 @@ impl IndexDb {
         }
 
         // 注水标记
-        let hydrated = self.read_meta("hydrated").map(|v| v == "1").unwrap_or(false);
-        self.hydrated.store(hydrated, std::sync::atomic::Ordering::SeqCst);
+        let hydrated = self
+            .read_meta("hydrated")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        self.hydrated
+            .store(hydrated, std::sync::atomic::Ordering::SeqCst);
     }
 
-    fn with_conn<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+    fn with_conn<T>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
         let mut conn = self.conn.lock().unwrap();
         let conn = conn.as_mut().ok_or_else(|| rusqlite::Error::InvalidQuery)?;
         f(conn)
@@ -427,10 +455,12 @@ impl IndexDb {
     fn read_meta(&self, key: &str) -> Option<String> {
         let conn = self.conn.lock().unwrap();
         let conn = conn.as_ref()?;
-        conn.query_row("SELECT value FROM meta WHERE key=?1", [key], |row| row.get(0))
-            .optional()
-            .ok()
-            .flatten()
+        conn.query_row("SELECT value FROM meta WHERE key=?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()
+        .ok()
+        .flatten()
     }
 
     fn write_meta(&self, key: &str, value: &str) {
@@ -475,7 +505,12 @@ fn upsert_item(
     insert_child_rows(tx, hash, meta)
 }
 
-fn insert_item(tx: &rusqlite::Transaction, hash: &str, meta: &ItemMetadata, source_mtime: i64) -> rusqlite::Result<()> {
+fn insert_item(
+    tx: &rusqlite::Transaction,
+    hash: &str,
+    meta: &ItemMetadata,
+    source_mtime: i64,
+) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
@@ -492,7 +527,11 @@ fn insert_item(tx: &rusqlite::Transaction, hash: &str, meta: &ItemMetadata, sour
     insert_child_rows(tx, hash, meta)
 }
 
-fn insert_child_rows(tx: &rusqlite::Transaction, hash: &str, meta: &ItemMetadata) -> rusqlite::Result<()> {
+fn insert_child_rows(
+    tx: &rusqlite::Transaction,
+    hash: &str,
+    meta: &ItemMetadata,
+) -> rusqlite::Result<()> {
     for p in &meta.paths {
         tx.execute(
             "INSERT INTO paths (hash, path, size, mtime) VALUES (?1, ?2, ?3, ?4)",
@@ -500,7 +539,10 @@ fn insert_child_rows(tx: &rusqlite::Transaction, hash: &str, meta: &ItemMetadata
         )?;
     }
     for tag in &meta.tags {
-        tx.execute("INSERT OR IGNORE INTO tags (hash, tag) VALUES (?1, ?2)", rusqlite::params![hash, tag])?;
+        tx.execute(
+            "INSERT OR IGNORE INTO tags (hash, tag) VALUES (?1, ?2)",
+            rusqlite::params![hash, tag],
+        )?;
     }
     for category in &meta.categories {
         tx.execute(
@@ -525,7 +567,9 @@ fn load_child_rows(
     add: impl Fn(&mut ItemMetadata, String),
 ) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
     for row in rows {
         let (hash, value) = row?;
         if let Some((meta, _)) = items.get_mut(&hash) {
@@ -534,4 +578,3 @@ fn load_child_rows(
     }
     Ok(())
 }
-

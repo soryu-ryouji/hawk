@@ -11,7 +11,11 @@ pub fn ensure_parent_dir(abs_file: &str) {
 
 /// 计算回收站中的可用位置（保留原目录结构）。
 /// 同名冲突时在文件名后追加 " (n)" 后缀——恢复时按回收站中的实际名称放回。
-pub fn find_free_trash_path(paths: &LibraryPaths, library_rel_path: &str, is_directory: bool) -> String {
+pub fn find_free_trash_path(
+    paths: &LibraryPaths,
+    library_rel_path: &str,
+    is_directory: bool,
+) -> String {
     let mut candidate = LibraryPaths::library_to_trash_path(library_rel_path);
     for n in 1.. {
         let abs = paths.to_absolute(&candidate);
@@ -22,7 +26,8 @@ pub fn find_free_trash_path(paths: &LibraryPaths, library_rel_path: &str, is_dir
         if free {
             return abs.unwrap();
         }
-        candidate = LibraryPaths::library_to_trash_path(&suffixed(library_rel_path, n, is_directory));
+        candidate =
+            LibraryPaths::library_to_trash_path(&suffixed(library_rel_path, n, is_directory));
     }
     unreachable!()
 }

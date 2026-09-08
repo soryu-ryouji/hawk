@@ -35,7 +35,10 @@ pub(crate) fn stage_palette(ctx: &Arc<PipelineCtx>, hash: String, palette: Vec<P
         flush_palette_batch(ctx);
         return;
     }
-    if !ctx.palette_timer.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    if !ctx
+        .palette_timer
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
         let ctx2 = ctx.clone();
         let runtime = ctx.runtime.clone();
         runtime.spawn(async move {
@@ -80,14 +83,21 @@ pub(crate) fn flush_palette_batch(ctx: &PipelineCtx) {
     // 权威层先行（两模式分发：Db 单事务 / Toml 并行小文件）
     let (applied, failed) = ctx.store.persist_batch(&to_write);
     if !failed.is_empty() {
-        tracing::warn!("调色板批量冲刷：{} 条落盘失败（下轮重提炼补齐）", failed.len());
+        tracing::warn!(
+            "调色板批量冲刷：{} 条落盘失败（下轮重提炼补齐）",
+            failed.len()
+        );
     }
     if applied.is_empty() {
         return;
     }
 
     ctx.store.apply_batch(&applied);
-    tracing::info!("调色板批量冲刷 {} 条（暂存 {} 条）", applied.len(), batch_len);
+    tracing::info!(
+        "调色板批量冲刷 {} 条（暂存 {} 条）",
+        applied.len(),
+        batch_len
+    );
 
     // 合并为一条 items.updated 发出：一批最多 500 条，逐条 item.updated 会冲爆 SSE 订阅者
     let mut dtos: Vec<crate::core::item::ItemDto> = Vec::with_capacity(applied.len());
@@ -100,8 +110,10 @@ pub(crate) fn flush_palette_batch(ctx: &PipelineCtx) {
         }
     }
     if !dtos.is_empty() {
-        ctx.bus
-            .publish(ItemEvents::ITEMS_UPDATED, serde_json::json!({ "items": dtos }));
+        ctx.bus.publish(
+            ItemEvents::ITEMS_UPDATED,
+            serde_json::json!({ "items": dtos }),
+        );
     }
 }
 

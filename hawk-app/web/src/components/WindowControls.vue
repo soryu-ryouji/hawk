@@ -64,18 +64,16 @@ function close() {
 }
 
 @media (hover: hover) {
-
-.win-btn:hover {
-  background: var(--bg-3);
-  color: var(--fg-0);
-}
+  .win-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg-0);
+  }
 }
 
 @media (hover: hover) {
-
-.win-btn.close:hover {
-  background: #e81123;
-  color: #fff;
-}
+  .win-btn.close:hover {
+    background: #e81123;
+    color: #fff;
+  }
 }
 </style>

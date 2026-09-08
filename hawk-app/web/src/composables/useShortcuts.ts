@@ -59,18 +59,12 @@ export function useShortcuts() {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c' && !e.shiftKey && !e.altKey) {
       // 复制图片：预览中复制当前图；网格中恰好单选时复制选中图。
       // 多选/无选不拦截——保留浏览器默认的文本复制行为
-      const target = preview.previewId
-        ? preview.previewItem
-        : store.selection.length === 1
-          ? store.primarySelected
-          : null;
+      const target = preview.previewId ? preview.previewItem : store.selection.length === 1 ? store.primarySelected : null;
       if (target) {
         e.preventDefault();
         void copyImageToClipboard(target.id)
           .then(() => store.showToast('已复制图片'))
-          .catch((err: unknown) =>
-            store.showToast(`复制图片失败：${err instanceof Error ? err.message : String(err)}`),
-          );
+          .catch((err: unknown) => store.showToast(`复制图片失败：${err instanceof Error ? err.message : String(err)}`));
       }
       return;
     }
@@ -97,12 +91,7 @@ export function useShortcuts() {
       e.preventDefault();
       const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
       const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
-      const next = moveGridSelection(
-        gridNavRows.value,
-        store.primarySelected ? itemKey(store.primarySelected.id, store.primarySelected.path) : null,
-        dx,
-        dy,
-      );
+      const next = moveGridSelection(gridNavRows.value, store.primarySelected ? itemKey(store.primarySelected.id, store.primarySelected.path) : null, dx, dy);
       if (next) {
         // 仅键盘导航允许触发「滚动到选中项」（ItemGrid 的 watcher 消费此标记）
         markKeyboardNavScroll();

@@ -29,10 +29,13 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::ctx::{active_session, publish_index_progress, PipelineCtx, Reply, ScanProgress};
 use super::ctx::complete as complete_reply;
+use super::ctx::{active_session, publish_index_progress, PipelineCtx, Reply, ScanProgress};
 use super::fs_ops;
-use super::upsert::{apply_upsert, defer_upsert, file_changed_since_prepare, needs_palette_work, prepare_upsert, PrepareOutcome, PendingUpsert, try_compute_hash};
+use super::upsert::{
+    apply_upsert, defer_upsert, file_changed_since_prepare, needs_palette_work, prepare_upsert,
+    try_compute_hash, PendingUpsert, PrepareOutcome,
+};
 use super::Job;
 
 /// items.added 批量事件合并窗口：距首条暂存超该值即冲刷
@@ -76,7 +79,12 @@ pub(crate) struct WalkOutcome {
 
 /// 扫描启动（Job::ScanStart 处理）：消费线程内完成——建会话、spawn runner，立即返回。
 /// 已有扫描在途时合并请求（回复立即成功，本轮完成后自动补扫）
-pub(crate) fn start(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool, reply: Reply<Result<(), String>>) {
+pub(crate) fn start(
+    ctx: &Arc<PipelineCtx>,
+    full: bool,
+    force_walk: bool,
+    reply: Reply<Result<(), String>>,
+) {
     ctx.scan_scheduled.store(false, Ordering::SeqCst);
     if ctx.scanning.swap(true, Ordering::SeqCst) {
         if let Some(session) = active_session(ctx) {
@@ -117,13 +125,18 @@ pub(crate) fn start(ctx: &Arc<PipelineCtx>, full: bool, force_walk: bool, reply:
 /// runner 线程主体：遍历 + 并行哈希，结果经队列回流；任何失败都保证 ScanEnd 到达
 /// （阻塞入队）——消费循环据此收尾，扫描状态不会卡死
 fn run_runner(ctx: Arc<PipelineCtx>, session: Arc<ScanSession>) {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_phases(&ctx, &session)));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_phases(&ctx, &session)));
     let (walk, error) = match result {
         Ok(Ok(walk)) => (walk, None),
         Ok(Err(e)) => (WalkOutcome::default(), Some(e)),
         Err(_) => (WalkOutcome::default(), Some("扫描线程 panic".to_string())),
     };
-    ctx.sender.send_blocking(Job::ScanEnd { session, walk, error });
+    ctx.sender.send_blocking(Job::ScanEnd {
+        session,
+        walk,
+        error,
+    });
 }
 
 /// 扫描主体：目录级增量判定 → 脏目录文件级复用判定 → 需哈希文件并行处理。
@@ -145,7 +158,11 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
     for (rel, mtime, entries) in ctx.scanner.walk_directory_stats(&walk_incomplete) {
         walk.seen_dirs.insert(rel.clone());
         walk.dir_stats.insert(rel.clone(), (mtime, entries));
-        if snapshots.get(&rel).map(|s| *s != (mtime, entries)).unwrap_or(true) {
+        if snapshots
+            .get(&rel)
+            .map(|s| *s != (mtime, entries))
+            .unwrap_or(true)
+        {
             walk.dirty_dirs.push(rel);
         }
         reporter.report(ctx, "scan", walk.seen_dirs.len() as i32, 0, false);
@@ -352,8 +369,10 @@ pub(crate) fn finish(
             ctx.store.replace_folder_snapshots(&walk.dir_stats);
         }
         // 对账扫描是目录结构变化的兜底(外部删空目录等不会产生任何事件),广播一次 folder.changed
-        ctx.bus
-            .publish(ItemEvents::FOLDER_CHANGED, folder_changed_payload(REASON_EXTERNAL));
+        ctx.bus.publish(
+            ItemEvents::FOLDER_CHANGED,
+            folder_changed_payload(REASON_EXTERNAL),
+        );
         report_done(ctx, walk.files);
 
         tracing::info!(
@@ -481,7 +500,10 @@ impl AddedBatcher {
     }
 
     fn due(&self) -> bool {
-        self.ids.len() >= ADDED_BATCH_MAX || self.oldest.is_some_and(|t| t.elapsed() >= ADDED_BATCH_AFTER)
+        self.ids.len() >= ADDED_BATCH_MAX
+            || self
+                .oldest
+                .is_some_and(|t| t.elapsed() >= ADDED_BATCH_AFTER)
     }
 
     /// 冲刷为一条 items.added；扫描结束/出错前兜底调用，避免尾批滞留

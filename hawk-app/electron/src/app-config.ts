@@ -117,9 +117,7 @@ export function listLibraries(): LibraryList {
   const history = readConfig().libraryHistory ?? [];
   return {
     current: libraryRoot,
-    libraries: history
-      .filter((p): p is string => typeof p === 'string')
-      .map((p) => ({ path: p, name: libraryDisplayName(p), exists: fs.existsSync(p) })),
+    libraries: history.filter((p): p is string => typeof p === 'string').map((p) => ({ path: p, name: libraryDisplayName(p), exists: fs.existsSync(p) })),
   };
 }
 

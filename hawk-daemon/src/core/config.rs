@@ -132,7 +132,8 @@ impl LibraryConfig {
     /// 原子写（临时文件 + rename），成功后 reload 返回前后差异（调用方据此 wake LAN supervisor）
     pub fn update_web(&self, web: &WebSettings) -> Result<ConfigChange, String> {
         let file = &self.paths.config_file;
-        let text = std::fs::read_to_string(file).map_err(|e| format!("读取配置失败 {file}: {e}"))?;
+        let text =
+            std::fs::read_to_string(file).map_err(|e| format!("读取配置失败 {file}: {e}"))?;
         let mut doc = text
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("配置解析失败 {file}: {e}"))?;
@@ -206,10 +207,16 @@ fn load(paths: &LibraryPaths) -> Snapshot {
         snapshot.name = Some(name.to_string());
     }
     if let Some(ignore) = table.get("ignore").and_then(|v| v.as_array()) {
-        snapshot.ignore = ignore.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        snapshot.ignore = ignore
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
     }
     if let Some(extensions) = table.get("extensions").and_then(|v| v.as_array()) {
-        snapshot.extensions = extensions.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        snapshot.extensions = extensions
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
     }
     snapshot.web = table.get("web").map(parse_web_value).unwrap_or_default();
     snapshot
@@ -218,7 +225,10 @@ fn load(paths: &LibraryPaths) -> Snapshot {
 fn parse_web_value(value: &toml::Value) -> WebSettings {
     let mut web = WebSettings::default();
     if let Some(table) = value.as_table() {
-        web.enabled = table.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        web.enabled = table
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if let Some(port) = table.get("port").and_then(|v| v.as_integer()) {
             if (1..=65535).contains(&port) {
                 web.port = port as u16;
@@ -230,8 +240,14 @@ fn parse_web_value(value: &toml::Value) -> WebSettings {
                 web.token = Some(token.to_string());
             }
         }
-        web.writable = table.get("writable").and_then(|v| v.as_bool()).unwrap_or(false);
-        web.separate_write_token = table.get("separate_write_token").and_then(|v| v.as_bool()).unwrap_or(false);
+        web.writable = table
+            .get("writable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        web.separate_write_token = table
+            .get("separate_write_token")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if let Some(write_token) = table.get("write_token").and_then(|v| v.as_str()) {
             let write_token = write_token.trim();
             if !write_token.is_empty() {
@@ -306,7 +322,10 @@ impl IgnoreMatcher {
 }
 
 fn split_segments(path: &str) -> Vec<String> {
-    path.split('/').filter(|s| !s.is_empty()).map(String::from).collect()
+    path.split('/')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 /// 分段 glob：`**` 跨目录，段内 `*`/`?` 不跨 '/'。大小写需由调用方归一
@@ -452,7 +471,7 @@ mod tests {
 
         // 改名生效且保留其余段与注释
         cfg.update_name(Some("  我的库  ")).unwrap();
-        let text = std::fs::read_to_string(&root.join(".hawk/config.toml")).unwrap();
+        let text = std::fs::read_to_string(root.join(".hawk/config.toml")).unwrap();
         assert!(text.contains("name = \"我的库\""));
         assert!(text.contains("[web]"));
         assert!(text.contains("# 索引时忽略的路径"));
@@ -460,7 +479,7 @@ mod tests {
 
         // 空白清除自定义名（回退目录名）
         cfg.update_name(Some(" ")).unwrap();
-        let text = std::fs::read_to_string(&root.join(".hawk/config.toml")).unwrap();
+        let text = std::fs::read_to_string(root.join(".hawk/config.toml")).unwrap();
         assert!(!text.lines().any(|l| l.starts_with("name")));
         assert_eq!(cfg.current().name, None);
 

@@ -36,7 +36,15 @@ const LABELS: Record<string, string> = {
           />
         </div>
         <div class="detail">
-          {{ progress ? (progress.total > 0 ? `${progress.processed} / ${progress.total}` : progress.processed > 0 ? `已发现 ${progress.processed} 个文件` : '') : '' }}
+          {{
+            progress
+              ? progress.total > 0
+                ? `${progress.processed} / ${progress.total}`
+                : progress.processed > 0
+                  ? `已发现 ${progress.processed} 个文件`
+                  : ''
+              : ''
+          }}
         </div>
       </template>
       <template v-else>

@@ -8,7 +8,7 @@ use crate::core::paths::LibraryPaths;
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -47,7 +47,11 @@ pub struct LibraryWatcher {
 }
 
 impl LibraryWatcher {
-    pub fn new(paths: LibraryPaths, config: Arc<LibraryConfig>, callback: Callback) -> Arc<LibraryWatcher> {
+    pub fn new(
+        paths: LibraryPaths,
+        config: Arc<LibraryConfig>,
+        callback: Callback,
+    ) -> Arc<LibraryWatcher> {
         Arc::new(LibraryWatcher {
             paths,
             config,
@@ -66,16 +70,21 @@ impl LibraryWatcher {
         let dispatch_config = config.clone();
         let dispatch_cb = cb.clone();
 
-        let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            match res {
-                Ok(event) => dispatch_event(&dispatch_paths, &dispatch_config, &dispatch_cb, &pending_from, event),
+        let mut watcher: RecommendedWatcher =
+            notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
+                Ok(event) => dispatch_event(
+                    &dispatch_paths,
+                    &dispatch_config,
+                    &dispatch_cb,
+                    &pending_from,
+                    event,
+                ),
                 Err(e) => {
                     tracing::warn!("文件监听缓冲溢出，触发全量扫描兜底: {e}");
                     dispatch_cb(WatcherEvent::Overflow);
                 }
-            }
-        })
-        .expect("创建文件监听失败");
+            })
+            .expect("创建文件监听失败");
 
         watcher
             .watch(std::path::Path::new(&paths.root), RecursiveMode::Recursive)
@@ -161,7 +170,9 @@ fn dispatch_event(
                 if event.paths.len() >= 2 {
                     let old = normalize(&event.paths[0]);
                     let new = normalize(&event.paths[1]);
-                    if !is_excluded_path(paths, config, &old) && !is_excluded_path(paths, config, &new) {
+                    if !is_excluded_path(paths, config, &old)
+                        && !is_excluded_path(paths, config, &new)
+                    {
                         cb(WatcherEvent::Moved { old, new });
                     } else {
                         // 任一端隐藏/内部：两端都可见才配对成 Moved，否则按 upsert/删除收敛
@@ -226,7 +237,9 @@ fn pair_or_upsert(
         old
     };
     match old {
-        Some(old) if !is_excluded_path(paths, config, &old) && !is_excluded_path(paths, config, &new) => {
+        Some(old)
+            if !is_excluded_path(paths, config, &old) && !is_excluded_path(paths, config, &new) =>
+        {
             cb(WatcherEvent::Moved { old, new });
         }
         Some(old) => dispatch_rename_result(paths, config, cb, &old, &new),
@@ -329,7 +342,7 @@ fn dispatch_rename_result(
     }
 }
 
-fn normalize(path: &PathBuf) -> String {
+fn normalize(path: &Path) -> String {
     normalize_str(&path.to_string_lossy())
 }
 
@@ -340,6 +353,7 @@ fn normalize_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     /// 记录回调：收集派发的事件
@@ -352,7 +366,8 @@ mod tests {
 
     /// 临时库装配（watcher 只用到路径规则、配置与磁盘现状，不需要完整流水线）
     fn rig(name: &str) -> (LibraryPaths, Arc<LibraryConfig>, PathBuf) {
-        let base = std::env::temp_dir().join(format!("hawk-watcher-test-{name}-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("hawk-watcher-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let paths = LibraryPaths::new(base.to_str().unwrap(), None);
@@ -363,7 +378,8 @@ mod tests {
 
     /// macOS FSEvents 的 rename 事件：单路径 Modify(Name(Any))
     fn name_event(path: &str) -> Event {
-        Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any))).add_path(PathBuf::from(path))
+        Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any)))
+            .add_path(PathBuf::from(path))
     }
 
     fn rel(path: &str) -> String {
@@ -379,7 +395,13 @@ mod tests {
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &config, &cb, &pending, name_event(file.to_str().unwrap()));
+        dispatch_event(
+            &paths,
+            &config,
+            &cb,
+            &pending,
+            name_event(file.to_str().unwrap()),
+        );
 
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
@@ -396,10 +418,22 @@ mod tests {
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &config, &cb, &pending, name_event(old.to_str().unwrap()));
+        dispatch_event(
+            &paths,
+            &config,
+            &cb,
+            &pending,
+            name_event(old.to_str().unwrap()),
+        );
         assert!(events.lock().unwrap().is_empty(), "旧端不应立即产生事件");
 
-        dispatch_event(&paths, &config, &cb, &pending, name_event(new.to_str().unwrap()));
+        dispatch_event(
+            &paths,
+            &config,
+            &cb,
+            &pending,
+            name_event(new.to_str().unwrap()),
+        );
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
         assert!(
@@ -416,11 +450,17 @@ mod tests {
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &config, &cb, &pending, name_event(gone.to_str().unwrap()));
-        pending
-            .lock()
-            .unwrap()
-            .insert(rel(gone.to_str().unwrap()), Instant::now() - RENAME_PAIR_TIMEOUT);
+        dispatch_event(
+            &paths,
+            &config,
+            &cb,
+            &pending,
+            name_event(gone.to_str().unwrap()),
+        );
+        pending.lock().unwrap().insert(
+            rel(gone.to_str().unwrap()),
+            Instant::now() - RENAME_PAIR_TIMEOUT,
+        );
         flush_stale(&paths, &config, &cb, &pending);
 
         let events = events.lock().unwrap();
@@ -438,11 +478,26 @@ mod tests {
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &config, &cb, &pending, name_event(temp.to_str().unwrap()));
-        dispatch_event(&paths, &config, &cb, &pending, name_event(file.to_str().unwrap()));
+        dispatch_event(
+            &paths,
+            &config,
+            &cb,
+            &pending,
+            name_event(temp.to_str().unwrap()),
+        );
+        dispatch_event(
+            &paths,
+            &config,
+            &cb,
+            &pending,
+            name_event(file.to_str().unwrap()),
+        );
 
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], WatcherEvent::FileUpsert(p) if p.ends_with("d.png")), "{events:?}");
+        assert!(
+            matches!(&events[0], WatcherEvent::FileUpsert(p) if p.ends_with("d.png")),
+            "{events:?}"
+        );
     }
 }
