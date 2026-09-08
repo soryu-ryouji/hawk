@@ -49,7 +49,7 @@
     "globals": "^17.12.0",
     "jsdom": "^30.0.1",
     "openapi-typescript": "^7.13.0",
-    "playwright-core": "^1.57.0",
+    "playwright-core": "^1.63.0",
     "prettier": "^3.9.6",
     "smol-toml": "^1.8.0",
     "typescript": "^5.9.3",
