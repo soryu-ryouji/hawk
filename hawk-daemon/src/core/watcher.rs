@@ -144,6 +144,14 @@ fn dispatch_event(
     pending_from: &Arc<Mutex<HashMap<String, Instant>>>,
     event: Event,
 ) {
+    // 系统明确告知事件被丢弃（macOS FSEvents must-scan-subdirs / 内核丢弃 → Flag::Rescan）：
+    // 这是「漏事件」的最强信号，直接走溢出兜底（消费循环排队去重的强制遍历）
+    if event.need_rescan() {
+        tracing::warn!("文件系统事件被丢弃（need-rescan 标志），触发兜底扫描");
+        cb(WatcherEvent::Overflow);
+        return;
+    }
+
     // 配对超时兜底：每次有事件时顺带 flush（与周期 flush 互补，降低延迟）
     flush_stale(paths, config, cb, pending_from);
 
@@ -466,6 +474,19 @@ mod tests {
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], WatcherEvent::Deleted(p) if p.ends_with("c.png")));
+    }
+
+    /// 事件被系统丢弃（Flag::Rescan）→ 溢出兜底（强制遍历收敛）
+    #[test]
+    fn rescan_flag_triggers_overflow() {
+        let (paths, config, _root) = rig("rescan-flag");
+        let (cb, events) = recorder();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let event = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        dispatch_event(&paths, &config, &cb, &pending, event);
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], WatcherEvent::Overflow));
     }
 
     /// 隐藏端不产生事件：临时文件名（.BC.T_xxx 等）与可见新名字配对时按 upsert 收敛

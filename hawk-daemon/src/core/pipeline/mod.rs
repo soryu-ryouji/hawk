@@ -678,10 +678,10 @@ fn consumer_loop(ctx: Arc<PipelineCtx>, rx: std::sync::mpsc::Receiver<Job>) {
         if ctx.overflow.swap(false, Ordering::SeqCst)
             && !ctx.scan_scheduled.swap(true, Ordering::SeqCst)
         {
-            tracing::info!("检测到事件丢失,排队对账扫描");
+            tracing::info!("检测到事件丢失,排队对账扫描（强制遍历收敛内容变更）");
             ctx.sender.fire(Job::ScanStart {
                 full: false,
-                force_walk: false,
+                force_walk: true,
                 scope: None,
                 reply: None,
             });
