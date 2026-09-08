@@ -7,7 +7,7 @@
 | # | 项 | 状态 | 提交 |
 | - | -- | ---- | ---- |
 | 1 | P0-3 静态检查门禁：cargo fmt/clippy + 前端 ESLint/Prettier + CI | DONE | 见 git log |
-| 2 | P2-11 panic 策略：移除 release panic="abort"（恢复 catch_unwind 隔离）+ 请求/worker panic 兜底 | DONE | 071e58d |
+| 2 | P2-11 panic 策略：移除 release panic="abort"（恢复 catch_unwind 隔离）+ 请求/worker panic 兜底；unwrap/expect 审计（结论：均为内部不变量/已守卫，无用户输入触发路径） | DONE | 071e58d |
 | 3 | P1-4 hawk-daemon 拆 lib + 薄 bin | DONE | 见 git log |
 | 4 | P0-2 配置解析容错：保留上次有效配置 + 错误暴露 | DONE | 见 git log |
 | 5 | P1-5 可观测性：app/status 扩展（扫描统计/队列溢出/配置错误/SSE lag） | DONE | 见 git log |
@@ -16,7 +16,7 @@
 | 8 | P1-6 文档机制化：API 文档-代码契约测试 + 文档链接检查 | DONE | 见 git log |
 | 9 | P2-9 前端全局错误处理（errorHandler + unhandledrejection） | DONE | 见 git log |
 | 10 | P2-8 前端 library store 拆分 | DONE | 见 git log |
-| 11 | P2-12 依赖审计：dependabot + cargo audit + npm audit | TODO | |
+| 11 | P2-12 依赖审计：dependabot + cargo audit + npm audit | DONE | 见 git log |
 | 12 | P2-10 跨仓协议契约 | SKIP（hawk-remote 未实现，无被测对象；落地时补） | - |
 
 ## 约定
@@ -38,3 +38,4 @@
 - 2026-09-08 #8 完成：contract_tests 增文档-代码契约（端点+SSE 双向）；tools/check-docs.py + CI 链接检查（50 条）
 - 2026-09-08 #9 完成：main.ts 全局错误兜底（errorHandler/unhandledrejection/error + 5s 去重 toast）
 - 2026-09-08 #10 完成：library.ts 909→851 行，导航/排序拆到 libraryNavigation（工厂+依赖注入）；新增 6 个 store 测试（先测后拆）
+- 2026-09-08 #11 完成：unwrap/expect 审计（无用户输入触发路径）；#12 完成：dependabot + audit job（cargo audit + npm audit critical，与发布解耦先观察）
