@@ -182,6 +182,10 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
                     None => return Err(format!("扫描范围不存在: {scope_rel}")),
                 }
             };
+            // 目录不可读/已删除：标记遍历不完整，收尾跳过范围消失对账（防误删整棵子树）
+            if std::fs::read_dir(&abs).is_err() {
+                walk_incomplete.store(true, Ordering::SeqCst);
+            }
             let files = ctx.scanner.walk_directory(&abs);
             tracing::info!(
                 "定向扫描 {}: 枚举 {} 个文件",
@@ -414,8 +418,11 @@ pub(crate) fn finish(
             // 遍历不完整(部分目录枚举失败)时 seen 不可信:本轮跳过消失对账与快照替换,
             // 避免误删已索引位置或写入残缺快照;最终一致由下一轮对账保证
             tracing::warn!("扫描遍历不完整(目录枚举失败),跳过本轮消失对账与快照更新");
-        } else if session.scope.is_none() {
-            // 定向扫描只看到子树，做全局消失对账/快照替换会误删其余位置
+        } else if let Some(scope) = &session.scope {
+            // 定向扫描只看到子树：消失对账限定在 scope 前缀内（全局对账会误删其余位置），
+            // 快照不替换（下轮全库扫描自然收敛）
+            reconcile_missing_scoped(ctx, &session, &walk, scope);
+        } else {
             reconcile_missing(ctx, &session, &walk);
             // 快照整体替换为本轮统计(下轮增量的对比基准)
             ctx.store.replace_folder_snapshots(&walk.dir_stats);
@@ -498,6 +505,28 @@ fn reconcile_missing(ctx: &PipelineCtx, session: &ScanSession, walk: &WalkOutcom
         if !walk.seen_dirs.contains(dir) || dirty_set.contains(dir) {
             fs_ops::do_delete(ctx, &rel);
         }
+    }
+}
+
+/// 定向扫描的消失对账：只处理 scope 前缀下的索引位置（其余不动）。
+/// 手工重扫需要「新增 + 删除」都收敛；seen 是本轮枚举到的文件，touched 是窗口内消费侧新增
+fn reconcile_missing_scoped(
+    ctx: &PipelineCtx,
+    session: &ScanSession,
+    walk: &WalkOutcome,
+    scope: &str,
+) {
+    let prefix = if scope.is_empty() {
+        String::new()
+    } else {
+        format!("{scope}/")
+    };
+    let touched = session.touched.lock().unwrap();
+    for rel in ctx.index.locations_under(&prefix) {
+        if walk.seen.contains(&rel) || touched.contains(&rel) {
+            continue;
+        }
+        fs_ops::do_delete(ctx, &rel);
     }
 }
 

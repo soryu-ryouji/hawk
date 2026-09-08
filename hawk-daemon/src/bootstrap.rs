@@ -221,6 +221,8 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
                 }
             }
             WatcherEvent::Overflow => pipeline.notify_overflow(),
+            // 系统告知某路径事件被丢弃：定向强制重扫该子树（根路径 = 整库）
+            WatcherEvent::Rescan(rel) => pipeline.request_scoped_rescan(rel),
         })
     });
     watcher.start();

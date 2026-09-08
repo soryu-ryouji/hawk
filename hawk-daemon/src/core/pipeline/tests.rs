@@ -317,6 +317,41 @@ async fn scoped_rescan_picks_up_missed_files() {
     );
 }
 
+/// 定向重扫收敛范围内删除（监听漏掉的删除），范围外不动
+#[tokio::test]
+async fn scoped_rescan_reconciles_missing_in_scope() {
+    let rig = Rig::new("scoped-reconcile");
+    std::fs::create_dir_all(rig.root.join("A")).unwrap();
+    std::fs::create_dir_all(rig.root.join("B")).unwrap();
+    rig.write_png("A/a.png", [255, 0, 0]);
+    rig.write_png("B/b.png", [0, 255, 0]);
+    rig.pipeline.run_scan(false).await.unwrap();
+    assert_eq!(rig.index.count(), 2);
+
+    // 直接删盘（不经 watcher）：A 的删除应被定向重扫收敛，B 的删除不归它管
+    std::fs::remove_file(rig.abs("A/a.png")).unwrap();
+    std::fs::remove_file(rig.abs("B/b.png")).unwrap();
+
+    rig.pipeline.run_scoped_scan("A".to_string()).await.unwrap();
+    let paths = rig.index.all_location_paths();
+    assert_eq!(paths.len(), 1, "只收敛 A 的删除: {paths:?}");
+    assert!(paths[0].ends_with("B/b.png"));
+}
+
+/// 范围目录不可读/已删除：跳过范围消失对账，不误删索引（由下轮全库扫描收敛）
+#[tokio::test]
+async fn scoped_rescan_skips_reconcile_when_scope_unreadable() {
+    let rig = Rig::new("scoped-unreadable");
+    std::fs::create_dir_all(rig.root.join("A")).unwrap();
+    rig.write_png("A/a.png", [255, 0, 0]);
+    rig.pipeline.run_scan(false).await.unwrap();
+    assert_eq!(rig.index.count(), 1);
+
+    std::fs::remove_dir_all(rig.root.join("A")).unwrap();
+    rig.pipeline.run_scoped_scan("A".to_string()).await.unwrap();
+    assert_eq!(rig.index.count(), 1, "范围不可读时不做消失对账");
+}
+
 /// 扩展名白名单：白名单外的文件不入库（扫描枚举与入库判定共用同一谓词），磁盘文件保持不动
 #[tokio::test]
 async fn extension_whitelist_excludes_unlisted_files() {

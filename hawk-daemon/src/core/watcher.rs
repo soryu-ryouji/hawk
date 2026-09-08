@@ -32,6 +32,8 @@ pub enum WatcherEvent {
     GlobalFilterChanged,
     /// 事件缓冲溢出，需要全量扫描兜底
     Overflow,
+    /// 系统明确告知某路径下事件被丢弃（FSEvents must-scan-subdirs）：定向重扫该路径
+    Rescan(String),
 }
 
 type Callback = Arc<dyn Fn(WatcherEvent) + Send + Sync>;
@@ -145,10 +147,25 @@ fn dispatch_event(
     event: Event,
 ) {
     // 系统明确告知事件被丢弃（macOS FSEvents must-scan-subdirs / 内核丢弃 → Flag::Rescan）：
-    // 这是「漏事件」的最强信号，直接走溢出兜底（消费循环排队去重的强制遍历）
+    // 这是「漏事件」的最强信号。事件自带受影响路径 → 定向重扫（根路径即整库），
+    // 比无差别全库遍历更省；路径全部不可用时退回溢出兜底
     if event.need_rescan() {
-        tracing::warn!("文件系统事件被丢弃（need-rescan 标志），触发兜底扫描");
-        cb(WatcherEvent::Overflow);
+        let mut any = false;
+        for path in &event.paths {
+            let abs = normalize(path);
+            if is_excluded_path(paths, config, &abs) {
+                continue;
+            }
+            if let Some(rel) = paths.to_relative(&abs) {
+                tracing::warn!("文件系统事件被丢弃（need-rescan 标志），定向重扫: {rel}");
+                cb(WatcherEvent::Rescan(rel));
+                any = true;
+            }
+        }
+        if !any {
+            tracing::warn!("文件系统事件被丢弃（need-rescan 标志），触发全库兜底扫描");
+            cb(WatcherEvent::Overflow);
+        }
         return;
     }
 
@@ -479,14 +496,19 @@ mod tests {
     /// 事件被系统丢弃（Flag::Rescan）→ 溢出兜底（强制遍历收敛）
     #[test]
     fn rescan_flag_triggers_overflow() {
-        let (paths, config, _root) = rig("rescan-flag");
+        let (paths, config, root) = rig("rescan-flag");
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
-        let event = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        let event = Event::new(EventKind::Other)
+            .set_flag(notify::event::Flag::Rescan)
+            .add_path(root.join("A"));
         dispatch_event(&paths, &config, &cb, &pending, event);
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], WatcherEvent::Overflow));
+        assert!(
+            matches!(&events[0], WatcherEvent::Rescan(rel) if rel == "A"),
+            "{events:?}"
+        );
     }
 
     /// 隐藏端不产生事件：临时文件名（.BC.T_xxx 等）与可见新名字配对时按 upsert 收敛
