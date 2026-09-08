@@ -74,6 +74,10 @@ pub(crate) fn do_metadata_sync(ctx: &PipelineCtx) {
     // 宽高自愈：入库时 decode/identify 暂时失败（文件占用等）会把 width=0 落库且无自愈路径，
     // 增量扫描按 size/mtime 复用不再触及 → 永久滞留 0 × 0。同一任务（PaletteOnly 含补宽高）兜底
     for hash in ctx.store.hashes_with_zero_dim() {
+        // 负缓存（非可解码图像）：0 宽高是终态，不再周期重派
+        if ctx.store.palette_negative_cached(&hash) {
+            continue;
+        }
         if ctx.index.with_item_mut(&hash, |item| item.width == 0).unwrap_or(false) {
             if let Some(abs) = ctx.index.main_source_abs(&hash, &ctx.paths) {
                 ctx.worker.enqueue_palette(&hash, &abs);

@@ -183,6 +183,16 @@ impl MetadataStore {
         self.inner.lock().unwrap().by_hash.get(hash).cloned()
     }
 
+    /// 派生探测负缓存（空调色板 = 已探测且非可解码图像）：读取端宽高自愈的跳过依据（不克隆元数据）
+    pub fn palette_negative_cached(&self, hash: &str) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .by_hash
+            .get(hash)
+            .is_some_and(|m| m.palette_negative_cached())
+    }
+
     /// 全部元数据条目快照（批量迁移用）
     pub fn snapshot(&self) -> Vec<(String, ItemMetadata)> {
         self.inner.lock().unwrap().by_hash.iter().map(|(h, m)| (h.clone(), m.clone())).collect()

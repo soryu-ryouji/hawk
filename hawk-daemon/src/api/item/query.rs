@@ -156,16 +156,47 @@ pub(crate) async fn item_skeleton(
     Ok(Json(Envelope::ok(ItemSkeletonResponse { items, total_size })))
 }
 
+/// 读取端宽高自愈的判定：0 宽高且未被负缓存标记为「已探测的非可解码图像」。
+/// 后者的 0 宽高是终态，重复派发只会让 worker 反复回写负缓存
+fn should_heal_dim(width: i32, negative_cached: bool) -> bool {
+    width == 0 && !negative_cached
+}
+
 /// 读取端宽高自愈：响应中发现 0 × 0 的 item → 派发后台补全任务（identify 补宽高 + 按需调色板）。
 /// 入库时解码暂时失败会把 width=0 落库且无事件再触及，用户拉列表即触发重试，
 /// 修复后经 item.updated 事件自动刷新骨架/卡片。in-flight 去重，幂等，高频调用零负担
 fn dispatch_dim_heal<'a>(state: &SharedState, items: impl Iterator<Item = (&'a str, i32)>) {
     for (hash, width) in items {
-        if width == 0 {
-            if let Some(abs) = state.index.main_source_abs(hash, &state.paths) {
-                state.worker.enqueue_palette(hash, &abs);
-            }
+        if !should_heal_dim(width, state.store.palette_negative_cached(hash)) {
+            continue;
         }
+        if let Some(abs) = state.index.main_source_abs(hash, &state.paths) {
+            state.worker.enqueue_palette(hash, &abs);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_heal_dim;
+
+    /// 正常图像（宽高已知）：不派发
+    #[test]
+    fn dim_known_no_dispatch() {
+        assert!(!should_heal_dim(1024, false));
+        assert!(!should_heal_dim(1024, true));
+    }
+
+    /// 宽高缺失且未探测过：派发（临时失败可自愈）
+    #[test]
+    fn dim_missing_dispatches() {
+        assert!(should_heal_dim(0, false));
+    }
+
+    /// 宽高缺失但已负缓存（非可解码图像）：0 是终态，不派发
+    #[test]
+    fn dim_missing_negative_cached_skips() {
+        assert!(!should_heal_dim(0, true));
     }
 }
 

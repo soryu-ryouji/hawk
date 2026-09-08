@@ -198,10 +198,13 @@ fn process_job(
     // 非图像文件（内容喷探）：不做任何解码（identify/缩略图/调色板），空数组负缓存
     // 终止「palette 缺失 → 重派」的周期循环；宽高 0×0 即终态。幂等，重复应用无害
     if !ThumbnailService::is_probably_image(&job.source_abs) {
-        let _ = deps.jobs.try_fire(Job::Palette {
-            hash: job.hash.clone(),
-            palette: Vec::new(),
-        });
+        // 负缓存只写一次：重复回写会让每次列表读取都触发一轮元数据落盘 + items.updated
+        if !deps.store.palette_negative_cached(&job.hash) {
+            let _ = deps.jobs.try_fire(Job::Palette {
+                hash: job.hash.clone(),
+                palette: Vec::new(),
+            });
+        }
         return;
     }
 

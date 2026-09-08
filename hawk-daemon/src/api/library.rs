@@ -262,13 +262,13 @@ struct CleanupIndexResponse {
     removed: usize,
     /// 隐藏文件（路径任一段以 . 开头，如 .DS_Store、.stignore）
     hidden: usize,
-    /// ignore 规则命中
+    /// ignore 规则命中或扩展名不在白名单内
     ignored: usize,
     /// 源文件已消失的残留（与 refresh_cache 的消失对账同款判定）
     missing: usize,
 }
 
-/// 索引体检：清除不该在索引里的条目——隐藏文件、ignore 规则命中、源文件已删除的残留。
+/// 索引体检：清除不该在索引里的条目——隐藏文件、ignore 规则命中或扩展名不在白名单内、源文件已删除的残留。
 /// 只摘索引位置不动磁盘文件；移除经流水线单写者（notify_deleted → do_delete），事件广播后 UI 自动收敛。
 /// 与 refresh_cache 的差异：refresh_cache 只对账源文件消失；本端点还清「文件还在但不该入库」的残留
 /// （早期版本入库的结果——增量扫描靠目录快照跳过 clean 目录，不会再触达它们，只能靠本入口收敛）。
@@ -296,7 +296,7 @@ async fn cleanup_index(State(state): State<SharedState>) -> Json<Envelope<Cleanu
             if let Some(abs) = state.paths.to_absolute(&rel) {
                 state.pipeline.notify_deleted(abs);
             }
-        } else if state.config.is_ignored(&rel) {
+        } else if !state.config.is_file_included(&rel) {
             ignored += 1;
             if let Some(abs) = state.paths.to_absolute(&rel) {
                 state.pipeline.notify_deleted(abs);

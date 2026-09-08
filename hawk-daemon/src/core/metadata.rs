@@ -35,6 +35,12 @@ pub struct ItemMetadata {
 }
 
 impl ItemMetadata {
+    /// 派生探测负缓存：空调色板 = 已探测且非可解码图像（worker 对非图像文件写入）——
+    /// 宽高 0 对这类文件是终态，读取端与对账不再重复派发任务
+    pub fn palette_negative_cached(&self) -> bool {
+        self.palette.as_ref().is_some_and(|p| p.is_empty())
+    }
+
     pub fn find_path(&self, path: &str) -> Option<&PathEntry> {
         self.paths.iter().find(|p| p.path == path)
     }

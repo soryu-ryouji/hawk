@@ -18,6 +18,7 @@ struct Rig {
     pipeline: IndexPipeline,
     index: Arc<ItemIndex>,
     store: Arc<MetadataStore>,
+    config: Arc<LibraryConfig>,
     bus: EventBus,
 }
 
@@ -32,7 +33,20 @@ impl Rig {
         Self::with_mode(name, Some(crate::core::metadata_store::StorageMode::Toml))
     }
 
+    /// 指定扩展名白名单的装配（写 .hawk/config.toml 后再构造 LibraryConfig）
+    fn with_extensions(name: &str, extensions: &[&str]) -> Rig {
+        Self::with_mode_and_ext(name, None, extensions)
+    }
+
     fn with_mode(name: &str, mode: Option<crate::core::metadata_store::StorageMode>) -> Rig {
+        Self::with_mode_and_ext(name, mode, &[])
+    }
+
+    fn with_mode_and_ext(
+        name: &str,
+        mode: Option<crate::core::metadata_store::StorageMode>,
+        extensions: &[&str],
+    ) -> Rig {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new("debug"))
             .with_test_writer()
@@ -47,6 +61,10 @@ impl Rig {
         let root_str = root.to_string_lossy().to_string();
         let paths = LibraryPaths::new(&root_str, Some(cache.to_string_lossy().to_string()));
         paths.ensure_layout();
+        if !extensions.is_empty() {
+            let list = extensions.iter().map(|e| format!("\"{e}\"")).collect::<Vec<_>>().join(", ");
+            std::fs::write(&paths.config_file, format!("extensions = [{list}]\n")).unwrap();
+        }
         let config = Arc::new(LibraryConfig::new(paths.clone()));
         let startup = Arc::new(StartupState::default());
         let store = Arc::new(MetadataStore::with_mode(paths.clone(), &startup, mode));
@@ -76,7 +94,7 @@ impl Rig {
         };
         let pipeline = IndexPipeline::new(
             paths.clone(),
-            config,
+            config.clone(),
             store.clone(),
             index.clone(),
             thumbs,
@@ -93,7 +111,7 @@ impl Rig {
         pipeline.start();
         startup.mark_ready();
 
-        Rig { root, cache, pipeline, index, store, bus }
+        Rig { root, cache, pipeline, index, store, config, bus }
     }
 
     fn abs(&self, rel: &str) -> String {
@@ -245,6 +263,23 @@ async fn scan_reconcile_removes_disappeared() {
     let remaining = rig.index.all_location_paths();
     assert_eq!(remaining.len(), 1);
     assert!(remaining[0].ends_with("b.png"));
+}
+
+/// 扩展名白名单：白名单外的文件不入库（扫描枚举与入库判定共用同一谓词），磁盘文件保持不动
+#[tokio::test]
+async fn extension_whitelist_excludes_unlisted_files() {
+    let rig = Rig::with_extensions("ext-whitelist", &["png"]);
+    rig.write_png("a.png", [255, 0, 0]);
+    std::fs::write(rig.root.join("b.txt"), b"hello").unwrap();
+    rig.stabilize("b.txt");
+
+    rig.pipeline.run_scan(false).await.unwrap();
+
+    assert_eq!(rig.index.count(), 1, "白名单外的文件不应入库");
+    let locations = rig.index.all_location_paths();
+    assert_eq!(locations.len(), 1);
+    assert!(locations[0].ends_with("a.png"));
+    assert!(rig.root.join("b.txt").is_file(), "文件本身不动（非侵入式）");
 }
 
 #[tokio::test]

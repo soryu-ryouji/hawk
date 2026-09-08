@@ -3,6 +3,7 @@
 //! notify 原生事件是粒度化的（Create/Remove/Modify/Name(From|To|Both)），
 //! 此处折叠为 FileSystemWatcher 语义的 upsert/delete/move；From/To 配对带 300ms 超时兜底。
 
+use crate::core::config::LibraryConfig;
 use crate::core::paths::LibraryPaths;
 use notify::event::{ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -39,15 +40,17 @@ const RENAME_PAIR_TIMEOUT: Duration = Duration::from_millis(300);
 
 pub struct LibraryWatcher {
     paths: LibraryPaths,
+    config: Arc<LibraryConfig>,
     callback: Callback,
     _watcher: Mutex<Option<RecommendedWatcher>>,
     pending_from: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 impl LibraryWatcher {
-    pub fn new(paths: LibraryPaths, callback: Callback) -> Arc<LibraryWatcher> {
+    pub fn new(paths: LibraryPaths, config: Arc<LibraryConfig>, callback: Callback) -> Arc<LibraryWatcher> {
         Arc::new(LibraryWatcher {
             paths,
+            config,
             callback,
             _watcher: Mutex::new(None),
             pending_from: Arc::new(Mutex::new(HashMap::new())),
@@ -56,14 +59,16 @@ impl LibraryWatcher {
 
     pub fn start(self: &Arc<Self>) {
         let paths = self.paths.clone();
+        let config = self.config.clone();
         let cb = self.callback.clone();
         let pending_from = self.pending_from.clone();
         let dispatch_paths = paths.clone();
+        let dispatch_config = config.clone();
         let dispatch_cb = cb.clone();
 
         let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             match res {
-                Ok(event) => dispatch_event(&dispatch_paths, &dispatch_cb, &pending_from, event),
+                Ok(event) => dispatch_event(&dispatch_paths, &dispatch_config, &dispatch_cb, &pending_from, event),
                 Err(e) => {
                     tracing::warn!("文件监听缓冲溢出，触发全量扫描兜底: {e}");
                     dispatch_cb(WatcherEvent::Overflow);
@@ -104,41 +109,40 @@ impl LibraryWatcher {
             stale
         };
         for path in stale {
-            if !self.is_internal(&path) && !self.is_hidden(&path) {
+            if !self.is_excluded(&path) {
                 (self.callback)(WatcherEvent::Deleted(path));
             }
         }
     }
 
-    fn is_internal(&self, abs: &str) -> bool {
+    /// 索引无关路径：.hawk 内部、含隐藏组件（.DS_Store/.stfolder 等）或扩展名不在可见白名单内
+    fn is_excluded(&self, abs: &str) -> bool {
         match self.paths.to_relative(abs) {
             None => true,
-            Some(rel) => LibraryPaths::is_internal(&rel),
-        }
-    }
-
-    fn is_hidden(&self, abs: &str) -> bool {
-        match self.paths.to_relative(abs) {
-            None => true,
-            Some(rel) => LibraryPaths::is_hidden(&rel),
+            Some(rel) => {
+                LibraryPaths::is_internal(&rel)
+                    || LibraryPaths::is_hidden(&rel)
+                    || !self.config.is_extension_included(&rel)
+            }
         }
     }
 }
 
 fn dispatch_event(
     paths: &LibraryPaths,
+    config: &Arc<LibraryConfig>,
     cb: &Callback,
     pending_from: &Arc<Mutex<HashMap<String, Instant>>>,
     event: Event,
 ) {
     // 配对超时兜底：每次有事件时顺带 flush（与周期 flush 互补，降低延迟）
-    flush_stale(paths, cb, pending_from);
+    flush_stale(paths, config, cb, pending_from);
 
     match event.kind {
         EventKind::Create(_) => {
             for path in event.paths {
                 let abs = normalize(&path);
-                dispatch_upsert(paths, cb, &abs);
+                dispatch_upsert(paths, config, cb, &abs);
             }
         }
         EventKind::Modify(ModifyKind::Data(_))
@@ -148,7 +152,7 @@ fn dispatch_event(
             for path in event.paths {
                 let abs = normalize(&path);
                 if std::path::Path::new(&abs).is_file() {
-                    dispatch_upsert(paths, cb, &abs);
+                    dispatch_upsert(paths, config, cb, &abs);
                 }
             }
         }
@@ -157,11 +161,11 @@ fn dispatch_event(
                 if event.paths.len() >= 2 {
                     let old = normalize(&event.paths[0]);
                     let new = normalize(&event.paths[1]);
-                    if !is_excluded_path(paths, &old) && !is_excluded_path(paths, &new) {
+                    if !is_excluded_path(paths, config, &old) && !is_excluded_path(paths, config, &new) {
                         cb(WatcherEvent::Moved { old, new });
                     } else {
                         // 任一端隐藏/内部：两端都可见才配对成 Moved，否则按 upsert/删除收敛
-                        dispatch_rename_result(paths, cb, &old, &new);
+                        dispatch_rename_result(paths, config, cb, &old, &new);
                     }
                 } else if let Some(path) = event.paths.first() {
                     // macOS FSEvents 的 rename 无法配对：旧/新路径各发一条单路径 Name(Any)。
@@ -170,7 +174,7 @@ fn dispatch_event(
                     // 的新名字由此入库
                     let abs = normalize(path);
                     if std::path::Path::new(&abs).exists() {
-                        pair_or_upsert(paths, cb, pending_from, abs);
+                        pair_or_upsert(paths, config, cb, pending_from, abs);
                     } else {
                         pending_from.lock().unwrap().insert(abs, Instant::now());
                     }
@@ -186,7 +190,7 @@ fn dispatch_event(
             }
             RenameMode::To => {
                 if let Some(path) = event.paths.first() {
-                    pair_or_upsert(paths, cb, pending_from, normalize(path));
+                    pair_or_upsert(paths, config, cb, pending_from, normalize(path));
                 }
             }
             _ => {}
@@ -194,7 +198,7 @@ fn dispatch_event(
         EventKind::Remove(_) => {
             for path in event.paths {
                 let abs = normalize(&path);
-                if !is_excluded_path(paths, &abs) {
+                if !is_excluded_path(paths, config, &abs) {
                     cb(WatcherEvent::Deleted(abs));
                 }
             }
@@ -208,6 +212,7 @@ fn dispatch_event(
 /// 来源：其他平台的 RenameMode::To 与 macOS FSEvents 单路径 Name(Any) 的新端
 fn pair_or_upsert(
     paths: &LibraryPaths,
+    config: &Arc<LibraryConfig>,
     cb: &Callback,
     pending_from: &Arc<Mutex<HashMap<String, Instant>>>,
     new: String,
@@ -221,20 +226,25 @@ fn pair_or_upsert(
         old
     };
     match old {
-        Some(old) if !is_excluded_path(paths, &old) && !is_excluded_path(paths, &new) => {
+        Some(old) if !is_excluded_path(paths, config, &old) && !is_excluded_path(paths, config, &new) => {
             cb(WatcherEvent::Moved { old, new });
         }
-        Some(old) => dispatch_rename_result(paths, cb, &old, &new),
+        Some(old) => dispatch_rename_result(paths, config, cb, &old, &new),
         None => {
-            if !is_excluded_path(paths, &new) {
-                dispatch_upsert(paths, cb, &new);
+            if !is_excluded_path(paths, config, &new) {
+                dispatch_upsert(paths, config, cb, &new);
             }
         }
     }
 }
 
 /// From/To 的 key 约定：From 存旧路径，To 到来时按「任意待配对 From」消费
-fn flush_stale(paths: &LibraryPaths, cb: &Callback, pending_from: &Arc<Mutex<HashMap<String, Instant>>>) {
+fn flush_stale(
+    paths: &LibraryPaths,
+    config: &Arc<LibraryConfig>,
+    cb: &Callback,
+    pending_from: &Arc<Mutex<HashMap<String, Instant>>>,
+) {
     let stale: Vec<String> = {
         let mut pending = pending_from.lock().unwrap();
         let now = Instant::now();
@@ -249,13 +259,13 @@ fn flush_stale(paths: &LibraryPaths, cb: &Callback, pending_from: &Arc<Mutex<Has
         stale
     };
     for path in stale {
-        if !is_excluded_path(paths, &path) {
+        if !is_excluded_path(paths, config, &path) {
             cb(WatcherEvent::Deleted(path));
         }
     }
 }
 
-fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
+fn dispatch_upsert(paths: &LibraryPaths, config: &Arc<LibraryConfig>, cb: &Callback, abs: &str) {
     let norm_config = normalize_str(&paths.config_file);
     let norm_categories = normalize_str(&paths.categories_file);
     let norm_tags = normalize_str(&paths.tags_file);
@@ -277,7 +287,7 @@ fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
         cb(WatcherEvent::GlobalFilterChanged);
         return;
     }
-    if is_excluded_path(paths, abs) {
+    if is_excluded_path(paths, config, abs) {
         return;
     }
     // 目录不产生 item 事件,单独上报以驱动 folder.changed(目录删除的信号处理：含内容/有设置的目录
@@ -292,19 +302,29 @@ fn dispatch_upsert(paths: &LibraryPaths, cb: &Callback, abs: &str) {
 /// 索引无关路径：.hawk 内部或含隐藏组件（.DS_Store、.stfolder 等）。
 /// 这些路径不产生 upsert/移动事件；删除事件同样不发出——
 /// 隐藏项本就不该在索引中，旧残留由扫描的 Remove/消失对账收敛
-fn is_excluded_path(paths: &LibraryPaths, abs: &str) -> bool {
+fn is_excluded_path(paths: &LibraryPaths, config: &Arc<LibraryConfig>, abs: &str) -> bool {
     match paths.to_relative(abs) {
         None => true,
-        Some(rel) => LibraryPaths::is_internal(&rel) || LibraryPaths::is_hidden(&rel),
+        Some(rel) => {
+            LibraryPaths::is_internal(&rel)
+                || LibraryPaths::is_hidden(&rel)
+                || !config.is_extension_included(&rel)
+        }
     }
 }
 
 /// rename 收尾：new 可见则 upsert，否则（new 隐藏/内部）在 old 可见时按删除处理
 /// ——从索引位置移入隐藏目录不能残留 old 位置的索引
-fn dispatch_rename_result(paths: &LibraryPaths, cb: &Callback, old: &str, new: &str) {
-    if !is_excluded_path(paths, new) {
-        dispatch_upsert(paths, cb, new);
-    } else if !is_excluded_path(paths, old) {
+fn dispatch_rename_result(
+    paths: &LibraryPaths,
+    config: &Arc<LibraryConfig>,
+    cb: &Callback,
+    old: &str,
+    new: &str,
+) {
+    if !is_excluded_path(paths, config, new) {
+        dispatch_upsert(paths, config, cb, new);
+    } else if !is_excluded_path(paths, config, old) {
         cb(WatcherEvent::Deleted(old.to_string()));
     }
 }
@@ -330,14 +350,15 @@ mod tests {
         (cb, events)
     }
 
-    /// 临时库装配（watcher 只用到路径规则与磁盘现状，不需要完整流水线）
-    fn rig(name: &str) -> (LibraryPaths, PathBuf) {
+    /// 临时库装配（watcher 只用到路径规则、配置与磁盘现状，不需要完整流水线）
+    fn rig(name: &str) -> (LibraryPaths, Arc<LibraryConfig>, PathBuf) {
         let base = std::env::temp_dir().join(format!("hawk-watcher-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let paths = LibraryPaths::new(base.to_str().unwrap(), None);
         paths.ensure_layout();
-        (paths, base)
+        let config = Arc::new(LibraryConfig::new(paths.clone()));
+        (paths, config, base)
     }
 
     /// macOS FSEvents 的 rename 事件：单路径 Modify(Name(Any))
@@ -352,13 +373,13 @@ mod tests {
     /// 临时文件 + rename 落盘（Finder/ditto/原子保存）：新名字路径的事件必须入库
     #[test]
     fn single_path_rename_upserts_materialized_file() {
-        let (paths, root) = rig("rename-upsert");
+        let (paths, config, root) = rig("rename-upsert");
         let file = root.join("a.png");
         std::fs::write(&file, b"x").unwrap();
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &cb, &pending, name_event(file.to_str().unwrap()));
+        dispatch_event(&paths, &config, &cb, &pending, name_event(file.to_str().unwrap()));
 
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
@@ -368,17 +389,17 @@ mod tests {
     /// 旧路径（已不存在）进配对，新路径（存在）配对成 Moved——元数据随位置跟随，不重算哈希
     #[test]
     fn single_path_rename_pairs_into_move() {
-        let (paths, root) = rig("rename-pair");
+        let (paths, config, root) = rig("rename-pair");
         let old = root.join("b.png");
         let new = root.join("b2.png");
         std::fs::write(&new, b"x").unwrap();
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &cb, &pending, name_event(old.to_str().unwrap()));
+        dispatch_event(&paths, &config, &cb, &pending, name_event(old.to_str().unwrap()));
         assert!(events.lock().unwrap().is_empty(), "旧端不应立即产生事件");
 
-        dispatch_event(&paths, &cb, &pending, name_event(new.to_str().unwrap()));
+        dispatch_event(&paths, &config, &cb, &pending, name_event(new.to_str().unwrap()));
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
         assert!(
@@ -390,17 +411,17 @@ mod tests {
     /// 移出库/删除：旧端无配对，超时后按删除收敛
     #[test]
     fn single_path_rename_flushes_stale_as_deleted() {
-        let (paths, root) = rig("rename-delete");
+        let (paths, config, root) = rig("rename-delete");
         let gone = root.join("c.png");
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &cb, &pending, name_event(gone.to_str().unwrap()));
+        dispatch_event(&paths, &config, &cb, &pending, name_event(gone.to_str().unwrap()));
         pending
             .lock()
             .unwrap()
             .insert(rel(gone.to_str().unwrap()), Instant::now() - RENAME_PAIR_TIMEOUT);
-        flush_stale(&paths, &cb, &pending);
+        flush_stale(&paths, &config, &cb, &pending);
 
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
@@ -410,15 +431,15 @@ mod tests {
     /// 隐藏端不产生事件：临时文件名（.BC.T_xxx 等）与可见新名字配对时按 upsert 收敛
     #[test]
     fn single_path_rename_from_hidden_temp_upserts_new_name() {
-        let (paths, root) = rig("rename-hidden");
+        let (paths, config, root) = rig("rename-hidden");
         let temp = root.join(".BC.T_abc");
         let file = root.join("d.png");
         std::fs::write(&file, b"x").unwrap();
         let (cb, events) = recorder();
         let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        dispatch_event(&paths, &cb, &pending, name_event(temp.to_str().unwrap()));
-        dispatch_event(&paths, &cb, &pending, name_event(file.to_str().unwrap()));
+        dispatch_event(&paths, &config, &cb, &pending, name_event(temp.to_str().unwrap()));
+        dispatch_event(&paths, &config, &cb, &pending, name_event(file.to_str().unwrap()));
 
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);

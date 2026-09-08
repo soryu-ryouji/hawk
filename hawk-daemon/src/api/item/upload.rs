@@ -102,6 +102,10 @@ pub(crate) async fn item_upload(
     }
     let ext = LibraryPaths::ext_of(&filename);
     let file_name = if ext.is_empty() { stem.clone() } else { format!("{stem}.{ext}") };
+    // 扩展名白名单（.hawk/config.toml 的 extensions）：白名单外的格式直接拒绝
+    if !state.config.is_extension_included(&file_name) {
+        return Err(ApiError::unsupported_format(format!("扩展名不在素材库可见格式白名单内: {file_name}")));
+    }
     let target_rel = if folder_rel.is_empty() {
         file_name.clone()
     } else {

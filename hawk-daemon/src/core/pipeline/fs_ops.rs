@@ -73,7 +73,8 @@ pub(crate) fn do_move(ctx: &Arc<PipelineCtx>, old_abs: &str, new_abs: &str) -> R
     };
     let new_rel = ctx.paths.to_relative(new_abs);
     let new_usable = new_rel.as_ref().is_some_and(|r| {
-        !LibraryPaths::is_internal(r) && (LibraryPaths::is_in_trash(r) || !ctx.config.is_ignored(r))
+        // 目标为回收站恒可用（可回收）；库内目标须在 ignore 与扩展名白名单内
+        !LibraryPaths::is_internal(r) && (LibraryPaths::is_in_trash(r) || ctx.config.is_file_included(r))
     });
     let Some(new_rel) = new_rel.filter(|_| new_usable) else {
         do_delete(ctx, &old_rel);

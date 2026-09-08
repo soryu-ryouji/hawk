@@ -247,8 +247,8 @@ impl IndexPipeline {
     }
 
     /// 启动注水：内存索引由元数据副本恢复（SQLite 快路径/TOML 回退），就绪无需等待全库扫描。
-    /// 位置过过滤：hidden/ignore 命中的历史残留不注水（磁盘文件还在时增量对账不触达，
-    /// 增量快照永远 clean，只能在这里挡）；元数据同步修剪，新副本不再是残留来源
+    /// 位置过过滤：hidden/ignore/扩展名白名单外的历史残留不注水（磁盘文件还在时增量对账
+    /// 不触达，增量快照永远 clean，只能在这里挡）；元数据同步修剪，新副本不再是残留来源
     fn hydrate_index(&self) {
         let entries = self.ctx.store.snapshot();
         for (hash, meta) in &entries {
@@ -256,7 +256,8 @@ impl IndexPipeline {
                 .paths
                 .iter()
                 .filter(|p| {
-                    let usable = !LibraryPaths::is_hidden(&p.path) && !self.ctx.config.is_ignored(&p.path);
+                    let usable =
+                        !LibraryPaths::is_hidden(&p.path) && self.ctx.config.is_file_included(&p.path);
                     if !usable {
                         tracing::info!("注水跳过残留位置: {}", p.path);
                     }

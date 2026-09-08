@@ -167,7 +167,7 @@ fn build_state(settings: Settings) -> SharedState {
 /// 返回的 watcher 由调用方持有保活
 fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
     use crate::core::events::REASON_EXTERNAL;
-    let watcher = LibraryWatcher::new(state.paths.clone(), {
+    let watcher = LibraryWatcher::new(state.paths.clone(), state.config.clone(), {
         let pipeline = state.pipeline.clone();
         let config = state.config.clone();
         let paths = state.paths.clone();
@@ -197,9 +197,12 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
             // 仅 name 变化无后续动作（library/info 每次读 current()）
             WatcherEvent::ConfigChanged => {
                 let change = config.reload();
-                if change.ignore_changed {
-                    // ignore 规则参与树构建，与重扫同点失效
-                    folder_tree.invalidate();
+                if change.ignore_changed || change.extensions_changed {
+                    // ignore 规则参与树构建，与重扫同点失效；扩展名白名单变化不改变目录结构，
+                    // 但需强制重扫让既有条目收敛（新增后缀入库、移除后缀出库）
+                    if change.ignore_changed {
+                        folder_tree.invalidate();
+                    }
                     pipeline.notify_config_changed();
                 }
                 if change.web_changed {

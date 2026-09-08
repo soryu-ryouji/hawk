@@ -41,7 +41,7 @@ impl LibraryScanner {
                         continue;
                     }
                     pending.push(full);
-                } else if !is_trash_subtree && self.config.is_ignored(&rel) {
+                } else if !is_trash_subtree && !self.config.is_file_included(&rel) {
                     continue;
                 } else {
                     out.push(full);
@@ -118,7 +118,7 @@ impl LibraryScanner {
                 Some(r) => r,
                 None => continue,
             };
-            if !is_trash_subtree && self.config.is_ignored(&rel) {
+            if !is_trash_subtree && !self.config.is_file_included(&rel) {
                 continue;
             }
             out.push(full);

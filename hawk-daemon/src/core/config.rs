@@ -6,6 +6,7 @@
 //! write_token 读写（separate_write_token 防止误删 write_token 后主 token 静默获得写权限）。
 
 use crate::core::paths::LibraryPaths;
+use std::collections::HashSet;
 use std::sync::RwLock;
 
 #[derive(Clone, Default, PartialEq)]
@@ -21,10 +22,12 @@ pub struct WebSettings {
     pub write_token: Option<String>,
 }
 
-/// reload 前后差异：调用方据此决定后续动作（ignore 变化 → 重扫，web 变化 → LAN 重绑）
+/// reload 前后差异：调用方据此决定后续动作（ignore / 扩展名白名单变化 → 重扫，web 变化 → LAN 重绑）
 #[derive(Default)]
 pub struct ConfigChange {
     pub ignore_changed: bool,
+    /// 扩展名白名单变化：需强制重扫以收敛既有条目（新增的后缀入库、移除的后缀出库）
+    pub extensions_changed: bool,
     pub web_changed: bool,
 }
 
@@ -32,6 +35,8 @@ pub struct ConfigChange {
 pub struct Snapshot {
     pub name: Option<String>,
     pub ignore: Vec<String>,
+    /// 可见扩展名白名单（空 = 不过滤，全部入库）
+    pub extensions: Vec<String>,
     pub web: WebSettings,
 }
 
@@ -39,6 +44,7 @@ pub struct LibraryConfig {
     paths: LibraryPaths,
     current: RwLock<Snapshot>,
     matcher: RwLock<IgnoreMatcher>,
+    extensions: RwLock<ExtensionFilter>,
 }
 
 impl LibraryConfig {
@@ -46,10 +52,12 @@ impl LibraryConfig {
         ensure_default(&paths);
         let snapshot = load(&paths);
         let matcher = IgnoreMatcher::build(&snapshot.ignore);
+        let extensions = ExtensionFilter::build(&snapshot.extensions);
         LibraryConfig {
             paths,
             current: RwLock::new(snapshot),
             matcher: RwLock::new(matcher),
+            extensions: RwLock::new(extensions),
         }
     }
 
@@ -57,20 +65,23 @@ impl LibraryConfig {
         self.current.read().unwrap().clone()
     }
 
-    /// 重读配置文件并重建 matcher，返回前后差异
+    /// 重读配置文件并重建 matcher/扩展名过滤，返回前后差异
     pub fn reload(&self) -> ConfigChange {
         let snapshot = load(&self.paths);
         let matcher = IgnoreMatcher::build(&snapshot.ignore);
+        let extensions = ExtensionFilter::build(&snapshot.extensions);
         let change = {
             let mut cur = self.current.write().unwrap();
             let change = ConfigChange {
                 ignore_changed: cur.ignore != snapshot.ignore,
+                extensions_changed: cur.extensions != snapshot.extensions,
                 web_changed: cur.web != snapshot.web,
             };
             *cur = snapshot;
             change
         };
         *self.matcher.write().unwrap() = matcher;
+        *self.extensions.write().unwrap() = extensions;
         change
     }
 
@@ -103,6 +114,18 @@ impl LibraryConfig {
     /// 相对路径是否被 ignore 规则命中（仅用于库内文件，回收站不参与）
     pub fn is_ignored(&self, rel: &str) -> bool {
         self.matcher.read().unwrap().is_ignored(rel)
+    }
+
+    /// 扩展名是否在白名单内（白名单为空 = 全部放行；无扩展名的文件在白名单非空时排除）。
+    /// 回收站不参与过滤（由调用方按 in_trash 区分），保证已回收的素材仍可见可恢复
+    pub fn is_extension_included(&self, rel: &str) -> bool {
+        self.extensions.read().unwrap().allows(rel)
+    }
+
+    /// 文件是否应进入索引：ignore 未命中且扩展名在白名单内。
+    /// 目录只用 is_ignored（目录无扩展名语义）
+    pub fn is_file_included(&self, rel: &str) -> bool {
+        !self.is_ignored(rel) && self.is_extension_included(rel)
     }
 
     /// 写回 [web] 段并热更：toml_edit 就地改键值，保留文件其余段与注释。
@@ -151,6 +174,10 @@ const DEFAULT_CONFIG_TEXT: &str = r#"# hawk 项目配置（.hawk/config.toml，�
 # 索引时忽略的路径（不含 "/" 的模式匹配任意深度同名项）
 ignore = []
 
+# 可见扩展名白名单：只索引这些后缀的文件（空数组 = 不过滤，全部入库）。
+# 改动即热生效并触发重扫，既有条目随之收敛（白名单外的素材从索引移除，文件本身不动）。
+# extensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "avif"]
+
 # 局域网 web 查看（桌面端设置面板读写；开启「允许修改素材库」后查看端可上传/删除等，请谨慎授权）
 [web]
 enabled = false
@@ -181,6 +208,9 @@ fn load(paths: &LibraryPaths) -> Snapshot {
     if let Some(ignore) = table.get("ignore").and_then(|v| v.as_array()) {
         snapshot.ignore = ignore.iter().filter_map(|v| v.as_str().map(String::from)).collect();
     }
+    if let Some(extensions) = table.get("extensions").and_then(|v| v.as_array()) {
+        snapshot.extensions = extensions.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+    }
     snapshot.web = table.get("web").map(parse_web_value).unwrap_or_default();
     snapshot
 }
@@ -210,6 +240,33 @@ fn parse_web_value(value: &toml::Value) -> WebSettings {
         }
     }
     web
+}
+
+// ---------- 扩展名白名单 ----------
+
+/// 可见扩展名白名单（空 = 不过滤）。构建时归一：trim、去前导点、小写、去空项
+pub struct ExtensionFilter {
+    allowed: HashSet<String>,
+}
+
+impl ExtensionFilter {
+    pub fn build(list: &[String]) -> ExtensionFilter {
+        let allowed = list
+            .iter()
+            .map(|raw| raw.trim().trim_start_matches('.').to_lowercase())
+            .filter(|e| !e.is_empty())
+            .collect();
+        ExtensionFilter { allowed }
+    }
+
+    /// 路径的扩展名是否放行（ext_of 已小写；无扩展名文件在白名单非空时排除）
+    pub fn allows(&self, rel: &str) -> bool {
+        if self.allowed.is_empty() {
+            return true;
+        }
+        let ext = LibraryPaths::ext_of(rel);
+        !ext.is_empty() && self.allowed.contains(&ext)
+    }
 }
 
 // ---------- ignore 匹配器 ----------
@@ -346,6 +403,43 @@ mod tests {
     fn case_insensitive() {
         let matcher = m(&["Node_Modules"]);
         assert!(matcher.is_ignored("a/node_modules/x.js"));
+    }
+
+    #[test]
+    fn extension_filter_allows_all_when_empty() {
+        let f = ExtensionFilter::build(&[]);
+        assert!(f.allows("a/b/x.png"));
+        assert!(f.allows("noext"));
+    }
+
+    #[test]
+    fn extension_filter_normalizes_and_matches() {
+        let f = ExtensionFilter::build(&[".PNG".to_string(), " jpg ".to_string()]);
+        assert!(f.allows("a/b/x.png"));
+        assert!(f.allows("x.JPG"));
+        assert!(!f.allows("x.gif"));
+        assert!(!f.allows("noext"));
+        assert!(!f.allows("a.b/c"));
+    }
+
+    #[test]
+    fn extensions_change_detected_and_applied() {
+        let dir = std::env::temp_dir().join(format!("hawk-cfg-ext-test-{}", std::process::id()));
+        let root = dir.join("lib");
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = LibraryPaths::new(root.to_str().unwrap(), None);
+        let cfg = LibraryConfig::new(paths.clone());
+        assert!(cfg.is_file_included("a.png"), "默认无白名单");
+
+        std::fs::write(&paths.config_file, "extensions = [\"png\"]\n").unwrap();
+        let change = cfg.reload();
+        assert!(change.extensions_changed);
+        assert!(!change.ignore_changed);
+        assert!(cfg.is_file_included("a.png"));
+        assert!(!cfg.is_file_included("a.txt"));
+        assert!(!cfg.is_file_included("noext"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

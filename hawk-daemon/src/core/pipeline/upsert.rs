@@ -119,7 +119,8 @@ pub(crate) fn prepare_upsert(
     }
 
     let in_trash = LibraryPaths::is_in_trash(&rel);
-    if !in_trash && ctx.config.is_ignored(&rel) {
+    // ignore 规则或扩展名白名单外：不入库；已入库的残留位置经删除通道清理（回收站不参与）
+    if !in_trash && !ctx.config.is_file_included(&rel) {
         return PrepareOutcome::Remove(rel);
     }
 

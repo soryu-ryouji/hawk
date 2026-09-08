@@ -83,7 +83,7 @@
             "type": "integer"
           },
           "ignored": {
-            "description": "ignore 规则命中",
+            "description": "ignore 规则命中或扩展名不在白名单内",
             "minimum": 0,
             "type": "integer"
           },
@@ -167,7 +167,7 @@
                 "type": "integer"
               },
               "ignored": {
-                "description": "ignore 规则命中",
+                "description": "ignore 规则命中或扩展名不在白名单内",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -3255,7 +3255,7 @@
             "description": "OK"
           }
         },
-        "summary": "索引体检：清除不该在索引里的条目——隐藏文件、ignore 规则命中、源文件已删除的残留。\n只摘索引位置不动磁盘文件；移除经流水线单写者（notify_deleted → do_delete），事件广播后 UI 自动收敛。\n与 refresh_cache 的差异：refresh_cache 只对账源文件消失；本端点还清「文件还在但不该入库」的残留\n（早期版本入库的结果——增量扫描靠目录快照跳过 clean 目录，不会再触达它们，只能靠本入口收敛）。\n多路径素材只摘命中位置，其余位置保留时条目仍在。",
+        "summary": "索引体检：清除不该在索引里的条目——隐藏文件、ignore 规则命中或扩展名不在白名单内、源文件已删除的残留。\n只摘索引位置不动磁盘文件；移除经流水线单写者（notify_deleted → do_delete），事件广播后 UI 自动收敛。\n与 refresh_cache 的差异：refresh_cache 只对账源文件消失；本端点还清「文件还在但不该入库」的残留\n（早期版本入库的结果——增量扫描靠目录快照跳过 clean 目录，不会再触达它们，只能靠本入口收敛）。\n多路径素材只摘命中位置，其余位置保留时条目仍在。",
         "tags": [
           "library"
         ]

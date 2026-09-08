@@ -154,6 +154,9 @@ name = "设计素材库"
 # 索引时忽略的路径
 ignore = ["node_modules", "*.tmp"]
 
+# 可见扩展名白名单：只索引这些后缀的文件（空数组 = 不过滤，全部入库）
+# extensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "avif"]
+
 # 局域网 web 查看（只读；桌面端设置面板读写,按库隔离,多库可同时开启互不冲突）
 [web]
 enabled = false      # 开启后 server 追加监听 0.0.0.0:<port>,并托管前端页面
@@ -163,6 +166,8 @@ writable = false     # 允许写:开启后查看端可上传/删除/修改(与�
 separate_write_token = false  # 拆分只读/可写 token:token 降为只读,write_token 可写(不拆分时 token 读写兼具)
 write_token = ""     # 拆分模式下的可写 token
 ```
+
+`extensions`（可见扩展名白名单，空 = 不过滤）保存即热生效：变化触发一次强制重扫，白名单外的既有条目从索引移除（文件本身不动，非侵入式），新加入白名单的后缀随即入库；回收站不参与过滤（已回收的素材仍可见、可恢复）。入库入口（`item/add`、`item/upload`）对白名单外的格式直接拒绝。
 
 `[web]` 保存即热生效（文件监听 Reload → LAN 监听 supervisor 运行期重绑，见 server-code-structure.md 的 api/lan.rs；仅 token/writable 等权限字段变化不重绑连接——每请求经 current().web 判定）。token 能力分三档：`writable = false` 时一律只读（写端点 `403 READ_ONLY`，放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）；`writable = true` 且未拆分时 `token` 读写兼具；拆分时 `token` 只读、`write_token` 可写（仅在 `writable = true` 且拆分时才是合法 token）。web 端写能力由 `app/info` 的 `writable` 字段按当前 token 告知前端。
 

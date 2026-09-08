@@ -111,6 +111,11 @@ pub(crate) async fn item_add(
     };
 
     let file_name = if ext.is_empty() { name.clone() } else { format!("{name}.{ext}") };
+    // 扩展名白名单（.hawk/config.toml 的 extensions）：白名单外的格式直接拒绝，
+    // 避免写盘后又被入库判定剔除（用户得到明确反馈而非「索引失败」）
+    if !state.config.is_extension_included(&file_name) {
+        return Err(ApiError::unsupported_format(format!("扩展名不在素材库可见格式白名单内: {file_name}")));
+    }
     let mut target_rel = if folder_rel.is_empty() {
         file_name.clone()
     } else {
