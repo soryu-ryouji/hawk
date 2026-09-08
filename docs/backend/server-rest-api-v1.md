@@ -213,10 +213,12 @@ hawk-daemon 单实例对应单个素材库。
 | 方法 | 端点                      | 说明               |
 | ---- | ------------------------- | ------------------ |
 | GET  | `/api/v1/library/info`    | 获取当前素材库信息 |
+| PATCH | `/api/v1/library/info`   | 改库显示名（`{"name": "..."}`，写 `.hawk/config.toml`，广播 `library.updated`） |
 | POST | `/api/v1/library/storage_mode` | 切换元数据存储方案（`{"mode": "database" \| "toml"}`），全量迁移后调用方应重启进程 |
 | POST | `/api/v1/library/reindex` | 全量重建索引       |
 | POST | `/api/v1/library/rescan`  | 强制重新遍历文件系统 |
-| POST | `/api/v1/library/refresh_cache` | 按范围刷新派生缓存 |
+| POST | `/api/v1/library/refresh_cache` | 按范围刷新派生缓存（补缺失 + 消失对账） |
+| POST | `/api/v1/library/cleanup_index` | 索引体检：清除隐藏文件/ignore 命中/源文件已删的残留位置 |
 
 ### info
 
@@ -240,6 +242,18 @@ hawk-daemon 单实例对应单个素材库。
 ```
 
 `storage_mode` 为元数据存储方案：`database`（`.hawk/metadata.db`，默认）/ `toml`（`.hawk/metadata/*.toml`，网盘同步友好）；语义与迁移见 [存储设计](storage.md)。
+
+### update
+
+`PATCH /api/v1/library/info`
+
+改库显示名：写库内 `.hawk/config.toml` 的 `name` 键（toml_edit 保注释，保存即热更）；空白名清除自定义名（回退库目录名）。成功后就地广播 `library.updated`（负载为完整库信息），各客户端对齐无需重拉。响应同 `info`。
+
+#### 请求
+
+| 参数 | 类型   | 必填 | 说明         |
+| ---- | ------ | ---- | ------------ |
+| name | string | 是   | 新显示名     |
 
 ### reindex
 
@@ -285,11 +299,34 @@ hawk-daemon 单实例对应单个素材库。
 ```json
 {
   "status": "success",
-  "data": { "dispatched": 42 }
+  "data": { "dispatched": 42, "removed": 0 }
 }
 ```
 
-`dispatched` 为实际入队的修复任务数（in-flight 去重丢弃或源文件已不在的不计）。
+`dispatched` 为实际入队的修复任务数（in-flight 去重丢弃或源文件已不在的不计）；`removed` 为消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛）。
+
+### cleanup_index
+
+`POST /api/v1/library/cleanup_index`
+
+索引体检：清除不该在索引里的条目——隐藏文件（路径任一段以 `.` 开头，如 `.DS_Store`）、ignore 规则命中、源文件已删除的残留。**只摘索引位置不动磁盘文件**，移除经流水线单写者执行并广播事件（UI 自动收敛）；回收站条目不参与。与 `refresh_cache` 的差异：后者只对账源文件消失，本端点还清「文件还在但不该入库」的早期版本残留（增量扫描靠目录快照跳过 clean 目录，不会再触达它们）。多路径素材只摘命中位置，其余位置保留时条目仍在。同步执行后返回统计。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": { "checked": 120, "removed": 3, "hidden": 1, "ignored": 1, "missing": 1 }
+}
+```
+
+| 字段 | 说明 |
+| ---- | ---- |
+| checked | 检查的索引位置数（不含回收站） |
+| removed | 清除的条目总数（= hidden + ignored + missing） |
+| hidden | 隐藏文件命中数 |
+| ignored | ignore 规则命中数 |
+| missing | 源文件已消失的残留数 |
 
 ## folder
 
@@ -863,6 +900,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `item.restored`   | Item 对象 | 首个回收站位置回归库内 |
 | `item.removed`    | `{ "id": "..." }` | 彻底删除(无剩余位置) |
 | `folder.changed`  | `{ "reason": "external" }` | 目录结构可能变化,客户端应重拉 `folder/list`;reason 恒为 `external`,客户端必须忽略取值(结构为将来预留) |
+| `library.updated` | LibraryInfo 对象 | 库显示名变更（`PATCH library/info`）；负载为完整库信息，客户端就地替换 |
 | `global_filter.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 全局列表隐藏集变更（标记/取消、级联跟随、外部同步重载）；负载为完整快照，客户端就地替换并重查列表 |
 | `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(缩略图/调色板队列与索引管道;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
 

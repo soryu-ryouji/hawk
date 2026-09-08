@@ -3,7 +3,7 @@
 //! 读取纪律:HTTP 层一律走 get_dto / query / query_skeleton / find_location / main_source_abs /
 //! contains / count 等不可变快照与锁内投影;可变引用仅限流水线(经 with_item_mut)。
 //! 查询路径「锁内只做过滤与排序键投影，排序在锁外」：读写互相阻塞的时间不含 O(N log N) 排序。
-//! 排序稳定:主键同值按 id 字典序打破平局。
+//! 排序稳定:主键同值按 (id, path) 字典序打破平局。
 
 use crate::core::color_math::delta_e_squared;
 use crate::core::item::{Item, ItemDto, ItemLocation, ItemQuery, ItemSkeletonDto};

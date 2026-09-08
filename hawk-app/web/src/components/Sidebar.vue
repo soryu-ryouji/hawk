@@ -4,16 +4,18 @@ import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { useContextMenu } from '../composables/useContextMenu';
 import { hasShell, shell } from '../platform';
-import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
+import { isItemsDrag, itemsDragOver, readItemsDrop, filesDragOver, droppedEntries } from '../dnd';
 import Icon from './Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
 import LibraryDropdown from './LibraryDropdown.vue';
 import PromptDialog from './PromptDialog.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
+import { useImporterStore } from '../stores/importer';
 import type { FolderNode } from '../types';
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
+const importer = useImporterStore();
 const menu = useContextMenu();
 
 // 三个分区的折叠态（点分区标题收起/展开，v-show 保留树节点内部的展开/编辑状态）
@@ -177,6 +179,24 @@ function onCategoryContextMenu(e: MouseEvent) {
   }
   menu.open([{ label: '新建分类', action: () => (showCreateCategory.value = true) }], e);
 }
+
+// ---- 外部文件/文件夹拖入文件夹树：树空白处落库根（结构化导入，目录树重建）；
+//  节点行上的 drop 由 FolderTreeNode 自行处理（导入到该节点）----
+function onFolderTreeDragOver(e: DragEvent) {
+  if (!store.viewerMode) {
+    filesDragOver(e);
+  }
+}
+
+function onFolderTreeDrop(e: DragEvent) {
+  const entries = droppedEntries(e);
+  const files = e.dataTransfer?.files ? [...e.dataTransfer.files] : [];
+  if (entries.length === 0 && files.length === 0) {
+    return;
+  }
+  e.stopPropagation();
+  void importer.importEntries(entries, '', files);
+}
 </script>
 
 <template>
@@ -237,7 +257,13 @@ function onCategoryContextMenu(e: MouseEvent) {
         </span>
         <button v-if="!store.viewerMode" class="add" title="新建文件夹" @click.stop="showCreateFolder = true">＋</button>
       </div>
-      <div v-show="!collapsed.folder" class="tree" @contextmenu.prevent="onTreeContextMenu">
+      <div
+        v-show="!collapsed.folder"
+        class="tree folder-tree"
+        @contextmenu.prevent="onTreeContextMenu"
+        @dragover="onFolderTreeDragOver"
+        @drop="onFolderTreeDrop"
+      >
         <FolderTreeNode v-for="node in taxonomy.folders?.children ?? []" :key="node.path" :node="node" :depth="0" :filter="navKeyword" />
       </div>
 
@@ -426,6 +452,11 @@ body.touch .library-name.in-body {
   display: flex;
   align-items: center;
   gap: 3px;
+}
+
+/* 文件夹树空态仍有可拖入高度（外部文件夹拖入 → 结构化导入到库根） */
+.folder-tree {
+  min-height: 48px;
 }
 
 .chev {

@@ -41,7 +41,7 @@ Eagle 主窗口的关键特征：
 
 严格遵循 architecture.md 的 sidecar 模式：前端不依赖 Electron IPC 做业务通信，主进程只管窗口、拉起/回收后端、注入 token。
 
-远程访问扩展此模型：产物携带 hawk-remote 二进制且用户配置过接入时，主进程额外拉起/回收 hawk-remote 进程并维护连接描述符（切换本地/远端库），见 [远程访问设计](../backend/remote-access.md)。本节其余内容不变。
+远程访问扩展此模型（**规划中**，hawk-remote 尚未落地）：产物携带 hawk-remote 二进制且用户配置过接入时，主进程额外拉起/回收 hawk-remote 进程并维护连接描述符（切换本地/远端库），见 [远程访问设计](../backend/remote-access.md)。本节其余内容不变。
 
 ```text
 Electron 主进程启动
@@ -90,7 +90,11 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `selectLibrary()` | 选新素材库：弹系统目录选择框 → 主进程杀掉旧 server 用新库重启（进历史记录） |
 | `listLibraries()` | 本机打开过的素材库历史：`{ current, libraries: [{ path, name, exists }] }`（最近在前；主进程读 `config.toml` 的 `libraryHistory` 并校验目录存在性） |
 | `openLibrary(path)` | 打开历史素材库（仅接受历史记录内的路径），换库就绪经 `onServerStarted` 通知 |
+| `openLibraryFolder(path)` | 在系统文件管理器中打开素材库目录（历史库条目 `···` 菜单） |
+| `removeLibrary(path)` | 从历史记录移除一条素材库（只删记录不动目录），返回移除后的列表 |
+| `restartServer()` | 重启当前库的 server（存储方案迁移等需要进程级重启的设置变更；主进程切启动屏并重建连接） |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
+| `openFolder(path)` | 在文件管理器中打开库内文件夹本身（区别 showInFinder 的「定位到父级并选中」） |
 | `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
 | `lanAddresses()` | 本机局域网 IPv4 地址列表（设置面板展示访问地址用；LAN 配置读写走 REST `GET/PUT /api/v1/app/lan`，不经 IPC） |
@@ -101,6 +105,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），应用内启动屏用；返回退订函数 |
 | `onServerRestarting(cb)` | 订阅 server 即将重启（换库/应用设置重启）：主进程停旧 server 时即发，前端应立即切启动屏（早于 ready 的 `onServerStarted`）；返回退订函数 |
 | `onServerStarted(cb)` | 订阅 server 就绪：`{ address, token }`（冷启动/换库/应用设置重启都会到达；restart 会换端口，渲染进程须先重配 API 再重启数据）；返回退订函数 |
+| `getServerConn()` | 拉取当前已就绪的 server 连接（未就绪返回 null）：页面加载晚于 server 就绪的竞态兜底 |
 | `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message }`（页面内错误屏呈现）；返回退订函数 |
 | `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的按关窗行为分流） |
 | `getCloseAction()` / `setCloseAction(action)` | 关窗行为偏好的读写：`'exit'`（默认，关窗直接退出）\| `'tray'`（关窗隐藏到托盘驻留），主进程持久化到 `~/.config/hawk/config.toml`（唯一事实源，未设置回退默认值）；即改即生效，无需重启 |
@@ -139,7 +144,9 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 │            │   多选：Shift 连选 / Cmd 点选       │                     │
 │            │   双击/空格 → 预览浮层（Esc 关闭）   │                     │
 │            │   右键：标签/分类/文件夹/回收        │                     │
-│            │   拖入文件 → 导入                  │                     │
+│            │   拖入文件 → 导入（拍扁到当前文件夹）│                     │
+│  文件夹树   │   拖入外部文件夹 → 结构化导入        │                     │
+│  （侧栏）   │   （目录树在目标下重建）            │                     │
 └────────────┴──────────────────────────────────┴─────────────────────┘
 ¹ 侧栏/检查器顶部各 40px 纯拖拽条（双击切换最大化）；macOS 原生红绿灯压在侧栏条左侧，
   Windows/Linux 自绘窗口控制 fixed 于窗口右上角（不随侧栏显隐移动）
@@ -151,7 +158,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 **窄屏适配**（断点 `max-width: 1200px`：三栏最小健康宽度 = 220 侧栏 + ~700 顶栏固有最小内容（前进后退/排序/筛选按钮/搜索/设置的 flex 最小值之和）+ 280 检查器，grid 的 `1fr` = `minmax(auto,1fr)` 随内容最小宽度增长，低于此宽度中栏撑破页面——iPad 除 12.9" 横屏（1366）外全部、拖窄的桌面窗口均走 narrow；`useLayout` 判定 narrow 并同步 `body.mobile`；宽屏桌面与 12.9" iPad 横屏为 wide 布局，只此一处按布局分支，业务组件不做端判断）：`.app` 改单栏（`minmax(0,1fr)`），侧栏变**抽屉**（fixed + `translateX(-105%)` 滑出，`drawer-open` 滑入；`no-panels` 在移动端不 display:none 侧栏——显隐由 transform 管，否则滑入滑出动画被 display 切换扼杀），汉堡按钮在顶栏左上角（复用侧栏开关），触屏点导航项/遮罩自动收起（鼠标设备保持展开，桌面窄窗可连续切换）；检查器与栏宽拖拽手柄隐藏，顶栏隐藏排序/筛选按钮/搜索框与选中计数——排序与筛选收敛进右端「排序与筛选」溢出菜单（sliders 图标：筛选工具列开关 + 字段×方向 8 项单选 + 重置项），搜索退化为搜索按钮（点开顶部搜索浮层输入，Enter 提交、Esc/点遮罩关闭），filterbar 本体放行显示、随开关展开；面包屑只渲染当前层级（祖先层级经侧栏抽屉导航），标题宽度放宽到 40vw 超长省略（390px 实测防横向溢出）；**触屏按布局分两种交互**（ItemGrid onSelect 按 pointerdown 实际指针分流，先按实际输入区分触屏/鼠标，再按 narrow 分）：触屏/笔下 narrow（竖屏，检查器隐藏）——单击直接开预览，同时选中（旋转到横屏时右栏即显示其属性）；触屏/笔下 wide（横屏，检查器可见，iPad 横屏场景）——单击选中看右栏属性、双击打开预览（iOS 禁用双击缩放后不保证触发 dblclick，按「同一张卡片 300ms 内两次点按」自行判定，点不同卡片重置计时）；鼠标任何布局——单击选择/多选（shift/ctrl）、双击打开走原生 dblclick（ItemCard @dblclick）。混合设备（触控笔记本、iPad 接触控板）两种输入各自可用）；**网格行宽硬顶**：齐行布局的行高夹紧（0.5×–1.75×目标高）与末行规则不得把行推出容器——行高最终以容器宽反推值（fitH）为硬顶，桌面容器宽极少生效，移动端窄屏遇全景图等宽行时杜绝图片出屏；**预览全沉浸**：图片占满 100vw/100vh，翻页栏隐藏——横向滑动切换上一张/下一张（传送带动效，相邻原图预加载免解码闪烁；缩放>1 时横向滑动变为平移，见 PreviewOverlay 组件行的手势语义）；**触屏手势**（`useLayout` 判定 touch = `(pointer: coarse)` 或 `maxTouchPoints>0`——iPad Safari 默认「请求桌面网站」时 pointer: coarse 不命中（iPadOS 因支持触控板/鼠标上报精细指针），仅靠 pointer 会把 iPad 误判为鼠标设备：iOS 双击不产生 dblclick，预览打不开；同步 `body.touch`，与 narrow 独立——iPad Pro 12.9" 横屏（1366px）为 wide+touch，手机横屏（≤932px）仍 narrow）：**下拉关闭**（阻尼跟手 + 背景随位移渐亮，≥96px 松手下滑出关闭，桌面鼠标不触发，保留 ×/Esc/点遮罩），**长按菜单**（卡片或预览图按住不动 500ms 打开条目菜单——iOS 长按不派发 contextmenu，网格卡片经 useLongPress、预览经 useZoomPan 内建长按检测（移动超阈值/第二指/抬手取消，触发后本次按压冻结手势，松手跟发的 click 被吞）；Android 原生 contextmenu 与长按检测双触发幂等，ContextMenu 开场守卫（250ms 内遮罩事件忽略）挡掉秒关；缩略图/预览图禁 `-webkit-touch-callout`——系统「存储图像」存的是 1024 压缩缩略图，保存原图统一走菜单「保存图片」），**双击**（同桌面语义：未放大退出预览、放大后复位；iOS 等不产生 dblclick，pointer 层按 300ms 内两次点按自判，鼠标走原生 dblclick，按指针类型分流防双触发），**关闭 × 隐藏**（仅触屏且窄屏，下拉关闭/双击/点遮罩替代；触屏宽屏如 iPad 横屏/触屏笔记本仍显示——鼠标没有下拉手势，且 touch 判定含 maxTouchPoints>0，混合设备不能无按钮）；**编辑窗口旋转约束互换**：90/270° 旋转后视觉宽高互换，`max-width`/`max-height` 约束同步互换，否则竖屏下旋转长边水平出屏；编辑窗口底栏按钮加大命中区（`body.mobile` 命中，浮层 Teleport 到 body 不在 `.app` 内）。桌面布局与交互完全不变。全端 `body` 禁双击缩放（`touch-action: manipulation`，保留滚动与双指缩放）——iPad Safari 双击侧栏/图片会按点击处锚点缩放页面，缩放级别累积不回弹，视觉上即"面板忽宽忽窄"（面板宽度实为 grid 固定列，代码无点击改宽路径）。
 
-网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。**虚拟渲染（Eagle 式滚动条）**：store 持当前视图全量骨架（`skeleton`：id/width/height/star，经 `item/skeleton` 一次性取回，与 `item/list` 同查询同排序且主键同值时按 id 打破平局——两次查询次序逐位一致），ItemGrid 用骨架算出全部行的 y 偏移，容器总高即时确定，滚动条可自由拖动跳转；只渲染视口 ±4 行（绝对定位 + translateY），行内详情未拉取的单元格只留宽高的占位块（不渲染图片），进入视口时按骨架索引区间经 `ensureWindow` 用 `item/list` 补数据。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
+网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。**虚拟渲染（Eagle 式滚动条）**：store 持当前视图全量骨架（`skeleton`：id/path/width/height/star/size，经 `item/skeleton` 一次性取回，与 `item/list` 同查询同排序且主键同值时按 (id, path) 字典序打破平局——两次查询次序逐位一致），ItemGrid 用骨架算出全部行的 y 偏移，容器总高即时确定，滚动条可自由拖动跳转；只渲染视口 ±4 行（绝对定位 + translateY），行内详情未拉取的单元格只留宽高的占位块（不渲染图片），进入视口时按骨架索引区间经 `ensureWindow` 用 `item/list` 补数据。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
 **触屏横屏适配**（wide + touch，如 iPad 横屏；纯 CSS（`body.touch .app:not(.mobile)`），与 narrow 互斥、桌面鼠标布局不变）：横向空间宝贵而检查器可见——搜索框从顶栏挪进检查器顶部条（`SearchBox` 双实例按布局切换可见性；浏览器端该 40px 条本是无拖拽需求的空条），顶栏空间留给筛选/排序按钮；侧栏库名上移到顶部拖拽条与侧栏开关同排（`in-head` 变体），正文整体上移填充空位。窄屏（手机）检查器隐藏，搜索框留在顶栏退化为搜索按钮（点开浮层），排序/筛选按钮维持隐藏（选项收进「排序与筛选」溢出菜单）。
 
@@ -167,10 +174,13 @@ web/
     ├── main.ts                # 入口：解析 hash 注入 api/token、创建 Pinia、挂载 App
     ├── App.vue                # 布局骨架；启动阶段状态机与跨 store 编排；挂载全局 composables（快捷键/拖拽导入）与浮层
     ├── types.ts               # 业务类型（ViewState/QueryState/MenuItem）+ hawkShell 全局类型声明；Item 等从 schema.d.ts 别名导出
-    ├── dnd.ts                 # 素材拖拽共享工具（网格→侧栏）：ITEMS_MIME、startItemsDrag/itemsDragOver/readItemsDrop
+    ├── dnd.ts                 # 拖拽共享工具：素材拖拽（网格→侧栏，ITEMS_MIME）与外部文件拖拽（Finder→侧栏结构化导入）：判定/放行/取 entry 列表
     ├── viewLogic.ts           # 视图/查询纯决策逻辑（排序父链继承/无过滤视图/选择集 range/toggle/item.updated 的合并与骨架重载决策）：library.ts 消费，Vitest 覆盖
     ├── importBatch.ts         # 批量导入共享状态机（重复策略 ask→首问整批生效、计数、进度推进）：依赖注入不触碰 store，Vitest 覆盖
     ├── saveImage.ts           # 原图保存（浏览器端）：原图 blob → Web Share（iOS 存相册/文件）或 <a download>（Android/桌面）；viewer 只读可用
+    ├── clipboard.ts           # 图片写入系统剪贴板（预览/网格 Cmd/Ctrl+C 共用）：Chromium 只收 PNG，非 PNG 经 canvas 转码（超尺寸等比降采样）
+    ├── imageEdit.ts           # 客户端图片重编码（旋转，canvas；JPEG EXIF 字节级回填并重置 Orientation）：ImageEditDialog → item/replace
+    ├── format.ts              # 显示格式化（字节/日期/路径等），Vitest 覆盖
     ├── layout.ts              # 网格布局单一来源：GRID_GAP/CARD_META_H/CARD_BORDER 常量（ItemCard 经 CSS 变量消费）+ 齐行布局纯函数 layoutRows，Vitest 覆盖
     ├── persist.ts             # localStorage 收口：键注册表（hawk:panelWidths/thumbSize/lastView/token）+ 统一损坏回退/写入静默
     ├── platform.ts            # 平台与 shell 收敛：platform/isMac/fileManagerName/hasShell/shell（浏览器端为类型化 no-op 壳，调用方免 ?. 兜底）
@@ -182,13 +192,13 @@ web/
     ├── stores/
     │   ├── library.ts         # Pinia 主 store：视图/查询/列表/选择集/回收站（见下）
     │   ├── taxonomy.ts        # 分类维度子 store：文件夹树/分类/标签/侧栏计数及其 CRUD
-    │   ├── importer.ts        # 导入子 store：批量导入进度/重复策略弹窗/路径与文件两个入口（importBatch 接线）
+    │   ├── importer.ts        # 导入子 store：批量导入进度/重复策略弹窗/拖拽入口（平铺与结构化，importBatch 接线）
     │   ├── preview.ts         # 预览子 store：预览浮层导航（sticky item）+ 图片编辑窗口目标与保存
     │   └── util.ts            # store 共用：errorText 错误码翻译、debounce
     ├── composables/           # 只放业务 composable；通用能力直接用 @vueuse/core
     │   ├── useContextMenu.ts  # 右键菜单状态（visible/x/y/items/openedAt 开场守卫：Android 长按原生 contextmenu 与长按检测双触发、长按后松手跟发事件落在遮罩上时防刚开的菜单被秒关）
     │   ├── useLongPress.ts    # 长按检测（触屏/笔按住 500ms，移动/抬手取消；iOS 无原生长按菜单的兑底）：网格卡片经此发右键同款 menu 事件，Vitest 覆盖
-    │   ├── useDragImport.ts   # 拖拽导入（文件夹递归展开 + 对接 importer.importPaths/importFiles）
+    │   ├── useDragImport.ts   # 拖拽导入（document 级平铺：收集在 importer；侧栏结构化导入在 Sidebar/FolderTreeNode）
     │   ├── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
     │   ├── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
     │   ├── useZoomPan.ts      # 预览手势引擎：滚轮不动点缩放/双击（触屏按 300ms 两次点按自判，iOS 不产 dblclick）/单指平移与滑动切换/双指捏合/下拉关闭/长按菜单（触发后冻结本次按压）状态机（语义矩阵见头注释）
@@ -203,14 +213,25 @@ web/
     │   ├── SetupScreen.vue    # 引导页：选库（Electron 内素材库未配置），选定后经 server-started 事件进启动屏
     │   ├── StartingScreen.vue # 应用内启动屏：server 扫描索引期间的进度反馈（替代旧独立 loading.html，单页生命周期无切换白屏）
     │   ├── ConnectScreen.vue  # 连接门页：局域网 web 查看先输入 token，验证通过后记忆、再访问免输入直连
+    │   ├── SettingsDialog.vue # 设置面板壳（左侧分区导航 + v-show 保活；Electron：外观/隐藏项/局域网/存储/更新，web：外观/隐藏项/连接）
+    │   ├── SettingsAppearance.vue # 外观分区：缩略图尺寸滑杆 + 预览关闭按钮开关（均即时生效）
+    │   ├── SettingsHiding.vue # 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签），逐条取消；viewer 只展示
+    │   ├── SettingsLan.vue    # 局域网分区（仅 Electron）：开关/写权限/token 拆分/端口，读写直连 daemon REST app/lan
+    │   ├── SettingsStorage.vue # 存储分区（仅 Electron）：元数据存储方案切换 + 缓存父目录迁移
+    │   ├── SettingsUpdate.vue # 更新分区（仅 Electron）：版本/通道/检查/下载/安装（状态机见 useUpdater）
+    │   ├── SettingsConnection.vue # 连接分区（仅 web）：当前访问级别 + 注销 token
     │   ├── Sidebar.vue
+    │   ├── LibraryDropdown.vue # 侧栏素材库下拉：历史库浮层（Teleport fixed），条目 ··· 菜单（打开目录/当前库重命名/移除记录），底部「打开文件夹…」
     │   ├── FolderTreeNode.vue
     │   ├── FolderTreePicker.vue   # Eagle 式文件夹树选择弹出层（检查器「文件夹」：点击当前值弹出，选择即移动）
     │   ├── TaxonomyRow.vue    # 分类/标签共用的侧栏行（图标/名称/计数/右键菜单/拖入高亮，kind 驱动差异）
+    │   ├── SelectBox.vue      # 自绘下拉选择（原生 select 暗色不协调）：Teleport fixed 浮层，设置面板/文件夹选择/库切换共用
     │   ├── SearchBox.vue      # 搜索框（TitleBar/Inspector 顶共用；触屏横屏挪到检查器顶）
     │   ├── ItemGrid.vue
     │   ├── ItemCard.vue
     │   ├── Inspector.vue
+    │   ├── InspectorItem.vue  # 检查器单选区（预览/调色板/编辑字段/文件位置）
+    │   ├── InspectorBatch.vue # 检查器多选区（交集语义的批量编辑面板）
     │   ├── TagEditor.vue      # 标签 chip 编辑器（Inspector 的子组件）
     │   ├── CategoryPickerDialog.vue # 分类选择模态（可选已有，也可输入新名字）
     │   ├── StarRating.vue     # 点星评分（Inspector/右键菜单共用）
@@ -220,10 +241,13 @@ web/
     │   ├── ImageEditDialog.vue # 图片编辑窗口（右键「编辑图片…」）：旋转预览 + 保存/放弃/取消三选确认
     │   ├── ContextMenu.vue    # 全局单例自绘菜单
     │   ├── ImportDuplicateDialog.vue # 导入重复策略对话框（忽略/仍然导入，整批生效）
-    │   ├── DeleteScopeDialog.vue # 多位置删除策略对话框（全部位置/仅当前文件夹/取消）
+    │   ├── inspector-shared.css # 检查器分区共享样式（.inspector-scope 前缀隔离）
+    │   ├── settings-shared.css  # 设置面板分区共享样式
     │   └── EmptyState.vue     # 空库/空结果占位
     └── styles.css             # 深色主题 CSS 变量与全局样式
 ```
+
+（各纯逻辑模块旁的 `*.spec.ts` 为对应 Vitest 用例：viewLogic/importBatch/layout/format 纯函数，itemCard/sidebarRows 组件渲染。）
 
 界面文案中文硬编码，v1 不做 i18n。
 
@@ -284,21 +308,29 @@ export async function request<T>(method: string, path: string,
 ```ts
 export const api = {
   appInfo(): Promise<AppInfo>;
+  startupStatus(): Promise<StartupInfo>;                     // 浏览器无 IPC 时轮询就绪
+  appLan() / saveAppLan(body): Promise<LanSettingsDto>;      // 局域网配置读写（admin 限定，daemon 权威）
   libraryInfo(): Promise<LibraryInfo>;
+  libraryRename(name: string): Promise<LibraryInfo>;         // PATCH library/info；广播 library.updated
+  librarySetStorageMode(mode): Promise<void>;                // 迁移后须重启 server
   reindex(): Promise<void>;
+  rescan(): Promise<void>;                                   // 忽略目录快照强制遍历（不读内容）
+  refreshCache(type, value?): Promise<{ dispatched: number; removed: number }>;  // 按范围补派生缓存 + 消失对账
+  cleanupIndex(): Promise<{ checked; removed; hidden; ignored; missing }>;       // 索引体检（只摘索引不动磁盘）
   folderList(): Promise<FolderNode>;
   folderCreate(name: string, parentPath?: string): Promise<FolderNode>;
   folderUpdate(path: string, patch: { name?: string; parent_path?: string }): Promise<FolderNode>;
   folderDelete(path: string): Promise<void>;
   folderRestore(path: string): Promise<void>;
-  itemList(params: ItemListParams): Promise<{ items: Item[]; total: number; offset: number; limit: number }>;
+  itemList(params: ItemListParams): Promise<{ items: Item[]; total: number; offset: number; limit: number; total_size: number }>;
   itemSkeleton(params): Promise<{ items: SkeletonItem[]; total_size: number }>;  // 全量骨架：同过滤同排序（确定性次序）、不分页，虚拟网格建完整布局用
-  itemDetail(id: string): Promise<Item>;
+  itemDetail(id: string, path?: string): Promise<Item>;      // path 定位同内容多位置中的具体条目
   itemCount(): Promise<number>;
-  itemAddByPath(path: string, opts?: { name?: string; folder_path?: string; tags?: string[] }): Promise<{ item: Item; already_existed: boolean }>;
-  itemUpload(file: File, opts?: { folder_path?: string; name?: string }): Promise<{ item: Item; already_existed: boolean }>;  // multipart 上传（web 端内容入库）；request 对 FormData 不做 JSON 序列化
+  itemAddByPath(path: string, opts?: { name?; folder_path?; tags?; skip_existing? }): Promise<{ item: Item; already_existed: boolean; skipped: boolean }>;
+  itemUpload(file: File, opts?: { folder_path?; name?; skip_existing? }): Promise<{ item: Item; already_existed: boolean; skipped: boolean }>;  // multipart 上传（web 端内容入库）；request 对 FormData 不做 JSON 序列化
   itemUpdate(id: string, patch: { name?; tags?; categories?; star?; annotation?; url?; folder_path? }, path?: string): Promise<Item>;
-  itemBatchUpdate(ids: string[], patch: { add_tags?; add_categories?; star?; folder_path? }): Promise<{ updated: number; missing_ids: string[] }>;  // 批量：标签/分类并集、评分/文件夹设置（见 API 文档 batch_update 节）
+  itemBatchUpdate(ids: string[], patch: { paths?: (string | null)[]; add_tags?; add_categories?; remove_tags?; remove_categories?; star?; folder_path? }): Promise<{ updated: number; missing_ids: string[]; conflicts?: string[] }>;  // 批量：标签/分类并集追加与摘除、评分/文件夹设置（见 API 文档 batch_update 节）
+  itemAggregate(ids: string[]): Promise<{ common_tags: string[]; common_categories: string[] }>;  // 多选面板交集
   itemDelete(id: string, path?: string): Promise<void>;
   itemRestore(id: string, path?: string): Promise<void>;
   refreshThumbnail(id: string): Promise<void>;
@@ -313,6 +345,12 @@ export const api = {
   tagCreate(name: string): Promise<void>;
   tagUpdate(name: string, newName: string): Promise<void>;        // 重命名，全部 item 跟随
   tagDelete(name: string): Promise<void>;
+  // 全局列表隐藏集与视图偏好（见 API 文档 global_filter / view 节）
+  globalFilterList(): Promise<GlobalFilter>;
+  globalFilterSet(kind: 'folder' | 'category' | 'tag', name: string, hidden: boolean): Promise<void>;
+  viewPreferences(): Promise<ViewPrefs>;
+  viewPreferenceSet(scope, orderBy, order): Promise<void>;
+  viewPreferenceReset(scope): Promise<void>;
   thumbnailUrl(id: string): string;  // 拼 ?token= 的 <img> URL（单一尺寸 1024）
   fileUrl(id: string): string;  // 原图 URL（预览浮层用），同样拼 ?token=
 };
@@ -324,10 +362,13 @@ export const api = {
 
 ```ts
 export function connectEvents(handlers: {
-  onAdded(item: Item): void; onUpdated(item: Item): void;
+  onAdded(item: Item): void; onItemsAdded(ids: string[]): void;      // items.added：扫描导入合并事件，按「有新增」信号重载骨架
+  onUpdated(item: Item): void; onItemsUpdated(items: Item[]): void;  // items.updated：调色板批量回写等，就地替换缓存
   onTrashed(id: string): void; onRestored(item: Item): void; onRemoved(id: string): void;
-  onTaskProgress(p: { task: string; pending: number; active: number }): void;
+  onTaskProgress(p: TaskProgress): void;  // { task, active, pending, phase?, processed?, total? }
   onFolderChanged(reason: string): void;   // 目录结构变化：重拉 folder/list（reason 恒为 external，忽略取值）
+  onLibraryUpdated(info: LibraryInfo): void;        // 改库显示名广播（负载为完整库信息）
+  onGlobalFilterChanged(filter: GlobalFilter): void; // 全局列表隐藏集变更（完整快照，就地替换）
   onReconnect(): void;   // EventSource 断线重连成功后全量对齐
 }): () => void;           // 返回断开函数（App 卸载/换库时调）
 ```
@@ -352,10 +393,10 @@ export function connectEvents(handlers: {
 view: ViewState;                 // 默认 all
 query: QueryState;               // 默认 { keywords: [], orderBy: 'modification_time', order: 'desc' }
 skeleton: SkeletonItem[];        // 当前视图全量骨架（item/skeleton 一次取回）：布局与滚动条总高的唯一依据
-details: Map<string, Item>;      // 已拉取详情（视口窗口 + 预取），按 id 索引
+details: Map<string, Item>;      // 已拉取详情（视口窗口 + 预取），按条目 key（itemKey(id, path)）索引；同内容多位置各自成条
 total: number;                   // = skeleton.length
 totalSize: number; loading: boolean; windowLoading: boolean;   // 整表加载中 / 视口窗口补数据中
-selection: string[];             // 选中 id，有序；末位为主选中/连选锚点（selectAll 基于全量骨架）
+selection: string[];             // 选中条目 key（id:path），有序；末位为主选中/连选锚点（selectAll 基于全量骨架）
 selectionSet: Set<string>;       // selection 的 computed 集：渲染层成员查询一律 has()（数组 includes 在全选数万条目时是 O(n²) + 响应式索引跟踪双重开销）
 library: LibraryInfo | null;
 thumbSize: number;               // 网格卡片边长偏好（滑杆 120–280，齐行布局目标行高）：桌面端会话级、固定 160 不持久化；web 端（浏览器）用户显式设置过则记忆 localStorage（`hawk:thumbSize`，越界/损坏回退到无偏好，经 persist.ts）且不再自动切换，未设置时跟随视口宽度的动态默认——≥700px 用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转经 useMediaQuery 自动跟随；用户设置统一走 setUserThumbSize（与动态默认写入路径区分）
@@ -388,10 +429,9 @@ addCategoryToSelected(name) / addTagToSelected(tag): Promise<void>;  // 批量�
 moveSelectedToFolder(path): Promise<void>;         // 批量端点移动主位置；已在目标处的项跳过
 setStarForSelected(star): Promise<void>;           // 批量端点设置评分（多选面板与右键菜单共用）
 batchUpdate(ids, patch, doneText): Promise<void>;  // 批量端点统一入口；missing_ids 计数在 toast 提示「n 个未处理」
-trashSelected(): Promise<void>; restoreSelected(): Promise<void>;   // 删除：选中项含多个库内位置副本时先问（DeleteScopeDialog：全部位置/仅当前文件夹/取消，单路径不弹）；恢复全部回收站位置
+trashSelected(): Promise<void>; restoreSelected(): Promise<void>;   // 删除选中项：每张卡片即一个位置（同内容多路径展开为独立条目），逐个 item/delete 只动该位置；恢复全部回收站位置
 clearTrash(): Promise<void>;                       // 调用方先二次确认
 deleteLocation(id, path): Promise<void>;         // 按位置删除（Inspector 文件位置列表）：其余位置保留，最后一个库内位置被删时整项回收
-deleteScopePrompt / resolveDeleteScope;          // 多位置删除策略弹窗挂起态（DeleteScopeDialog 呈现；folder 非空时才有「仅从此处移除」选项）
 viewerMode: boolean;          // 局域网 viewer token 且 [web].writable 未开启:隐藏全部写入口,服务端 403 为最终防线;writable 开启后 false(web 端与桌面端同权)
 showToast(msg: string): void;
 applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略见下节）
@@ -410,11 +450,17 @@ store init）、`refreshFolders/refreshTaxonomy/refreshGlobalFilter` 与文件�
 
 **导入子 store `useImporterStore`（stores/importer.ts）**：批量导入域。状态 `importProgress`
 （null 无任务；total=0 收集文件阶段不定态）、`dupPrompt`（重复策略弹窗挂起态，ImportDuplicateDialog
-呈现）；action `importBegin()`（拖拽落下占位，并发拒绝并 toast）、`importPaths(paths)`（Electron 拖拽：
-逐个 itemAddByPath，server 逐文件处理完才返回，done 逐项推进）、`importFiles(files)`（浏览器 multipart
-itemUpload，手机上传按钮的主入口）。两者共享 `importBatch.runImportBatch` 状态机（重复策略 ask→首问
-整批生效、计数、进度推进，依赖注入可单测）：带 skip_existing，首个重复时弹窗问一次（忽略/仍然导入），
-结束汇总 toast（新增/忽略重复/重复导入/失败）。folder_path 取主 store 的 currentFolderPath，提示经主 store showToast。
+呈现）；action `importBegin()`（拖拽落下占位，并发拒绝并 toast）、`importEntries(entries, targetFolder?,
+fallbackFiles?)`（拖拽统一入口：targetFolder 缺省为平铺导入——目录结构拍扁、全部落当前视图文件夹，
+网格/其余窗口区域 drop 的行为；指定 targetFolder 为结构化导入——侧栏文件夹树专用，拖入目录在目标下
+重建目录树（空目录也创建，folder/create 逐级建、同名已存在静默合并），文件按映射路径逐个入库；
+fallbackFiles 为 entries 不可用的拖拽源退回的平铺文件列表（无目录信息，直落目标文件夹）），
+`importFiles(files)`（浏览器 multipart itemUpload，手机上传按钮的主入口）。递归收集在
+`collectEntry`（webkitGetAsEntry 展开，'.' 开头隐藏条目跳过，与服务端侧栏树 is_hidden 同口径）；
+Electron 逐个 itemAddByPath（路径导入，保留时间戳），浏览器逐个 itemUpload。共享
+`importBatch.runImportBatch` 状态机（重复策略 ask→首问整批生效、计数、进度推进，依赖注入可单测）：
+带 skip_existing，首个重复时弹窗问一次（忽略/仍然导入），结束汇总 toast（新增/忽略重复/重复导入/失败）。
+平铺 folder_path 取主 store 的 currentFolderPath，提示经主 store showToast。
 
 **预览子 store `usePreviewStore`（stores/preview.ts）**：预览浮层与图片编辑域。状态 `previewId`、
 `previewItem`（sticky：详情未加载不置空，防浮层卸载重建）、`editorTarget`（编辑窗口目标，App.vue 据此挂载
@@ -450,30 +496,32 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/局域网/存储/更新；局域网 web 端：外观/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（LAN 字段编辑与更新下载进度切分区不丢），web 端不挂载局域网/存储/更新分区；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（保存按钮委托 `SettingsLan` 的 save，校验失败自动切到局域网分区） |
+| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/隐藏项/局域网/存储/更新；局域网 web 端：外观/隐藏项/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（LAN 字段编辑与更新下载进度切分区不丢），web 端不挂载局域网/存储/更新分区；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（保存按钮委托 `SettingsLan` 的 save，校验失败自动切到局域网分区） |
 | `SettingsAppearance.vue` | — | — | 外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，均经 store.setUserThumbSize——web 端由此记住偏好并停止跟随动态默认）+ 预览关闭按钮开关（preview.setHidePreviewClose 即时生效并 localStorage 记忆，全端持久）；无保存语义 |
+| `SettingsHiding.vue` | — | — | 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签，数据源为 taxonomy.globalFilter，SSE 实时对齐），逐条取消隐藏；回收站中的隐藏文件夹剥前缀加注；viewer 只读时只展示不操作 |
 | `SettingsLan.vue` | — | — | 局域网分区（仅 Electron）：开关 + 「允许修改素材库」+ token 拆分开关（separate_write_token + write_token，开启且为空时自动签发）+ 端口（纯文本输入，实时校验红框 + 提示，未启用时收起字段）+ token（monospace + 复制/重新生成）+ 本机地址列表（链接 + 逐行复制）；状态自管（打开时 `api.appLan()` 加载），读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启、SSE 不断），PUT 内置收敛等待，绑定失败自动回滚并报错；本机地址经 `shell.lanAddresses()`；经 `defineExpose({ save, busy })` 供壳的 footer 委托 |
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
 | `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读/可读写，store.viewerMode）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
-| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；点击弹历史库下拉菜单——最近使用在前、当前库打勾、已删除置灰、底部「打开文件夹…」选新库，经 `listLibraries`/`openLibrary`/`selectLibrary`）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为设置按钮（设置面板接入前 toast 占位），不随列表滚动；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签） |
-| `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input）、dropDepth（素材拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/在文件管理器中打开（仅 Electron）/全局列表隐藏切换/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮） |
+| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；LibraryDropdown 组件：历史库下拉——最近使用在前、当前库打勾、已删除置灰、条目 ··· 菜单（打开目录/当前库重命名/移除记录）、底部「打开文件夹…」选新库）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为筛选框（按小写子串过滤文件夹树/分类/标签，不随列表滚动；设置入口在 TitleBar 齿轮）；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签）；文件夹树容器接受外部文件/文件夹拖入（空白处 drop → 结构化导入到库根，目录树重建） |
+| `LibraryDropdown.vue` | — | — | 侧栏素材库下拉：库名触发按钮 + 历史库浮层（Teleport fixed，侧栏 overflow 不裁剪）；当前库打勾，目录已删的置灰；条目 ··· 菜单——打开素材库文件夹/当前库重命名（daemon `PATCH /library/info`）/从列表移除（仅删记录不动目录）；重命名/移除经 IPC，换库就绪经 `hawk:server-started` 驱动 App 原地重启数据 |
+| `SelectBox.vue` | `modelValue: string`、`options: {value,label}[]`、`placeholder?`、`disabled?` | `update:modelValue` | 自绘下拉选择（原生 select 展开列表由 OS 绘制，暗色主题不协调）：触发框 + Teleport fixed 浮层（视觉与 ContextMenu 一致），键盘导航与外部点击关闭；设置面板/文件夹选择/库切换共用 |
+| `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input，提交守卫：进入即捕获类型并同步摘除编辑态，await 窗口内的重复 Enter/blur 不会二次提交）、dropDepth（素材/外部文件拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/在文件管理器中打开（仅 Electron）/全局列表隐藏切换/刷新缓存（补该文件夹及子目录缺失的宽高/缩略图/调色板）/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮）；**接受外部文件/文件夹拖入**（整行可放置，drop → `importer.importEntries(entries, node.path, files)` 结构化导入：拖入目录在本节点下重建目录树，阻断 document 级平铺导入；entries 不可用时退回 files 直落本节点） |
 | `FolderTreePicker.vue` | `current: string`、`trigger: HTMLElement \| null`、`anchor: {left,width,top,bottom,flip}` | `pick(path)`、`close` | Eagle 式文件夹树选择弹出层（检查器「文件夹」用，Teleport body 定位到触发按钮）：点击当前值弹出/再点收起（trigger 列为 outside 忽略，否则 pointerdown 先关、click 后开关不上），**点击文件夹行即选中移动**（无确认，与 Eagle 一致；点当前行=取消）；展开态默认沿当前路径、▸ 折叠箭头、当前行高亮；下方空间不足向上翻转；点外部/Esc 关闭，面板内按键拦截（Delete/Backspace 不误删素材）；空库提示先到侧栏新建 |
 | `ItemGrid.vue` | — | — | 齐行布局 + 虚拟渲染：骨架算全量行 y 偏移（总高即时确定，滚动条可自由拖动），scroll rAF 驱动可见区间（±4 行 overscan，绝对定位 translateY），行内详情经 store.ensureWindow 补齐、未到位时占位块只留宽高；容器尺寸经 ResizeObserver 驱动（非正值忽略 + 挂载时主动测量 + 骨架到达时自愈兑底——RO 首帧可能在布局就绪前返回 0，且容器尺寸不再变化时不重发，会把布局永久卡在空网格）；空态 EmptyState；右键/长按/双击/点选转发 store。右键/长按菜单：保存图片（仅浏览器端无 hawkShell 时出现，移动端保存原图主入口；置顶首项）/添加标签/添加到分类/移动到文件夹/编辑图片（仅 canvas 可重编码的 jpg/png/webp，`preview.openEditor(item)`，编辑对象 = 右键点击的那张，与多选无关）/在文件管理器中显示/评分/移入回收站；菜单触发的选择器对话框（PromptDialog/CategoryPickerDialog/FolderPickerDialog）就地挂载在本组件 |
-| `ItemCard.vue` | `item: Item`、`selected: boolean`、`size: number` | `select(id, MouseEvent)`、`open(id)`、`menu(id, x, y)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |
+| `ItemCard.vue` | `item: Item`、`selected: boolean`、`width?: number`、`height?: number`（骨架尺寸，经 CSS 变量驱动卡片） | `select(item, MouseEvent)`、`open(item)`、`menu(item, MouseEvent)` | 缩略图（`loading=lazy`，加载失败显示 ext 占位块）、名称、★ 角标；可拖拽（`draggable`，回收站禁用）：拖未选中项改为单选它、拖已选中项带动整个选择集，dragstart 写 `application/x-hawk-items` 供侧栏放置 |
 | `Inspector.vue` | — | — | 检查器**壳**：顶部 40px 拖拽条（Windows/Linux 窗口控制 fixed 右侧；SearchBox `.inspector-search` 默认隐藏，触屏横屏 wide+touch 时填充——浏览器端该条本是无拖拽需求的空条）+ 按选中数分区分发：单选 `InspectorItem` / 多选 `InspectorBatch` / 无选中内联分区状态（视图名 + 文件数/占用空间，取自 item/list 的 total/total_size）。共享样式在 `inspector-shared.css`（`.inspector-scope` 前缀隔离），格式化工具在 `format.ts` |
 | `InspectorItem.vue` | — | — | 单选区：1024 预览 + 调色板色块行（点击按颜色检索，再点清除）+ 只读态（触屏/viewer：同结构全静态）/ 编辑态（失焦提交 updateItem；名称/注释自动增高 textarea，名称回车提交且换行转空格，注释 Ctrl+Enter 提交）；**信息导航**：标签/分类 chips、文件位置路径点击跳对应视图；文件夹 Eagle 式树选择（FolderTreePicker，点击当前值弹出、选择即移动）；分类 ＋ 弹 CategoryPickerDialog（复用 addCategoryToSelected 批量追加语义）；文件位置列表多路径时逐行「删除此位置」（store.deleteLocation） |
 | `InspectorBatch.vue` | — | — | 多选区：与单选面板同构的 Unity Inspector 语义——同一套分区（标签/分类/文件夹/基本信息），值为全部选中项的交集，混值显示「多个值」（文件夹仍可点选统一移动）；标签/分类交集经 `item/aggregate` 服务端聚合，文件夹/评分/大小按选择集与骨架纯前端计算；chip 的 × 批量摘除（`remove_tags`/`remove_categories`），＋ 批量追加，评分为统一设置；只读查看下同结构纯展示 |
 | `TagEditor.vue` | `modelValue: string[]` | `update:modelValue` | chip + 删除；「＋」按钮展开内联输入（带既有标签候选 datalist），Enter/失焦提交、Esc 取消（trim 去重） |
 | `CategoryPickerDialog.vue` | `title: string` | `confirm(name: string)`、`cancel` | 分类输入模态：输入框带已有分类候选（datalist），可输入新名字；确认单个分类名（Inspector「＋添加到分类」与多选批量添加共用） |
 | `StarRating.vue` | `modelValue: number` | `update:modelValue` | 5 星；点当前星值 → 清零 |
-| `PromptDialog.vue` | `title, placeholder?` | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消） |
+| `PromptDialog.vue` | `title`、`placeholder?`、`suggestions?: string[]`、`defaultValue?`、`dismissOnMask?`（默认 true） | `confirm(value)`、`cancel` | 通用文本输入模态（Enter 提交/Esc 取消；suggestions 渲染 datalist；提交守卫防 Enter 按键重复二次提交） |
 | `FolderPickerDialog.vue` | `title` | `confirm(path)`、`cancel` | 文件夹选择模态（扁平树下拉） |
 | `PreviewOverlay.vue` | `item: Item` | `close`、`navigate(1\|-1)` | 全屏展示原图（`/item/file`）；Eagle 式磨砂玻璃遮罩覆盖底层界面，右上角 × 关闭；**手势状态机在 `useZoomPan` composable**（滚轮以光标为不动点缩放、双击未放大时退出预览/放大时复位（触屏在 pointer 层按 300ms 内两次点按自判，iOS 不产生 dblclick；鼠标走原生 dblclick，按指针类型分流防双触发）、单指平移与滑动切换、双指捏合、下拉关闭、点击边距关闭的完整语义矩阵见其头注释），本组件只保留视觉层（imageStyle/trackStyle/overlayStyle）与语义接线；**手势两级语义**：缩放>1 单图平移模式（v-if 互斥，缩放=1 为 carousel 模式）；**pointer 手势统一落在始终挂载的全屏 `.gesture` 层**（平移图/carousel 轨道只是其下 `pointer-events:none` 的视觉层）——模式切换不打断进行中的手势，**双指捏合**（以两指中点为不动点缩放、中点平移兼作双指拖移，双指变单指无缝接管平移）由此可跨 scale=1 不丢跟踪；放大后单指左右滑动即平移（缩放>1 语义），捏合收回到 ≤1 回翻页模式；carousel = **三图轨道**（前|当前|后 并排，iOS 相册式）：横向拖动时左右邻图实时可见，过 56px 阈值松手邻图滑至屏幕中央（轨道动画结束才提交切换并无缝复位，配合相邻原图 `new Image()` 预加载免解码等待），首/末张边缘橡皮筋阻尼（0.35x），不足阈值回弹；**手势层与位移层分离**（位移会改变元素命中区域，transform 只放在视觉层）；点击语义保持不变（carousel 点击不关闭；平移模式点空白边距关闭、点图像不关闭，`moved` 阈值区分点击与拖拽）；触屏另支持**下拉关闭**（阻尼跟手+背景渐亮，≥96px 松手滑出关闭；`touch` 判定，手机/iPad 横竖屏均触发，桌面鼠标不触发）；`previewItem` 为 sticky（详情未加载不置空，防浮层卸载重建）；Esc/点遮罩/空格关闭（触屏窄屏无 ×，靠下拉/点遮罩）；←/→ 或底部按钮切换（**narrow 隐藏翻页栏**）；**关闭 × 仅触屏且窄屏隐藏**（`v-if="!touch || !narrow"`——真手机有下拉关闭；触屏宽屏/iPad 横屏/触屏笔记本宽窗口保留，鼠标无下拉手势且 carousel 点遮罩不关闭，不能没有按钮；设置面板「预览模式隐藏关闭按钮」开启时全端隐藏；carousel 轨道基准 -100vw 取响应式视口宽（`useWindowSize`），拖动窗口尺寸时当前帧保持居中不漂移）；右键菜单：在文件管理器中显示/复制文件路径/复制图片/编辑图片（仅 jpg/png/webp，`preview.openEditor`，保存后本浮层经 previewId 切换到新 id 显示旋转结果；放弃则保持原图）/删除图片（删除后跳到下一张，末张关闭）；**长按菜单**（触屏/笔，经 useZoomPan 内建检测）：保存图片（仅浏览器端，置顶首项）/在文件管理器中显示/复制文件路径/复制图片/编辑图片/删除图片，viewer 只读下保留保存与复制 |
 | `ImageEditDialog.vue` | `item: Item` | `close` | 图片编辑窗口：全屏 Eagle 式遮罩（观感同预览浮层、层级高于它），底部中间工具条为 ↺/↻ 旋转 + 「已旋转 n°」+ 退出/保存；`preview.editorTarget` 驱动、App.vue 全局挂载（网格与预览浮层右键「编辑图片…」均可打开）。编辑期间旋转只作用于预览角（CSS 变换）；「保存」或带修改退出（×/退出/Esc/点遮罩）时三选确认（保存/不保存/取消）才经 `preview.saveImageEdit` 做客户端重编码（canvas，EXIF 方向烘焙进像素；JPEG EXIF 字节级回填、Orientation 重置为 1）并提交 `item/replace`；id 漂移后详情就地替换、预览若正打开则跟随新 id；写回保留原修改时间，素材在按时间排序中不挪位 |
 | `ContextMenu.vue` | — | — | 读 useContextMenu 状态渲染；点外部/Esc 关闭（不选 = 保持不变）；打开期间挂 `body.menu-open` 挂起窗口拖拽区——Electron 的 `-webkit-app-region: drag` 由 OS 命中测试优先消费，遮罩盖在拖拽区上也收不到点击，禁用后点击空白才能正常关菜单 |
 | `ImportDuplicateDialog.vue` | — | — | 导入重复策略对话框：导入过程中首个「内容已在库内」触发（importer.dupPrompt 挂起的 resolve，App.vue 全局挂载），「忽略重复」（默认，Esc/点遮罩同效）/「仍然导入」二选一，选择整批生效（批量导入逐文件弹窗不可用）；服务端 skip_existing 配合（见 item/add） |
-| `DeleteScopeDialog.vue` | — | — | 多位置删除策略对话框：删除选中项里含多个库内位置副本的素材时触发（store.deleteScopePrompt），「删除全部位置」（卡片级，所有副本入回收站）/「仅从此处移除」（folder/root 视图才有：只删当前文件夹范围内的位置，其余保留）/「取消」（Esc/点遮罩同效，中止本次删除）；单路径素材不弹窗 |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
 
 ### composables
@@ -483,7 +531,7 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | composable | 签名与行为 |
 | ---------- | ---------- |
 | `useContextMenu()` | 模块级单例响应式状态 `{visible, x, y, items}`（全局唯一菜单）；`open(items, MouseEvent)` 定位（防出屏翻转）；`close()` |
-| `useDragImport()` | `useDropZone` 接 drop → 库内素材拖拽静默忽略；只读查看（viewer）toast 提示且悬停光标置禁止 → 先 `importer.importBegin()` 占位（收集文件阶段进度条即显示）→ `webkitGetAsEntry()` 递归展开文件夹 → Electron 经 `webUtils.getPathForFile` 取绝对路径走 `importer.importPaths`；浏览器（局域网 web 端）无路径可取，改走 `importer.importFiles`（multipart 内容上传，需 `[web].writable`；entries 不可用时退回平铺文件列表）；收集失败 toast |
+| `useDragImport()` | document 级 `useDropZone` 接 drop：库内素材拖拽静默忽略；外部拖入（含侧栏结构化 drop 冒泡被阻断后的其余区域）交 `importer.importEntries(entries, undefined, files)` 平铺导入（只读拒绝提示与进度占用均在 importer 内）；悬停光标置禁止（viewer/回收站视图/非侧栏的素材拖拽）；侧栏的结构化导入不经过本 composable（Sidebar/FolderTreeNode 自行接 drop） |
 | `useShortcuts()` | 全局 keydown：焦点在 input/textarea 时跳过；**图片编辑窗口打开时（preview.editorTarget）整体让行**（窗口自带 Esc/关闭逻辑，否则 Esc 会关底层预览、Delete 会删正在编辑的素材）；`Delete/Backspace` → 按视图 trashSelected/restoreSelected；`Esc` → 关浮层/菜单；`Cmd/Ctrl+A` → selectAll；`←/→`（浮层打开时）→ preview.navigatePreview。另有 main.ts 的捕获阶段拦截：IME 组合态（中文输入法选词）中的 Enter/Escape 不下发——Enter 是确认候选而非提交，Esc 是关候选窗而非取消 |
 | `useZoomPan()` | 预览浮层手势引擎（`useZoomPan({touch, hasNeighbor, navigate, close, hitImage})`）：管理 scale/tx/ty 与滑动/下拉跟手状态，返回视觉层消费的状态 ref 与一组 pointer/wheel/dblclick/click 处理器；语义矩阵（滚轮不动点缩放/双击/捏合跨 scale=1 不丢跟踪/56px 滑动阈值/96px 下拉关闭/0.35 边缘橡皮筋/点击 vs 拖拽区分）见文件头注释 |
 
@@ -496,11 +544,11 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 --fg-0: #e8e8e8;  --fg-1: #9d9d9d;  --accent: #4f8cff;  --danger: #e5534b;  --border: #3c3c3c;
 ```
 
-布局用 CSS Grid：`220px 1fr 280px` × `40px 1fr`，侧栏/检查器跨两行通高，顶栏只占中栏首行；侧栏可经顶栏开关隐藏归零（`no-panels` 时顶栏通栏）；窗口控制 fixed 于窗口右上角不占 grid。网格卡片 `repeat(auto-fill, minmax(var(--thumb-size), 1fr))`，卡片内缩略图定高 + `object-fit: contain`。
+布局用 CSS Grid：默认 `220px 1fr 280px` × `40px 1fr`（侧栏/检查器宽度可拖拽调整并持久化，见布局章节；`no-panels` 时两栏归零），侧栏/检查器跨两行通高，顶栏只占中栏首行；窗口控制 fixed 于窗口右上角不占 grid。网格为齐行布局（非 CSS grid）：ItemGrid 按图片宽高比计算 flex 行、行绝对定位 + translateY 虚拟渲染，卡片宽度由行宽反推，缩略图 `object-fit: contain`。
 
 ### 错误处理
 
-ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文案映射：`FILE_EXISTS`→「同名文件已存在」、`ITEM_NOT_FOUND`→「素材不存在或已被移除」……其余透传 message）。toast 固定底部居中，3s 自动消失。启动级失败（无 token / 连不上 server）渲染整页错误态而非 toast。
+ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文案映射：`FILE_EXISTS`→「同名文件或文件夹已存在」、`ITEM_NOT_FOUND`→「素材不存在或已被移除」……其余透传 message）。toast 固定底部居中，3s 自动消失。启动级失败（无 token / 连不上 server）渲染整页错误态而非 toast。
 
 ### SSE 增量刷新策略
 
@@ -515,6 +563,8 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 | `item.trashed` / `item.removed` | 就地移除（详情 + 骨架 + 选择），回收站视图同事件意味着「进来」，统一防抖重载兜底 |
 | `task.progress` | 更新 `taskBacklog`（缩略图积压计数；归零置 null 隐藏指示条），不触发文件夹/分类刷新 |
 | `folder.changed` | 防抖重拉文件夹树（reason 恒为 external，忽略取值）；骨架成员与分类/标签计数无关，不触发 |
+| `library.updated` | 负载为完整库信息（改库显示名）：就地替换 store.library，页面标题经 watch 同步 |
+| `global_filter.changed` | 负载为完整隐藏集快照：两侧状态同步（applyGlobalFilter）→ 重查骨架 + 防抖刷新计数——隐藏集变更影响全局类视图（全部/根目录/未分类/未标签）成员 |
 | 任何 item 事件 | 防抖刷新文件夹树与分类/标签计数（folder.changed 已覆盖目录结构变化，此项兜底文件夹内 item 计数变动） |
 
 断线自动重连（EventSource 原生行为），重连后 reloadSkeleton + refreshFolders 全量对齐。
@@ -526,7 +576,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 3. 网格：缩略图懒加载、虚拟渲染（打开即知总高、滚动条自由拖动、离屏不渲染）、单选/Shift 连选/Cmd 点选、双击预览浮层
 4. 搜索与筛选：关键词（命中名称/备注）、star 精确筛选、四种排序双向
 5. 检查器：1024 预览；名称、标签（chip 增删）、评分（点星）、备注、URL 编辑即存（失焦/回车提交）；只读信息：尺寸、大小、mtime、全部路径
-6. 导入：拖拽文件/文件夹到网格 → `item/add`（folder 路径取当前文件夹；文件夹由前端递归展开为文件逐个导入）
+6. 导入：拖拽文件/文件夹到网格 → `item/add`（folder 路径取当前文件夹；目录结构拍扁）；拖到侧栏文件夹树/节点 → 结构化导入（目录树在目标下重建，空目录也创建，文件按映射路径逐个导入）
 7. 右键菜单：添加标签 / 添加到分类 / 移动到文件夹 / 在 Finder 显示 / 回收（回收站视图为恢复、清空）
 8. 回收站：查看、单项或批量恢复、清空（二次确认）
 9. 实时性：另一进程改动库目录（或第二窗口操作）经 SSE 反映到界面
@@ -538,7 +588,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 - 瀑布流不等高布局、框选、颜色标签、标签云
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
-- UI/组件级测试框架不做全量覆盖；Vitest 主要覆盖纯函数与决策逻辑（viewLogic/importBatch/layout），侧栏维度行等交互密集组件有渲染测试（@vue/test-utils + jsdom，渲染分支回归），契约层由 server 的 smoke.sh 兜底
+- UI/组件级测试框架不做全量覆盖；Vitest 主要覆盖纯函数与决策逻辑（viewLogic/importBatch/layout/format），侧栏维度行等交互密集组件有渲染测试（@vue/test-utils + jsdom，渲染分支回归），契约层由 server 的 smoke.sh 兜底；真实交互另有 e2e 工具兜底（`tools/dnd-test.mjs` 真实鼠标事件验证拖拽、`tools/ui-check.mjs` 真实 Electron + CDP 自检）
 
 ## 打包与分发
 
@@ -579,6 +629,8 @@ hawk-app/
 │   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
 │   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、可配关窗行为（默认退出/托盘驻留） + 系统托盘、退出标志
 │   │   ├── app-config.ts   # 用户配置（~/.config/hawk/config.toml，全平台统一，TOML 格式；Electron 会话数据在平台默认 userData，两目录分离）：最近素材库与历史记录、缓存父目录、当前库根会话状态
+│   │   ├── cache.ts        # 缓存父目录迁移编排（停 server → 逐库复制 → 删旧 → 写配置 → 重启；任一环节失败不改配置）
+│   │   ├── cache-path.ts   # 缓存路径规则与搬迁原语（纯函数/纯 fs，与 daemon core/paths.rs 对齐；Vitest 覆盖）
 │   │   ├── updater.ts      # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
 │   │   ├── lan.ts          # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）
 │   │   ├── ipc.ts          # 白名单 IPC 注册（换库/文件管理器/剪贴板/窗口控制/局域网地址/退出应用）
@@ -591,12 +643,18 @@ hawk-app/
 │   ├── gen-types.mjs       # 拉起 server 拉取 OpenAPI schema 生成 TS 类型
 │   ├── dev.mjs             # 一键开发：vite + electron（wait-on 5173）
 │   ├── build-electron.mjs  # esbuild 打包主进程/preload TS 源码到 electron/out/（--watch 开发重建；dev.mjs 拉起）
+│   ├── electron-build-config.mjs # 主进程/preload 的 esbuild 构建配置（一次性构建与 watch 共用）
 │   ├── build-server.mjs    # cargo build --release 产出指定 target 的 hawk-daemon 单文件
 │   ├── build-update.mjs    # 构建 hawk-update.exe（Windows 更新辅助，hawk-update/）到 resources/hawk-update/；非 Windows 自跳过
 │   ├── pack.mjs            # electron-builder 打包（Windows zip / macOS .app / Linux AppImage）；先 stamp 构建标识
 │   ├── stamp-build.mjs     # 打包前写入 build-info.json（git sha，自动更新比较 nightly 新旧用；CI 用 HAWK_SHA 注入）
 │   ├── test-mobile-web.mjs # 移动端网页冒烟测试编排（临时库 + server + 断言）
 │   └── mobile-web-probe.cjs# 测试探针：无 preload 的 sandbox Electron 窗口模拟手机浏览器，输出 JSONL 探针与截图
+├── tools/
+│   ├── ui-check.mjs        # UI 端到端自检：真实启动 Electron，CDP 断言 DOM/交互/SSE 并截图
+│   ├── dnd-test.mjs        # 拖拽端到端复现：真实浏览器 + 真实鼠标事件（多选素材拖入侧栏文件夹，断言行高亮与移动生效）
+│   ├── test-resources.mjs  # extraResources 平台隔离回归（hawk-update 只进 Windows 产物）
+│   └── test-update.mjs     # hawk-update.exe 端到端验证（需先构建）
 └── web/                    # Vue 3 + Vite 前端，src/ 详档见「前端信息架构 · 目录结构」
 ```
 
@@ -606,7 +664,7 @@ hawk-app/
 npm install
 npm run gen:types   # 生成/更新 API 类型（需先 cargo build hawk-daemon）
 npm run dev         # vite(5173) + electron；server 由 electron 拉起（Rust 二进制，release 优先）
-npm run build       # vue-tsc --noEmit && vite build
+npm run build       # vue-tsc --noEmit（web）+ tsc --noEmit（electron）+ vite build
 npm run test:unit   # Vitest 纯函数/决策逻辑单测（web/src/**/*.spec.ts，默认 node 环境）
 npm run test:mobile # 移动端网页冒烟测试（见下）
 ```

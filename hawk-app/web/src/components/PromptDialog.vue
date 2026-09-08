@@ -15,14 +15,20 @@ const emit = defineEmits<{ confirm: [value: string]; cancel: [] }>();
 // 预填默认值（重命名场景）：对话框每次条件渲染重建，取一次初值即可
 const text = ref(props.defaultValue ?? '');
 const listId = `dl-${Math.random().toString(36).slice(2)}`;
+// 提交守卫：Enter 按键重复（auto-repeat）在父组件即除对话框前可能多次触发 confirm
+let submitted = false;
 
 const vFocus: Directive<HTMLElement> = {
   mounted: (el) => el.focus(),
 };
 
 function confirm() {
+  if (submitted) {
+    return;
+  }
   const value = text.value.trim();
   if (value) {
+    submitted = true;
     emit('confirm', value);
   } else {
     emit('cancel');

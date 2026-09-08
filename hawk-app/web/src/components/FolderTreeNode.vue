@@ -3,8 +3,9 @@ import { computed, ref } from 'vue';
 import type { Directive } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
+import { useImporterStore } from '../stores/importer';
 import { useContextMenu } from '../composables/useContextMenu';
-import { isItemsDrag, itemsDragOver, readItemsDrop } from '../dnd';
+import { isItemsDrag, itemsDragOver, readItemsDrop, isFilesDrag, filesDragOver, droppedEntries } from '../dnd';
 import { hasShell, shell, fileManagerName } from '../platform';
 import Icon from './Icon.vue';
 import type { FolderNode } from '../types';
@@ -20,6 +21,7 @@ const props = defineProps<{ node: FolderNode; depth: number; filter?: string }>(
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
+const importer = useImporterStore();
 const menu = useContextMenu();
 
 const expanded = ref(props.depth < 1);
@@ -54,15 +56,22 @@ function startEdit(kind: 'rename' | 'create') {
 }
 
 async function submitEdit() {
-  const text = editText.value.trim();
-  if (text) {
-    if (editing.value === 'rename') {
-      await taxonomy.folderRename(props.node.path, text);
-    } else {
-      await taxonomy.folderCreate(props.node.path, text);
-    }
+  // 进入即捕获类型并同步插除编辑态：await 窗口内（建目录+全库树刷新可达数百 ms）
+  // 再按 Enter（按键重复）或点击他处触发的 blur 不得二次提交（否则服务端报同名已存在）
+  const kind = editing.value;
+  if (kind === false) {
+    return;
   }
   editing.value = false;
+  const text = editText.value.trim();
+  if (!text) {
+    return;
+  }
+  if (kind === 'rename') {
+    await taxonomy.folderRename(props.node.path, text);
+  } else {
+    await taxonomy.folderCreate(props.node.path, text);
+  }
 }
 
 function onContextMenu(e: MouseEvent) {
@@ -98,11 +107,11 @@ function onContextMenu(e: MouseEvent) {
   );
 }
 
-// ---- 素材拖入（网格 → 文件夹）：enter/leave 成对计数防子元素间闪烁 ----
+// ---- 素材/外部文件拖入（网格 → 文件夹；Finder → 文件夹）：enter/leave 成对计数防子元素间闪烁 ----
 const dropDepth = ref(0);
 
 function onDragEnter(e: DragEvent) {
-  if (isItemsDrag(e)) {
+  if (isItemsDrag(e) || isFilesDrag(e)) {
     dropDepth.value++;
   }
 }
@@ -112,13 +121,25 @@ function onDragLeave() {
 }
 
 function onDragOver(e: DragEvent) {
-  itemsDragOver(e);
+  // 库内素材拖入不受影响；外部文件拖入在只读查看下拒绝放置（不 preventDefault，drop 不触发）
+  if (!itemsDragOver(e) && !store.viewerMode) {
+    filesDragOver(e);
+  }
 }
 
 function onDrop(e: DragEvent) {
   dropDepth.value = 0;
   if (readItemsDrop(e)) {
     store.moveSelectedToFolder(props.node.path);
+    return;
+  }
+  // 外部文件/文件夹：结构化导入到本节点（拖入目录在本节点下重建目录树），阻断 document 级平铺导入。
+  // entries 不可用的拖拽源退回 dataTransfer.files（无目录信息，文件直落本节点）
+  const entries = droppedEntries(e);
+  const files = e.dataTransfer?.files ? [...e.dataTransfer.files] : [];
+  if (entries.length > 0 || files.length > 0) {
+    e.stopPropagation();
+    void importer.importEntries(entries, props.node.path, files);
   }
 }
 </script>

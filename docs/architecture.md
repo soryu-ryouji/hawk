@@ -10,9 +10,13 @@ hawk 前后端完全解耦，通过 HTTP API 通信。桌面版中 Electron 只�
 │   design.jpg  photo.png  ...（无任何 hawk 文件）       │
 │   .hawk/                                             │
 │     ├── config.toml   项目配置（参与同步）              │
-│     ├── metadata/     素材参数（参与同步）              │
+│     ├── categories.toml / tags.toml / view.toml /    │
+│     │   global_filter.toml   注册表与偏好（参与同步）   │
+│     ├── metadata/     素材参数（配置文件模式，参与同步）  │
+│     ├── metadata.db   素材参数（数据库模式，本地专用）   │
+│     ├── storage_mode  存储方案标记（参与同步）          │
 │     └── trash/        回收站（本地专用）                │
-│   缩略图/调色板缓存 → 库外系统缓存目录（本地专用）       │
+│   缩略图/调色板/元数据缓存 → 库外系统缓存目录（本地专用）  │
 └──────────────────────┬───────────────────────────────┘
                        │ 文件系统监听 / 读写
                        ▼

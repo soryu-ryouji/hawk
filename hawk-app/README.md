@@ -10,8 +10,8 @@ cargo build --release --manifest-path ../hawk-daemon/Cargo.toml   # 后端二进
 npm run gen:types      # 从 hawk-daemon 的 OpenAPI schema 生成 TS 类型（web/src/api/schema.d.ts）
 npm run dev            # vite + electron 一键起（server 由 electron 拉起）
 npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_TOKEN 可纯浏览器调试
-npm run build          # vue-tsc --noEmit && vite build
-npm run test:unit      # Vitest 纯函数/决策逻辑单测（web/src/**/*.spec.ts）
+npm run build          # vue-tsc --noEmit（web）+ tsc --noEmit（electron）+ vite build
+npm run test:unit      # Vitest 单测（web/src/**/*.spec.ts：纯函数/决策逻辑 + 组件渲染）
 ```
 
 开发态后端二进制取 `hawk-daemon/target/` 下的构建产物（本机 `release` 优先，其次 `--target` 交叉产物与 `debug`）；
@@ -20,11 +20,12 @@ npm run test:unit      # Vitest 纯函数/决策逻辑单测（web/src/**/*.spec
 ## 测试
 
 ```bash
-npm run test:unit     # Vitest 单测：viewLogic（SSE 决策/排序继承/选择）/importBatch（导入状态机）/layout（齐行布局）
+npm run test:unit     # Vitest 单测：viewLogic（SSE 决策/排序继承/选择）/importBatch（导入状态机）/layout（齐行布局）/format（显示格式化）+ itemCard/sidebarRows 组件渲染
 npm run test:mobile   # 移动端网页冒烟：临时库 + hawk-daemon 托管 web/dist + 无 preload 探针窗口断言全链路
 npm run test:update   # hawk-update.exe 端到端验证：等进程/覆盖/清理/坏包日志（需先在 hawk-update/ cargo build）
 npm run test:resources  # extraResources 平台隔离回归：hawk-update 只进 Windows 产物，mac/linux 只带 hawk-daemon
 node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断言 DOM/交互/SSE 并截图
+node tools/dnd-test.mjs   # 拖拽端到端复现：真实浏览器 + 真实鼠标事件（多选素材拖入侧栏文件夹，断言移动与行高亮）
 ```
 
 ## 打包
