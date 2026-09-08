@@ -162,6 +162,7 @@ fn build_state(settings: Settings) -> SharedState {
         tags,
         global_filter,
         lan,
+        sse_lagged: std::sync::atomic::AtomicU64::new(0),
     })
 }
 

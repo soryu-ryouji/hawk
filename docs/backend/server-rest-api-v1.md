@@ -97,12 +97,24 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
   "status": "success",
   "data": {
     "thumbnail": { "pending": 236, "active": 4 },
-    "index": { "pending": 12, "active": 0, "phase": "hash", "processed": 1800, "total": 4200 }
+    "index": { "pending": 12, "active": 0, "phase": "hash", "processed": 1800, "total": 4200 },
+    "last_scan": { "started_unix_ms": 1788874284637, "duration_ms": 133, "files": 0, "dirty_dirs": 0, "applied": 0 },
+    "queue_overflow": false,
+    "sse_lagged": 0
   }
 }
 ```
 
 `index.phase` / `processed` / `total` 仅扫描进行中存在：`total=0` 的遍历阶段表示总量未知（客户端宜显示不定态进度）；空闲时为 `null`。
+
+观测字段（均可缺省，不影响客户端）：
+
+| 字段 | 说明 |
+| ---- | ---- |
+| `last_scan` | 最近一轮全库扫描统计（未跑过为 null）：开始时间、耗时、枚举文件数、深入目录数、实际应用数 |
+| `queue_overflow` | 索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位 |
+| `config_error` | `.hawk/config.toml` 解析错误（**保留上次有效配置继续运行**，修复后自动清除）；正常不出现 |
+| `sse_lagged` | SSE 订阅因消费落后被断开（lagged）的累计次数 |
 
 ### info
 

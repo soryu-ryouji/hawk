@@ -41,6 +41,16 @@ pub struct ScanProgress {
     pub total: i32,
 }
 
+/// 最近一轮全库扫描统计（app/status 观测用）
+#[derive(Clone, Debug)]
+pub struct ScanStats {
+    pub started_unix_ms: i64,
+    pub duration_ms: i64,
+    pub files: i32,
+    pub dirty_dirs: i32,
+    pub applied: i32,
+}
+
 /// 批量元数据应用结果（item/batch_update）：实际更新数与不存在的 id
 #[derive(Debug)]
 pub struct BatchMetadataResult {
@@ -124,6 +134,10 @@ pub(crate) struct PipelineCtx {
     pub(crate) deferred: Mutex<HashSet<String>>,
     pub(crate) queued_jobs: Arc<AtomicI32>,
     pub(crate) last_scan: Mutex<Option<ScanProgress>>,
+    /// 当前扫描起点（Instant, unix_ms）；无扫描在途为 None
+    pub(crate) scan_started: Mutex<Option<(std::time::Instant, i64)>>,
+    /// 最近一轮扫描统计
+    pub(crate) last_scan_stats: Mutex<Option<ScanStats>>,
     pub(crate) progress_last_at: AtomicI64,
     pub(crate) progress_idle: AtomicBool,
     /// 暂存的调色板回写（hash → 最新提炼结果）；同 hash 去重，按批冲刷
@@ -134,6 +148,11 @@ pub(crate) struct PipelineCtx {
     pub(crate) runtime: tokio::runtime::Handle,
     /// 活动扫描会话（扫描窗口内消费侧变更的簿记载体）
     pub(crate) scan_session: Mutex<Option<Arc<ScanSession>>>,
+}
+
+/// 最近一轮扫描统计快照
+pub(crate) fn scan_stats_snapshot(ctx: &PipelineCtx) -> Option<ScanStats> {
+    ctx.last_scan_stats.lock().unwrap().clone()
 }
 
 /// 当前活动扫描会话；无扫描在途返回 None

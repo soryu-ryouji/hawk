@@ -792,8 +792,36 @@
         "properties": {
           "data": {
             "properties": {
+              "config_error": {
+                "description": ".hawk/config.toml 解析错误（保留上次有效配置继续运行）；正常为 null",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "index": {
                 "$ref": "#/components/schemas/IndexBacklog"
+              },
+              "last_scan": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ScanStatsInfo",
+                    "description": "最近一轮全库扫描统计（未跑过为 null）"
+                  }
+                ]
+              },
+              "queue_overflow": {
+                "description": "索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位",
+                "type": "boolean"
+              },
+              "sse_lagged": {
+                "description": "SSE 订阅因消费落后被断开（lagged）的累计次数",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
               },
               "thumbnail": {
                 "$ref": "#/components/schemas/TaskBacklog"
@@ -801,7 +829,9 @@
             },
             "required": [
               "thumbnail",
-              "index"
+              "index",
+              "queue_overflow",
+              "sse_lagged"
             ],
             "type": "object"
           },
@@ -2000,6 +2030,43 @@
         ],
         "type": "object"
       },
+      "ScanStatsInfo": {
+        "description": "最近一轮全库扫描统计",
+        "properties": {
+          "applied": {
+            "description": "本轮实际应用入库的位置数",
+            "format": "int32",
+            "type": "integer"
+          },
+          "dirty_dirs": {
+            "description": "快照对比判定为 dirty、深入枚举的目录数",
+            "format": "int32",
+            "type": "integer"
+          },
+          "duration_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "files": {
+            "description": "本轮枚举到的文件数",
+            "format": "int32",
+            "type": "integer"
+          },
+          "started_unix_ms": {
+            "description": "扫描开始时间（Unix 毫秒）",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "started_unix_ms",
+          "duration_ms",
+          "files",
+          "dirty_dirs",
+          "applied"
+        ],
+        "type": "object"
+      },
       "SseEvents": {
         "description": "SSE 事件载荷注册表：键为 `event:` 帧的事件名，值为 `data:` 帧 JSON 载荷的结构。\n与 core::taxonomy::ItemEvents 常量一一对应（契约测试双向比对）",
         "properties": {
@@ -2178,8 +2245,36 @@
       },
       "TaskStatus": {
         "properties": {
+          "config_error": {
+            "description": ".hawk/config.toml 解析错误（保留上次有效配置继续运行）；正常为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "index": {
             "$ref": "#/components/schemas/IndexBacklog"
+          },
+          "last_scan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScanStatsInfo",
+                "description": "最近一轮全库扫描统计（未跑过为 null）"
+              }
+            ]
+          },
+          "queue_overflow": {
+            "description": "索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位",
+            "type": "boolean"
+          },
+          "sse_lagged": {
+            "description": "SSE 订阅因消费落后被断开（lagged）的累计次数",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
           },
           "thumbnail": {
             "$ref": "#/components/schemas/TaskBacklog"
@@ -2187,7 +2282,9 @@
         },
         "required": [
           "thumbnail",
-          "index"
+          "index",
+          "queue_overflow",
+          "sse_lagged"
         ],
         "type": "object"
       },

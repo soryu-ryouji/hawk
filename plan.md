@@ -9,8 +9,8 @@
 | 1 | P0-3 静态检查门禁：cargo fmt/clippy + 前端 ESLint/Prettier + CI | DONE | 见 git log |
 | 2 | P2-11 panic 策略：移除 release panic="abort"（恢复 catch_unwind 隔离）+ 请求/worker panic 兜底 | DONE | 071e58d |
 | 3 | P1-4 hawk-daemon 拆 lib + 薄 bin | DONE | 见 git log |
-| 4 | P0-2 配置解析容错：保留上次有效配置 + 错误暴露 | TODO | |
-| 5 | P1-5 可观测性：app/status 扩展（扫描统计/队列溢出/配置错误） | TODO | |
+| 4 | P0-2 配置解析容错：保留上次有效配置 + 错误暴露 | DONE | 见 git log |
+| 5 | P1-5 可观测性：app/status 扩展（扫描统计/队列溢出/配置错误/SSE lag） | DONE | 见 git log |
 | 6 | P0-1 周期 FS 对账兜底（HAWK_FS_RESCAN_INTERVAL，默认 900s） | TODO | |
 | 7 | P1-7 API 策略拒绝返回 4xx（add/upload/rename 前置校验） | TODO | |
 | 8 | P1-6 文档机制化：API 文档-代码契约测试 + 文档链接检查 | TODO | |
@@ -32,3 +32,4 @@
 - 2026-09-08 #1 完成：cargo fmt/clippy 全绿；前端 eslint+prettier 全绿；CI rust 加 fmt/clippy、desktop 加 lint/format:check
 - 2026-09-08 #2 完成：移除 panic=abort，worker/CatchPanic/panic hook 隔离齐备
 - 2026-09-08 #3 完成：lib.rs + 薄 bin + tests/openapi_contract.rs；clippy 因可见性暴露的 4 处收敛为 pub(crate)
+- 2026-09-08 #4+#5 完成：config load→Result、last_error 暴露；app/status 增 last_scan/queue_overflow/config_error/sse_lagged；契约产物重固化

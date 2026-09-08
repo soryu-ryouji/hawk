@@ -104,10 +104,34 @@ struct IndexBacklog {
     total: Option<i32>,
 }
 
+/// 最近一轮全库扫描统计
+#[derive(Serialize, utoipa::ToSchema)]
+struct ScanStatsInfo {
+    /// 扫描开始时间（Unix 毫秒）
+    started_unix_ms: i64,
+    duration_ms: i64,
+    /// 本轮枚举到的文件数
+    files: i32,
+    /// 快照对比判定为 dirty、深入枚举的目录数
+    dirty_dirs: i32,
+    /// 本轮实际应用入库的位置数
+    applied: i32,
+}
+
 #[derive(Serialize, utoipa::ToSchema)]
 struct TaskStatus {
     thumbnail: TaskBacklog,
     index: IndexBacklog,
+    /// 最近一轮全库扫描统计（未跑过为 null）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_scan: Option<ScanStatsInfo>,
+    /// 索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位
+    queue_overflow: bool,
+    /// .hawk/config.toml 解析错误（保留上次有效配置继续运行）；正常为 null
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_error: Option<String>,
+    /// SSE 订阅因消费落后被断开（lagged）的累计次数
+    sse_lagged: u64,
 }
 
 /// 后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照）
@@ -120,6 +144,13 @@ struct TaskStatus {
 async fn status(State(state): State<SharedState>) -> Json<Envelope<TaskStatus>> {
     let (thumb_pending, thumb_active) = state.worker.backlog();
     let index = state.pipeline.index_progress();
+    let last_scan = state.pipeline.scan_stats().map(|s| ScanStatsInfo {
+        started_unix_ms: s.started_unix_ms,
+        duration_ms: s.duration_ms,
+        files: s.files,
+        dirty_dirs: s.dirty_dirs,
+        applied: s.applied,
+    });
     Json(Envelope::ok(TaskStatus {
         thumbnail: TaskBacklog {
             pending: thumb_pending,
@@ -132,6 +163,10 @@ async fn status(State(state): State<SharedState>) -> Json<Envelope<TaskStatus>> 
             processed: index.processed,
             total: index.total,
         },
+        last_scan,
+        queue_overflow: state.pipeline.queue_overflowed(),
+        config_error: state.config.config_error(),
+        sse_lagged: state.sse_lagged.load(std::sync::atomic::Ordering::Relaxed),
     }))
 }
 

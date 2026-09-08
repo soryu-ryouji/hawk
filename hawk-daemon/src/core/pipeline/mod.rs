@@ -197,6 +197,8 @@ impl IndexPipeline {
             deferred: Mutex::new(std::collections::HashSet::new()),
             queued_jobs,
             last_scan: Mutex::new(None),
+            scan_started: Mutex::new(None),
+            last_scan_stats: Mutex::new(None),
             progress_last_at: std::sync::atomic::AtomicI64::new(0),
             progress_idle: std::sync::atomic::AtomicBool::new(true),
             palette_pending: Mutex::new(Vec::new()),
@@ -307,6 +309,16 @@ impl IndexPipeline {
     /// 索引进度快照(task.progress("index") 事件与 app/status 端点共用同一构造)
     pub fn index_progress(&self) -> TaskProgress {
         ctx::index_progress_snapshot(&self.ctx)
+    }
+
+    /// 最近一轮全库扫描统计（未跑过为 None）
+    pub fn scan_stats(&self) -> Option<ctx::ScanStats> {
+        ctx::scan_stats_snapshot(&self.ctx)
+    }
+
+    /// 索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后由消费者复位
+    pub fn queue_overflowed(&self) -> bool {
+        self.ctx.overflow.load(Ordering::SeqCst)
     }
 
     /// 队列回流句柄：worker 等外部线程向消费循环派发 FixDim/Palette 任务的通道

@@ -209,6 +209,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         global_filter,
         worker,
         lan: LanSupervisor::new(),
+        sse_lagged: std::sync::atomic::AtomicU64::new(0),
     });
     let router = build_router(state.clone());
     state.folder_tree.spawn_invalidation(&state.bus);

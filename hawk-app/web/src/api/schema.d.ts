@@ -1081,7 +1081,17 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_TaskStatus: {
             data?: {
+                /** @description .hawk/config.toml 解析错误（保留上次有效配置继续运行）；正常为 null */
+                config_error?: string | null;
                 index: components["schemas"]["IndexBacklog"];
+                last_scan?: null | components["schemas"]["ScanStatsInfo"];
+                /** @description 索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位 */
+                queue_overflow: boolean;
+                /**
+                 * Format: int64
+                 * @description SSE 订阅因消费落后被断开（lagged）的累计次数
+                 */
+                sse_lagged: number;
                 thumbnail: components["schemas"]["TaskBacklog"];
             };
             status: string;
@@ -1391,6 +1401,31 @@ export interface components {
             /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
             removed: number;
         };
+        /** @description 最近一轮全库扫描统计 */
+        ScanStatsInfo: {
+            /**
+             * Format: int32
+             * @description 本轮实际应用入库的位置数
+             */
+            applied: number;
+            /**
+             * Format: int32
+             * @description 快照对比判定为 dirty、深入枚举的目录数
+             */
+            dirty_dirs: number;
+            /** Format: int64 */
+            duration_ms: number;
+            /**
+             * Format: int32
+             * @description 本轮枚举到的文件数
+             */
+            files: number;
+            /**
+             * Format: int64
+             * @description 扫描开始时间（Unix 毫秒）
+             */
+            started_unix_ms: number;
+        };
         /**
          * @description SSE 事件载荷注册表：键为 `event:` 帧的事件名，值为 `data:` 帧 JSON 载荷的结构。
          *     与 core::taxonomy::ItemEvents 常量一一对应（契约测试双向比对）
@@ -1452,7 +1487,17 @@ export interface components {
             total?: number | null;
         };
         TaskStatus: {
+            /** @description .hawk/config.toml 解析错误（保留上次有效配置继续运行）；正常为 null */
+            config_error?: string | null;
             index: components["schemas"]["IndexBacklog"];
+            last_scan?: null | components["schemas"]["ScanStatsInfo"];
+            /** @description 索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位 */
+            queue_overflow: boolean;
+            /**
+             * Format: int64
+             * @description SSE 订阅因消费落后被断开（lagged）的累计次数
+             */
+            sse_lagged: number;
             thumbnail: components["schemas"]["TaskBacklog"];
         };
         TaxonInfo: {

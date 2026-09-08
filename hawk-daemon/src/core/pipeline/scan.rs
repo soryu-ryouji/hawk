@@ -30,7 +30,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::ctx::complete as complete_reply;
-use super::ctx::{active_session, publish_index_progress, PipelineCtx, Reply, ScanProgress};
+use super::ctx::{
+    active_session, publish_index_progress, PipelineCtx, Reply, ScanProgress, ScanStats,
+};
 use super::fs_ops;
 use super::upsert::{
     apply_upsert, defer_upsert, file_changed_since_prepare, needs_palette_work, prepare_upsert,
@@ -107,6 +109,10 @@ pub(crate) fn start(
         rescan_requested: Mutex::new((false, false)),
     });
     *ctx.scan_session.lock().unwrap() = Some(session.clone());
+    *ctx.scan_started.lock().unwrap() = Some((
+        std::time::Instant::now(),
+        crate::core::paths::unix_ms(std::time::SystemTime::now()),
+    ));
 
     let ctx2 = ctx.clone();
     let session_for_runner = session.clone();
@@ -374,6 +380,20 @@ pub(crate) fn finish(
             folder_changed_payload(REASON_EXTERNAL),
         );
         report_done(ctx, walk.files);
+        // 扫描统计（app/status 观测）：起点在 start 记录，缺失时退化为 0 时长
+        let (started_unix_ms, duration_ms) = ctx
+            .scan_started
+            .lock()
+            .unwrap()
+            .map(|(at, unix)| (unix, at.elapsed().as_millis() as i64))
+            .unwrap_or((0, 0));
+        *ctx.last_scan_stats.lock().unwrap() = Some(ScanStats {
+            started_unix_ms,
+            duration_ms,
+            files: walk.files,
+            dirty_dirs: walk.dirty_dirs.len() as i32,
+            applied: session.applied.load(Ordering::SeqCst),
+        });
 
         tracing::info!(
             "扫描完成:{} 个文件({} 个计算哈希,{} 个目录中 {} 个深入,{} 个已应用),{} 个索引位置",

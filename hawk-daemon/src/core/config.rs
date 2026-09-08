@@ -45,12 +45,21 @@ pub struct LibraryConfig {
     current: RwLock<Snapshot>,
     matcher: RwLock<IgnoreMatcher>,
     extensions: RwLock<ExtensionFilter>,
+    /// 最近一次加载/重载的错误：解析失败时保留上次有效配置继续运行（正常为 None）
+    last_error: RwLock<Option<String>>,
 }
 
 impl LibraryConfig {
     pub fn new(paths: LibraryPaths) -> LibraryConfig {
         ensure_default(&paths);
-        let snapshot = load(&paths);
+        // 启动期解析失败没有「上次有效配置」可回退：用默认值继续，并记录错误（app/status 暴露）
+        let (snapshot, error) = match load(&paths) {
+            Ok(snapshot) => (snapshot, None),
+            Err(e) => {
+                tracing::warn!("配置加载失败，按默认配置继续: {e}");
+                (Snapshot::default(), Some(e))
+            }
+        };
         let matcher = IgnoreMatcher::build(&snapshot.ignore);
         let extensions = ExtensionFilter::build(&snapshot.extensions);
         LibraryConfig {
@@ -58,16 +67,32 @@ impl LibraryConfig {
             current: RwLock::new(snapshot),
             matcher: RwLock::new(matcher),
             extensions: RwLock::new(extensions),
+            last_error: RwLock::new(error),
         }
+    }
+
+    /// 最近一次配置加载/重载的错误（解析失败时保留上次有效配置继续运行）；正常为 None
+    pub fn config_error(&self) -> Option<String> {
+        self.last_error.read().unwrap().clone()
     }
 
     pub fn current(&self) -> Snapshot {
         self.current.read().unwrap().clone()
     }
 
-    /// 重读配置文件并重建 matcher/扩展名过滤，返回前后差异
+    /// 重读配置文件并重建 matcher/扩展名过滤，返回前后差异。
+    /// 解析失败时保留上次有效配置（返回空差异），错误经 config_error 暴露——
+    /// 用户手滑写错一个字符不该让 ignore/白名单/局域网配置静默失效
     pub fn reload(&self) -> ConfigChange {
-        let snapshot = load(&self.paths);
+        let snapshot = match load(&self.paths) {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                tracing::warn!("配置重载失败，保留上次有效配置: {e}");
+                *self.last_error.write().unwrap() = Some(e);
+                return ConfigChange::default();
+            }
+        };
+        *self.last_error.write().unwrap() = None;
         let matcher = IgnoreMatcher::build(&snapshot.ignore);
         let extensions = ExtensionFilter::build(&snapshot.extensions);
         let change = {
@@ -190,19 +215,17 @@ separate_write_token = false
 write_token = ""
 "#;
 
-fn load(paths: &LibraryPaths) -> Snapshot {
+/// 读取并解析 config.toml；文件不存在视为新库（默认快照，非错误），
+/// 读取/解析失败返回 Err（调用方保留上次有效配置）
+fn load(paths: &LibraryPaths) -> Result<Snapshot, String> {
     let mut snapshot = Snapshot::default();
-    if !std::path::Path::new(&paths.config_file).is_file() {
-        return snapshot;
+    let file = &paths.config_file;
+    if !std::path::Path::new(file).is_file() {
+        return Ok(snapshot);
     }
-    let text = match std::fs::read_to_string(&paths.config_file) {
-        Ok(t) => t,
-        Err(_) => return snapshot,
-    };
-    let table: toml::Value = match toml::from_str(&text) {
-        Ok(t) => t,
-        Err(_) => return snapshot,
-    };
+    let text = std::fs::read_to_string(file).map_err(|e| format!("读取配置失败 {file}: {e}"))?;
+    let table: toml::Value =
+        toml::from_str(&text).map_err(|e| format!("配置解析失败 {file}: {e}"))?;
     if let Some(name) = table.get("name").and_then(|v| v.as_str()) {
         snapshot.name = Some(name.to_string());
     }
@@ -219,7 +242,7 @@ fn load(paths: &LibraryPaths) -> Snapshot {
             .collect();
     }
     snapshot.web = table.get("web").map(parse_web_value).unwrap_or_default();
-    snapshot
+    Ok(snapshot)
 }
 
 fn parse_web_value(value: &toml::Value) -> WebSettings {
@@ -457,6 +480,42 @@ mod tests {
         assert!(cfg.is_file_included("a.png"));
         assert!(!cfg.is_file_included("a.txt"));
         assert!(!cfg.is_file_included("noext"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_error_keeps_previous_config() {
+        let dir = std::env::temp_dir().join(format!("hawk-cfg-err-test-{}", std::process::id()));
+        let root = dir.join("lib");
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = LibraryPaths::new(root.to_str().unwrap(), None);
+        std::fs::create_dir_all(root.join(".hawk")).unwrap();
+        std::fs::write(
+            &paths.config_file,
+            "extensions = [\"png\"]\nname = \"有效\"\n",
+        )
+        .unwrap();
+        let cfg = LibraryConfig::new(paths.clone());
+        assert_eq!(cfg.config_error(), None);
+        assert!(cfg.is_file_included("a.png") && !cfg.is_file_included("a.txt"));
+
+        // 语法错误：保留上次有效配置，记录错误
+        std::fs::write(&paths.config_file, "extensions = [\"png\"\n").unwrap();
+        let change = cfg.reload();
+        assert!(!change.extensions_changed && !change.ignore_changed && !change.web_changed);
+        assert!(cfg.config_error().is_some());
+        assert!(
+            cfg.is_file_included("a.png") && !cfg.is_file_included("a.txt"),
+            "旧配置仍生效"
+        );
+        assert_eq!(cfg.current().name.as_deref(), Some("有效"));
+
+        // 修好后错误清除、新配置生效
+        std::fs::write(&paths.config_file, "extensions = [\"txt\"]\n").unwrap();
+        assert!(cfg.reload().extensions_changed);
+        assert_eq!(cfg.config_error(), None);
+        assert!(!cfg.is_file_included("a.png") && cfg.is_file_included("a.txt"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

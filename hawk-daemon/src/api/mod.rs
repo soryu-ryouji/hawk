@@ -101,6 +101,8 @@ pub struct AppState {
     pub tags: Arc<TagRegistry>,
     /// 全局列表隐藏项注册表（.hawk/global_filter.toml）
     pub global_filter: Arc<GlobalFilter>,
+    /// SSE 订阅因消费落后被断开（lagged）的累计次数（app/status 观测）
+    pub sse_lagged: std::sync::atomic::AtomicU64,
     /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
     pub lan: Arc<lan::LanSupervisor>,
 }

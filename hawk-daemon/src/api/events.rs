@@ -24,15 +24,26 @@ pub fn routes() -> OpenApiRouter<SharedState> {
 )]
 async fn events(State(state): State<SharedState>) -> Response {
     let mut rx = state.bus.subscribe();
-    // lagged（消费跟不上）/总线关闭 → 结束流（断开订阅，客户端重连全量对齐）
+    // lagged（消费跟不上）/总线关闭 → 结束流（断开订阅，客户端重连全量对齐）；
+    // lagged 次数累计进 app/status（观测订阅端积压）
+    let state = state.clone();
     let stream = async_stream::stream! {
-        while let Ok(event) = rx.recv().await {
-            let frame = axum::body::Bytes::from(format!(
-                "event: {}\ndata: {}\n\n",
-                event.kind,
-                serde_json::to_string(&event.payload).unwrap()
-            ));
-            yield Ok::<axum::body::Bytes, std::convert::Infallible>(frame);
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let frame = axum::body::Bytes::from(format!(
+                        "event: {}\ndata: {}\n\n",
+                        event.kind,
+                        serde_json::to_string(&event.payload).unwrap()
+                    ));
+                    yield Ok::<axum::body::Bytes, std::convert::Infallible>(frame);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    state.sse_lagged.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
         }
     };
     Response::builder()
