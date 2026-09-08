@@ -63,6 +63,11 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # audit-check 把扫描结果写成 commit 上的 check run（含 unmaintained 警告注释），
+    # 需要 checks: write；顶层最小权限不含它，job 级单独提权
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v7
 
