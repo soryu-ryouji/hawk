@@ -15,7 +15,7 @@
 | 7 | P1-7 API 策略拒绝返回 4xx（add/upload/rename 前置校验） | DONE | 见 git log |
 | 8 | P1-6 文档机制化：API 文档-代码契约测试 + 文档链接检查 | DONE | 见 git log |
 | 9 | P2-9 前端全局错误处理（errorHandler + unhandledrejection） | DONE | 见 git log |
-| 10 | P2-8 前端 library store 拆分 | TODO | |
+| 10 | P2-8 前端 library store 拆分 | DONE | 见 git log |
 | 11 | P2-12 依赖审计：dependabot + cargo audit + npm audit | TODO | |
 | 12 | P2-10 跨仓协议契约 | SKIP（hawk-remote 未实现，无被测对象；落地时补） | - |
 
@@ -37,3 +37,4 @@
 - 2026-09-08 #7 完成：add/upload/update 前置校验 ignore+白名单，4xx 明确报错
 - 2026-09-08 #8 完成：contract_tests 增文档-代码契约（端点+SSE 双向）；tools/check-docs.py + CI 链接检查（50 条）
 - 2026-09-08 #9 完成：main.ts 全局错误兜底（errorHandler/unhandledrejection/error + 5s 去重 toast）
+- 2026-09-08 #10 完成：library.ts 909→851 行，导航/排序拆到 libraryNavigation（工厂+依赖注入）；新增 6 个 store 测试（先测后拆）

@@ -191,6 +191,7 @@ web/
     │   └── schema.d.ts        # openapi-typescript 生成（入库，勿手改）
     ├── stores/
     │   ├── library.ts         # Pinia 主 store：视图/查询/列表/选择集/回收站（见下）
+    │   ├── libraryNavigation.ts # 视图导航与排序偏好状态机（历史栈/视图记忆/排序 scope；依赖注入，主 store 接线）
     │   ├── taxonomy.ts        # 分类维度子 store：文件夹树/分类/标签/侧栏计数及其 CRUD
     │   ├── importer.ts        # 导入子 store：批量导入进度/重复策略弹窗/拖拽入口（平铺与结构化，importBatch 接线）
     │   ├── preview.ts         # 预览子 store：预览浮层导航（sticky item）+ 图片编辑窗口目标与保存
@@ -386,7 +387,8 @@ export function connectEvents(handlers: {
 跨 store 的编排（init 顺序、init 前的会话清理、SSE 分发）由组件层（App.vue）负责。组件不直接调 api
 （除缩略图 URL 拼接），一切经 action。
 
-**主 store `useLibraryStore`（stores/library.ts）**——视图/查询/列表/选择集/回收站：
+**主 store `useLibraryStore`（stores/library.ts）**——视图/查询/列表/选择集/回收站。
+视图导航与排序偏好拆在 `stores/libraryNavigation.ts`（`createViewNavigation` 工厂：历史栈/视图记忆/排序 scope 持久化，依赖注入便于单测），主 store 只做接线与其余 action：
 
 ```ts
 // ---- state ----
