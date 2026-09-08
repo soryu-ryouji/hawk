@@ -82,7 +82,7 @@ impl ThumbnailWorker {
     }
 
     /// 装配协作者：索引只读访问 + 回流通道。必须在 start 之前调用（main 装配流水线后接线）
-    pub fn attach(&self, index: Arc<ItemIndex>, store: Arc<MetadataStore>, jobs: JobSender) {
+    pub(crate) fn attach(&self, index: Arc<ItemIndex>, store: Arc<MetadataStore>, jobs: JobSender) {
         *self.deps.lock().unwrap() = Some(WorkerDeps { index, store, jobs });
     }
 

@@ -310,7 +310,7 @@ impl IndexPipeline {
     }
 
     /// 队列回流句柄：worker 等外部线程向消费循环派发 FixDim/Palette 任务的通道
-    pub fn sender(&self) -> JobSender {
+    pub(crate) fn sender(&self) -> JobSender {
         self.ctx.sender.clone()
     }
 

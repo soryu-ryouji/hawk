@@ -7,8 +7,8 @@
 | # | 项 | 状态 | 提交 |
 | - | -- | ---- | ---- |
 | 1 | P0-3 静态检查门禁：cargo fmt/clippy + 前端 ESLint/Prettier + CI | DONE | 见 git log |
-| 2 | P2-11 panic 策略：移除 release panic="abort"（恢复 catch_unwind 隔离）+ 请求/worker panic 兜底 | TODO | |
-| 3 | P1-4 hawk-daemon 拆 lib + 薄 bin | TODO | |
+| 2 | P2-11 panic 策略：移除 release panic="abort"（恢复 catch_unwind 隔离）+ 请求/worker panic 兜底 | DONE | 071e58d |
+| 3 | P1-4 hawk-daemon 拆 lib + 薄 bin | DONE | 见 git log |
 | 4 | P0-2 配置解析容错：保留上次有效配置 + 错误暴露 | TODO | |
 | 5 | P1-5 可观测性：app/status 扩展（扫描统计/队列溢出/配置错误） | TODO | |
 | 6 | P0-1 周期 FS 对账兜底（HAWK_FS_RESCAN_INTERVAL，默认 900s） | TODO | |
@@ -30,3 +30,5 @@
 （每完成一项在此追加一行：日期 + 项 + 验证方式）
 
 - 2026-09-08 #1 完成：cargo fmt/clippy 全绿；前端 eslint+prettier 全绿；CI rust 加 fmt/clippy、desktop 加 lint/format:check
+- 2026-09-08 #2 完成：移除 panic=abort，worker/CatchPanic/panic hook 隔离齐备
+- 2026-09-08 #3 完成：lib.rs + 薄 bin + tests/openapi_contract.rs；clippy 因可见性暴露的 4 处收敛为 pub(crate)

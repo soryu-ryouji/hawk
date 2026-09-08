@@ -269,7 +269,7 @@ struct CacheInner {
 }
 
 impl FolderTreeCache {
-    pub fn new() -> FolderTreeCache {
+    pub(crate) fn new() -> FolderTreeCache {
         FolderTreeCache {
             inner: RwLock::new(CacheInner {
                 tree: None,
@@ -311,7 +311,7 @@ impl FolderTreeCache {
 
     /// 取目录结构树（count 未填）：命中返回克隆；未命中现建并回填。
     /// 建树在锁外进行（IO 不堵失效/并发读）；建树期间发生失效则本次结果不回填缓存
-    pub fn get_or_build(
+    pub(crate) fn get_or_build(
         &self,
         paths: &LibraryPaths,
         config: &Arc<crate::core::config::LibraryConfig>,
