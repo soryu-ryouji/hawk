@@ -10,7 +10,7 @@ license = "AGPL-3.0-only"
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.6", features = ["fs", "catch-panic"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -39,7 +39,6 @@ utoipa-axum = "0.2.0"
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true
 
 [dev-dependencies]

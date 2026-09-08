@@ -24,5 +24,12 @@ async fn main() {
         )
         .init();
 
+    // panic 也进日志（默认 hook 仍保留：stderr 尾部是 Electron 侧错误屏的数据源）
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("panic: {info}");
+        default_hook(info);
+    }));
+
     bootstrap::run(Settings::from_cli(cli)).await;
 }

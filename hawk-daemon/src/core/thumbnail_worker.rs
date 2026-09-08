@@ -132,7 +132,14 @@ impl ThumbnailWorker {
                 };
                 queued.fetch_sub(1, Ordering::SeqCst);
                 active.fetch_add(1, Ordering::SeqCst);
-                process_job(&job, &deps, &thumbs, &bus);
+                // 单任务 panic 隔离：解码器对畸形输入可能 panic，不能让线程（乃至进程）倒下
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    process_job(&job, &deps, &thumbs, &bus);
+                }))
+                .is_err()
+                {
+                    tracing::warn!("缩略图任务 panic（跳过）: {}", job.hash);
+                }
                 inflight.lock().unwrap().remove(&job.dedup_key());
                 active.fetch_sub(1, Ordering::SeqCst);
                 report_progress(&bus, &queued, &active, &progress_last, &progress_idle);

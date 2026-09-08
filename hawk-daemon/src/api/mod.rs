@@ -145,6 +145,8 @@ pub fn build_router(state: SharedState) -> axum::Router {
         ))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
         .layer(axum::middleware::from_fn(cors))
+        // 最外层兜底：handler/中间件 panic 转 500，不拖垮进程（进程级 panic 隔离见 main 的 panic hook）
+        .layer(tower_http::catch_panic::CatchPanicLayer::new())
 }
 
 /// CORS 全放开（localhost 工具，token 兜底）；唯一例外：token 发现端点不带 CORS 头
