@@ -1,0 +1,47 @@
+# Dependabot PR 自动合并：patch/minor 升级在 CI 通过后自动 squash 合并。
+# major 升级和分组 PR 不在此列，仍需手动处理。
+#
+# 前置条件（需在 GitHub 网页开启一次，workflow 本身做不了）：
+#   1. Settings → General → Pull Requests → 勾选 "Allow auto-merge"
+#   2. 强烈建议：给 main 设分支规则，把 ci.yml 里的关键 job（test/audit）
+#      设为 required status checks。没有 required checks 时，
+#      auto-merge 不会等 CI 跑完，PR 会被立即合并。
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'soryu-ryouji/hawk'
+    steps:
+      - name: 读取 Dependabot 升级元数据
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 仅 patch/minor 走自动合并；分组 PR 的 update-type 为空，天然被排除
+      - name: 批准 patch/minor 更新
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 开启 auto-merge（等 required checks 全绿）
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
