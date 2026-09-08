@@ -87,6 +87,18 @@ async function confirmMigrate() {
   }
 }
 
+// ---- 周期兜底重扫（库级设置，写 .hawk/config.toml 的 [scan]）----
+const periodicRescan = computed(() => store.library?.scan?.periodic ?? true);
+/** 间隔文案（秒 → 分钟/秒） */
+const intervalText = computed(() => {
+  const seconds = store.library?.scan?.interval ?? 900;
+  return seconds >= 60 ? `每 ${Math.round(seconds / 60)} 分钟` : `每 ${seconds} 秒`;
+});
+
+async function onPeriodicRescan(e: Event) {
+  await store.setPeriodicRescan((e.target as HTMLInputElement).checked);
+}
+
 /** 索引体检按钮状态（结果 toast 由 store 展示） */
 const cleaning = ref(false);
 
@@ -102,6 +114,20 @@ async function runCleanup() {
 
 <template>
   <div class="pane">
+    <div class="switch-row">
+      <div>
+        <div class="switch-label">周期兜底重扫</div>
+        <p class="hint">
+          文件监听可能静默漏事件（尤其 macOS）。开启后 {{ intervalText }}强制遍历一次（只读元数据、不读文件内容），收敛漏掉的新增/删除；
+          关闭后新增/删除仍由实时监听捕获，仅「监听漏掉」的部分需要手动右键「重新扫描」。
+        </p>
+      </div>
+      <label class="switch" title="周期兜底重扫">
+        <input type="checkbox" :checked="periodicRescan" @change="onPeriodicRescan" />
+        <span class="track" />
+      </label>
+    </div>
+
     <div class="field column">
       <span class="field-label">元数据存储</span>
       <div class="mode-row">

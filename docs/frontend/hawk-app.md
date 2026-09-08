@@ -218,7 +218,7 @@ web/
     │   ├── SettingsAppearance.vue # 外观分区：缩略图尺寸滑杆 + 预览关闭按钮开关（均即时生效）
     │   ├── SettingsHiding.vue # 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签），逐条取消；viewer 只展示
     │   ├── SettingsLan.vue    # 局域网分区（仅 Electron）：开关/写权限/token 拆分/端口，读写直连 daemon REST app/lan
-    │   ├── SettingsStorage.vue # 存储分区（仅 Electron）：元数据存储方案切换 + 缓存父目录迁移
+    │   ├── SettingsStorage.vue # 存储分区（仅 Electron）：周期兜底重扫开关 + 元数据存储方案切换 + 缓存父目录迁移
     │   ├── SettingsUpdate.vue # 更新分区（仅 Electron）：版本/通道/检查/下载/安装（状态机见 useUpdater）
     │   ├── SettingsConnection.vue # 连接分区（仅 web）：当前访问级别 + 注销 token
     │   ├── Sidebar.vue
@@ -311,7 +311,8 @@ export const api = {
   appInfo(): Promise<AppInfo>;
   startupStatus(): Promise<StartupInfo>;                     // 浏览器无 IPC 时轮询就绪
   appLan() / saveAppLan(body): Promise<LanSettingsDto>;      // 局域网配置读写（admin 限定，daemon 权威）
-  libraryInfo(): Promise<LibraryInfo>;
+  libraryInfo(): Promise<LibraryInfo>;                           // 含 [scan] 周期兜底重扫设置
+  libraryScanSet(scan: { periodic: boolean; interval?: number }): Promise<LibraryInfo>;  // 保存即热生效
   libraryRename(name: string): Promise<LibraryInfo>;         // PATCH library/info；广播 library.updated
   librarySetStorageMode(mode): Promise<void>;                // 迁移后须重启 server
   reindex(): Promise<void>;
@@ -503,7 +504,7 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | `SettingsHiding.vue` | — | — | 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签，数据源为 taxonomy.globalFilter，SSE 实时对齐），逐条取消隐藏；回收站中的隐藏文件夹剥前缀加注；viewer 只读时只展示不操作 |
 | `SettingsLan.vue` | — | — | 局域网分区（仅 Electron）：开关 + 「允许修改素材库」+ token 拆分开关（separate_write_token + write_token，开启且为空时自动签发）+ 端口（纯文本输入，实时校验红框 + 提示，未启用时收起字段）+ token（monospace + 复制/重新生成）+ 本机地址列表（链接 + 逐行复制）；状态自管（打开时 `api.appLan()` 加载），读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启、SSE 不断），PUT 内置收敛等待，绑定失败自动回滚并报错；本机地址经 `shell.lanAddresses()`；经 `defineExpose({ save, busy })` 供壳的 footer 委托 |
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
-| `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
+| `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：**周期兜底重扫开关**（库级 `[scan]` 设置，写 `.hawk/config.toml` 保存即热生效；文案说明实时监听仍是主路径、关闭后仅漏事件需手动重扫）+ 元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
 | `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读/可读写，store.viewerMode）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；LibraryDropdown 组件：历史库下拉——最近使用在前、当前库打勾、已删除置灰、条目 ··· 菜单（打开目录/当前库重命名/移除记录）、底部「打开文件夹…」选新库）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为筛选框（按小写子串过滤文件夹树/分类/标签，不随列表滚动；设置入口在 TitleBar 齿轮）；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签）；文件夹树容器接受外部文件/文件夹拖入（空白处 drop → 结构化导入到库根，目录树重建） |
 | `LibraryDropdown.vue` | — | — | 侧栏素材库下拉：库名触发按钮 + 历史库浮层（Teleport fixed，侧栏 overflow 不裁剪）；当前库打勾，目录已删的置灰；条目 ··· 菜单——打开素材库文件夹/当前库重命名（daemon `PATCH /library/info`）/从列表移除（仅删记录不动目录）；重命名/移除经 IPC，换库就绪经 `hawk:server-started` 驱动 App 原地重启数据 |

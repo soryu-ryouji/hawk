@@ -92,8 +92,7 @@ impl Rig {
             library_root: root_str,
             port: 0,
             token: "test".to_string(),
-            reconcile_interval_seconds: 0, // 关闭周期对账/兜底扫描：测试只断言显式驱动的行为
-            fs_rescan_interval_seconds: 0,
+            reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为
             cache_parent: None,
             web_dist: None,
         };
@@ -350,6 +349,24 @@ async fn scoped_rescan_skips_reconcile_when_scope_unreadable() {
     std::fs::remove_dir_all(rig.root.join("A")).unwrap();
     rig.pipeline.run_scoped_scan("A".to_string()).await.unwrap();
     assert_eq!(rig.index.count(), 1, "范围不可读时不做消失对账");
+}
+
+/// 周期兜底扫描的到期判定
+#[test]
+fn fs_rescan_due_respects_switch_and_interval() {
+    use super::fs_rescan_due;
+    let hour = 3_600_000i64;
+    assert!(!fs_rescan_due(false, 900, 0, hour), "关闭时不触发");
+    assert!(
+        !fs_rescan_due(true, 900, 0, hour),
+        "还没跑过全库扫描时不触发"
+    );
+    assert!(
+        !fs_rescan_due(true, 900, 1000, 1000 + 899_000),
+        "未到间隔不触发"
+    );
+    assert!(fs_rescan_due(true, 900, 1000, 1000 + 900_000), "到间隔触发");
+    assert!(fs_rescan_due(true, 60, 1000, 1000 + hour), "远超间隔触发");
 }
 
 /// 扩展名白名单：白名单外的文件不入库（扫描枚举与入库判定共用同一谓词），磁盘文件保持不动

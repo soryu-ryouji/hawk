@@ -226,6 +226,7 @@ hawk-daemon 单实例对应单个素材库。
 | ---- | ------------------------- | ------------------ |
 | GET  | `/api/v1/library/info`    | 获取当前素材库信息 |
 | PATCH | `/api/v1/library/info`   | 改库显示名（`{"name": "..."}`，写 `.hawk/config.toml`，广播 `library.updated`） |
+| PUT | `/api/v1/library/scan`   | 周期兜底重扫设置（`{"periodic": bool, "interval": 秒}`，写 `.hawk/config.toml` 的 `[scan]`，保存即热生效） |
 | POST | `/api/v1/library/storage_mode` | 切换元数据存储方案（`{"mode": "database" \| "toml"}`），全量迁移后调用方应重启进程 |
 | POST | `/api/v1/library/reindex` | 全量重建索引       |
 | POST | `/api/v1/library/rescan`  | 强制重新遍历文件系统 |
@@ -248,7 +249,8 @@ hawk-daemon 单实例对应单个素材库。
     "path": "D:/Assets/Design",
     "modification_time": 1592461625783,
     "application_version": "1.0.0",
-    "storage_mode": "database"
+    "storage_mode": "database",
+    "scan": { "periodic": true, "interval": 900 }
   }
 }
 ```
@@ -266,6 +268,25 @@ hawk-daemon 单实例对应单个素材库。
 | 参数 | 类型   | 必填 | 说明         |
 | ---- | ------ | ---- | ------------ |
 | name | string | 是   | 新显示名     |
+
+### scan
+
+`PUT /api/v1/library/scan`
+
+周期兜底重扫设置：写库内 `.hawk/config.toml` 的 `[scan]` 段（toml_edit 保注释，保存即热生效——消费循环每 30s 检查一次配置）。返回更新后的库信息并广播 `library.updated`。
+
+语义：**实时监听仍是发现新增/删除的主路径**；周期重扫只是监听静默漏事件时的最终一致兜底（强制遍历、按 size/mtime 复用哈希，不读文件内容）。关闭后漏掉的事件需手动 `POST /library/rescan`（可带 `path`）收敛。
+
+#### 请求
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| periodic | bool | 是 | 是否开启周期兜底重扫 |
+| interval | number | 否 | 重扫间隔（秒，下限 60）；缺省沿用当前值 |
+
+#### 响应
+
+同 `GET /library/info`（含 `scan` 字段）。
 
 ### reindex
 

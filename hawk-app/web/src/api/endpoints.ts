@@ -58,6 +58,8 @@ export const api = {
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   /** 改库显示名（写库内 config.toml 的 name，daemon 热更并广播 library.updated 事件）；返回更新后的库信息 */
   libraryRename: (name: string) => request<LibraryInfo>('PATCH', '/api/v1/library/info', { body: { name } }),
+  /** 周期兜底扫描设置（库级 [scan]）：保存即热生效；返回更新后的库信息 */
+  libraryScanSet: (scan: { periodic: boolean; interval?: number }) => request<LibraryInfo>('PUT', '/api/v1/library/scan', { body: scan }),
   /** 切换元数据存储方案（database/toml）：daemon 侧全量迁移；成功后须重启 server（调用方负责） */
   librarySetStorageMode: (mode: 'database' | 'toml') => request<void>('POST', '/api/v1/library/storage_mode', { body: { mode } }),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),

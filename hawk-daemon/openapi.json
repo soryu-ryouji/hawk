@@ -684,6 +684,10 @@
               "path": {
                 "type": "string"
               },
+              "scan": {
+                "$ref": "#/components/schemas/ScanInfo",
+                "description": "周期兜底扫描设置（.hawk/config.toml 的 [scan]）"
+              },
               "storage_mode": {
                 "description": "元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）",
                 "type": "string"
@@ -694,7 +698,8 @@
               "path",
               "modification_time",
               "application_version",
-              "storage_mode"
+              "storage_mode",
+              "scan"
             ],
             "type": "object"
           },
@@ -1911,6 +1916,10 @@
           "path": {
             "type": "string"
           },
+          "scan": {
+            "$ref": "#/components/schemas/ScanInfo",
+            "description": "周期兜底扫描设置（.hawk/config.toml 的 [scan]）"
+          },
           "storage_mode": {
             "description": "元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）",
             "type": "string"
@@ -1921,7 +1930,8 @@
           "path",
           "modification_time",
           "application_version",
-          "storage_mode"
+          "storage_mode",
+          "scan"
         ],
         "type": "object"
       },
@@ -2040,6 +2050,46 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "ScanInfo": {
+        "properties": {
+          "interval": {
+            "description": "重扫间隔（秒）",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "periodic": {
+            "description": "是否开启周期兜底重扫",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "periodic",
+          "interval"
+        ],
+        "type": "object"
+      },
+      "ScanSettingsBody": {
+        "properties": {
+          "interval": {
+            "description": "重扫间隔（秒，缺省沿用当前值；下限 60）",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "periodic": {
+            "description": "是否开启周期兜底重扫",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "periodic"
+        ],
         "type": "object"
       },
       "ScanStatsInfo": {
@@ -3498,6 +3548,37 @@
           }
         },
         "summary": "重新扫描：忽略目录快照强制遍历文件做复用判定（不读文件内容），收敛监听漏事件。\n带 path 时只遍历该子树（不做消失对账与快照替换，见 pipeline/scan.rs）。异步执行，立即返回",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/scan": {
+      "put": {
+        "operationId": "scan_settings_set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanSettingsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LibraryInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "周期兜底扫描设置：写库内 `.hawk/config.toml` 的 `[scan]`（toml_edit 保注释），保存即热生效\n（消费循环每 30s 检查一次配置）。返回更新后的库信息并广播 `library.updated`",
         "tags": [
           "library"
         ]

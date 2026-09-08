@@ -574,6 +574,16 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /** 周期兜底重扫开关（库级设置，写 .hawk/config.toml 的 [scan]）：保存即热生效 */
+  async function setPeriodicRescan(periodic: boolean) {
+    try {
+      library.value = await api.libraryScanSet({ periodic });
+      showToast(periodic ? '已开启周期兜底重扫' : '已关闭周期兜底重扫（仍可手动重新扫描）');
+    } catch (e) {
+      showToast(errorText(e));
+    }
+  }
+
   /** 手动「重新扫描」：强制遍历文件做复用判定（不读文件内容），拾取监听漏掉的新增/删除；
    *  path 缺省 = 整库，指定时只重扫该文件夹子树 */
   async function rescanFiles(path?: string, label?: string) {
@@ -844,6 +854,7 @@ export const useLibraryStore = defineStore('library', () => {
     restoreSelected,
     clearTrash,
     rescanFiles,
+    setPeriodicRescan,
     refreshCache,
     cleanupIndex,
     renameLibrary,

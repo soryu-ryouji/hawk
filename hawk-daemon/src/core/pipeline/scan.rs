@@ -127,10 +127,13 @@ pub(crate) fn start(
         rescan_scopes: Mutex::new(Vec::new()),
     });
     *ctx.scan_session.lock().unwrap() = Some(session.clone());
-    *ctx.scan_started.lock().unwrap() = Some((
-        std::time::Instant::now(),
-        crate::core::paths::unix_ms(std::time::SystemTime::now()),
-    ));
+    let started_unix_ms = crate::core::paths::unix_ms(std::time::SystemTime::now());
+    *ctx.scan_started.lock().unwrap() = Some((std::time::Instant::now(), started_unix_ms));
+    // 全库扫描才重置周期兜底计时（定向重扫不覆盖全库）
+    if session.scope.is_none() {
+        ctx.last_full_scan_unix_ms
+            .store(started_unix_ms, Ordering::SeqCst);
+    }
 
     let ctx2 = ctx.clone();
     let session_for_runner = session.clone();

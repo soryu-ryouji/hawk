@@ -685,6 +685,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 周期兜底扫描设置：写库内 `.hawk/config.toml` 的 `[scan]`（toml_edit 保注释），保存即热生效
+         *     （消费循环每 30s 检查一次配置）。返回更新后的库信息并广播 `library.updated`
+         */
+        put: operations["scan_settings_set"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/storage_mode": {
         parameters: {
             query?: never;
@@ -1053,6 +1073,8 @@ export interface components {
                 modification_time: number;
                 name: string;
                 path: string;
+                /** @description 周期兜底扫描设置（.hawk/config.toml 的 [scan]） */
+                scan: components["schemas"]["ScanInfo"];
                 /** @description 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好） */
                 storage_mode: string;
             };
@@ -1366,6 +1388,8 @@ export interface components {
             modification_time: number;
             name: string;
             path: string;
+            /** @description 周期兜底扫描设置（.hawk/config.toml 的 [scan]） */
+            scan: components["schemas"]["ScanInfo"];
             /** @description 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好） */
             storage_mode: string;
         };
@@ -1407,6 +1431,24 @@ export interface components {
         RescanRequest: {
             /** @description 只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库） */
             path?: string | null;
+        };
+        ScanInfo: {
+            /**
+             * Format: int64
+             * @description 重扫间隔（秒）
+             */
+            interval: number;
+            /** @description 是否开启周期兜底重扫 */
+            periodic: boolean;
+        };
+        ScanSettingsBody: {
+            /**
+             * Format: int64
+             * @description 重扫间隔（秒，缺省沿用当前值；下限 60）
+             */
+            interval?: number | null;
+            /** @description 是否开启周期兜底重扫 */
+            periodic: boolean;
         };
         /** @description 最近一轮全库扫描统计 */
         ScanStatsInfo: {
@@ -2425,6 +2467,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    scan_settings_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LibraryInfo"];
                 };
             };
         };

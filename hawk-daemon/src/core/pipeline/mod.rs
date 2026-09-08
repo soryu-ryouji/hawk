@@ -47,6 +47,18 @@ use tokio::sync::oneshot;
 
 use ctx::{complete, publish_index_progress, PipelineCtx, Reply};
 
+/// 周期兜底扫描是否到期：开启 + 跑过至少一轮全库扫描 + 距上次全库扫描起点超过间隔
+pub(crate) fn fs_rescan_due(
+    periodic: bool,
+    interval_seconds: u64,
+    last_full_scan_ms: i64,
+    now_ms: i64,
+) -> bool {
+    periodic
+        && last_full_scan_ms > 0
+        && now_ms.saturating_sub(last_full_scan_ms) >= (interval_seconds as i64) * 1000
+}
+
 /// 提交等待超时：消费循环被长任务（大批量迁移等）占住时，调用方得到明确错误而非无限挂起。
 /// 超时后任务仍可能完成——处理幂等，晚到结果无害。扫描等待不设超时（等整轮完成，后台 await）
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -202,6 +214,7 @@ impl IndexPipeline {
             last_scan: Mutex::new(None),
             scan_started: Mutex::new(None),
             last_scan_stats: Mutex::new(None),
+            last_full_scan_unix_ms: std::sync::atomic::AtomicI64::new(0),
             progress_last_at: std::sync::atomic::AtomicI64::new(0),
             progress_idle: std::sync::atomic::AtomicBool::new(true),
             palette_pending: Mutex::new(Vec::new()),
@@ -252,25 +265,32 @@ impl IndexPipeline {
             });
         }
 
-        // 文件系统兜底扫描：监听静默丢事件时的最终一致性保证。force_walk 强制遍历全部文件
-        // （复用哈希、不读内容）——目录快照只能发现增删改名，漏掉的内容变更只有全量 stat 能收敛；
-        // 间隔默认 900s，与手动刷新共用同一套 runner/会话机制（在途请求自动合并）
-        if self.ctx.settings.fs_rescan_interval_seconds > 0 {
+        // 文件系统兜底扫描：监听静默丢事件时的最终一致性保证。每 30s 检查一次库级 [scan] 设置
+        // （热更即生效），到点才派发 force_walk 全库扫描（复用哈希、不读内容）。计时基准是
+        // 「上次全库扫描起点」——启动扫描/手动重扫也会重置，避免刚扫完又扫
+        {
             let ctx = self.ctx.clone();
             self.ctx.runtime.spawn(async move {
-                let mut ticker = tokio::time::interval(Duration::from_secs(
-                    ctx.settings.fs_rescan_interval_seconds,
-                ));
+                let mut ticker = tokio::time::interval(Duration::from_secs(30));
                 ticker.tick().await; // 立即 tick 的一次丢弃
                 loop {
                     ticker.tick().await;
-                    tracing::info!("周期兜底扫描（监听漏事件收敛）");
-                    ctx.sender.fire(Job::ScanStart {
-                        full: false,
-                        force_walk: true,
-                        scope: None,
-                        reply: None,
-                    });
+                    let scan = ctx.config.scan_settings();
+                    let last = ctx.last_full_scan_unix_ms.load(Ordering::SeqCst);
+                    if fs_rescan_due(
+                        scan.periodic,
+                        scan.interval_seconds,
+                        last,
+                        crate::core::paths::unix_ms(std::time::SystemTime::now()),
+                    ) {
+                        tracing::info!("周期兜底扫描（监听漏事件收敛）");
+                        ctx.sender.fire(Job::ScanStart {
+                            full: false,
+                            force_walk: true,
+                            scope: None,
+                            reply: None,
+                        });
+                    }
                 }
             });
         }

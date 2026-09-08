@@ -18,6 +18,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(storage_mode_set))
         .routes(routes!(reindex))
         .routes(routes!(rescan))
+        .routes(routes!(scan_settings_set))
         .routes(routes!(refresh_cache))
         .routes(routes!(cleanup_index))
 }
@@ -30,6 +31,16 @@ pub(crate) struct LibraryInfo {
     application_version: &'static str,
     /// 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）
     storage_mode: &'static str,
+    /// 周期兜底扫描设置（.hawk/config.toml 的 [scan]）
+    scan: ScanInfo,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ScanInfo {
+    /// 是否开启周期兜底重扫
+    periodic: bool,
+    /// 重扫间隔（秒）
+    interval: u64,
 }
 
 /// 库信息：显示名取 config 的 name，缺省目录名
@@ -65,6 +76,13 @@ fn build_library_info(state: &SharedState) -> LibraryInfo {
         storage_mode: match state.store.mode() {
             crate::core::metadata_store::StorageMode::Db => "database",
             crate::core::metadata_store::StorageMode::Toml => "toml",
+        },
+        scan: {
+            let scan = state.config.scan_settings();
+            ScanInfo {
+                periodic: scan.periodic,
+                interval: scan.interval_seconds,
+            }
         },
     }
 }
@@ -148,6 +166,43 @@ async fn library_update(
 async fn reindex(State(state): State<SharedState>) -> Json<SuccessOnly> {
     state.pipeline.request_scan(true);
     success()
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct ScanSettingsBody {
+    /// 是否开启周期兜底重扫
+    periodic: bool,
+    /// 重扫间隔（秒，缺省沿用当前值；下限 60）
+    interval: Option<u64>,
+}
+
+/// 周期兜底扫描设置：写库内 `.hawk/config.toml` 的 `[scan]`（toml_edit 保注释），保存即热生效
+/// （消费循环每 30s 检查一次配置）。返回更新后的库信息并广播 `library.updated`
+#[utoipa::path(
+    put,
+    path = "/api/v1/library/scan",
+    tags = ["library"],
+    request_body = ScanSettingsBody,
+    responses((status = 200, description = "OK", body = Envelope<LibraryInfo>))
+)]
+async fn scan_settings_set(
+    State(state): State<SharedState>,
+    JsonBody(body): JsonBody<ScanSettingsBody>,
+) -> Result<Json<Envelope<LibraryInfo>>, ApiError> {
+    let current = state.config.scan_settings();
+    let scan = crate::core::config::ScanSettings {
+        periodic: body.periodic,
+        interval_seconds: body.interval.unwrap_or(current.interval_seconds),
+    };
+    state
+        .config
+        .update_scan(&scan)
+        .map_err(ApiError::internal)?;
+    let info = build_library_info(&state);
+    state
+        .bus
+        .publish(LibraryEvents::UPDATED, serde_json::to_value(&info).unwrap());
+    Ok(Json(Envelope::ok(info)))
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]

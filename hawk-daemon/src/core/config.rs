@@ -22,12 +22,32 @@ pub struct WebSettings {
     pub write_token: Option<String>,
 }
 
+/// 周期兜底扫描设置（库级，随库同步）：监听漏事件时的最终一致保证
+#[derive(Clone, PartialEq)]
+pub struct ScanSettings {
+    /// 是否开启周期兜底重扫
+    pub periodic: bool,
+    /// 重扫间隔（秒），下限 60
+    pub interval_seconds: u64,
+}
+
+impl Default for ScanSettings {
+    fn default() -> Self {
+        ScanSettings {
+            periodic: true,
+            interval_seconds: 900,
+        }
+    }
+}
+
 /// reload 前后差异：调用方据此决定后续动作（ignore / 扩展名白名单变化 → 重扫，web 变化 → LAN 重绑）
 #[derive(Default)]
 pub struct ConfigChange {
     pub ignore_changed: bool,
     /// 扩展名白名单变化：需强制重扫以收敛既有条目（新增的后缀入库、移除的后缀出库）
     pub extensions_changed: bool,
+    /// 周期兜底扫描设置变化（消费循环的定时检查自读配置，仅用于日志/事件语义）
+    pub scan_changed: bool,
     pub web_changed: bool,
 }
 
@@ -37,6 +57,8 @@ pub struct Snapshot {
     pub ignore: Vec<String>,
     /// 可见扩展名白名单（空 = 不过滤，全部入库）
     pub extensions: Vec<String>,
+    /// 周期兜底扫描设置
+    pub scan: ScanSettings,
     pub web: WebSettings,
 }
 
@@ -100,6 +122,7 @@ impl LibraryConfig {
             let change = ConfigChange {
                 ignore_changed: cur.ignore != snapshot.ignore,
                 extensions_changed: cur.extensions != snapshot.extensions,
+                scan_changed: cur.scan != snapshot.scan,
                 web_changed: cur.web != snapshot.web,
             };
             *cur = snapshot;
@@ -145,6 +168,30 @@ impl LibraryConfig {
     /// 回收站不参与过滤（由调用方按 in_trash 区分），保证已回收的素材仍可见可恢复
     pub fn is_extension_included(&self, rel: &str) -> bool {
         self.extensions.read().unwrap().allows(rel)
+    }
+
+    /// 周期兜底扫描设置（消费循环定时检查时读取；热更即生效）
+    pub fn scan_settings(&self) -> ScanSettings {
+        self.current.read().unwrap().scan.clone()
+    }
+
+    /// 写回 [scan] 段并热更（toml_edit 保注释；原子写），返回前后差异
+    pub fn update_scan(&self, scan: &ScanSettings) -> Result<ConfigChange, String> {
+        let file = &self.paths.config_file;
+        let text =
+            std::fs::read_to_string(file).map_err(|e| format!("读取配置失败 {file}: {e}"))?;
+        let mut doc = text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("配置解析失败 {file}: {e}"))?;
+        doc["scan"]["periodic"] = toml_edit::value(scan.periodic);
+        doc["scan"]["interval"] = toml_edit::value(scan.interval_seconds.max(60) as i64);
+        let tmp = format!("{file}.tmp");
+        std::fs::write(&tmp, doc.to_string()).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
+        if let Err(e) = std::fs::rename(&tmp, file) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("配置替换失败 {file}: {e}"));
+        }
+        Ok(self.reload())
     }
 
     /// 文件是否应进入索引：ignore 未命中且扩展名在白名单内。
@@ -204,6 +251,13 @@ ignore = []
 # 改动即热生效并触发重扫，既有条目随之收敛（白名单外的素材从索引移除，文件本身不动）。
 # extensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "avif"]
 
+# 周期兜底重扫：监听可能静默丢事件（尤其 macOS FSEvents），开启后每 interval 秒强制遍历一次
+# （只 stat 不读文件内容，按 size/mtime 复用哈希）。关闭后仍由实时监听捕获增删改，
+# 仅「监听漏掉」的部分需要手动右键「重新扫描」收敛
+[scan]
+periodic = true
+interval = 900
+
 # 局域网 web 查看（桌面端设置面板读写；开启「允许修改素材库」后查看端可上传/删除等，请谨慎授权）
 [web]
 enabled = false
@@ -240,6 +294,14 @@ fn load(paths: &LibraryPaths) -> Result<Snapshot, String> {
             .iter()
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
+    }
+    if let Some(scan) = table.get("scan").and_then(|v| v.as_table()) {
+        if let Some(periodic) = scan.get("periodic").and_then(|v| v.as_bool()) {
+            snapshot.scan.periodic = periodic;
+        }
+        if let Some(interval) = scan.get("interval").and_then(|v| v.as_integer()) {
+            snapshot.scan.interval_seconds = interval.max(60) as u64;
+        }
     }
     snapshot.web = table.get("web").map(parse_web_value).unwrap_or_default();
     Ok(snapshot)
@@ -480,6 +542,34 @@ mod tests {
         assert!(cfg.is_file_included("a.png"));
         assert!(!cfg.is_file_included("a.txt"));
         assert!(!cfg.is_file_included("noext"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_settings_parse_and_update() {
+        let dir = std::env::temp_dir().join(format!("hawk-cfg-scan-test-{}", std::process::id()));
+        let root = dir.join("lib");
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = LibraryPaths::new(root.to_str().unwrap(), None);
+        let cfg = LibraryConfig::new(paths.clone());
+        // 默认模板：periodic = true / 900s
+        assert!(cfg.scan_settings().periodic);
+        assert_eq!(cfg.scan_settings().interval_seconds, 900);
+
+        // 写回：关闭 + 下限夹紧（10 → 60）
+        let change = cfg
+            .update_scan(&ScanSettings {
+                periodic: false,
+                interval_seconds: 10,
+            })
+            .unwrap();
+        assert!(change.scan_changed);
+        assert!(!cfg.scan_settings().periodic);
+        assert_eq!(cfg.scan_settings().interval_seconds, 60);
+        let text = std::fs::read_to_string(&paths.config_file).unwrap();
+        assert!(text.contains("periodic = false"));
+        assert!(text.contains("[web]"), "其余段保留");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

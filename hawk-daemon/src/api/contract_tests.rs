@@ -70,6 +70,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
         Some(r#"{"mode":"database"}"#),
     ),
     ("POST", "/api/v1/library/rescan", None),
+    ("PUT", "/api/v1/library/scan", Some(r#"{"periodic":true}"#)),
     (
         "POST",
         "/api/v1/library/refresh_cache",
@@ -169,8 +170,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         library_root: root_str,
         port: 0,
         token: TOKEN.to_string(),
-        reconcile_interval_seconds: 0, // 关闭周期对账/兜底扫描：测试只断言显式驱动的行为
-        fs_rescan_interval_seconds: 0,
+        reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为
         cache_parent: None,
         web_dist: None,
     };

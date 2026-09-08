@@ -138,6 +138,8 @@ pub(crate) struct PipelineCtx {
     pub(crate) scan_started: Mutex<Option<(std::time::Instant, i64)>>,
     /// 最近一轮扫描统计
     pub(crate) last_scan_stats: Mutex<Option<ScanStats>>,
+    /// 上次全库扫描起点（Unix 毫秒；0 = 还没跑过）——周期兜底扫描的计时基准
+    pub(crate) last_full_scan_unix_ms: std::sync::atomic::AtomicI64,
     pub(crate) progress_last_at: AtomicI64,
     pub(crate) progress_idle: AtomicBool,
     /// 暂存的调色板回写（hash → 最新提炼结果）；同 hash 去重，按批冲刷
