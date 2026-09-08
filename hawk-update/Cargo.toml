@@ -8,7 +8,7 @@ license = "AGPL-3.0-only"
 
 [dependencies]
 zip = { version = "2", default-features = false, features = ["deflate"] }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [profile.release]
 strip = true
