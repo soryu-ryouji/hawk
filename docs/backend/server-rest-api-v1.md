@@ -593,6 +593,8 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 
 向素材库添加新文件。`path`、`url`、`img_base64` 三者必须提供其一，作为文件内容来源；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。`url` 仅作为下载来源；来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
 
+**入库策略前置校验**（写盘前拒绝，避免落盘后又被入库判定剔除）：目标路径命中 `ignore` 规则返回 `INVALID_PARAM`；扩展名不在可见白名单（`.hawk/config.toml` 的 `extensions`）返回 `UNSUPPORTED_FORMAT`。`item/upload` 与 `item/update` 的改名/移动目标同样受此约束。
+
 `path` 导入时保留原文件的创建时间与修改时间（`File.Copy` 默认会重置）：按 `modification_time` 排序与文件管理器观感均以原文件为准；`url`/`img_base64` 无原文件时间，取入库时刻。
 
 #### 请求

@@ -111,7 +111,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 ### api/item/ 详解
 
 - **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影
-- **add**：`path`/`url`/`img_base64` 三选一取内容（url 经 ureq 30s 超时下载到内存，扩展名从 URL 推断、推断不出按内容嗅探；base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（`spawn_blocking`，不阻塞运行时线程；path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
+- **add**：`path`/`url`/`img_base64` 三选一取内容（入库策略前置校验：ignore 规则/扩展名白名单外的目标直接 4xx，不落盘）（url 经 ureq 30s 超时下载到内存，扩展名从 URL 推断、推断不出按内容嗅探；base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（`spawn_blocking`，不阻塞运行时线程；path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
 - **upload**：multipart/form-data 内容入库（web 端用，浏览器无文件路径可引用）：`file`（文件名只取末段防跨目录，扩展名决定类型，与 path 导入同语义不校验内容）/`folder_path`/`name` → 与 add 相同的同名检查→哈希→落盘→upsert 闭环，响应同 add；写权限 viewer 需 `[web].writable`（auth 中间件统一拦截）
 - **update**：经 `find_location` 取位置快照 → 回收站中的文件禁止改名/移动 → `name` 分支做真实 rename 并 `submit_move`；`folder_path` 分支**按移动后的最新位置再移动**（改名+移动同请求时基于新文件名计算目标）→ tags/star(0–5 校验)/categories/annotation/url 走 `submit_metadata` → 响应 `get_dto` 投影
 - **batch_update**：校验后先逐个移动主位置（同名冲突不整体失败，跳过该项记入 missing），再 `submit_batch_metadata` 一次提交（标签/分类并集追加、评分设置）；不存在的 id 由流水线记入 `missing_ids`；无任何更新字段返回 400

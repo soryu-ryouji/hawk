@@ -54,6 +54,12 @@ pub(crate) async fn item_update(
         } else {
             format!("{dir}/{file_name}")
         };
+        // 改名目标同样受入库策略约束（ignore 规则可命中新名字，如 *.tmp）
+        if state.config.is_ignored(&target_rel) {
+            return Err(ApiError::invalid_param(format!(
+                "目标路径被 ignore 规则排除: {target_rel}"
+            )));
+        }
         if target_rel != loc.path {
             let source_abs = state.paths.to_absolute(&loc.path).unwrap();
             let target_abs = state.paths.to_absolute(&target_rel).unwrap();
@@ -94,6 +100,17 @@ pub(crate) async fn item_update(
             .unwrap_or(&current.path)
             .to_string();
         let target_abs = format!("{folder_abs}/{file_name}");
+        let target_rel = if folder_path.is_empty() {
+            file_name.clone()
+        } else {
+            format!("{folder_path}/{file_name}")
+        };
+        // 移动目标同样受入库策略约束（目标文件夹可能被 ignore 命中）
+        if state.config.is_ignored(&target_rel) {
+            return Err(ApiError::invalid_param(format!(
+                "目标路径被 ignore 规则排除: {target_rel}"
+            )));
+        }
         let source_abs = state.paths.to_absolute(&current.path).unwrap();
         if target_abs != source_abs {
             if std::path::Path::new(&target_abs).exists() {

@@ -107,17 +107,22 @@ pub(crate) async fn item_upload(
     } else {
         format!("{stem}.{ext}")
     };
-    // 扩展名白名单（.hawk/config.toml 的 extensions）：白名单外的格式直接拒绝
-    if !state.config.is_extension_included(&file_name) {
-        return Err(ApiError::unsupported_format(format!(
-            "扩展名不在素材库可见格式白名单内: {file_name}"
-        )));
-    }
     let target_rel = if folder_rel.is_empty() {
         file_name.clone()
     } else {
         format!("{folder_rel}/{file_name}")
     };
+    // 入库策略前置校验（ignore 规则 / 扩展名白名单）：写盘前拒绝
+    if state.config.is_ignored(&target_rel) {
+        return Err(ApiError::invalid_param(format!(
+            "目标路径被 ignore 规则排除: {target_rel}"
+        )));
+    }
+    if !state.config.is_extension_included(&file_name) {
+        return Err(ApiError::unsupported_format(format!(
+            "扩展名不在素材库可见格式白名单内: {file_name}"
+        )));
+    }
     let target_abs = state.paths.to_absolute(&target_rel).unwrap();
     if std::path::Path::new(&target_abs).exists() {
         return Err(ApiError::file_exists(&target_rel));
