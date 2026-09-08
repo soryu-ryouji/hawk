@@ -171,7 +171,7 @@ web/
 ├── index.html
 ├── tsconfig.json
 └── src/
-    ├── main.ts                # 入口：解析 hash 注入 api/token、创建 Pinia、挂载 App
+    ├── main.ts                # 入口：解析 hash 注入 api/token、创建 Pinia、挂载 App；IME 组合态拦截 + 全局错误兜底（Vue errorHandler/未处理拒绝/运行时错误 → console + 去重 toast）
     ├── App.vue                # 布局骨架；启动阶段状态机与跨 store 编排；挂载全局 composables（快捷键/拖拽导入）与浮层
     ├── types.ts               # 业务类型（ViewState/QueryState/MenuItem）+ hawkShell 全局类型声明；Item 等从 schema.d.ts 别名导出
     ├── dnd.ts                 # 拖拽共享工具：素材拖拽（网格→侧栏，ITEMS_MIME）与外部文件拖拽（Finder→侧栏结构化导入）：判定/放行/取 entry 列表
