@@ -342,12 +342,12 @@ try {
     await evaljs(`[...document.querySelectorAll('.bar button')].map((b) => b.textContent).join(',')`),
     '↺,↻,退出,保存',
   );
-  await evaljs(`[...document.querySelectorAll('.bar button')].find((b) => b.textContent === '↻')?.click()`);
+  await evaljs(`[...document.querySelectorAll('.bar button')].find((b) => b.textContent.trim() === '↻')?.click()`);
   await new Promise((r) => setTimeout(r, 200));
   check('旋转预览生效', await evaljs(`document.querySelector('body > .overlay .image')?.style.transform ?? ''`), 'rotate(90deg)');
-  await evaljs(`[...document.querySelectorAll('.bar button')].find((b) => b.textContent === '退出')?.click()`);
+  await evaljs(`[...document.querySelectorAll('.bar button')].find((b) => b.textContent.trim() === '退出')?.click()`);
   check('脏退出弹三选确认', await evaljs(`!!document.querySelector('.confirm-text')`), true);
-  await evaljs(`[...document.querySelectorAll('.confirm-actions button')].find((b) => b.textContent === '不保存')?.click()`);
+  await evaljs(`[...document.querySelectorAll('.confirm-actions button')].find((b) => b.textContent.trim() === '不保存')?.click()`);
   await new Promise((r) => setTimeout(r, 300));
   check('放弃修改关闭编辑窗口', await editorOpen(), false);
   await screenshot('ui-edit.png');
@@ -498,7 +498,7 @@ try {
   await evaljs(`document.querySelector('.dialog .trigger')?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.list .option')`), 5_000);
   await evaljs(`[...document.querySelectorAll('.list .option')].find((o) => o.textContent.includes('海报'))?.click()`);
-  await evaljs(`[...document.querySelectorAll('.dialog .actions button')].find((b) => b.textContent === '确定')?.click()`);
+  await evaljs(`[...document.querySelectorAll('.dialog .actions button')].find((b) => b.textContent.trim() === '确定')?.click()`);
   const moveTarget = await evaljs(`document.querySelector('.inspector .name-input')?.value ?? ''`);
   const moveOk = await waitFor(async () => {
     const id = await evaljs(idByName(moveTarget));
@@ -625,7 +625,7 @@ try {
   // 分类重命名（PromptDialog）：赋值跟随、视图跟随
   await evaljs(`[...document.querySelectorAll('.sidebar .tax-row')].find((r) => r.dataset.name === '灵感')?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
-  await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent === '重命名')?.click()`);
+  await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent.trim() === '重命名')?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.dialog input')`), 5_000);
   await evaljs(`(() => {
     const input = document.querySelector('.dialog input');
@@ -687,7 +687,7 @@ try {
   // 重命名「测试标签」→「已测试」，item 跟随（用 item/list 验证，不依赖具体 item 身份）
   await evaljs(`[...document.querySelectorAll('.sidebar .tax-row')].find((r) => r.textContent.includes('测试标签'))?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 60, clientY: 60 }))`);
   await waitFor(async () => evaljs(`!!document.querySelector('.menu')`), 5_000);
-  await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent === '重命名')?.click()`);
+  await evaljs(`[...document.querySelectorAll('.menu .item')].find((b) => b.textContent.trim() === '重命名')?.click()`);
   await waitFor(async () => evaljs(`!!document.querySelector('.dialog input')`), 5_000);
   await evaljs(`(() => {
     const input = document.querySelector('.dialog input');
@@ -782,7 +782,7 @@ try {
   check('同 hash 副本各成一张卡', dupShown, true);
   // 点副本卡：检查器名称为副本（位置级字段）
   if (dupShown) {
-    await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent === 'sunset-copy.png')?.click()`);
+    await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent.trim() === 'sunset-copy.png')?.click()`);
     await waitFor(async () => evaljs(`document.querySelector('.inspector .name-input')?.value === 'sunset-copy' ? true : null`), 5_000);
     check('同 hash 卡片名称各自（位置级）', true, true);
     // 删除副本位置：原卡保留
