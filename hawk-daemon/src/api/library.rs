@@ -150,16 +150,46 @@ async fn reindex(State(state): State<SharedState>) -> Json<SuccessOnly> {
     success()
 }
 
-/// 刷新缓存：忽略快照强制遍历全部文件做复用判定（不读文件内容）。异步执行，立即返回
+#[derive(Deserialize, utoipa::ToSchema)]
+struct RescanRequest {
+    /// 只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库）
+    path: Option<String>,
+}
+
+/// 重新扫描：忽略目录快照强制遍历文件做复用判定（不读文件内容），收敛监听漏事件。
+/// 带 path 时只遍历该子树（不做消失对账与快照替换，见 pipeline/scan.rs）。异步执行，立即返回
 #[utoipa::path(
     post,
     path = "/api/v1/library/rescan",
     tags = ["library"],
+    request_body = RescanRequest,
     responses((status = 200, description = "OK", body = SuccessOnly))
 )]
-async fn rescan(State(state): State<SharedState>) -> Json<SuccessOnly> {
-    state.pipeline.request_rescan();
-    success()
+async fn rescan(
+    State(state): State<SharedState>,
+    body: axum::body::Bytes,
+) -> Result<Json<SuccessOnly>, ApiError> {
+    // 请求体可省略（兼容无 body / 空 body / `{}` 三种写法）
+    let path = if body.is_empty() {
+        String::new()
+    } else {
+        let req: RescanRequest = serde_json::from_slice(&body)
+            .map_err(|e| ApiError::invalid_param(format!("请求体解析失败: {e}")))?;
+        req.path.unwrap_or_default()
+    };
+    if path.is_empty() {
+        state.pipeline.request_rescan();
+        return Ok(success());
+    }
+    if !LibraryPaths::is_valid_library_path(Some(&path)) {
+        return Err(ApiError::invalid_param(format!("非法文件夹路径: {path}")));
+    }
+    let abs = state.paths.to_absolute(&path).unwrap();
+    if !std::path::Path::new(&abs).is_dir() {
+        return Err(ApiError::folder_not_found(&path));
+    }
+    state.pipeline.request_scoped_rescan(path);
+    Ok(success())
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]

@@ -90,6 +90,11 @@ function onContextMenu(e: MouseEvent) {
         action: () => void taxonomy.setHidden('folder', props.node.path, !hidden.value),
       },
       {
+        label: '重新扫描',
+        title: '重新遍历该文件夹（含子目录）的文件，拾取监听漏掉的新增/删除（不重建已有缓存）',
+        action: () => void store.rescanFiles(props.node.path, props.node.name),
+      },
+      {
         label: '刷新缓存',
         title: '修复该文件夹（含子目录）缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目',
         action: () => void store.refreshCache('folder', props.node.path, props.node.name),

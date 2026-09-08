@@ -187,8 +187,8 @@ function onDblClick(e: MouseEvent) {
       </button>
       <input v-if="!hasShell && !store.viewerMode" ref="pickerInput" type="file" multiple class="file-picker" @change="onPicked" />
 
-      <!-- 刷新缓存：仅浏览器端显示——Electron 端走右键菜单「刷新缓存（整库）」，只读查看不可写 -->
-      <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="刷新缓存（重新扫描素材库）" @click="store.refreshLibrary()">
+      <!-- 重新扫描：仅浏览器端显示——Electron 端走侧栏文件夹树右键菜单，只读查看不可写 -->
+      <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="重新扫描素材库（收敛监听漏事件）" @click="store.rescanFiles()">
         <Icon name="refresh" :size="14" />
       </button>
 

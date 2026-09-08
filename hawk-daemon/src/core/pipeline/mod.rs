@@ -76,6 +76,9 @@ pub(crate) enum Job {
     ScanStart {
         full: bool,
         force_walk: bool,
+        /// 定向扫描的库内相对路径（None = 全库）；定向扫描只遍历该子树，
+        /// 不做消失对账与快照替换（见 scan.rs）
+        scope: Option<String>,
         reply: Reply<Result<(), String>>,
     },
     /// runner 回流的单文件结果（pending.hash 必为 Some），消费循环穿插应用
@@ -265,6 +268,7 @@ impl IndexPipeline {
                     ctx.sender.fire(Job::ScanStart {
                         full: false,
                         force_walk: true,
+                        scope: None,
                         reply: None,
                     });
                 }
@@ -387,6 +391,7 @@ impl IndexPipeline {
         self.ctx.sender.fire(Job::ScanStart {
             full: false,
             force_walk: true,
+            scope: None,
             reply: None,
         });
     }
@@ -395,11 +400,22 @@ impl IndexPipeline {
         self.ctx.overflow.store(true, Ordering::SeqCst);
     }
 
-    /// 用户手动「刷新缓存」（library/rescan）：忽略快照强制遍历，fire-and-forget
+    /// 用户手动「重新扫描」（library/rescan，整库）：忽略快照强制遍历，fire-and-forget
     pub fn request_rescan(&self) {
         self.ctx.sender.fire(Job::ScanStart {
             full: false,
             force_walk: true,
+            scope: None,
+            reply: None,
+        });
+    }
+
+    /// 用户手动「重新扫描」（library/rescan，指定文件夹）：只遍历该子树，fire-and-forget
+    pub fn request_scoped_rescan(&self, scope: String) {
+        self.ctx.sender.fire(Job::ScanStart {
+            full: false,
+            force_walk: false,
+            scope: Some(scope),
             reply: None,
         });
     }
@@ -414,6 +430,7 @@ impl IndexPipeline {
         self.ctx.sender.fire(Job::ScanStart {
             full,
             force_walk: false,
+            scope: None,
             reply: None,
         });
     }
@@ -520,10 +537,20 @@ impl IndexPipeline {
     /// 回复在扫描收尾（ScanEnd）时完成；不设超时——扫描可持续很久（冷缓存大库），
     /// 调用方（启动流程）在后台 await，期间消费循环照常处理其他任务
     pub async fn run_scan(&self, full: bool) -> Result<(), String> {
+        self.run_scan_scoped(full, None).await
+    }
+
+    /// 定向扫描（测试/需要等待完成时用）：只遍历指定子树并等待收尾
+    pub async fn run_scoped_scan(&self, scope: String) -> Result<(), String> {
+        self.run_scan_scoped(false, Some(scope)).await
+    }
+
+    async fn run_scan_scoped(&self, full: bool, scope: Option<String>) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         if !self.ctx.sender.try_fire(Job::ScanStart {
             full,
             force_walk: false,
+            scope,
             reply: Some(tx),
         }) {
             return Err("索引队列已满".to_string());
@@ -655,6 +682,7 @@ fn consumer_loop(ctx: Arc<PipelineCtx>, rx: std::sync::mpsc::Receiver<Job>) {
             ctx.sender.fire(Job::ScanStart {
                 full: false,
                 force_walk: false,
+                scope: None,
                 reply: None,
             });
         }
@@ -709,8 +737,9 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
         Job::ScanStart {
             full,
             force_walk,
+            scope,
             reply,
-        } => scan::start(ctx, full, force_walk, reply),
+        } => scan::start(ctx, full, force_walk, scope, reply),
         Job::ScanFile { pending } => scan::apply_scan_file(ctx, pending),
         Job::ScanEnd {
             session,

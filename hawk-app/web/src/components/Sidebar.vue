@@ -92,6 +92,11 @@ function onTreeContextMenu(e: MouseEvent) {
     [
       { label: '新建文件夹', action: () => (showCreateFolder.value = true) },
       {
+        label: '重新扫描（整库）',
+        title: '重新遍历全部文件，拾取监听漏掉的新增/删除（不重建已有缓存）',
+        action: () => void store.rescanFiles(),
+      },
+      {
         label: '刷新缓存（整库）',
         title: '修复全部素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目',
         action: () => void store.refreshCache('library', undefined, '整库'),

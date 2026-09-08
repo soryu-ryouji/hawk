@@ -292,6 +292,31 @@ async fn scan_reconcile_removes_disappeared() {
     assert!(remaining[0].ends_with("b.png"));
 }
 
+/// 定向重扫：只遍历指定子树，拾取监听漏掉的新文件；其余目录不动
+#[tokio::test]
+async fn scoped_rescan_picks_up_missed_files() {
+    let rig = Rig::new("scoped-rescan");
+    std::fs::create_dir_all(rig.root.join("A")).unwrap();
+    std::fs::create_dir_all(rig.root.join("B")).unwrap();
+    rig.write_png("A/a.png", [255, 0, 0]);
+    rig.write_png("B/b.png", [0, 255, 0]);
+    rig.pipeline.run_scan(false).await.unwrap();
+    assert_eq!(rig.index.count(), 2);
+
+    // 监听漏报：直接写盘（stabilize 把 mtime 拨回，避免写入中防抖延迟）
+    rig.write_png("A/a2.png", [0, 0, 255]);
+    rig.write_png("B/b2.png", [0, 0, 0]);
+
+    rig.pipeline.run_scoped_scan("A".to_string()).await.unwrap();
+    let paths = rig.index.all_location_paths();
+    assert_eq!(paths.len(), 3, "只应拾取 A 下的新文件: {paths:?}");
+    assert!(paths.iter().any(|p| p.ends_with("A/a2.png")));
+    assert!(
+        !paths.iter().any(|p| p.ends_with("B/b2.png")),
+        "B 不应被扫到"
+    );
+}
+
 /// 扩展名白名单：白名单外的文件不入库（扫描枚举与入库判定共用同一谓词），磁盘文件保持不动
 #[tokio::test]
 async fn extension_whitelist_excludes_unlisted_files() {

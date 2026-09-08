@@ -2030,6 +2030,18 @@
         ],
         "type": "object"
       },
+      "RescanRequest": {
+        "properties": {
+          "path": {
+            "description": "只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库）",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ScanStatsInfo": {
         "description": "最近一轮全库扫描统计",
         "properties": {
@@ -3463,6 +3475,16 @@
     "/api/v1/library/rescan": {
       "post": {
         "operationId": "rescan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescanRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -3475,7 +3497,7 @@
             "description": "OK"
           }
         },
-        "summary": "刷新缓存：忽略快照强制遍历全部文件做复用判定（不读文件内容）。异步执行，立即返回",
+        "summary": "重新扫描：忽略目录快照强制遍历文件做复用判定（不读文件内容），收敛监听漏事件。\n带 path 时只遍历该子树（不做消失对账与快照替换，见 pipeline/scan.rs）。异步执行，立即返回",
         "tags": [
           "library"
         ]

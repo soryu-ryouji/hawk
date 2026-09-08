@@ -51,6 +51,8 @@ const ADDED_BATCH_MAX: usize = 2000;
 pub(crate) struct ScanSession {
     pub(crate) full: bool,
     pub(crate) force_walk: bool,
+    /// 定向扫描范围（库内相对路径）；None = 全库
+    pub(crate) scope: Option<String>,
     pub(crate) reply: Mutex<Reply<Result<(), String>>>,
     /// 窗口内消费侧新增/刷新的位置（消失对账豁免）
     pub(crate) touched: Mutex<HashSet<String>>,
@@ -62,6 +64,8 @@ pub(crate) struct ScanSession {
     pub(crate) applied: AtomicI32,
     /// 扫描在途时的合并请求 (full, force_walk)，完成后自动补扫
     pub(crate) rescan_requested: Mutex<(bool, bool)>,
+    /// 扫描在途时排队的定向扫描范围，完成后依次补扫
+    pub(crate) rescan_scopes: Mutex<Vec<String>>,
 }
 
 /// runner 的遍历结果，随 Job::ScanEnd 交给收尾（单写者传递，无并发访问）
@@ -85,14 +89,26 @@ pub(crate) fn start(
     ctx: &Arc<PipelineCtx>,
     full: bool,
     force_walk: bool,
+    scope: Option<String>,
     reply: Reply<Result<(), String>>,
 ) {
     ctx.scan_scheduled.store(false, Ordering::SeqCst);
     if ctx.scanning.swap(true, Ordering::SeqCst) {
         if let Some(session) = active_session(ctx) {
-            let mut req = session.rescan_requested.lock().unwrap();
-            req.0 |= full;
-            req.1 |= force_walk;
+            match scope {
+                // 定向请求排队（去重），收尾后依次补扫；全库请求按位合并
+                Some(scope) => {
+                    let mut queued = session.rescan_scopes.lock().unwrap();
+                    if !queued.contains(&scope) {
+                        queued.push(scope);
+                    }
+                }
+                None => {
+                    let mut req = session.rescan_requested.lock().unwrap();
+                    req.0 |= full;
+                    req.1 |= force_walk;
+                }
+            }
         }
         complete_reply(reply, Ok(()));
         return;
@@ -101,12 +117,14 @@ pub(crate) fn start(
     let session = Arc::new(ScanSession {
         full,
         force_walk,
+        scope,
         reply: Mutex::new(reply),
         touched: Mutex::new(HashSet::new()),
         invalidated: Mutex::new(HashSet::new()),
         batcher: Mutex::new(AddedBatcher::default()),
         applied: AtomicI32::new(0),
         rescan_requested: Mutex::new((false, false)),
+        rescan_scopes: Mutex::new(Vec::new()),
     });
     *ctx.scan_session.lock().unwrap() = Some(session.clone());
     *ctx.scan_started.lock().unwrap() = Some((
@@ -152,64 +170,91 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
     let walk_incomplete = AtomicBool::new(false);
     let reporter = ScanReporter::new();
 
-    // 阶段一:目录快照对比。遍历目录取 (mtime, 直接子项数),
-    // 与上轮快照一致 = 无增删重命名 → 跳过整个目录的文件级访问;
-    // 首轮快照为空或强制遍历(手动刷新) = 全部深入
-    let snapshots: HashMap<String, (i64, i64)> = if session.full || session.force_walk {
-        HashMap::new()
-    } else {
-        ctx.store.load_folder_snapshots()
-    };
-    reporter.report(ctx, "scan", 0, 0, true);
-    for (rel, mtime, entries) in ctx.scanner.walk_directory_stats(&walk_incomplete) {
-        walk.seen_dirs.insert(rel.clone());
-        walk.dir_stats.insert(rel.clone(), (mtime, entries));
-        if snapshots
-            .get(&rel)
-            .map(|s| *s != (mtime, entries))
-            .unwrap_or(true)
-        {
-            walk.dirty_dirs.push(rel);
+    // 阶段一/二：定向扫描（scope）只遍历目标子树；全库扫描先做目录快照对比，
+    // 只深入 dirty 目录枚举直接文件（clean 目录不碰文件系统）
+    let candidates: Vec<String> = match session.scope.clone() {
+        Some(scope_rel) => {
+            let abs = if scope_rel.is_empty() {
+                ctx.paths.root.clone()
+            } else {
+                match ctx.paths.to_absolute(&scope_rel) {
+                    Some(a) => a,
+                    None => return Err(format!("扫描范围不存在: {scope_rel}")),
+                }
+            };
+            let files = ctx.scanner.walk_directory(&abs);
+            tracing::info!(
+                "定向扫描 {}: 枚举 {} 个文件",
+                if scope_rel.is_empty() {
+                    "(库根)"
+                } else {
+                    &scope_rel
+                },
+                files.len()
+            );
+            files
         }
-        reporter.report(ctx, "scan", walk.seen_dirs.len() as i32, 0, false);
-    }
+        None => {
+            let snapshots: HashMap<String, (i64, i64)> = if session.full || session.force_walk {
+                HashMap::new()
+            } else {
+                ctx.store.load_folder_snapshots()
+            };
+            reporter.report(ctx, "scan", 0, 0, true);
+            for (rel, mtime, entries) in ctx.scanner.walk_directory_stats(&walk_incomplete) {
+                walk.seen_dirs.insert(rel.clone());
+                walk.dir_stats.insert(rel.clone(), (mtime, entries));
+                if snapshots
+                    .get(&rel)
+                    .map(|s| *s != (mtime, entries))
+                    .unwrap_or(true)
+                {
+                    walk.dirty_dirs.push(rel);
+                }
+                reporter.report(ctx, "scan", walk.seen_dirs.len() as i32, 0, false);
+            }
+            let mut files = Vec::new();
+            for rel_dir in &walk.dirty_dirs {
+                let abs_dir = if rel_dir.is_empty() {
+                    ctx.paths.root.clone()
+                } else {
+                    match ctx.paths.to_absolute(rel_dir) {
+                        Some(a) => a,
+                        None => continue,
+                    }
+                };
+                files.extend(ctx.scanner.walk_files_in_directory(&abs_dir));
+            }
+            files
+        }
+    };
 
-    // 阶段二:只深入有变化的目录,枚举直接文件做复用判定/哈希(clean 目录不碰文件系统)
+    // 阶段二（公共）：复用判定 / 需哈希入 pending
     let mut pending: Vec<PendingUpsert> = Vec::new();
-    for rel_dir in &walk.dirty_dirs {
-        let abs_dir = if rel_dir.is_empty() {
-            ctx.paths.root.clone()
-        } else {
-            match ctx.paths.to_absolute(rel_dir) {
-                Some(a) => a,
-                None => continue,
-            }
-        };
-        for abs in ctx.scanner.walk_files_in_directory(&abs_dir) {
-            if let Some(rel) = ctx.paths.to_relative(&abs) {
-                walk.seen.insert(rel);
-                walk.files += 1;
-            }
-            match prepare_upsert(ctx, &abs, session.full, true, 0) {
-                PrepareOutcome::Apply(mut p) => {
-                    if let Some(hash) = p.reused_hash.clone() {
-                        // 复用项免哈希,直接回流应用
-                        p.hash = Some(hash);
-                        // 阻塞入队（背压）：try_send 满队即丢会导致大库首扫丢应用——
-                        // 快照已替换为 clean，丢失项不会被重扫收敛。消费循环从不等待 runner，无死锁
-                        ctx.sender.send_blocking(Job::ScanFile { pending: p });
-                    } else {
-                        pending.push(p);
-                    }
+    for abs in candidates {
+        if let Some(rel) = ctx.paths.to_relative(&abs) {
+            walk.seen.insert(rel);
+            walk.files += 1;
+        }
+        match prepare_upsert(ctx, &abs, session.full, true, 0) {
+            PrepareOutcome::Apply(mut p) => {
+                if let Some(hash) = p.reused_hash.clone() {
+                    // 复用项免哈希,直接回流应用
+                    p.hash = Some(hash);
+                    // 阻塞入队（背压）：try_send 满队即丢会导致大库首扫丢应用——
+                    // 快照已替换为 clean，丢失项不会被重扫收敛。消费循环从不等待 runner，无死锁
+                    ctx.sender.send_blocking(Job::ScanFile { pending: p });
+                } else {
+                    pending.push(p);
                 }
-                PrepareOutcome::Remove(rel) => {
-                    // ignore 规则命中/文件已消失：经队列按删除处理（单写者纪律）
-                    if let Some(abs) = ctx.paths.to_absolute(&rel) {
-                        ctx.sender.send_blocking(Job::Delete { abs });
-                    }
-                }
-                PrepareOutcome::Skip => {}
             }
+            PrepareOutcome::Remove(rel) => {
+                // ignore 规则命中/文件已消失：经队列按删除处理（单写者纪律）
+                if let Some(abs) = ctx.paths.to_absolute(&rel) {
+                    ctx.sender.send_blocking(Job::Delete { abs });
+                }
+            }
+            PrepareOutcome::Skip => {}
         }
     }
 
@@ -369,7 +414,8 @@ pub(crate) fn finish(
             // 遍历不完整(部分目录枚举失败)时 seen 不可信:本轮跳过消失对账与快照替换,
             // 避免误删已索引位置或写入残缺快照;最终一致由下一轮对账保证
             tracing::warn!("扫描遍历不完整(目录枚举失败),跳过本轮消失对账与快照更新");
-        } else {
+        } else if session.scope.is_none() {
+            // 定向扫描只看到子树，做全局消失对账/快照替换会误删其余位置
             reconcile_missing(ctx, &session, &walk);
             // 快照整体替换为本轮统计(下轮增量的对比基准)
             ctx.store.replace_folder_snapshots(&walk.dir_stats);
@@ -420,6 +466,17 @@ pub(crate) fn finish(
         ctx.sender.fire(Job::ScanStart {
             full: again_full,
             force_walk: again_walk,
+            scope: None,
+            reply: None,
+        });
+    }
+    for scope in std::mem::take(&mut *session.rescan_scopes.lock().unwrap()) {
+        tracing::info!("扫描在途期间收到定向扫描请求，自动补扫: {scope}");
+        ctx.scan_scheduled.store(true, Ordering::SeqCst);
+        ctx.sender.fire(Job::ScanStart {
+            full: false,
+            force_walk: false,
+            scope: Some(scope),
             reply: None,
         });
     }

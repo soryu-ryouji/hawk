@@ -574,11 +574,12 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 手动「刷新缓存」：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
-  async function refreshLibrary() {
+  /** 手动「重新扫描」：强制遍历文件做复用判定（不读文件内容），拾取监听漏掉的新增/删除；
+   *  path 缺省 = 整库，指定时只重扫该文件夹子树 */
+  async function rescanFiles(path?: string, label?: string) {
     try {
-      await api.rescan();
-      showToast('正在刷新缓存…');
+      await api.rescan(path);
+      showToast(path ? `正在重新扫描「${label ?? path}」…` : '正在重新扫描素材库…');
     } catch (e) {
       showToast(errorText(e));
     }
@@ -842,7 +843,7 @@ export const useLibraryStore = defineStore('library', () => {
     trashSelected,
     restoreSelected,
     clearTrash,
-    refreshLibrary,
+    rescanFiles,
     refreshCache,
     cleanupIndex,
     renameLibrary,

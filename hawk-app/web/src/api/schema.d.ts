@@ -674,7 +674,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 刷新缓存：忽略快照强制遍历全部文件做复用判定（不读文件内容）。异步执行，立即返回 */
+        /**
+         * 重新扫描：忽略目录快照强制遍历文件做复用判定（不读文件内容），收敛监听漏事件。
+         *     带 path 时只遍历该子树（不做消失对账与快照替换，见 pipeline/scan.rs）。异步执行，立即返回
+         */
         post: operations["rescan"];
         delete?: never;
         options?: never;
@@ -1400,6 +1403,10 @@ export interface components {
             dispatched: number;
             /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
             removed: number;
+        };
+        RescanRequest: {
+            /** @description 只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库） */
+            path?: string | null;
         };
         /** @description 最近一轮全库扫描统计 */
         ScanStatsInfo: {
@@ -2405,7 +2412,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RescanRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

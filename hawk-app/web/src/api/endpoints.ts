@@ -61,8 +61,9 @@ export const api = {
   /** 切换元数据存储方案（database/toml）：daemon 侧全量迁移；成功后须重启 server（调用方负责） */
   librarySetStorageMode: (mode: 'database' | 'toml') => request<void>('POST', '/api/v1/library/storage_mode', { body: { mode } }),
   reindex: () => request<void>('POST', '/api/v1/library/reindex'),
-  /** 刷新缓存：强制遍历全部文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录 */
-  rescan: () => request<void>('POST', '/api/v1/library/rescan'),
+  /** 重新扫描：强制遍历文件做复用判定（不读文件内容），收敛监听漏事件与直接改目录。
+   *  path 为库内相对路径时只重扫该子树（缺省整库） */
+  rescan: (path?: string) => request<void>('POST', '/api/v1/library/rescan', path ? { body: { path } } : undefined),
   /** 按范围刷新派生缓存（补缺失模式）：补 0 × 0 宽高 + 缺失缩略图/调色板，不重建已有文件；
    *  附带消失对账：范围内源文件已删除但索引残留的失效位置会被移除 */
   refreshCache: (type: 'folder' | 'category' | 'tag' | 'library', value?: string) =>
