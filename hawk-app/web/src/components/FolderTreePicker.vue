@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { onClickOutside, useEventListener } from '@vueuse/core';
 import { useTaxonomyStore } from '../stores/taxonomy';
+import Icon from './Icon.vue';
 import type { FolderNode } from '../types';
 
 // Eagle 式文件夹树选择弹出层（检查器「文件夹」使用）：点击当前值弹出，
@@ -95,7 +96,9 @@ function pick(path: string) {
         :style="{ paddingLeft: 12 + row.depth * 14 + 'px' }"
         @click="pick(row.path)"
       >
-        <span v-if="row.hasChildren" class="arrow" :class="{ expanded: expanded.has(row.path) }" @click.stop="toggle(row.path)">▸</span>
+        <span v-if="row.hasChildren" class="arrow" :class="{ expanded: expanded.has(row.path) }" @click.stop="toggle(row.path)">
+          <Icon name="chevronRight" :size="12" />
+        </span>
         <span v-else class="arrow-placeholder" />
         <span class="name">{{ row.name }}</span>
       </div>
@@ -150,10 +153,12 @@ function pick(path: string) {
 }
 
 .arrow {
-  display: inline-block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
   width: 14px;
   flex: none;
-  text-align: center;
   transition: transform 0.1s;
 }
 

@@ -164,7 +164,9 @@ function onDrop(e: DragEvent) {
       @dragover="onDragOver"
       @drop="onDrop"
     >
-      <span v-if="hasVisibleChildren" class="arrow" :class="{ expanded: expanded || forcedExpand }" @click.stop="expanded = !expanded">▸</span>
+      <span v-if="hasVisibleChildren" class="arrow" :class="{ expanded: expanded || forcedExpand }" @click.stop="expanded = !expanded">
+        <Icon name="chevronRight" :size="12" />
+      </span>
       <span v-else class="arrow-placeholder" />
       <template v-if="editing !== 'rename'">
         <span class="name">{{ node.name }}</span>
@@ -220,8 +222,14 @@ function onDrop(e: DragEvent) {
   outline-offset: -1px;
 }
 
+/* 展开箭头用 SVG 图标（与分区标题同款）：▸ 字形在字身框内偏左，绕盒子中心旋转会把水平偏移转成
+   垂直偏移（展开态上移约 4px）；图标在槽位内居中后，旋转前后可视中心不变 */
 .arrow {
   flex: none;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 14px;
   color: var(--fg-1);
   transition: transform 0.1s;
