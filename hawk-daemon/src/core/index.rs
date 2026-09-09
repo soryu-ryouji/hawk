@@ -629,23 +629,23 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
         items.retain(|i| {
             let side = i.width.min(i.height);
             side > 0
-                && q.min_side_gte.map_or(true, |v| side >= v)
-                && q.min_side_lte.map_or(true, |v| side <= v)
+                && q.min_side_gte.is_none_or(|v| side >= v)
+                && q.min_side_lte.is_none_or(|v| side <= v)
         });
     }
     // 宽/高独立区间：0（未解析）视为未知，对应维度任一边界激活时不命中
     if q.min_width.is_some() || q.max_width.is_some() {
         items.retain(|i| {
             i.width > 0
-                && q.min_width.map_or(true, |v| i.width >= v)
-                && q.max_width.map_or(true, |v| i.width <= v)
+                && q.min_width.is_none_or(|v| i.width >= v)
+                && q.max_width.is_none_or(|v| i.width <= v)
         });
     }
     if q.min_height.is_some() || q.max_height.is_some() {
         items.retain(|i| {
             i.height > 0
-                && q.min_height.map_or(true, |v| i.height >= v)
-                && q.max_height.map_or(true, |v| i.height <= v)
+                && q.min_height.is_none_or(|v| i.height >= v)
+                && q.max_height.is_none_or(|v| i.height <= v)
         });
     }
     if let Some(color) = q.color {
