@@ -380,6 +380,8 @@ function onFolderTreeDrop(e: DragEvent) {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  /* 恒定预留滚动条槽位：展开长列表时滚动条出现/消失不再挤压内容宽度（否则整栏跳变 8px） */
+  scrollbar-gutter: stable;
   padding-bottom: 8px;
 }
 

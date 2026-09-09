@@ -365,6 +365,8 @@ function onMenu(item: Item, e: MouseEvent) {
 .grid-scroll {
   position: relative;
   overflow-y: auto;
+  /* 恒定预留滚动条槽位：素材数量跨过视口高度时列宽不再跳变（否则 8px 宽度差会重排卡片） */
+  scrollbar-gutter: stable;
   background: var(--bg-0);
   padding: 12px;
 }

@@ -70,6 +70,8 @@ function onHeadDblClick() {
 .inspector-body {
   flex: 1;
   overflow-y: auto;
+  /* 恒定预留滚动条槽位：内容增减触发滚动条出现/消失时不改变内容宽度（否则整栏跳变 8px） */
+  scrollbar-gutter: stable;
 }
 
 .section-status {
