@@ -383,6 +383,12 @@ function onFolderTreeDrop(e: DragEvent) {
   padding-bottom: 8px;
 }
 
+/* 滚动容器的子项不参与压缩：.folder-tree 的 min-height 会覆盖 flex 项的自动最小尺寸，
+   窗口高度不足时树被压扁、行内容溢出压到下面的「分类/标签」分区上（应改为整体滚动） */
+.sidebar-body > * {
+  flex: none;
+}
+
 .library-name {
   display: flex;
   align-items: center;
