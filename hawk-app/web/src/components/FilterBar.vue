@@ -1,10 +1,13 @@
 <script setup lang="ts">
 // 筛选工具列（Eagle 式）：TitleBar 下方一行的条件筛选 chip。
-// 显隐由挂载方（App.vue）控制：点击顶栏漏斗按钮展开，或查询带筛选条件（评分/颜色）时常驻。
-// 评分：点击 chip 弹星级菜单；颜色：条件激活时显示色块 chip，可就地清除。
+// 显隐由挂载方（App.vue）控制：点击顶栏漏斗按钮展开，或查询带筛选条件（评分/颜色/尺寸）时常驻。
+// 评分：点击 chip 弹星级菜单；颜色：条件激活时显示色块 chip，可就地清除；
+// 尺寸：SizeMenu（短边档位区间 / 宽高区间，面板内模式下拉切换）。
 import { useLibraryStore } from '../stores/library';
 import { useContextMenu } from '../composables/useContextMenu';
 import Icon from './Icon.vue';
+import SizeMenu from './SizeMenu.vue';
+import type { SizeFilter } from '../types';
 
 const store = useLibraryStore();
 const { open: openMenu } = useContextMenu();
@@ -28,6 +31,10 @@ function openRatingMenu(e: MouseEvent) {
     e.currentTarget as HTMLElement,
   );
 }
+/** 尺寸筛选回调：undefined 为清除 */
+function onSizeSelect(size: SizeFilter | undefined) {
+  store.setQuery({ size });
+}
 </script>
 
 <template>
@@ -36,6 +43,8 @@ function openRatingMenu(e: MouseEvent) {
       <Icon name="star" :size="13" />
       <span>{{ store.query.star !== undefined ? `${store.query.star} 星` : '评分' }}</span>
     </button>
+
+    <SizeMenu :size="store.query.size" @select="onSizeSelect" />
 
     <div v-if="store.query.color" class="chip color-chip" title="颜色筛选">
       <span class="dot" :style="{ background: store.query.color }" />

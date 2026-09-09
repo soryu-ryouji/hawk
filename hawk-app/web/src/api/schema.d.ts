@@ -1281,6 +1281,36 @@ export interface components {
             keywords?: string[] | null;
             /** Format: int32 */
             limit?: number;
+            /**
+             * Format: int32
+             * @description 高度筛选（像素）：≤ 阈值，可与 min_height 组成区间
+             */
+            max_height?: number | null;
+            /**
+             * Format: int32
+             * @description 宽度筛选（像素）：≤ 阈值，可与 min_width 组成区间
+             */
+            max_width?: number | null;
+            /**
+             * Format: int32
+             * @description 高度筛选（像素）：≥ 阈值，可与 max_height 组成区间；与宽度条件独立
+             */
+            min_height?: number | null;
+            /**
+             * Format: int32
+             * @description 分辨率档位筛选（短边 = min(width, height)，像素）：≥ 阈值，可与 min_side_lte 组成区间
+             */
+            min_side_gte?: number | null;
+            /**
+             * Format: int32
+             * @description 分辨率档位筛选（短边 = min(width, height)，像素）：≤ 阈值，可与 min_side_gte 组成区间
+             */
+            min_side_lte?: number | null;
+            /**
+             * Format: int32
+             * @description 宽度筛选（像素）：≥ 阈值，可与 max_width 组成区间；与高度条件独立
+             */
+            min_width?: number | null;
             /** Format: int32 */
             offset?: number;
             order?: string | null;

@@ -14,7 +14,7 @@ export function sameNameSet(a: string[] | undefined, b: string[] | undefined): b
 
 /** 无过滤的「全部素材」视图：item.updated 不可能改变成员资格（进出回收站有独立事件），可原地更新 */
 export function isUnfilteredView(view: ViewState, query: QueryState): boolean {
-  return view.kind === 'all' && query.keywords.length === 0 && query.star === undefined && !query.color;
+  return view.kind === 'all' && query.keywords.length === 0 && query.star === undefined && !query.color && query.size === undefined;
 }
 
 /** 条目 key：同内容（同 hash）多位置在视图中各自成条，前端以 `${id}\n${path}` 唯一定位。

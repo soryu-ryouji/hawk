@@ -534,6 +534,10 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | ext        | string   | 按扩展名过滤                                                    |
 | annotation | string   | 按备注文本过滤                                                  |
 | url        | string   | 按来源网址过滤                                                  |
+| min_side_gte | number | 分辨率档位筛选（短边 = min(width, height)，像素）：≥ 阈值，可与 `min_side_lte` 组成区间 |
+| min_side_lte | number | 分辨率档位筛选（短边 = min(width, height)，像素）：≤ 阈值，可与 `min_side_gte` 组成区间；宽高未解析（0×0）的 item 两方向均不命中 |
+| min_width / max_width | number | 宽度独立区间（像素）：≥ / ≤ 阈值，两者可组合；与高度条件独立，宽未解析（0）时不命中 |
+| min_height / max_height | number | 高度独立区间（像素）：≥ / ≤ 阈值，两者可组合；与宽度条件独立，高未解析（0）时不命中 |
 | color      | string   | 按颜色检索（`#344441`，`#` 可省略，大小写不敏感）；命中条件为调色板任一颜色 CIE76 ΔE ≤ 25，格式非法返回 `INVALID_PARAM` |
 | in_trash   | boolean  | 是否只查回收站中的 item，默认 false                             |
 | order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` |

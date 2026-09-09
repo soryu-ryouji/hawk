@@ -31,10 +31,30 @@ export type ViewState =
   | { kind: 'tag'; name: string }
   | { kind: 'trash' };
 
+/** 分辨率档位筛选：短边（min(width, height)）区间 */
+export interface SideSizeFilter {
+  kind: 'side';
+  min?: number;
+  max?: number;
+}
+
+/** 宽高独立区间筛选：宽与高各自可设下限/上限 */
+export interface WhSizeFilter {
+  kind: 'wh';
+  minWidth?: number;
+  maxWidth?: number;
+  minHeight?: number;
+  maxHeight?: number;
+}
+
+export type SizeFilter = SideSizeFilter | WhSizeFilter;
+
 export interface QueryState {
   keywords: string[];
   star?: number;
   color?: string;
+  /** 尺寸筛选：短边档位区间或宽高独立区间，一次只有一个活跃条件 */
+  size?: SizeFilter;
   orderBy: 'modification_time' | 'name' | 'size' | 'star';
   order: 'asc' | 'desc';
 }

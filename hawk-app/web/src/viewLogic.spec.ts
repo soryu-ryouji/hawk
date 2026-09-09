@@ -56,11 +56,12 @@ describe('isUnfilteredView', () => {
     expect(isUnfilteredView({ kind: 'all' }, query())).toBe(true);
   });
 
-  it('任一筛选条件（关键词/评分/颜色）不成立', () => {
+  it('任一筛选条件（关键词/评分/颜色/尺寸）不成立', () => {
     const v: ViewState = { kind: 'all' };
     expect(isUnfilteredView(v, query({ keywords: ['x'] }))).toBe(false);
     expect(isUnfilteredView(v, query({ star: 3 }))).toBe(false);
     expect(isUnfilteredView(v, query({ color: '#fff' }))).toBe(false);
+    expect(isUnfilteredView(v, query({ size: { kind: 'side', min: 1080 } }))).toBe(false);
   });
 
   it('非 all 视图一律不成立', () => {

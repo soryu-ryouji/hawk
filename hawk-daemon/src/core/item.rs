@@ -227,6 +227,18 @@ pub struct ItemQuery {
     pub ext: Option<String>,
     pub annotation: Option<String>,
     pub url: Option<String>,
+    /// 分辨率档位筛选（短边 = min(width, height)，像素）：≥ 阈值，可与 min_side_lte 组成区间
+    pub min_side_gte: Option<i32>,
+    /// 分辨率档位筛选（短边 = min(width, height)，像素）：≤ 阈值，可与 min_side_gte 组成区间
+    pub min_side_lte: Option<i32>,
+    /// 宽度筛选（像素）：≥ 阈值，可与 max_width 组成区间；与高度条件独立
+    pub min_width: Option<i32>,
+    /// 宽度筛选（像素）：≤ 阈值，可与 min_width 组成区间
+    pub max_width: Option<i32>,
+    /// 高度筛选（像素）：≥ 阈值，可与 max_height 组成区间；与宽度条件独立
+    pub min_height: Option<i32>,
+    /// 高度筛选（像素）：≤ 阈值，可与 min_height 组成区间
+    pub max_height: Option<i32>,
     /// 颜色检索（已转 Lab）；命中条件为调色板任一颜色 ΔE ≤ 阈值
     pub color: Option<LabColor>,
     pub in_trash: bool,

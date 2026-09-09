@@ -297,7 +297,7 @@ useDragImport();
     <!-- 窄屏抽屉遮罩：点按空白处收起 -->
     <div v-if="narrow && store.sidebarVisible" class="drawer-scrim" @click="store.toggleSidebar()" />
     <TitleBar class="titlebar" @open-settings="showSettings = true" />
-    <!-- 筛选工具列：顶栏漏斗按钮展开，或评分/颜色条件激活时常驻 -->
+    <!-- 筛选工具列：顶栏漏斗按钮展开，或评分/颜色/尺寸条件激活时常驻 -->
     <FilterBar v-if="store.filterBarVisible || store.hasActiveFilters" />
     <ItemGrid />
     <!-- 索引进度指示：入库队列/扫描进度（与缩略图条同为只读指示） -->

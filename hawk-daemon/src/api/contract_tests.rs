@@ -1045,6 +1045,50 @@ async fn global_filter_exclusion() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法维度应 400");
 }
 
+/// 分辨率档位筛选：短边（min(width, height)）与阈值比较，gte/lte 可组合成区间；
+/// 宽高未解析（0×0）的 item 两个方向均不命中
+#[tokio::test]
+async fn item_list_filters_by_resolution_tier() {
+    let app = test_app("dimfilter");
+    // 测试项均为 8×8 图（短边 8）
+    let a = app.add_test_item("a.png", [10, 10, 10]).await;
+    app.add_test_item("b.png", [20, 20, 20]).await;
+
+    let list = |body: Value| async {
+        let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/list", Some(body)).await;
+        let v: Value = serde_json::from_slice(&bytes).unwrap();
+        (
+            v["data"]["total"].as_u64().unwrap(),
+            v["data"]["items"].clone(),
+        )
+    };
+
+    // 以上/以下：短边含等于阈值
+    let (total, _) = list(json!({"min_side_gte": 8})).await;
+    assert_eq!(total, 2, "短边 ≥ 8 命中全部（含等于）");
+    let (total, _) = list(json!({"min_side_gte": 9})).await;
+    assert_eq!(total, 0, "短边 ≥ 9 无命中");
+    let (total, _) = list(json!({"min_side_lte": 8})).await;
+    assert_eq!(total, 2, "短边 ≤ 8 命中全部（含等于）");
+    let (total, _) = list(json!({"min_side_lte": 7})).await;
+    assert_eq!(total, 0, "短边 ≤ 7 无命中");
+    // 区间组合
+    let (total, _) = list(json!({"min_side_gte": 8, "min_side_lte": 8})).await;
+    assert_eq!(total, 2, "区间 [8, 8] 命中全部");
+    // 宽/高独立区间（同样 8×8 图）
+    let (total, _) = list(json!({"min_width": 8, "max_width": 8})).await;
+    assert_eq!(total, 2, "宽度区间 [8, 8] 命中全部");
+    let (total, _) = list(json!({"min_height": 9})).await;
+    assert_eq!(total, 0, "高度 ≥ 9 无命中");
+    // 宽高组合：宽 ≥ 8 且高 ≤ 7
+    let (total, _) = list(json!({"min_width": 8, "max_height": 7})).await;
+    assert_eq!(total, 0, "宽高交叉条件无命中");
+    // 与其它条件 AND 组合
+    let (total, items) = list(json!({"min_side_gte": 8, "keywords": ["a"]})).await;
+    assert_eq!(total, 1, "档位与关键词 AND");
+    assert_eq!(items[0]["id"], json!(a));
+}
+
 /// 文件夹树缓存新鲜度：API 增删目录后 folder/list 立即反映（端点内同步失效）
 #[tokio::test]
 async fn folder_tree_cache_stays_fresh() {

@@ -24,6 +24,18 @@ pub(crate) struct ItemListRequest {
     ext: Option<String>,
     annotation: Option<String>,
     url: Option<String>,
+    /// 分辨率档位筛选（短边 = min(width, height)，像素）：≥ 阈值，可与 min_side_lte 组成区间
+    min_side_gte: Option<i32>,
+    /// 分辨率档位筛选（短边 = min(width, height)，像素）：≤ 阈值，可与 min_side_gte 组成区间
+    min_side_lte: Option<i32>,
+    /// 宽度筛选（像素）：≥ 阈值，可与 max_width 组成区间；与高度条件独立
+    min_width: Option<i32>,
+    /// 宽度筛选（像素）：≤ 阈值，可与 min_width 组成区间
+    max_width: Option<i32>,
+    /// 高度筛选（像素）：≥ 阈值，可与 max_height 组成区间；与宽度条件独立
+    min_height: Option<i32>,
+    /// 高度筛选（像素）：≤ 阈值，可与 min_height 组成区间
+    max_height: Option<i32>,
     color: Option<String>,
     in_trash: bool,
     order_by: Option<String>,
@@ -51,6 +63,12 @@ impl Default for ItemListRequest {
             ext: None,
             annotation: None,
             url: None,
+            min_side_gte: None,
+            min_side_lte: None,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
             color: None,
             in_trash: false,
             order_by: None,
@@ -105,6 +123,12 @@ fn build_query(req: ItemListRequest) -> Result<ItemQuery, ApiError> {
         ext: req.ext,
         annotation: req.annotation,
         url: req.url,
+        min_side_gte: req.min_side_gte,
+        min_side_lte: req.min_side_lte,
+        min_width: req.min_width,
+        max_width: req.max_width,
+        min_height: req.min_height,
+        max_height: req.max_height,
         color,
         in_trash: req.in_trash,
         order_by: req.order_by,

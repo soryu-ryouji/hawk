@@ -1533,6 +1533,54 @@
             "format": "int32",
             "type": "integer"
           },
+          "max_height": {
+            "description": "高度筛选（像素）：≤ 阈值，可与 min_height 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_width": {
+            "description": "宽度筛选（像素）：≤ 阈值，可与 min_width 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_height": {
+            "description": "高度筛选（像素）：≥ 阈值，可与 max_height 组成区间；与宽度条件独立",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_side_gte": {
+            "description": "分辨率档位筛选（短边 = min(width, height)，像素）：≥ 阈值，可与 min_side_lte 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_side_lte": {
+            "description": "分辨率档位筛选（短边 = min(width, height)，像素）：≤ 阈值，可与 min_side_gte 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_width": {
+            "description": "宽度筛选（像素）：≥ 阈值，可与 max_width 组成区间；与高度条件独立",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "offset": {
             "format": "int32",
             "type": "integer"

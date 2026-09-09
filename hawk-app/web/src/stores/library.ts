@@ -152,8 +152,8 @@ export const useLibraryStore = defineStore('library', () => {
 
   // ---- getters ----
   const isTrash = computed(() => view.value.kind === 'trash');
-  /** 查询是否带有筛选条件（评分/颜色）：有则筛选工具列常驻显示 */
-  const hasActiveFilters = computed(() => query.value.star !== undefined || !!query.value.color);
+  /** 查询是否带有筛选条件（评分/颜色/尺寸）：有则筛选工具列常驻显示 */
+  const hasActiveFilters = computed(() => query.value.star !== undefined || !!query.value.color || query.value.size !== undefined);
   const currentFolderPath = computed(() => (view.value.kind === 'folder' ? view.value.path : null));
   const selectedItems = computed(() => selection.value.map((id) => details.value.get(id)).filter((i): i is Item => !!i));
   const primarySelected = computed(() => selectedItems.value.at(-1) ?? null);
@@ -181,6 +181,12 @@ export const useLibraryStore = defineStore('library', () => {
       keywords: query.value.keywords.length > 0 ? query.value.keywords : undefined,
       star: query.value.star,
       color: query.value.color,
+      min_side_gte: query.value.size?.kind === 'side' ? query.value.size.min : undefined,
+      min_side_lte: query.value.size?.kind === 'side' ? query.value.size.max : undefined,
+      min_width: query.value.size?.kind === 'wh' ? query.value.size.minWidth : undefined,
+      max_width: query.value.size?.kind === 'wh' ? query.value.size.maxWidth : undefined,
+      min_height: query.value.size?.kind === 'wh' ? query.value.size.minHeight : undefined,
+      max_height: query.value.size?.kind === 'wh' ? query.value.size.maxHeight : undefined,
       order_by: query.value.orderBy,
       order: query.value.order,
       in_trash: isTrash.value || undefined,
