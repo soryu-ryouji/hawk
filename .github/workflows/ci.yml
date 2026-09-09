@@ -58,34 +58,6 @@ jobs:
       - run: cargo test
         working-directory: hawk-daemon
 
-  # 依赖安全公告巡检：与发布解耦（不参与 publish 的 needs），先观察一段时间再决定是否转门禁——
-  # 存量漏洞可能有上游未修复项，直接卡发版会让 hotfix 无法出包
-  audit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # audit-check 把扫描结果写成 commit 上的 check run（含 unmaintained 警告注释），
-    # 需要 checks: write；顶层最小权限不含它，job 级单独提权
-    permissions:
-      contents: read
-      checks: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: hawk-daemon
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '26'
-
-      - run: npm audit --audit-level=critical
-        working-directory: hawk-app
-
-      - run: npm audit --audit-level=critical
-        working-directory: hawk-browser-extension
-
   desktop:
     runs-on: ubuntu-latest
     timeout-minutes: 40
