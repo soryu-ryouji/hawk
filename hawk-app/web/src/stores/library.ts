@@ -170,6 +170,20 @@ export const useLibraryStore = defineStore('library', () => {
   });
   /** 当前视图条目数（= 骨架长度；骨架未加载时为 0） */
   const total = computed(() => skeleton.value.length);
+  /** 索引进度条文案（启动屏/主界面共用）：扫描中带阶段进度（遍历阶段总数未知，只报已处理数）；否则报剩余任务数 */
+  const indexProgressText = computed(() => {
+    const p = indexProgress.value;
+    if (!p) {
+      return '';
+    }
+    if (p.phase) {
+      const label = p.phase === 'scan' ? '扫描' : p.phase === 'hash' ? '哈希' : '应用';
+      const total = p.total ?? 0;
+      const processed = p.processed ?? 0;
+      return total > 0 ? `正在索引素材库 · ${label} ${processed}/${total}` : `正在索引素材库 · 已发现 ${processed} 个文件`;
+    }
+    return `正在索引素材 · 剩余 ${p.pending + p.active}`;
+  });
 
   // ---- 内部 ----
   const debouncedSkeletonReload = debounce(200);
@@ -828,6 +842,7 @@ export const useLibraryStore = defineStore('library', () => {
     deleteLocation,
     taskBacklog,
     indexProgress,
+    indexProgressText,
     sidebarVisible,
     filterBarVisible,
     viewerMode,

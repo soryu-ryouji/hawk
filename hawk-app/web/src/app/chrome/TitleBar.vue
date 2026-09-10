@@ -4,13 +4,13 @@
 // 窄屏（竖屏宽度不足）：排序/筛选收进「排序与筛选」溢出菜单，搜索框退化为搜索按钮（点开浮层），
 // 面包屑只显示当前层级（完整路径经侧栏抽屉导航）。横屏/宽屏布局不受影响。
 import { computed, nextTick, ref, watch } from 'vue';
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '@/stores/library';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLayout } from '@/shared/composables/useLayout';
 import Icon from '@/shared/ui/Icon.vue';
-import SearchBox from './SearchBox.vue';
+import SearchBox from '@/components/SearchBox.vue';
 import { hasShell, isMac, shell } from '@/shared/lib/platform';
-import { useImporterStore } from '../stores/importer';
+import { useImporterStore } from '@/stores/importer';
 import type { MenuItem, QueryState } from '@/shared/types';
 
 const store = useLibraryStore();

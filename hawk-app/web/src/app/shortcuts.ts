@@ -2,11 +2,11 @@
 // 空格 展开/关闭预览；←→ 预览中切换图片；方向键 网格中移动选中框；
 // Delete 回收/恢复、Esc 关浮层、Cmd/Ctrl+A 全选、Cmd/Ctrl+C 复制图片。
 import { useEventListener } from '@vueuse/core';
-import { useLibraryStore } from '../stores/library';
-import { usePreviewStore } from '../stores/preview';
+import { useLibraryStore } from '@/stores/library';
+import { usePreviewStore } from '@/stores/preview';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
-import { gridNavRows, markKeyboardNavScroll, moveGridSelection } from './useGridNav';
-import { itemKey } from '../viewLogic';
+import { gridNavRows, markKeyboardNavScroll, moveGridSelection } from '@/composables/useGridNav';
+import { itemKey } from '@/viewLogic';
 import { copyImageToClipboard } from '@/shared/lib/clipboard';
 
 export function useShortcuts() {
