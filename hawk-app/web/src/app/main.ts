@@ -1,6 +1,6 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import App from '@/app/App.vue';
+import App from './App.vue';
 import './styles.css';
 
 // IME 组合态（中文输入法选词）中的 Enter/Escape 不下发给应用：

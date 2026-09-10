@@ -120,7 +120,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 ## 契约与类型生成
 
 - 前端 TS 类型从 OpenAPI schema 生成（openapi-typescript），**不手写对接口**
-- `npm run gen:types`：脚本启动 hawk-daemon（临时目录建库）→ 拉 `/openapi/v1.json` → 生成 `web/src/api/schema.d.ts` → 杀掉 server。生成文件入库，schema 变更时重新生成
+- `npm run gen:types`：脚本启动 hawk-daemon（临时目录建库）→ 拉 `/openapi/v1.json` → 生成 `web/src/shared/api/schema.d.ts` → 杀掉 server。生成文件入库，schema 变更时重新生成
 - API client 统一处理：Bearer 头、信封解包（`status`/`data`/`error`）、错误码异常、SSE 用 `?token=`（EventSource 无法设请求头）
 
 ## 前端信息架构
@@ -169,94 +169,45 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 ```text
 web/
 ├── index.html
-├── tsconfig.json
+├── tsconfig.json            # baseUrl + `@ → src` 路径别名（跨边界 import 的稳定路径，vite 同步配置）
 └── src/
-    ├── main.ts                # 入口：解析 hash 注入 api/token、创建 Pinia、挂载 App；IME 组合态拦截 + 全局错误兜底（Vue errorHandler/未处理拒绝/运行时错误 → console + 去重 toast）
-    ├── App.vue                # 布局骨架；启动阶段状态机与跨 store 编排；挂载全局 composables（快捷键/拖拽导入）与浮层
-    ├── types.ts               # 业务类型（ViewState/QueryState/MenuItem）+ hawkShell 全局类型声明；Item 等从 schema.d.ts 别名导出
-    ├── dnd.ts                 # 拖拽共享工具：素材拖拽（网格→侧栏，ITEMS_MIME）与外部文件拖拽（Finder→侧栏结构化导入）：判定/放行/取 entry 列表
-    ├── viewLogic.ts           # 视图/查询纯决策逻辑（排序父链继承/无过滤视图/选择集 range/toggle/item.updated 的合并与骨架重载决策）：library.ts 消费，Vitest 覆盖
-    ├── importBatch.ts         # 批量导入共享状态机（重复策略 ask→首问整批生效、计数、进度推进）：依赖注入不触碰 store，Vitest 覆盖
-    ├── saveImage.ts           # 原图保存（浏览器端）：原图 blob → Web Share（iOS 存相册/文件）或 <a download>（Android/桌面）；viewer 只读可用
-    ├── clipboard.ts           # 图片写入系统剪贴板（预览/网格 Cmd/Ctrl+C 共用）：Chromium 只收 PNG，非 PNG 经 canvas 转码（超尺寸等比降采样）
-    ├── imageEdit.ts           # 客户端图片重编码（旋转，canvas；JPEG EXIF 字节级回填并重置 Orientation）：ImageEditDialog → item/replace
-    ├── format.ts              # 显示格式化（字节/日期/路径等），Vitest 覆盖
-    ├── layout.ts              # 网格布局单一来源：GRID_GAP/CARD_META_H/CARD_BORDER 常量（ItemCard 经 CSS 变量消费）+ 齐行布局纯函数 layoutRows，Vitest 覆盖
-    ├── persist.ts             # localStorage 收口：键注册表（hawk:panelWidths/thumbSize/lastView/token）+ 统一损坏回退/写入静默
-    ├── platform.ts            # 平台与 shell 收敛：platform/isMac/fileManagerName/hasShell/shell（浏览器端为类型化 no-op 壳，调用方免 ?. 兜底）
-    ├── api/
-    │   ├── client.ts          # request 封装：baseURL、Bearer 头、信封解包、ApiError；token 记忆经 persist.ts
-    │   ├── endpoints.ts       # 全部端点的强类型函数（api.itemList(...) 等）
-    │   ├── events.ts          # SSE 连接管理：订阅、重连、分发
-    │   └── schema.d.ts        # openapi-typescript 生成（入库，勿手改）
-    ├── stores/
-    │   ├── library.ts         # Pinia 主 store：视图/查询/列表/选择集/回收站（见下）
-    │   ├── libraryNavigation.ts # 视图导航与排序偏好状态机（历史栈/视图记忆/排序 scope；依赖注入，主 store 接线）
-    │   ├── taxonomy.ts        # 分类维度子 store：文件夹树/分类/标签/侧栏计数及其 CRUD
-    │   ├── importer.ts        # 导入子 store：批量导入进度/重复策略弹窗/拖拽入口（平铺与结构化，importBatch 接线）
-    │   ├── preview.ts         # 预览子 store：预览浮层导航（sticky item）+ 图片编辑窗口目标与保存
-    │   └── util.ts            # store 共用：errorText 错误码翻译、debounce
-    ├── composables/           # 只放业务 composable；通用能力直接用 @vueuse/core
-    │   ├── useContextMenu.ts  # 右键菜单状态（visible/x/y/items/openedAt 开场守卫：Android 长按原生 contextmenu 与长按检测双触发、长按后松手跟发事件落在遮罩上时防刚开的菜单被秒关）
-    │   ├── useLongPress.ts    # 长按检测（触屏/笔按住 500ms，移动/抬手取消；iOS 无原生长按菜单的兑底）：网格卡片经此发右键同款 menu 事件，Vitest 覆盖
-    │   ├── useDragImport.ts   # 拖拽导入（document 级平铺：收集在 importer；侧栏结构化导入在 Sidebar/FolderTreeNode）
-    │   ├── useShortcuts.ts    # 全局快捷键映射（内部基于 VueUse useEventListener）
-    │   ├── useGridNav.ts      # 网格选中框空间导航（ItemGrid 发布行布局，方向键消费）
-    │   ├── useZoomPan.ts      # 预览手势引擎：滚轮不动点缩放/双击（触屏按 300ms 两次点按自判，iOS 不产 dblclick）/单指平移与滑动切换/双指捏合/下拉关闭/长按菜单（触发后冻结本次按压）状态机（语义矩阵见头注释）
-    │   ├── useLayout.ts       # 布局/触屏判定：narrow=matchMedia ≤1200px（同步 body.mobile，三栏最小健康宽度见布局章节），touch=(pointer: coarse) 或 maxTouchPoints>0（同步 body.touch，iPad「请求桌面网站」下 pointer 不命中需 maxTouchPoints 兜底）；narrow 驱动布局差异（抽屉侧栏/点按开预览/顶栏减负），touch 驱动触屏手势（下拉关闭；预览关闭 × 仅在 touch+narrow 隐藏，见 PreviewOverlay 行）；设备能力判断走 platform.ts
-    │   ├── useUpdater.ts      # 应用更新渲染层状态机（Electron）：通道偏好/检查/下载（可取消）/安装编排，启动静默检查（发现新版本按 通道@版本 toast 一次）；语义在主进程
-    │   └── useStartup.ts      # 启动状态机：server-started/error/progress 事件（Electron IPC）或浏览器轮询 /app startup，就绪计数驱动 App (re)boot
-    ├── components/
-    │   ├── TitleBar.vue
-    │   ├── FilterBar.vue      # 筛选工具列：评分/颜色/尺寸条件 chip（漏斗按钮或条件激活时显示）
-    │   ├── SizeMenu.vue       # 尺寸筛选下拉：min/max 区间 + 档位列表 + 模式下拉（短边 ↔ 宽高四框）
-    │   ├── WindowControls.vue
-    │   ├── Icon.vue           # 描边小图标（feather 风格 inline SVG，侧栏/按钮行首）
-    │   ├── SetupScreen.vue    # 引导页：选库（Electron 内素材库未配置），选定后经 server-started 事件进启动屏
-    │   ├── StartingScreen.vue # 应用内启动屏：server 扫描索引期间的进度反馈（替代旧独立 loading.html，单页生命周期无切换白屏）
-    │   ├── ConnectScreen.vue  # 连接门页：局域网 web 查看先输入 token，验证通过后记忆、再访问免输入直连
-    │   ├── SettingsDialog.vue # 设置面板壳（左侧分区导航 + v-show 保活；Electron：外观/隐藏项/局域网/存储/更新，web：外观/隐藏项/连接）
-    │   ├── SettingsAppearance.vue # 外观分区：缩略图尺寸滑杆 + 预览关闭按钮开关（均即时生效）
-    │   ├── SettingsHiding.vue # 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签），逐条取消；viewer 只展示
-    │   ├── SettingsLan.vue    # 局域网分区（仅 Electron）：开关/写权限/token 拆分/端口，读写直连 daemon REST app/lan
-    │   ├── SettingsStorage.vue # 存储分区（仅 Electron）：周期兜底重扫开关 + 元数据存储方案切换 + 缓存父目录迁移
-    │   ├── SettingsUpdate.vue # 更新分区（仅 Electron）：版本/通道/检查/下载/安装（状态机见 useUpdater）
-    │   ├── SettingsConnection.vue # 连接分区（仅 web）：当前访问级别 + 注销 token
-    │   ├── Sidebar.vue
-    │   ├── LibraryDropdown.vue # 侧栏素材库下拉：历史库浮层（Teleport fixed），条目 ··· 菜单（打开目录/当前库重命名/移除记录），底部「打开文件夹…」
-    │   ├── FolderTreeNode.vue
-    │   ├── FolderTreePicker.vue   # Eagle 式文件夹树选择弹出层（检查器「文件夹」：点击当前值弹出，选择即移动）
-    │   ├── TaxonomyRow.vue    # 分类/标签共用的侧栏行（图标/名称/计数/右键菜单/拖入高亮，kind 驱动差异）
-    │   ├── SelectBox.vue      # 自绘下拉选择（原生 select 暗色不协调）：Teleport fixed 浮层，设置面板/文件夹选择/库切换共用
-    │   ├── SearchBox.vue      # 搜索框（TitleBar/Inspector 顶共用；触屏横屏挪到检查器顶）
-    │   ├── ItemGrid.vue
-    │   ├── ItemCard.vue
-    │   ├── Inspector.vue
-    │   ├── InspectorItem.vue  # 检查器单选区（预览/调色板/编辑字段/文件位置）
-    │   ├── InspectorBatch.vue # 检查器多选区（交集语义的批量编辑面板）
-    │   ├── TagEditor.vue      # 标签 chip 编辑器（Inspector 的子组件）
-    │   ├── CategoryPickerDialog.vue # 分类选择模态（可选已有，也可输入新名字）
-    │   ├── StarRating.vue     # 点星评分（Inspector/右键菜单共用）
-    │   ├── PromptDialog.vue   # 文本输入模态（添加标签/新建文件夹）
-    │   ├── FolderPickerDialog.vue # 文件夹选择模态（移动到文件夹）
-    │   ├── PreviewOverlay.vue
-    │   ├── ImageEditDialog.vue # 图片编辑窗口（右键「编辑图片…」）：旋转预览 + 保存/放弃/取消三选确认
-    │   ├── ContextMenu.vue    # 全局单例自绘菜单
-    │   ├── ImportDuplicateDialog.vue # 导入重复策略对话框（忽略/仍然导入，整批生效）
-    │   ├── inspector-shared.css # 检查器分区共享样式（.inspector-scope 前缀隔离）
-    │   ├── settings-shared.css  # 设置面板分区共享样式
-    │   └── EmptyState.vue     # 空库/空结果占位
-    └── styles.css             # 深色主题 CSS 变量与全局样式
+    ├── app/                 # 装配层：唯一允许引用所有域的位置（规则见「域边界与依赖规则」）
+    │   ├── main.ts          # 入口：解析 hash 注入 api/token、创建 Pinia、挂载 App；IME 组合态拦截 + 全局错误兜底（Vue errorHandler/未处理拒绝/运行时错误 → console + 去重 toast）
+    │   ├── App.vue          # 布局骨架与相位分发（启动/引导/门页/错误 ↔ 主界面）；挂载全局 composable（快捷键/拖拽导入）与浮层
+    │   ├── boot.ts          # useBoot：启动相位机（starting→ready，旁路 setup/connect/error）+ runBoot 编排（taxonomy 先行 → store.init → 连 SSE）+ server 重启监听 + 浏览器轮询接线；boot.spec 覆盖相位迁移与编排接线
+    │   ├── startup.ts       # useStartup：server-started/error/progress（Electron IPC）或浏览器轮询 /app/startup，就绪计数驱动 boot (re)boot
+    │   ├── shortcuts.ts     # useShortcuts：全局快捷键映射（内部基于 VueUse useEventListener）
+    │   ├── panelResize.ts   # usePanelResize：侧栏/检查器宽度拖拽（mousemove 生命周期 + localStorage 持久化 + 卸载兜底）
+    │   ├── screens/         # 前置相位屏：StartingScreen（索引扫描进度）/ SetupScreen（选库引导）/ ConnectScreen（token 门页）
+    │   └── chrome/          # 应用铬件：TitleBar（面包屑/搜索/筛选开关，库控件经 library 域出口取数）/ WindowControls
+    ├── shared/              # 无业务依赖的原语，任何层可引用
+    │   ├── api/             # client.ts（request 封装：baseURL/Bearer/信封解包/ApiError；token 记忆经 persist.ts）/ endpoints.ts（全部端点强类型函数）/ events.ts（SSE 连接管理）/ schema.d.ts（openapi-typescript 生成，勿手改）
+    │   ├── types.ts         # 契约类型 re-export（schema + electron IPC 单点对齐）+ 业务自有类型（ViewState/QueryState/MenuItem）
+    │   ├── lib/             # format（显示格式化）/ persist（localStorage 收口：键注册表 + 损坏回退）/ platform（platform/isMac/hasShell/shell，浏览器端类型化 no-op 壳）/ clipboard（剪贴板写入，非 PNG canvas 转码）/ saveImage（Web Share / <a download>）/ dnd（拖拽共享工具：ITEMS_MIME 与判定）/ imageEdit（客户端图片重编码，JPEG EXIF 字节级回填）/ storeUtil（errorText 错误码翻译 + debounce）
+    │   ├── ui/              # 通用组件：Icon（feather 风格 inline SVG）/ EmptyState / PromptDialog / SelectBox（自绘下拉）/ ContextMenu（全局单例菜单）
+    │   └── composables/     # useContextMenu（右键菜单状态 + 开场守卫）/ useLongPress（长按检测）/ useLayout（narrow/touch 判定与 body 同步）
+    └── domains/             # 业务域：域之间只准经各自 index.ts 出口引用
+        ├── library/         # 素材库域（核心）
+        │   ├── index.ts     # 域公共出口：store、写操作服务、跨域纯逻辑（itemKey/splitKey/displayPath/网格导航）、对外组件（ItemGrid/Inspector/FilterBar/SearchBox）
+        │   ├── store.ts     # Pinia store：视图/查询/列表/选择集/回收站 + applyEvent SSE 编排（见「Pinia store」节）
+        │   ├── navigation.ts # 视图导航与排序偏好状态机（历史栈/视图记忆/排序 scope 持久化；依赖注入便于单测），store 接线
+        │   ├── actions.ts   # item 写操作服务层：普通函数模块（非 store），调 api → toast → 防抖重载/分类维度刷新；私有依赖走 store 公共 API（requestSkeletonReload/refreshSelectionAggregate/applyEvent）
+        │   ├── logic/       # viewLogic（排序父链继承/选择集 range/toggle/item.updated 合并与骨架重载决策）/ layout（齐行布局纯函数 + 网格常量）/ useGridNav（选中框空间导航：ItemGrid 发布行布局，方向键消费）
+        │   └── components/  # ItemGrid / ItemCard / FilterBar / SearchBox / SizeMenu（尺寸筛选下拉）/ Inspector / InspectorItem / InspectorBatch / StarRating + inspector-shared.css
+        ├── taxonomy/        # 分类维度域：store + Sidebar / FolderTreeNode / FolderTreePicker / FolderPickerDialog / TaxonomyRow / TagEditor / CategoryPickerDialog / LibraryDropdown（侧栏库切换铬件，含 IPC）
+        ├── preview/         # 预览域：store + PreviewOverlay / ImageEditDialog + logic/useZoomPan（预览手势引擎，语义矩阵见头注释）
+        ├── import/          # 导入域：store + ImportDuplicateDialog + logic/useDragImport（document 级平铺拖入）/ logic/importBatch（批量导入状态机：重复策略整批生效）
+        └── settings/        # 设置域：updater.ts（useUpdater 渲染层状态机）+ components/SettingsDialog 与六分区面板 + settings-shared.css
 ```
 
-（各纯逻辑模块旁的 `*.spec.ts` 为对应 Vitest 用例：viewLogic/importBatch/layout/format 纯函数，itemCard/sidebarRows 组件渲染。）
+（spec 随模块就近放置：logic 纯函数（viewLogic/importBatch/layout/format）、store 行为（library/library.behavior/boot）、组件渲染（itemCard/sidebarRows/SizeMenu）。分层测试约定见「域边界与依赖规则」。）
 
 界面文案中文硬编码，v1 不做 i18n。
 
-### 类型层（types.ts）
+### 类型层（shared/types.ts）
 
 ```ts
-import type { components } from './api/schema';
+import type { components } from '@/shared/api/schema'; // 契约类型一律从生成的 schema 取，不另写；IPC 类型从 electron/src/ipc-contract.ts re-export
 
 // 契约类型一律从生成的 schema 取，不另写
 export type Item = components['schemas']['ItemDto'];
@@ -283,9 +234,9 @@ export interface QueryState {
 export interface MenuItem { label: string; danger?: boolean; separator?: boolean; action?: () => void }
 ```
 
-### API 层
+### API 层（shared/api/）
 
-**client.ts**——模块级单例，启动时解析连接参数（桌面端经 hash 注入；局域网 web 查看走同源回退 + token 门页）：
+**shared/api/client.ts**——模块级单例，启动时解析连接参数（桌面端经 hash 注入；局域网 web 查看走同源回退 + token 门页）：
 
 ```ts
 export class ApiError extends Error {
@@ -305,7 +256,7 @@ export async function request<T>(method: string, path: string,
 
 **局域网 web 查看**（server 侧见 storage.md 的 `[web]` 段与 server-rest-api-v1.md 的 `app/info.access`）：桌面端设置面板配置 enabled/port/token 与写权限（按库隔离，token 支持「二合一/拆分」两模式），server 追加监听 `0.0.0.0:<port>` 并托管前端静态文件；浏览器打开 `http://<电脑IP>:<port>` 先进 ConnectScreen 输入 token，验证通过后经 `app/info` 的 `access`/`writable` 判定写能力（store.viewerMode 驱动，同一浏览器切换身份用设置面板「连接」分区的注销按钮）——**只读 token**：前端隐藏全部写入口（右键写菜单/编辑窗口/检查器编辑字段/侧栏新建/多选批量/删除快捷键/拖拽导入与放置/上传按钮），服务端写端点对该 token 一律 `403 READ_ONLY` 为最终防线；**持可写 token**（未拆分时的 token 或拆分时的 write_token，保存即热生效）web 端与桌面端同权：上传（multipart `item/upload`，浏览器无文件路径可引用）、删除、标签/评分/文件夹等全部写操作可用。
 
-**endpoints.ts**——端点一一对应 server-rest-api-v1.md，签名即契约：
+**shared/api/endpoints.ts**——端点一一对应 server-rest-api-v1.md，签名即契约：
 
 ```ts
 export const api = {
@@ -378,19 +329,40 @@ export function connectEvents(handlers: {
 
 事件名与负载的字段契约以 server-rest-api-v1.md「events」节为准（`ItemEvents` 常量与文档一一对应），此处只做类型分发，不自定义负载形状。
 
-### Pinia store（stores/）
+### 域边界与依赖规则
 
-四个 store 构成 DAG：子 store（taxonomy/importer/preview）可读主 store 的 state/getter、调其 action；
-**主 store 不反向依赖子 store，子 store 之间不互引**。两个例外通道（仍是单向语义的解耦）：
-- `registerTaxonomyHooks`：taxonomy store 创建时把「防抖刷新计数/文件夹树」两个回调注册到主 store
-  的模块级钩子，主 store 的 SSE 分发与批量 action 经钩子转发刷新——主 store 不 import taxonomy；
-- `init(validators)`：restoreView 的存在性校验（文件夹/分类/标签是否在词表中）由 App.vue 以参数注入，
-  主 store 不知道数据来自 taxonomy store。
-跨 store 的编排（init 顺序、init 前的会话清理、SSE 分发）由组件层（App.vue）负责。组件不直接调 api
-（除缩略图 URL 拼接），一切经 action。
+三层结构 `app → domains/* → shared` 单向依赖，两条机器强制（eslint，配置见 hawk-app/eslint.config.mjs）：
 
-**主 store `useLibraryStore`（stores/library.ts）**——视图/查询/列表/选择集/回收站。
-视图导航与排序偏好拆在 `stores/libraryNavigation.ts`（`createViewNavigation` 工厂：历史栈/视图记忆/排序 scope 持久化，依赖注入便于单测），主 store 只做接线与其余 action：
+1. **相对引用的方向纪律**（eslint-plugin-boundaries）：app 可引用一切；域可引用 shared 与域（含自身 index.ts 的 barrel 再导出）；**shared 只准自引用**（不得上引业务层）。
+2. **`@/` 别名引用的出口纪律**（no-restricted-syntax，boundaries 的解析器不认识 vite 别名故分而治之）：`@/domains/<x>/…` 深入域内文件一律禁止——**域外只准 `@/domains/<x>`**（index.ts 出口）；`@/app/` 为装配层私有（app 内部互引用相对路径）。
+
+域公共出口是域的 API 白名单：域内重构、文件移动只改 index.ts，域外零感知。跨域编排（相位机驱动 init、SSE 分发接线、快捷键）全部收敛在 app 装配层。
+
+### 分层测试约定
+
+每层一种测试形态，全部沿用既有 spec 先例（不引新测试栈）：
+
+| 层 | 测试方式 | 先例 |
+| -- | -------- | ---- |
+| `domains/*/logic/` 纯函数 | 直接单测 | viewLogic.spec / layout.spec / importBatch.spec |
+| `domains/*/store.ts` | `setActivePinia` + `vi.mock('@/shared/api/endpoints')` | library.spec（导航/排序）、library.behavior.spec（SSE/竞争/写操作特征化） |
+| `domains/*/components/` | `@vue/test-utils` 挂载（props 入事件出的组件零 mock） | SizeMenu.spec / itemCard.spec / sidebarRows.spec |
+| `app/` 编排层 | mock `@/shared/lib/platform`（shell 适配器）+ 域出口 | boot.spec（相位迁移/runBoot 编排/浏览器轮询） |
+
+配套纪律：`vi.mock` 恒指向 `@/shared/api/endpoints` 单一稳定路径（域迁移不动 mock）；重构前先写特征化测试锁行为（Feathers《修改代码的艺术》），移动与逻辑修改分离提交（历史可 bisect）。
+
+### Pinia store（domains/*/store.ts）
+
+五个 store 构成 DAG：子 store（taxonomy/importer/preview）可读主 store 的 state/getter、调其 action；**主 store 不反向依赖子 store，子 store 之间不互引**。三个例外通道（仍是单向语义的解耦）：
+
+- `registerTaxonomyHooks`：taxonomy store 创建时把「防抖刷新计数/文件夹树」两个回调注册到主 store 的模块级钩子，主 store 的 SSE 分发经钩子转发刷新——主 store 不 import taxonomy；
+- `init(validators)`：restoreView 的存在性校验（文件夹/分类/标签是否在词表中）由 app/boot.ts 以参数注入，主 store 不知道数据来自 taxonomy store；
+- **写操作服务层**（`domains/library/actions.ts`）：item 写操作是无自身状态的编排逻辑（调 api → toast → 防抖重载），按 Pinia 文档认可的 store 外组织方式做成普通函数模块而非空壳 store；服务层直调 `useTaxonomyStore()` 的防抖公共入口 `refreshTaxonomySoon/refreshFoldersSoon`——与 SSE hooks 注册的是同一函数，防抖行为零漂移。
+
+跨 store 的编排（init 顺序、init 前的会话清理、SSE 分发）由装配层（app/boot.ts）负责。组件不直接调 api（例外：设置面板的配置端点与 token 验证屏），读经 store，写经服务层。
+
+**主 store `useLibraryStore`（domains/library/store.ts）**——视图/查询/列表/选择集/回收站与 SSE 事件编排。
+视图导航与排序偏好拆在 `navigation.ts`（`createViewNavigation` 工厂：历史栈/视图记忆/排序 scope 持久化，依赖注入便于单测），store 只做接线；**item 写操作在 `actions.ts` 服务层**（updateItem/trashSelected/restoreSelected/deleteLocation/clearTrash/renameLibrary/setPeriodicRescan/rescanFiles/refreshCache/cleanupIndex/addCategoryToSelected/addTagToSelected/removeTagFromSelected/removeCategoryFromSelected/moveSelectedToFolder/setStarForSelected，私有 batchUpdate/selectionUniqueIds 随迁/入 viewLogic），服务层可触发的 store 公共面只有 `requestSkeletonReload`（防抖重载入口）与 `refreshSelectionAggregate`：
 
 ```ts
 // ---- state ----
@@ -403,75 +375,40 @@ totalSize: number; loading: boolean; windowLoading: boolean;   // 整表加载�
 selection: string[];             // 选中条目 key（id:path），有序；末位为主选中/连选锚点（selectAll 基于全量骨架）
 selectionSet: Set<string>;       // selection 的 computed 集：渲染层成员查询一律 has()（数组 includes 在全选数万条目时是 O(n²) + 响应式索引跟踪双重开销）
 library: LibraryInfo | null;
-thumbSize: number;               // 网格卡片边长偏好（滑杆 120–280，齐行布局目标行高）：桌面端会话级、固定 160 不持久化；web 端（浏览器）用户显式设置过则记忆 localStorage（`hawk:thumbSize`，越界/损坏回退到无偏好，经 persist.ts）且不再自动切换，未设置时跟随视口宽度的动态默认——≥700px 用 160 常规网格，不足（手机竖屏等）用最大 280 大图流，横竖屏旋转经 useMediaQuery 自动跟随；用户设置统一走 setUserThumbSize（与动态默认写入路径区分）
+thumbSize: number;               // 网格卡片边长偏好（滑杆 120–280，齐行布局目标行高）：桌面端会话级固定 160 不持久化；web 端记忆 localStorage 且不再自动切换，未设置时跟随视口宽度动态默认
 sidebarVisible: boolean;         // 侧栏显隐（标题栏开关，默认开）
 toast: string | null;            // 轻提示（3s 自动清除）
-// 缩略图后台积压（task.progress 驱动；null 无积压，App.vue 顶部细进度条据此显隐）
-taskBacklog: { pending: number; active: number } | null;
+taskBacklog / indexProgress;     // 缩略图积压与索引进度（task.progress 驱动；indexProgressText 为配套文案 getter）
 // 会话内浏览历史：viewHistory/historyIndex，setView 压栈，数据变更修正就地替换当前条目
 
 // ---- getters ----
-isTrash: boolean;                // view.kind === 'trash'
-currentFolderPath: string | null;
-selectedItems: Item[];
-primarySelected: Item | null;    // selection 末位对应的 item
+isTrash / currentFolderPath / selectedItems / primarySelected / viewTitle / hasActiveFilters
 
-// ---- actions ----
-init(validators): Promise<void>;  // libraryInfo + resetList；restoreView 的存在性校验经 validators 注入（taxonomy 数据）
-setView(v: ViewState): void;                     // 切视图：压浏览历史 → 清空选择 → resetList
-goBack() / goForward(): void;                    // 标题栏前进/后退（canGoBack/canGoForward 驱动禁用态）
-toggleSidebar(): void;                           // 侧栏显隐开关
-searchText: string; submitSearch(): void;       // 搜索框草稿与提交（TitleBar/Inspector 顶搜索框共用，回车按空格拆 keywords）
-setQuery(patch: Partial<QueryState>): void;        // → resetList
-resetList(): Promise<void>;      // 取全量骨架（skeletonVersion 作废过期响应）→ 清 details → ensureWindow(0, 150)
-ensureWindow(start, end): Promise<void>;  // 视口窗口补数据：按骨架索引区间拉 item/list（次序逐位对齐），已缓存则跳过
-reloadSkeleton(): Promise<void>; // SSE 驱动骨架重载：成员/次序以服务端为准；滚动位置不动，详情缓存保留并清理失效项
-select(id: string, mod?: 'range' | 'toggle'): void;
-selectAll(): void; clearSelection(): void;
-updateItem(id: string, patch): Promise<void>;      // 就地更新 items；ApiError → toast
-addCategoryToSelected(name) / addTagToSelected(tag): Promise<void>;  // 批量端点并集追加（已含该分类/标签的项跳过）；ensureSelectionDetails 先补齐选中项详情
-moveSelectedToFolder(path): Promise<void>;         // 批量端点移动主位置；已在目标处的项跳过
-setStarForSelected(star): Promise<void>;           // 批量端点设置评分（多选面板与右键菜单共用）
-batchUpdate(ids, patch, doneText): Promise<void>;  // 批量端点统一入口；missing_ids 计数在 toast 提示「n 个未处理」
-trashSelected(): Promise<void>; restoreSelected(): Promise<void>;   // 删除选中项：每张卡片即一个位置（同内容多路径展开为独立条目），逐个 item/delete 只动该位置；恢复全部回收站位置
-clearTrash(): Promise<void>;                       // 调用方先二次确认
-deleteLocation(id, path): Promise<void>;         // 按位置删除（Inspector 文件位置列表）：其余位置保留，最后一个库内位置被删时整项回收
-viewerMode: boolean;          // 局域网 viewer token 且 [web].writable 未开启:隐藏全部写入口,服务端 403 为最终防线;writable 开启后 false(web 端与桌面端同权)
-showToast(msg: string): void;
-applyEvent(type: string, payload: unknown): void;  // SSE 分发入口（策略见下节）
+// ---- actions（读侧与状态机；写操作见 actions.ts 服务层）----
+init(validators): Promise<void>;  // appInfo/libraryInfo + restoreView（validators 注入 taxonomy 校验）+ resetList
+setView(v) / correctView(v) / goBack() / goForward(): void;
+setQuery(patch) / submitSearch() / resetList() / ensureWindow(start, end) / reloadSkeleton(): Promise<void>;
+select(key, mod?) / selectAll() / clearSelection(): void;
+requestSkeletonReload(): void;      // 防抖重载入口（服务层与 SSE 同一通道）
+refreshSelectionAggregate(): void;  // 立即重拉选择集聚合
+showToast(msg): void;
+applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量刷新策略」节）；updateItem 的响应也走此入口（单一代码路径）
 ```
 
-**分类维度子 store `useTaxonomyStore`（stores/taxonomy.ts）**：文件夹树 / 分类 / 标签 / 侧栏计数域。
+**分类维度子 store `useTaxonomyStore`（domains/taxonomy/store.ts）**：文件夹树 / 分类 / 标签 / 侧栏计数域。
 状态 `folders`（完整树含根）、`categories`、`tagList`、`trashTotal`、`allCount`（全部素材计数，应用隐藏排除）、
-`rootCount`、`uncategorizedCount`、`untaggedCount`、`globalFilter`（全局列表隐藏集）；getter `flatFolders`（移动目标选择控件）、`categoryOptions`、`folderExists/categoryExists/
-tagExists`（restoreView 校验经 App.vue 注入主 store init）、`isHidden`；action `refreshAll`（首屏/换库加载，先于主
-store init）、`refreshFolders/refreshTaxonomy/refreshGlobalFilter` 与文件夹/分类/标签 CRUD（视图跟随重命名/删除回退让当前
-视图经主 store `correctView` 修正）、`setHidden`（标记/取消全局列表隐藏）。创建时经 `registerTaxonomyHooks` 注册防抖刷新回调与
-`onGlobalFilterChanged`（隐藏集事件：同步两侧状态 → 重查骨架 + 计数），SSE 事件
-（item 增删/集合变化/folder.changed/global_filter.changed）与本地批量 action 的分类维度刷新都由主 store 经钩子转发至此。
-隐藏排除经主 store `listParams` 在全局类视图（全部/根目录/未分类/未标签）附带 `exclude_folders/categories/tags`
-（隐藏集由本 store 经 `setGlobalFilter` 注入主 store，保持引用方向 DAG）；维度自身视图与回收站不排除。
+`rootCount`、`uncategorizedCount`、`untaggedCount`、`globalFilter`（全局列表隐藏集）；getter `flatFolders`、`categoryOptions`、`folderExists/categoryExists/tagExists`、`isHidden`；action `refreshAll`（首屏/换库加载，先于主 store init）、`refreshFolders/refreshTaxonomy/refreshGlobalFilter`（裸函数，供需等待结果的编排）、**`refreshFoldersSoon/refreshTaxonomySoon`（防抖公共入口，SSE hooks 与服务层写操作共用）**、文件夹/分类/标签 CRUD（视图跟随重命名/删除回退经主 store `correctView` 修正）、`setHidden`。创建时经 `registerTaxonomyHooks` 注册防抖刷新回调与 `onGlobalFilterChanged`。隐藏排除经主 store `listParams` 在全局类视图附带 `exclude_*` 参数（隐藏集经 `setGlobalFilter` 注入主 store，保持引用方向 DAG）。
 
-**导入子 store `useImporterStore`（stores/importer.ts）**：批量导入域。状态 `importProgress`
-（null 无任务；total=0 收集文件阶段不定态）、`dupPrompt`（重复策略弹窗挂起态，ImportDuplicateDialog
-呈现）；action `importBegin()`（拖拽落下占位，并发拒绝并 toast）、`importEntries(entries, targetFolder?,
-fallbackFiles?)`（拖拽统一入口：targetFolder 缺省为平铺导入——目录结构拍扁、全部落当前视图文件夹，
-网格/其余窗口区域 drop 的行为；指定 targetFolder 为结构化导入——侧栏文件夹树专用，拖入目录在目标下
-重建目录树（空目录也创建，folder/create 逐级建、同名已存在静默合并），文件按映射路径逐个入库；
-fallbackFiles 为 entries 不可用的拖拽源退回的平铺文件列表（无目录信息，直落目标文件夹）），
-`importFiles(files)`（浏览器 multipart itemUpload，手机上传按钮的主入口）。递归收集在
-`collectEntry`（webkitGetAsEntry 展开，'.' 开头隐藏条目跳过，与服务端侧栏树 is_hidden 同口径）；
-Electron 逐个 itemAddByPath（路径导入，保留时间戳），浏览器逐个 itemUpload。共享
-`importBatch.runImportBatch` 状态机（重复策略 ask→首问整批生效、计数、进度推进，依赖注入可单测）：
-带 skip_existing，首个重复时弹窗问一次（忽略/仍然导入），结束汇总 toast（新增/忽略重复/重复导入/失败）。
-平铺 folder_path 取主 store 的 currentFolderPath，提示经主 store showToast。
+**导入子 store `useImporterStore`（domains/import/store.ts）**：批量导入域。状态 `importProgress`
+（null 无任务；total=0 收集文件阶段不定态）、`dupPrompt`（重复策略弹窗挂起态）；action `importBegin()`、
+`importEntries(entries, targetFolder?, fallbackFiles?)`（拖拽统一入口：targetFolder 缺省平铺导入，指定为侧栏
+结构化导入——目录树重建、文件按映射路径入库）、`importFiles(files)`（浏览器 multipart 上传主入口）。共享
+`logic/importBatch.runImportBatch` 状态机（重复策略 ask→首问整批生效、计数、进度推进，依赖注入可单测）。
 
-**预览子 store `usePreviewStore`（stores/preview.ts）**：预览浮层与图片编辑域。状态 `previewId`、
-`previewItem`（sticky：详情未加载不置空，防浮层卸载重建）、`editorTarget`（编辑窗口目标，App.vue 据此挂载
-ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previewIndex/previewNavId`（邻居 id 取自
-主 store 骨架）、`openEditor/closeEditor`、`saveImageEdit(id, angle)`（编辑窗口保存：客户端重编码
-（canvas，JPEG EXIF 字节级回填并重置 Orientation，见 imageEdit.ts）→ item/replace；id 漂移后新 item 就地替换
-详情（预览若正打开则跟随新 id）；返回是否成功，调用方据此关闭编辑窗口）。打开预览时按需 ensureWindow 补详情。
+**预览子 store `usePreviewStore`（domains/preview/store.ts）**：预览浮层与图片编辑域。状态 `previewId`、
+`previewItem`（sticky：详情未加载不置空）、`editorTarget`（App.vue 据此挂载 ImageEditDialog）；action
+`openPreview/closePreview/navigatePreview`、`openEditor/closeEditor`、`saveImageEdit(id, angle)`（客户端
+重编码 → item/replace；id 漂移后就地替换详情）。打开预览时按需 ensureWindow 补详情。
 
 ### Vue 实践基线
 
@@ -529,9 +466,9 @@ ImageEditDialog）；action `openPreview/closePreview/navigatePreview`、`previe
 | `ImportDuplicateDialog.vue` | — | — | 导入重复策略对话框：导入过程中首个「内容已在库内」触发（importer.dupPrompt 挂起的 resolve，App.vue 全局挂载），「忽略重复」（默认，Esc/点遮罩同效）/「仍然导入」二选一，选择整批生效（批量导入逐文件弹窗不可用）；服务端 skip_existing 配合（见 item/add） |
 | `EmptyState.vue` | `text: string` | — | 空态文案与「拖入文件开始」提示 |
 
-### composables
+### composables 分布
 
-通用能力不重复造：滚动驱动用原生 `@scroll` + rAF（可见区间计算在 ItemGrid.vue 内联，配合骨架布局做虚拟渲染）；拖拽用 `useDropZone`；全局监听用 `useEventListener`。业务 composable 如下（单测只覆盖纯函数/决策逻辑模块 viewLogic/importBatch/layout，composable 本体靠移动端冒烟与手测）：
+通用能力不重复造：滚动驱动用原生 `@scroll` + rAF（可见区间计算在 ItemGrid.vue 内联，配合骨架布局做虚拟渲染）；拖拽用 `useDropZone`；全局监听用 `useEventListener`。业务 composable 如下（单测只覆盖纯函数/决策逻辑模块——现已集中在各域 logic/，composable 本体靠移动端冒烟与手测；通用 composable 在 shared/composables/，跨域业务 composable 在各域 logic/ 或 app/）：
 
 | composable | 签名与行为 |
 | ---------- | ---------- |
@@ -621,7 +558,7 @@ Electron 端内置「检查更新 → 下载（sha256 校验）→ 重启替换�
 - **校验**：CI 为每个产物生成 `<artifact>.sha256` 边车随 Release 上传；主进程下载后强制比对，缺失即报错引导手动下载——不提供无校验的更新。因此**边车机制上线的首个发布之后，更新功能才可用**（存量发布无边车）
 - **取消与复用**：下载可中途取消（AbortController 中断，半成品即时清理，回「发现新版本」态可直接重下）；检查发现更新时先在暂存目录查磁盘缓存——资产名不含版本（stable 固定名 / nightly 滚动 tag），「同版本」只能靠 sha256 边车比对判定，哈希一致即同一个包（覆盖「下完未装就退出」场景），命中则跳过下载直接可安装
 - **替换**（运行中文件被锁，不能自我替换）：Linux AppImage 同目录拷贝 + 原子改名覆盖自身（旧挂载来自旧 inode 不受影响）+ `app.relaunch()`；macOS 由 detached sh 脚本接力（等旧进程 pid 退出 → 解压 zip → 替换 `.app` → 拉起新实例 → 自清理；解压/暂存与 `.app` 同目录同卷 mv 原子，需对安装位置有写权限；app 内 fetch 下载无 quarantine 标记，不触发 Gatekeeper）；Windows 由随包分发的更新辅助程序接力（Rust 单文件 `hawk-update.exe`，源码在仓库根 `hawk-update/`，经 `win.extraResources` 进产物）：主进程把它复制到更新临时目录后启动（temp 副本运行，避免应用目录内同名文件被更新时占用自身），它用 OpenProcess+WaitForSingleObject 等旧进程退出（校验进程名防 PID 复用误等）→ 解压 → 递归覆盖（单文件带重试窗口）→ 拉起新实例 → 自清理，全程写更新目录 `install.log`、失败非零退出——曾用 PowerShell 脚本做同一件事，执行策略/PSModulePath 污染等环境差异导致静默失败（「点安装没反应」且现场无迹可循），故换确定性行为的专用程序
-- **UI**：设置面板「更新」分区（仅 Electron）：当前版本（v + 短 sha）、通道单选、检查/下载（进度条，total 未知时不定态动画；下载中可取消）/重启安装（缓存命中时检查完直接出现）；启动后主界面就绪延迟 8s 静默检查（每会话一次），发现新版本 toast 提示一次（`hawk:lastUpdateNotice` 按 通道@版本 去重，避免每次启动重复打扰）。渲染层状态机在 `composables/useUpdater.ts`（idle → checking → uptodate/available/error → downloading → ready），检查/下载/安装语义全部在主进程「应用更新」段，渲染层只做编排
+- **UI**：设置面板「更新」分区（仅 Electron）：当前版本（v + 短 sha）、通道单选、检查/下载（进度条，total 未知时不定态动画；下载中可取消）/重启安装（缓存命中时检查完直接出现）；启动后主界面就绪延迟 8s 静默检查（每会话一次），发现新版本 toast 提示一次（`hawk:lastUpdateNotice` 按 通道@版本 去重，避免每次启动重复打扰）。渲染层状态机在 `domains/settings/updater.ts`（idle → checking → uptodate/available/error → downloading → ready），检查/下载/安装语义全部在主进程「应用更新」段，渲染层只做编排
 
 ## 目录结构
 

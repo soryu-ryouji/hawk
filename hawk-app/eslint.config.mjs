@@ -27,10 +27,14 @@ export default tseslint.config(
     },
   },
   {
-    // 域边界强制（重构过渡期 warn，域迁移完成后收敛 error）：
-    // app（装配层）可引用一切；域只能引用 shared 与其他域的 index.ts；shared 不依赖上层。
-    // legacy 类型覆盖尚未迁入域结构的存量文件（components/ stores/ composables/ 根模块）——
-    // 随阶段 4/5 迁移完成后收紧为 disallow
+    // 域边界强制（error）。两层守护，按引用书写方式分工：
+    // 1) boundaries/dependencies 管「相对引用」的方向纪律：app 可引用一切；域向 shared/域；
+    //    shared 只准自引用（不得上引）；域内相对引用为 internal 关系自动放行
+    //    （含域 index.ts 的 barrel 再导出）。相对层的「只准经 index」不单独设卡——
+    //    跨边界引用按约定一律走 @/ 别名（见下条），相对写法跨域在目录树上也不自然
+    // 2) no-restricted-syntax 管「@/ 别名引用」的出口纪律（boundaries 的解析器不认识
+    //    vite 别名）：@/domains/<x>/… 深入域内文件一律禁止（只准 @/domains/<x> 出口）；
+    //    @/app/ 为装配层私有（app 内部互引用相对路径）
     files: ['web/src/**'],
     plugins: { boundaries },
     settings: {
@@ -38,35 +42,35 @@ export default tseslint.config(
         { type: 'app', pattern: 'web/src/app/**' },
         { type: 'domain', pattern: 'web/src/domains/*/**' },
         { type: 'shared', pattern: 'web/src/shared/**' },
-        { type: 'legacy', pattern: 'web/src/**' },
       ],
     },
     rules: {
-      // 目标终态规则的先遣（warn）：域之间禁止直接引用（须经各自 index.ts，阶段 5 升 error
-      // 并补 entry-point 强制）；shared 只准自引用；legacy 存量区与 app 装配层暂不受限
       'boundaries/dependencies': [
-        'warn',
+        'error',
         {
           default: 'disallow',
           policies: [
             {
               from: { element: { type: 'app' } },
-              allow: [{ to: { element: { types: { anyOf: ['app', 'domain', 'shared', 'legacy'] } } } }],
+              allow: [{ to: { element: { types: { anyOf: ['app', 'domain', 'shared'] } } } }],
             },
             {
               from: { element: { type: 'domain' } },
-              allow: [
-                { to: { element: { types: { anyOf: ['shared', 'legacy'] } } } },
-                // 同元素内部引用（域内 index/相对路径）放行；跨域仍需经对方 index（阶段 5 收紧）
-                { to: { element: { type: 'domain' } }, sameElement: true },
-              ],
+              allow: [{ to: { element: { types: { anyOf: ['domain', 'shared'] } } } }],
             },
             { from: { element: { type: 'shared' } }, allow: [{ to: { element: { type: 'shared' } } }] },
-            {
-              from: { element: { type: 'legacy' } },
-              allow: [{ to: { element: { types: { anyOf: ['legacy', 'app', 'domain', 'shared'] } } } }],
-            },
           ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportDeclaration[source.value=/^@\\/domains\\/[^/]+\\/.+/], ImportExpression[source.value=/^@\\/domains\\/[^/]+\\/.+/], ExportAllDeclaration[source.value=/^@\\/domains\\/[^/]+\\/.+/]',
+          message: '域外引用必须经域出口：@/domains/<domain>（不得深入域内文件）',
+        },
+        {
+          selector: 'ImportDeclaration[source.value=/^@\\/app\\//]',
+          message: '@/app/ 为装配层私有（app 内部互相引用用相对路径）',
         },
       ],
     },

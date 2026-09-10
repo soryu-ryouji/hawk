@@ -2,9 +2,9 @@
 // 应用内启动屏：server 扫描索引期间的进度反馈（端口自旧独立 loading.html 页——
 // 单页生命周期无二次导航，启动过程不会出现空白窗口；窗口在首帧渲染后才 show）。
 // Electron 进度经主进程 IPC 推送；浏览器（局域网查看）由 useStartup 轮询驱动。
-import WindowControls from '@/app/chrome/WindowControls.vue';
+import WindowControls from '../chrome/WindowControls.vue';
 import { hasShell, isMac } from '@/shared/lib/platform';
-import type { ServerProgress } from '@/app/startup';
+import type { ServerProgress } from '../startup';
 
 defineProps<{ progress: ServerProgress | null; error: string | null }>();
 const emit = defineEmits<{ quit: [] }>();
