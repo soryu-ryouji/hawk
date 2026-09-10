@@ -530,7 +530,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 - 瀑布流不等高布局、框选、颜色标签、标签云
 - URL/插件导入的界面入口（API 已支持）
 - 多素材库并存、服务器版
-- UI/组件级测试框架不做全量覆盖；Vitest 主要覆盖纯函数与决策逻辑（viewLogic/importBatch/layout/format），侧栏维度行等交互密集组件有渲染测试（@vue/test-utils + jsdom，渲染分支回归），契约层由 server 的 smoke.sh 兜底；真实交互另有 e2e 工具兜底（`tools/dnd-test.mjs` 真实鼠标事件验证拖拽、`tools/ui-check.mjs` 真实 Electron + CDP 自检）
+- UI/组件级测试框架不做全量覆盖；Vitest 主要覆盖纯函数与决策逻辑（viewLogic/importBatch/layout/format），侧栏维度行等交互密集组件有渲染测试（@vue/test-utils + jsdom，渲染分支回归），契约层由 server 的 smoke.sh 兜底；真实交互另有 e2e 工具兜底（`tools/dnd-test.mjs` 真实鼠标事件验证拖拽、`tools/ui-check.mjs` 真实 Electron + hawk-daemon + CDP 自检 101 项：布局/浏览/搜索/评分筛选/批量操作/回收站全流程/SSE 实时/视图记忆/同 hash 多位置/侧栏筛选/**换库重启**（回落启动屏→新库就绪→配置持久化→切回对称）。自检以假 HOME 隔离运行：spawn Electron 时重定向 `HOME`（Windows 三件套 `USERPROFILE/APPDATA/LOCALAPPDATA`），主进程配置与 userData 全落临时目录，真实用户配置零触碰）
 
 ## 打包与分发
 
@@ -594,7 +594,7 @@ hawk-app/
 │   ├── test-mobile-web.mjs # 移动端网页冒烟测试编排（临时库 + server + 断言）
 │   └── mobile-web-probe.cjs# 测试探针：无 preload 的 sandbox Electron 窗口模拟手机浏览器，输出 JSONL 探针与截图
 ├── tools/
-│   ├── ui-check.mjs        # UI 端到端自检：真实启动 Electron，CDP 断言 DOM/交互/SSE 并截图
+│   ├── ui-check.mjs        # UI 端到端自检（CI 运行）：真实启动 vite + Electron + hawk-daemon（临时双素材库 + 假 HOME 配置隔离），CDP 断言 DOM/交互/SSE/换库重启并截图
 │   ├── dnd-test.mjs        # 拖拽端到端复现：真实浏览器 + 真实鼠标事件（多选素材拖入侧栏文件夹，断言行高亮与移动生效）
 │   ├── test-resources.mjs  # extraResources 平台隔离回归（hawk-update 只进 Windows 产物）
 │   └── test-update.mjs     # hawk-update.exe 端到端验证（需先构建）

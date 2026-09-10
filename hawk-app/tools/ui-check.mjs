@@ -92,22 +92,30 @@ for (let i = 1; i <= 6; i++) {
 fs.writeFileSync(path.join(lib, '海报', 'cat.png'), png(2, 4, [0, 255, 0]));
 fs.writeFileSync(path.join(lib, '海报', 'logo.png'), png(8, 8, [0, 0, 255]));
 
-// 预设素材库配置，跳过目录选择框（跑完恢复原配置）
-// 应用自有配置目录全平台统一为 ~/.config/hawk（TOML，见 electron/src/app-config.ts）；
-// Electron 会话数据在平台默认 userData（appData/hawk-app），本脚本不触碰
-const configDir = path.join(os.homedir(), '.config', 'hawk');
+// 假 HOME 隔离：spawn Electron 时重定向 HOME，主进程配置（os.homedir()/.config/hawk，
+// 见 electron/src/paths.ts）与 Electron userData 全部落入临时目录——真实用户配置零触碰
+// （旧「备份→写入→退出恢复」方案在 SIGKILL 下会残留测试配置）。Windows 的 os.homedir()
+// 读 USERPROFILE，userData 另读 APPDATA/LOCALAPPDATA，三件套一并重定向
+const fakeHome = path.join(tmp, 'home');
+const configDir = path.join(fakeHome, '.config', 'hawk');
 fs.mkdirSync(configDir, { recursive: true });
 const configFile = path.join(configDir, 'config.toml');
-const configBackup = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : null;
-// 任何退出路径（含 spawn 失败导致的进程崩溃）都恢复原配置；原本无配置则删除本次写入，不残留
-process.on('exit', () => {
-  if (configBackup !== null) {
-    fs.writeFileSync(configFile, configBackup);
-  } else {
-    fs.rmSync(configFile, { force: true });
-  }
-});
-fs.writeFileSync(configFile, toml.stringify({ libraryPath: lib }));
+const homeEnv =
+  process.platform === 'win32'
+    ? {
+        USERPROFILE: fakeHome,
+        APPDATA: path.join(fakeHome, 'AppData', 'Roaming'),
+        LOCALAPPDATA: path.join(fakeHome, 'AppData', 'Local'),
+      }
+    : { HOME: fakeHome };
+
+// 第二个素材库（换库重启用）：内容与主库可区分
+const libB = path.join(tmp, 'library-b');
+fs.mkdirSync(libB, { recursive: true });
+fs.writeFileSync(path.join(libB, 'beta1.png'), png(4, 2, [0, 0, 255]));
+fs.writeFileSync(path.join(libB, 'beta2.png'), png(4, 2, [0, 255, 255]));
+// 预置当前库 + 历史含第二库（跳过目录选择框；下拉历史可直接切换）
+fs.writeFileSync(configFile, toml.stringify({ libraryPath: lib, libraryHistory: [libB] }));
 
 // ---------- 启动 vite + electron ----------
 
@@ -131,8 +139,8 @@ try {
       cwd: root,
       // 启动失败（沙箱/缺动态库）时让报错直接进日志，而不是只剩一句「等待超时」
       stdio: 'inherit',
-      // 对账间隔缩短到 3s：监听静默丢事件时自检也能快速收敛
-      env: { ...process.env, HAWK_RESCAN_INTERVAL: '3' },
+      // 对账间隔缩短到 3s：监听静默丢事件时自检也能快速收敛；HOME 重定向隔离用户配置
+      env: { ...process.env, ...homeEnv, HAWK_RESCAN_INTERVAL: '3' },
     },
   );
 
@@ -813,6 +821,82 @@ try {
   check('外部删除后刷新缓存收敛残留', true, true);
   check('刷新缓存响应含消失对账计数', typeof refreshRes?.removed === 'number', true);
 
+  // ---- 搜索：关键词提交过滤与清空恢复 ----
+  await evaljs(`(() => {
+    const input = document.querySelector('.search-box input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 'sunset');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  const searched = await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && names.length === 1 && names[0] === 'sunset.png' ? true : null;
+  }, 10_000);
+  check('搜索关键词过滤到命中卡', searched, true);
+  await evaljs(`(() => {
+    const input = document.querySelector('.search-box input');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  })()`);
+  await waitFor(async () => ((await evaljs(`document.querySelectorAll('.card').length`)) >= 8 ? true : null), 10_000);
+  check('清空搜索恢复列表', true, true);
+
+  // ---- 筛选工具列：评分 chip 过滤（界面与服务端口径一致） ----
+  await evaljs(`document.querySelector('[title="筛选工具列"]')?.click()`);
+  await waitFor(() => evaljs(`!!document.querySelector('.filterbar')`), 5_000);
+  await evaljs(`document.querySelector('.filterbar .chip[title="评分筛选"]')?.click()`);
+  await waitFor(() => evaljs(`!!document.querySelector('.menu .item')`), 5_000);
+  await evaljs(`[...document.querySelectorAll('.menu .item')].find((n) => n.textContent.trim() === '5 星')?.click()`);
+  const starFiltered = await waitFor(async () => {
+    const total = await evaljs(`fetch(new URLSearchParams(location.hash.slice(1)).get('api') + '/api/v1/item/list', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + new URLSearchParams(location.hash.slice(1)).get('token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ star: 5 }),
+    }).then((r) => r.json()).then((e) => e.data.total).catch(() => -1)`);
+    const cards = await evaljs(`document.querySelectorAll('.card').length`);
+    return total > 0 && cards === total ? true : null;
+  }, 10_000);
+  check('评分筛选生效（界面=服务端口径）', starFiltered, true);
+  await evaljs(`document.querySelector('.filterbar .chip[title="评分筛选"]')?.click()`);
+  await waitFor(() => evaljs(`!!document.querySelector('.menu .item')`), 5_000);
+  await evaljs(`[...document.querySelectorAll('.menu .item')].find((n) => n.textContent.trim() === '全部评分')?.click()`);
+  await waitFor(async () => ((await evaljs(`document.querySelectorAll('.card').length`)) >= 8 ? true : null), 10_000);
+  check('清除评分筛选恢复列表', true, true);
+
+  // ---- 回收站全流程：Delete 进站 → 站内视图 → 恢复回原位 ----
+  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent.trim() === 'f2.png')?.click()`);
+  await evaljs(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))`);
+  await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && !names.includes('f2.png') ? true : null;
+  }, 10_000);
+  check('Delete 快捷键移入回收站', true, true);
+  await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('回收站'))?.click()`);
+  await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && names.includes('f2.png') ? true : null;
+  }, 10_000);
+  check('回收站视图显示被删卡', true, true);
+  // 恢复入口在多选面板（单选渲染 InspectorItem 无恢复按钮）：ctrl 多选站内两张一起恢复
+  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent.trim() === 'f2.png')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+  await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent.includes('sunset-copy'))?.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))`);
+  // 选中后等检查器批量面板渲染完成再取按钮（Vue 更新是异步的，立即查询会静默落空）
+  await waitFor(() => evaljs(`!!document.querySelector('.multi button')`), 5_000);
+  await evaljs(`[...document.querySelectorAll('.multi button')].find((b) => b.textContent.trim() === '恢复')?.click()`);
+  await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && !names.includes('f2.png') ? true : null;
+  }, 15_000);
+  await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('全部素材'))?.click()`);
+  await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && names.includes('f2.png') ? true : null;
+  }, 10_000);
+  check('恢复回原位', true, true);
+
   // ---- 侧栏底栏筛选框：过滤文件夹/分类/标签（Eagle 式） ----
   await evaljs(`(() => {
     const input = document.querySelector('.nav-filter input');
@@ -848,6 +932,38 @@ try {
   })()`);
   await waitFor(async () => evaljs(`(document.querySelector('.sidebar .tree')?.textContent ?? '').includes('图标') ? true : null`), 5_000);
   check('侧栏筛选清空后恢复', true, true);
+  // ---- 换库重启：下拉切库 → 回落启动屏 → 新库就绪 → 配置持久化 → 切回 ----
+  await evaljs(`document.querySelector('.sidebar .library-name')?.click()`);
+  await waitFor(() => evaljs(`!!document.querySelector('.lib-panel .lib-item')`), 5_000);
+  await evaljs(`[...document.querySelectorAll('.lib-panel .lib-item')].find((n) => n.textContent.includes('library-b'))?.click()`);
+  // serverRestarting → 相位机回落启动屏（boot.ts 链路）；新库 daemon 起进程+索引需要时间，轮询抓启动屏窗口
+  const splashShown = await waitFor(async () => evaljs(`!!document.querySelector('.standalone')`), 10_000).catch(() => null);
+  check('换库回落启动屏', splashShown === true, true);
+  await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && names.length === 2 && names.includes('beta1.png') && names.includes('beta2.png') ? true : null;
+  }, 90_000);
+  check('新库网格渲染（2 张）', true, true);
+  check('新库无旧库素材残留', await evaljs(`![...document.querySelectorAll('.card .name')].some((n) => n.textContent.startsWith('f'))`), true);
+  const cfgB = toml.parse(fs.readFileSync(configFile, 'utf8'));
+  check('换库后配置持久化当前库', cfgB.libraryPath === libB, true);
+  check('历史记录保留旧库', (cfgB.libraryHistory ?? []).includes(lib), true);
+  await screenshot('ui-library-b.png');
+
+  // 切回旧库对称验证（下拉条目按显示名区分：library / library-b）
+  await evaljs(`document.querySelector('.sidebar .library-name')?.click()`);
+  await waitFor(() => evaljs(`!!document.querySelector('.lib-panel .lib-item')`), 5_000);
+  await evaljs(
+    `[...document.querySelectorAll('.lib-panel .lib-item')].find((n) => n.textContent.trim().startsWith('library') && !n.textContent.includes('library-b'))?.click()`,
+  );
+  await waitFor(async () => {
+    const names = await evaljs(`[...document.querySelectorAll('.card .name')].map((n) => n.textContent)`);
+    return names && names.includes('sunset.png') ? true : null;
+  }, 90_000);
+  check('切回旧库恢复内容', true, true);
+  const cfgBack = toml.parse(fs.readFileSync(configFile, 'utf8'));
+  check('切回后配置持久化', cfgBack.libraryPath === lib, true);
+
   await screenshot('ui-trash.png');
 
   console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
