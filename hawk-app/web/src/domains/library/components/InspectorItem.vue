@@ -3,15 +3,16 @@
 // 只读的两个来源：触屏设备（编辑控件易误触）与只读查看（局域网 viewer token）——同结构全静态展示。
 import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '@/shared/api/endpoints';
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '../store';
+import { addCategoryToSelected, deleteLocation, updateItem } from '../actions';
 import { useLayout } from '@/shared/composables/useLayout';
-import { displayPath, itemKey } from '../viewLogic';
+import { displayPath, itemKey } from '../logic/viewLogic';
 import { formatSize, formatTime } from '@/shared/lib/format';
-import TagEditor from './TagEditor.vue';
+import TagEditor from '@/components/TagEditor.vue';
 import StarRating from './StarRating.vue';
 import Icon from '@/shared/ui/Icon.vue';
-import CategoryPickerDialog from './CategoryPickerDialog.vue';
-import FolderTreePicker from './FolderTreePicker.vue';
+import CategoryPickerDialog from '@/components/CategoryPickerDialog.vue';
+import FolderTreePicker from '@/components/FolderTreePicker.vue';
 import type { ViewState } from '@/shared/types';
 
 const store = useLibraryStore();
@@ -84,31 +85,31 @@ function submitName() {
   name.value = value;
   if (item.value && value && value !== item.value.name) {
     // 改名是位置级操作（同内容多位置时只改本条目对应的文件）
-    void store.updateItem(item.value.id, { name: value }, item.value.path);
+    void updateItem(item.value.id, { name: value }, item.value.path);
   }
 }
 
 function submitAnnotation() {
   if (item.value && annotation.value !== (item.value.annotation ?? '')) {
-    void store.updateItem(item.value.id, { annotation: annotation.value });
+    void updateItem(item.value.id, { annotation: annotation.value });
   }
 }
 
 function submitUrl() {
   if (item.value && url.value !== (item.value.url ?? '')) {
-    void store.updateItem(item.value.id, { url: url.value });
+    void updateItem(item.value.id, { url: url.value });
   }
 }
 
 watch(tags, (value) => {
   if (item.value && JSON.stringify(value) !== JSON.stringify(item.value.tags ?? [])) {
-    void store.updateItem(item.value.id, { tags: value });
+    void updateItem(item.value.id, { tags: value });
   }
 });
 
 watch(star, (value) => {
   if (item.value && value !== Number(item.value.star)) {
-    void store.updateItem(item.value.id, { star: value });
+    void updateItem(item.value.id, { star: value });
   }
 });
 
@@ -116,7 +117,7 @@ watch(star, (value) => {
 
 function removeCategory(category: string) {
   if (item.value) {
-    void store.updateItem(item.value.id, {
+    void updateItem(item.value.id, {
       categories: (item.value.categories ?? []).filter((c) => c !== category),
     });
   }
@@ -125,7 +126,7 @@ function removeCategory(category: string) {
 /** 添加到分类（＋ 按钮确认后）：复用批量追加 action（单选即长度为 1 的批量） */
 function addCategory(category: string) {
   showCategoryPicker.value = false;
-  store.addCategoryToSelected(category);
+  addCategoryToSelected(category);
 }
 
 // ---- 文件夹 ----
@@ -155,7 +156,7 @@ function toggleFolderPicker() {
 function moveToFolder(path: string) {
   if (item.value && path !== currentDir.value) {
     // 移动是位置级操作（同上）
-    void store.updateItem(item.value.id, { folder_path: path }, item.value.path);
+    void updateItem(item.value.id, { folder_path: path }, item.value.path);
   }
 }
 
@@ -352,7 +353,7 @@ function searchColor(color: string) {
             v-if="!store.viewerMode && (item.paths?.length ?? 0) > 1"
             class="finder danger-btn"
             title="删除此位置（其余位置保留）"
-            @click="store.deleteLocation(item.id, path)"
+            @click="deleteLocation(item.id, path)"
           >
             <Icon name="trash" :size="13" />
           </button>

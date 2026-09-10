@@ -6,7 +6,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '@/shared/api/endpoints';
 import { shell } from '@/shared/lib/platform';
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '@/domains/library';
+import { cleanupIndex, setPeriodicRescan } from '@/domains/library';
 
 const store = useLibraryStore();
 
@@ -96,7 +97,7 @@ const intervalText = computed(() => {
 });
 
 async function onPeriodicRescan(e: Event) {
-  await store.setPeriodicRescan((e.target as HTMLInputElement).checked);
+  await setPeriodicRescan((e.target as HTMLInputElement).checked);
 }
 
 /** 索引体检按钮状态（结果 toast 由 store 展示） */
@@ -105,7 +106,7 @@ const cleaning = ref(false);
 async function runCleanup() {
   cleaning.value = true;
   try {
-    await store.cleanupIndex();
+    await cleanupIndex();
   } finally {
     cleaning.value = false;
   }

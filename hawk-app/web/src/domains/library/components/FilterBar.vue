@@ -3,7 +3,7 @@
 // 显隐由挂载方（App.vue）控制：点击顶栏漏斗按钮展开，或查询带筛选条件（评分/颜色/尺寸）时常驻。
 // 评分：点击 chip 弹星级菜单；颜色：条件激活时显示色块 chip，可就地清除；
 // 尺寸：SizeMenu（短边档位区间 / 宽高区间，面板内模式下拉切换）。
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '../store';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import Icon from '@/shared/ui/Icon.vue';
 import SizeMenu from './SizeMenu.vue';

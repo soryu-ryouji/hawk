@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
+import { useLibraryStore } from '@/domains/library';
+import { refreshCache } from '@/domains/library';
+import { useTaxonomyStore } from '@/stores/taxonomy';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import Icon from '@/shared/ui/Icon.vue';
 
@@ -46,7 +47,7 @@ function onContextMenu(e: MouseEvent) {
       {
         label: '刷新缓存',
         title: `修复该${kindLabel}下素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目`,
-        action: () => void store.refreshCache(props.kind, props.name),
+        action: () => void refreshCache(props.kind, props.name),
       },
       {
         label: `删除${kindLabel}`,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { useTaxonomyStore } from '../stores/taxonomy';
+import { useTaxonomyStore } from '@/stores/taxonomy';
 import SelectBox from '@/shared/ui/SelectBox.vue';
 
 defineProps<{ title: string }>();

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 连接分区（仅局域网 web 端）：当前访问级别 + token 注销（换身份重新输入）。
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '@/domains/library';
 
 const store = useLibraryStore();
 const emit = defineEmits<{ logout: [] }>();

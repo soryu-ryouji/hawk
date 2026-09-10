@@ -5,7 +5,7 @@
 import { computed, ref, type Ref } from 'vue';
 import { api } from '@/shared/api/endpoints';
 import { loadJSON, saveJSON, STORAGE_KEYS } from '@/shared/lib/persist';
-import { resolveSort } from '../viewLogic';
+import { resolveSort } from './logic/viewLogic';
 import type { LibraryInfo, QueryState, ViewPrefs, ViewState } from '@/shared/types';
 
 /** restoreView 的存在性校验（文件夹/分类/标签数据在 taxonomy store，由组件层注入，保持引用方向 DAG） */

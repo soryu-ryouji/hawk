@@ -37,6 +37,11 @@ export function splitKey(key: string): { id: string; path: string } {
   return { id: key.slice(0, i), path: key.slice(i + 1) };
 }
 
+/** 选择集的内容 id（去重）：元数据类批量操作（标签/分类/评分）按内容应用一次（同 hash 多位置只算一份） */
+export function selectionUniqueIds(selection: readonly string[]): string[] {
+  return [...new Set(selection.map((key) => splitKey(key).id))];
+}
+
 /** 选择集总字节数：按选择集条目 key 查表累加。数据源是骨架（含 size，全量）而非详情
  * （详情只覆盖视口窗口：全选数万条目时仅百来条有详情，按详情聚合必然偏小） */
 export function selectionTotalSize(selection: readonly string[], sizes: ReadonlyMap<string, number>): number {

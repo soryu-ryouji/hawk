@@ -4,8 +4,8 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
-import { debounce, errorText } from './util';
-import { registerTaxonomyHooks, useLibraryStore } from './library';
+import { debounce, errorText } from '@/shared/lib/storeUtil';
+import { registerTaxonomyHooks, useLibraryStore } from '@/domains/library';
 import type { CategoryInfo, FolderNode, GlobalFilter, TagInfo } from '@/shared/types';
 
 export const useTaxonomyStore = defineStore('taxonomy', () => {
@@ -257,9 +257,19 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
   const debouncedRefreshFolders = debounce(300);
   const debouncedRefreshTaxonomy = debounce(300);
 
+  /** 防抖刷新入口（公共）：SSE hooks、服务层批量写操作、跨域调用统一走这两个，
+   *  爆发期合并为 300ms 内一次；refreshAll/refreshFolders 等裸函数仅供需等待结果的编排使用 */
+  function refreshTaxonomySoon() {
+    debouncedRefreshTaxonomy(() => void refreshTaxonomy());
+  }
+
+  function refreshFoldersSoon() {
+    debouncedRefreshFolders(() => void refreshFolders());
+  }
+
   registerTaxonomyHooks({
-    refreshTaxonomy: () => debouncedRefreshTaxonomy(() => void refreshTaxonomy()),
-    refreshFolders: () => debouncedRefreshFolders(() => void refreshFolders()),
+    refreshTaxonomy: refreshTaxonomySoon,
+    refreshFolders: refreshFoldersSoon,
     onGlobalFilterChanged: (filter) => onGlobalFilterUpdated(filter),
   });
 
@@ -282,7 +292,9 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
     setHidden,
     refreshGlobalFilter,
     refreshFolders,
+    refreshFoldersSoon,
     refreshTaxonomy,
+    refreshTaxonomySoon,
     refreshAll,
     folderCreate,
     folderRename,

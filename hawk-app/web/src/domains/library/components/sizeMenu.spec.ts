@@ -3,7 +3,7 @@
 // SizeMenu 不依赖 store（props 入 / select 事件出），可直接挂载
 import { afterEach, describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
-import SizeMenu from './components/SizeMenu.vue';
+import SizeMenu from './SizeMenu.vue';
 import type { SizeFilter } from '@/shared/types';
 
 // 面板打开状态下 unmount 会残留 Teleport 到 body 的 DOM，污染后续测试的 document 查询

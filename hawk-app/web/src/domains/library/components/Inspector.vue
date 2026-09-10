@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 检查器壳：顶部拖拽条（含触屏横屏时的搜索框）+ 按选中数分区分发：
 // 单选 → InspectorItem（完整编辑）；多选 → InspectorBatch（批量操作）；无选中 → 分区状态。
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '../store';
 import { formatSize } from '@/shared/lib/format';
 import { shell } from '@/shared/lib/platform';
 import SearchBox from './SearchBox.vue';

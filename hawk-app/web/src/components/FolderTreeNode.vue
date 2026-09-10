@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { Directive } from 'vue';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
-import { useImporterStore } from '../stores/importer';
+import { useLibraryStore } from '@/domains/library';
+import { moveSelectedToFolder, refreshCache, rescanFiles } from '@/domains/library';
+import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useImporterStore } from '@/stores/importer';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { isItemsDrag, itemsDragOver, readItemsDrop, isFilesDrag, filesDragOver, droppedEntries } from '../dnd';
 import { hasShell, shell, fileManagerName } from '@/shared/lib/platform';
@@ -92,12 +93,12 @@ function onContextMenu(e: MouseEvent) {
       {
         label: '重新扫描',
         title: '重新遍历该文件夹（含子目录）的文件，拾取监听漏掉的新增/删除（不重建已有缓存）',
-        action: () => void store.rescanFiles(props.node.path, props.node.name),
+        action: () => void rescanFiles(props.node.path, props.node.name),
       },
       {
         label: '刷新缓存',
         title: '修复该文件夹（含子目录）缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目',
-        action: () => void store.refreshCache('folder', props.node.path, props.node.name),
+        action: () => void refreshCache('folder', props.node.path, props.node.name),
       },
       { separator: true, label: '' },
       {
@@ -137,7 +138,7 @@ function onDragOver(e: DragEvent) {
 function onDrop(e: DragEvent) {
   dropDepth.value = 0;
   if (readItemsDrop(e)) {
-    store.moveSelectedToFolder(props.node.path);
+    moveSelectedToFolder(props.node.path);
     return;
   }
   // 外部文件/文件夹：结构化导入到本节点（拖入目录在本节点下重建目录树），阻断 document 级平铺导入。

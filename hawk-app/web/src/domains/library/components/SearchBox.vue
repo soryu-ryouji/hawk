@@ -2,7 +2,7 @@
 // 搜索框：TitleBar 与 Inspector 顶部共用。
 // 触屏横屏（wide + touch，如 iPad 横屏）时 Inspector 顶实例经 styles.css 显示、顶栏实例隐藏，
 // 把顶栏空间留给筛选/排序按钮；其余布局顶栏实例常驻、Inspector 实例隐藏。
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '../store';
 import Icon from '@/shared/ui/Icon.vue';
 
 const store = useLibraryStore();

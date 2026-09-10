@@ -7,7 +7,7 @@
 import { ref } from 'vue';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '@/domains/library';
 import { UPDATE_CANCELLED, type UpdateChannel, type UpdateInfo, type UpdateProgress } from '@/shared/types';
 
 export type UpdaterPhase = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'ready' | 'error';

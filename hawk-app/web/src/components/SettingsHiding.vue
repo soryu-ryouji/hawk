@@ -4,9 +4,9 @@
 // 只读查看（局域网 viewer）只展示不操作（服务端 403 为最终防线）。
 // 幽灵条目（指向已不存在维度）由用户在此手动清除——级联跟随之外的兜底出口。
 import { computed } from 'vue';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
-import { TRASH_PREFIX, displayPath } from '../viewLogic';
+import { useLibraryStore } from '@/domains/library';
+import { useTaxonomyStore } from '@/stores/taxonomy';
+import { TRASH_PREFIX, displayPath } from '@/domains/library';
 import Icon from '@/shared/ui/Icon.vue';
 
 const store = useLibraryStore();

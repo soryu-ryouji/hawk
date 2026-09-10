@@ -7,8 +7,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { useClipboard } from '@vueuse/core';
 import { api } from '@/shared/api/endpoints';
-import { errorText } from '../stores/util';
-import { useLibraryStore } from '../stores/library';
+import { errorText } from '@/shared/lib/storeUtil';
+import { useLibraryStore } from '@/domains/library';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
 

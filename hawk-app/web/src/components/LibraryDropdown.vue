@@ -7,7 +7,8 @@
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { shell } from '@/shared/lib/platform';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
-import { useLibraryStore } from '../stores/library';
+import { useLibraryStore } from '@/domains/library';
+import { renameLibrary } from '@/domains/library';
 import Icon from '@/shared/ui/Icon.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
 import type { LibraryHistoryItem, MenuItem } from '@/shared/types';
@@ -131,7 +132,7 @@ async function submitRename(name: string): Promise<void> {
     return;
   }
   if (name !== store.library?.name) {
-    const ok = await store.renameLibrary(name);
+    const ok = await renameLibrary(name);
     if (!ok) {
       return;
     }

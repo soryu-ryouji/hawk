@@ -3,7 +3,7 @@
 // 启动状态机在 app/boot.ts，面板拖拽在 app/panelResize.ts，本组件只做接线与胶水。
 import { ref, watch } from 'vue';
 import { apiConfig, clearStoredToken } from '@/shared/api/client';
-import { useLibraryStore } from '@/stores/library';
+import { useLibraryStore, FilterBar, ItemGrid, Inspector } from '@/domains/library';
 import { useImporterStore } from '@/stores/importer';
 import { usePreviewStore } from '@/stores/preview';
 import { useShortcuts } from './shortcuts';
@@ -15,10 +15,7 @@ import { startupAutoCheck } from '@/composables/useUpdater';
 import { hasShell, shell } from '@/shared/lib/platform';
 import Sidebar from '@/components/Sidebar.vue';
 import TitleBar from '@/app/chrome/TitleBar.vue';
-import FilterBar from '@/components/FilterBar.vue';
 import WindowControls from '@/app/chrome/WindowControls.vue';
-import ItemGrid from '@/components/ItemGrid.vue';
-import Inspector from '@/components/Inspector.vue';
 import PreviewOverlay from '@/components/PreviewOverlay.vue';
 import ImageEditDialog from '@/components/ImageEditDialog.vue';
 import ContextMenu from '@/shared/ui/ContextMenu.vue';

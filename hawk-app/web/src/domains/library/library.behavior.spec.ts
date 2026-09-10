@@ -31,8 +31,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 
-import { useLibraryStore, registerTaxonomyHooks } from './library';
-import { itemKey } from '../viewLogic';
+import { useLibraryStore, registerTaxonomyHooks } from './store';
+import { useTaxonomyStore } from '@/stores/taxonomy';
+import { trashSelected, setStarForSelected, addCategoryToSelected } from './actions';
+import { itemKey } from './logic/viewLogic';
 import type { Item, LibraryInfo, SkeletonItem } from '@/shared/types';
 
 // ---- 夹具 ----
@@ -273,7 +275,7 @@ describe('写操作', () => {
     store.selection = [kA, kB];
     mocks.itemDelete.mockImplementationOnce(() => Promise.reject(new Error('占用中'))).mockImplementationOnce(() => Promise.resolve());
 
-    await store.trashSelected();
+    await trashSelected();
 
     expect(mocks.itemDelete).toHaveBeenCalledTimes(2); // 第一个失败不中断第二个
     expect(mocks.itemDelete).toHaveBeenNthCalledWith(1, 'a', 'a.png');
@@ -294,7 +296,7 @@ describe('写操作', () => {
       conflicts: ['a.png', 'b.png', 'c.png', 'd.png'],
     });
 
-    await store.setStarForSelected(5);
+    await setStarForSelected(5);
 
     expect(mocks.itemBatchUpdate).toHaveBeenCalledWith(['a'], { star: 5 });
     expect(store.toast).toBe('已设置评分（a.png、b.png、c.png 等 4 个 因目标文件夹已存在同名文件未移动，2 个未处理）');
@@ -307,10 +309,12 @@ describe('写操作', () => {
     store.skeleton = [skel('a', 'a.png'), skel('b', 'b.png')];
     store.details = new Map([[kA, detail('a', 'a.png', { categories: ['品牌'] })]]);
     store.selection = [kA, kB];
+    // 拆分后分类维度刷新走 taxonomy 的防抖公共入口（与 SSE hooks 同一函数），Spy 在调用源上
+    const refreshSoon = vi.spyOn(useTaxonomyStore(), 'refreshTaxonomySoon');
 
-    await store.addCategoryToSelected('品牌');
+    await addCategoryToSelected('品牌');
 
     expect(mocks.itemBatchUpdate).toHaveBeenCalledWith(['b'], { add_categories: ['品牌'] }); // a 已有该分类被过滤
-    expect(hooks.refreshTaxonomy).toHaveBeenCalledTimes(1);
+    expect(refreshSoon).toHaveBeenCalledTimes(1);
   });
 });

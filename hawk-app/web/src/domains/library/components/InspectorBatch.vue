@@ -6,13 +6,23 @@
 // 文件夹/评分/大小按选择集与骨架纯前端计算。
 import { computed, nextTick, ref } from 'vue';
 import { api } from '@/shared/api/endpoints';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
+import { useLibraryStore } from '../store';
+import {
+  addCategoryToSelected,
+  addTagToSelected,
+  moveSelectedToFolder,
+  removeCategoryFromSelected,
+  removeTagFromSelected,
+  restoreSelected,
+  setStarForSelected,
+  trashSelected,
+} from '../actions';
+import { useTaxonomyStore } from '@/stores/taxonomy';
 import { formatSize } from '@/shared/lib/format';
-import { itemKey, selectionTotalSize, commonFoldersOf, commonStarOf } from '../viewLogic';
+import { itemKey, selectionTotalSize, commonFoldersOf, commonStarOf } from '../logic/viewLogic';
 import StarRating from './StarRating.vue';
-import CategoryPickerDialog from './CategoryPickerDialog.vue';
-import FolderTreePicker from './FolderTreePicker.vue';
+import CategoryPickerDialog from '@/components/CategoryPickerDialog.vue';
+import FolderTreePicker from '@/components/FolderTreePicker.vue';
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
@@ -46,7 +56,7 @@ async function startTagEdit() {
 function commitTag() {
   const tag = tagInput.value.trim();
   if (tag) {
-    store.addTagToSelected(tag);
+    addTagToSelected(tag);
   }
   tagInput.value = '';
   tagEditing.value = false;
@@ -57,7 +67,7 @@ const showCategoryPicker = ref(false);
 
 function batchAddCategory(name: string) {
   showCategoryPicker.value = false;
-  store.addCategoryToSelected(name);
+  addCategoryToSelected(name);
 }
 
 // ---- 文件夹（点击当前值弹树选择，选择即统一移动；混值时显示「多个值」仍可统一） ----
@@ -85,12 +95,12 @@ function toggleFolderPicker() {
 
 function batchMoveFolder(path: string) {
   pickerAnchor.value = null;
-  store.moveSelectedToFolder(path);
+  moveSelectedToFolder(path);
 }
 
 // ---- 基本信息 ----
 function applyStarToAll(value: number) {
-  void store.setStarForSelected(value);
+  void setStarForSelected(value);
 }
 </script>
 
@@ -116,7 +126,7 @@ function applyStarToAll(value: number) {
         <div class="chips">
           <span v-for="tag in commonTags" :key="tag" class="chip">
             <button class="jump" :title="`查看标签「${tag}」`" @click="goView({ kind: 'tag', name: tag })">{{ tag }}</button>
-            <button class="remove" :title="`从全部选中项移除标签「${tag}」`" @click="store.removeTagFromSelected(tag)">×</button>
+            <button class="remove" :title="`从全部选中项移除标签「${tag}」`" @click="removeTagFromSelected(tag)">×</button>
           </span>
           <input
             v-if="tagEditing"
@@ -144,7 +154,7 @@ function applyStarToAll(value: number) {
         <div class="chips">
           <span v-for="category in commonCategories" :key="category" class="chip">
             <button class="jump" :title="`查看分类「${category}」`" @click="goView({ kind: 'category', name: category })">{{ category }}</button>
-            <button class="remove" :title="`从全部选中项移除分类「${category}」`" @click="store.removeCategoryFromSelected(category)">×</button>
+            <button class="remove" :title="`从全部选中项移除分类「${category}」`" @click="removeCategoryFromSelected(category)">×</button>
           </span>
           <button class="add" title="添加到分类（应用到全部选中）" @click="showCategoryPicker = true">＋</button>
         </div>
@@ -180,8 +190,8 @@ function applyStarToAll(value: number) {
         </dl>
       </section>
 
-      <button v-if="!store.isTrash" class="danger" @click="store.trashSelected()">移入回收站</button>
-      <button v-else @click="store.restoreSelected()">恢复</button>
+      <button v-if="!store.isTrash" class="danger" @click="trashSelected()">移入回收站</button>
+      <button v-else @click="restoreSelected()">恢复</button>
     </template>
 
     <!-- 只读查看（局域网 viewer）：同结构纯展示 -->

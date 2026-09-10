@@ -4,8 +4,8 @@
 // 侧栏（文件夹树）的结构化导入在 Sidebar/FolderTreeNode 的 drop 处理中调 importer.importEntries，
 // 与本文件无关。
 import { useDropZone } from '@vueuse/core';
-import { useLibraryStore } from '../stores/library';
-import { useImporterStore } from '../stores/importer';
+import { useLibraryStore } from '@/domains/library';
+import { useImporterStore } from '@/stores/importer';
 import { ITEMS_MIME, droppedEntries } from '../dnd';
 
 export function useDragImport() {

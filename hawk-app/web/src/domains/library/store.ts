@@ -1,10 +1,11 @@
-// Pinia 主 store：视图/查询/列表/选择集/回收站，以及列表与 item 写操作 action。
-// 组件不直接调 api，一切经 action；SSE 事件经 applyEvent 分发（分类维度分支在 taxonomy store，组件层编排）。
+// Pinia 主 store：视图/查询/列表/选择集/回收站与 SSE 事件编排（applyEvent）。
+// 组件不直接调 api，读经本 store，写经 ./actions（服务层）；跨域经 index.ts 出口。
+// SSE 事件经 applyEvent 分发（分类维度分支转发 taxonomy hooks，组件层编排）。
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { useMediaQuery } from '@vueuse/core';
 import { api } from '@/shared/api/endpoints';
-import { createViewNavigation, type ViewValidators } from './libraryNavigation';
+import { createViewNavigation, type ViewValidators } from './navigation';
 import {
   isGlobalViewKind,
   isUnfilteredView,
@@ -14,13 +15,14 @@ import {
   mergeDetailOnUpdate,
   nextSelection,
   patchSkeletonOnUpdate,
+  selectionUniqueIds,
   shouldReloadOnUpdate,
   splitKey,
   taxonomyChanged,
-} from '../viewLogic';
+} from './logic/viewLogic';
 import { hasShell } from '@/shared/lib/platform';
 import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
-import { debounce, errorText } from './util';
+import { debounce, errorText } from '@/shared/lib/storeUtil';
 import type { GlobalFilter, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, ViewPrefs, ViewState } from '@/shared/types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
@@ -41,7 +43,7 @@ export function registerTaxonomyHooks(hooks: TaxonomyHooks): void {
   taxonomyHooks = hooks;
 }
 
-export type { ViewValidators } from './libraryNavigation';
+export type { ViewValidators } from './navigation';
 
 export const useLibraryStore = defineStore('library', () => {
   // ---- state ----
@@ -88,7 +90,7 @@ export const useLibraryStore = defineStore('library', () => {
   /** 拉取选择集聚合（版本守卫丢弃过期响应） */
   async function fetchSelectionAggregate() {
     const version = ++aggregateVersion;
-    const ids = selectionUniqueIds();
+    const ids = selectionUniqueIds(selection.value);
     try {
       const res = await api.itemAggregate(ids);
       if (version === aggregateVersion) {
@@ -451,16 +453,6 @@ export const useLibraryStore = defineStore('library', () => {
     selection.value = [];
   }
 
-  // ---- item 写操作 ----
-  async function updateItem(id: string, patch: Parameters<typeof api.itemUpdate>[1], path?: string) {
-    try {
-      const updated = await api.itemUpdate(id, patch, path);
-      applyUpdatedItem(updated, true);
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
   /**
    * item.updated 的统一入口（updateItem 响应与 SSE 共用）。本函数只做状态接线，
    * 全部判定（位置集/分类维度变化、详情合并、骨架补丁、重载时机）为 viewLogic.ts 纯函数。
@@ -527,219 +519,14 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** 选中项逐个位置移入回收站（每张卡片即一个位置，删除只动该位置，其余位置保留） */
-  async function trashSelected() {
-    const keys = [...selection.value];
-    for (const key of keys) {
-      const { id, path } = splitKey(key);
-      try {
-        await api.itemDelete(id, path);
-      } catch (e) {
-        showToast(errorText(e));
-      }
-    }
-    clearSelection();
+  /** 防抖骨架重载的公共入口（服务层写操作与 SSE 事件同一条防抖通道，服务层唯一可触发的重载口） */
+  function requestSkeletonReload() {
     debouncedSkeletonReload(() => void reloadSkeleton());
   }
 
-  /** 删除单个文件位置（Inspector 文件位置列表）：item 其余位置保留；
-   *  删除后经 SSE item.updated 就地刷新，最后一个库内位置被删时按整项回收 */
-  async function deleteLocation(id: string, path: string) {
-    try {
-      await api.itemDelete(id, path);
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  async function restoreSelected() {
-    const keys = [...selection.value];
-    let failed = 0;
-    for (const key of keys) {
-      const { id, path } = splitKey(key);
-      try {
-        await api.itemRestore(id, path);
-      } catch (e) {
-        failed++;
-        showToast(errorText(e));
-      }
-    }
-    clearSelection();
-    if (failed === 0) {
-      showToast('已恢复');
-    }
-    debouncedSkeletonReload(() => void reloadSkeleton());
-  }
-
-  async function clearTrash() {
-    try {
-      await api.trashClear();
-      showToast('回收站已清空');
-      if (isTrash.value) {
-        debouncedSkeletonReload(() => void reloadSkeleton());
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  /** 改库显示名（当前库）：写库内 config.toml 的 name；成功后就地更新库信息并返回 true */
-  async function renameLibrary(name: string): Promise<boolean> {
-    try {
-      library.value = await api.libraryRename(name);
-      return true;
-    } catch (e) {
-      showToast(errorText(e));
-      return false;
-    }
-  }
-
-  /** 周期兜底重扫开关（库级设置，写 .hawk/config.toml 的 [scan]）：保存即热生效 */
-  async function setPeriodicRescan(periodic: boolean) {
-    try {
-      library.value = await api.libraryScanSet({ periodic });
-      showToast(periodic ? '已开启周期兜底重扫' : '已关闭周期兜底重扫（仍可手动重新扫描）');
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  /** 手动「重新扫描」：强制遍历文件做复用判定（不读文件内容），拾取监听漏掉的新增/删除；
-   *  path 缺省 = 整库，指定时只重扫该文件夹子树 */
-  async function rescanFiles(path?: string, label?: string) {
-    try {
-      await api.rescan(path);
-      showToast(path ? `正在重新扫描「${label ?? path}」…` : '正在重新扫描素材库…');
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  /** 按范围刷新派生缓存（补缺失模式）：修复 0 × 0 宽高、缺失缩略图/调色板；修复项经 item.updated 自动刷新。
-   *  附带消失对账：源文件已删但索引残留的失效位置会被清除（watcher 漏事件时的手动收敛入口） */
-  async function refreshCache(type: 'folder' | 'category' | 'tag' | 'library', value?: string, label?: string) {
-    try {
-      const res = await api.refreshCache(type, value);
-      const parts: string[] = [];
-      if (res.removed > 0) {
-        parts.push(`已清除 ${res.removed} 个失效位置`);
-      }
-      parts.push(res.dispatched > 0 ? `正在刷新「${label ?? type}」缓存（${res.dispatched} 项）` : `「${label ?? type}」派生缓存完好，无需修复`);
-      showToast(parts.join('，'));
-      if (res.removed > 0) {
-        debouncedSkeletonReload(() => void reloadSkeleton());
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  /** 索引体检：清除不该在索引里的条目（隐藏文件 / ignore 命中 / 源文件已删的残留），
-   *  只清索引不动磁盘文件；清除项经 item 丢失事件自动从界面消失 */
-  async function cleanupIndex() {
-    try {
-      const res = await api.cleanupIndex();
-      const parts: string[] = [];
-      if (res.removed > 0) {
-        const detail = [
-          res.hidden > 0 ? `隐藏文件 ${res.hidden}` : '',
-          res.ignored > 0 ? `ignore 命中 ${res.ignored}` : '',
-          res.missing > 0 ? `已删文件残留 ${res.missing}` : '',
-        ]
-          .filter(Boolean)
-          .join('、');
-        parts.push(`已清除 ${res.removed} 个错误条目（${detail}）`);
-        debouncedSkeletonReload(() => void reloadSkeleton());
-      } else {
-        parts.push(`索引完好（检查 ${res.checked} 项，无需清理）`);
-      }
-      showToast(parts.join('，'));
-    } catch (e) {
-      showToast(errorText(e));
-    }
-  }
-
-  /** 为全部选中项追加分类(内容级：同 hash 多位置只应用一次)。
-   *  已有该分类的 id 从已加载详情一次构建（未加载的由服务端空操作跳过，不为过滤拉全量详情） */
-  async function addCategoryToSelected(name: string) {
-    const existing = new Set([...details.value.values()].filter((i) => i.categories.includes(name)).map((i) => i.id));
-    const ids = selectionUniqueIds().filter((id) => !existing.has(id));
-    await batchUpdate(ids, { add_categories: [name] }, '已添加分类');
-    taxonomyHooks?.refreshTaxonomy();
-  }
-
-  /** 为全部选中项追加标签(同 addCategoryToSelected 的过滤策略) */
-  async function addTagToSelected(tag: string) {
-    const existing = new Set([...details.value.values()].filter((i) => i.tags.includes(tag)).map((i) => i.id));
-    const ids = selectionUniqueIds().filter((id) => !existing.has(id));
-    await batchUpdate(ids, { add_tags: [tag] }, '已添加标签');
-    taxonomyHooks?.refreshTaxonomy();
-  }
-
-  /** 选中集的内容 id（去重）：元数据类批量操作（标签/分类/评分）按内容应用一次 */
-  function selectionUniqueIds(): string[] {
-    return [...new Set(selection.value.map((key) => splitKey(key).id))];
-  }
-
-  /** 将全部选中项移动到目标文件夹(位置级：每位置各移;空字符串为根目录);已在目标文件夹的位置跳过;完成后立即刷新文件夹树 */
-  async function moveSelectedToFolder(path: string) {
-    const targets = selection.value
-      .map((key) => splitKey(key))
-      .filter(({ path: p }) => {
-        const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
-        return dir !== path;
-      });
-    await batchUpdate(
-      targets.map((t) => t.id),
-      { paths: targets.map((t) => t.path), folder_path: path },
-      '已移动',
-    );
-    taxonomyHooks?.refreshFolders();
-  }
-
-  /** 批量设置选中项评分(内容级去重;多选面板与右键菜单共用) */
-  async function setStarForSelected(star: number) {
-    await batchUpdate(selectionUniqueIds(), { star }, '已设置评分');
-  }
-
-  /** 从全部选中项移除标签（共有标签 × 摘除）；完成后立即刷新聚合与计数 */
-  async function removeTagFromSelected(tag: string) {
-    await batchUpdate(selectionUniqueIds(), { remove_tags: [tag] }, '已移除标签');
-    taxonomyHooks?.refreshTaxonomy();
-  }
-
-  /** 从全部选中项移除分类（共有分类 × 摘除） */
-  async function removeCategoryFromSelected(name: string) {
-    await batchUpdate(selectionUniqueIds(), { remove_categories: [name] }, '已移除分类');
-    taxonomyHooks?.refreshTaxonomy();
-  }
-
-  /** 批量端点统一入口:missing(内容不存在/移动冲突)在结果中提示,不整体失败 */
-  async function batchUpdate(ids: string[], patch: Parameters<typeof api.itemBatchUpdate>[1], doneText: string) {
-    if (ids.length === 0) {
-      return;
-    }
-    try {
-      const res = await api.itemBatchUpdate(ids, patch);
-      const parts: string[] = [];
-      if (res.conflicts?.length) {
-        // 同名冲突跳过的项：给出具体文件名与原因，不再只说「未处理」
-        const names = res.conflicts.slice(0, 3).join('、');
-        const more = res.conflicts.length > 3 ? ` 等 ${res.conflicts.length} 个` : '';
-        parts.push(`${names}${more} 因目标文件夹已存在同名文件未移动`);
-      }
-      const skipped = res.missing_ids.length;
-      if (skipped > 0) {
-        parts.push(`${skipped} 个未处理`);
-      }
-      showToast(parts.length > 0 ? `${doneText}（${parts.join('，')}）` : doneText);
-      // 批量写可能改变了选择集的共有特性（加/摘标签分类）→ 立即重拉聚合（不等防抖）
-      if (selection.value.length > 1) {
-        void fetchSelectionAggregate();
-      }
-    } catch (e) {
-      showToast(errorText(e));
-    }
+  /** 立即重拉选择集聚合（批量写改变共有特性后，不等选择变化防抖） */
+  function refreshSelectionAggregate() {
+    void fetchSelectionAggregate();
   }
 
   // ---- SSE ----
@@ -839,7 +626,6 @@ export const useLibraryStore = defineStore('library', () => {
     setUserThumbSize,
     searchText,
     toast,
-    deleteLocation,
     taskBacklog,
     indexProgress,
     indexProgressText,
@@ -870,21 +656,8 @@ export const useLibraryStore = defineStore('library', () => {
     select,
     selectAll,
     clearSelection,
-    updateItem,
-    trashSelected,
-    restoreSelected,
-    clearTrash,
-    rescanFiles,
-    setPeriodicRescan,
-    refreshCache,
-    cleanupIndex,
-    renameLibrary,
-    addCategoryToSelected,
-    addTagToSelected,
-    removeTagFromSelected,
-    removeCategoryFromSelected,
-    moveSelectedToFolder,
-    setStarForSelected,
+    requestSkeletonReload,
+    refreshSelectionAggregate,
     showToast,
     applyEvent,
     setGlobalFilter,

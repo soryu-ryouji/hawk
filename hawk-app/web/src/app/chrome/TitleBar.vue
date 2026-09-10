@@ -4,11 +4,11 @@
 // 窄屏（竖屏宽度不足）：排序/筛选收进「排序与筛选」溢出菜单，搜索框退化为搜索按钮（点开浮层），
 // 面包屑只显示当前层级（完整路径经侧栏抽屉导航）。横屏/宽屏布局不受影响。
 import { computed, nextTick, ref, watch } from 'vue';
-import { useLibraryStore } from '@/stores/library';
+import { useLibraryStore } from '@/domains/library';
+import { rescanFiles, SearchBox } from '@/domains/library';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLayout } from '@/shared/composables/useLayout';
 import Icon from '@/shared/ui/Icon.vue';
-import SearchBox from '@/components/SearchBox.vue';
 import { hasShell, isMac, shell } from '@/shared/lib/platform';
 import { useImporterStore } from '@/stores/importer';
 import type { MenuItem, QueryState } from '@/shared/types';
@@ -188,7 +188,7 @@ function onDblClick(e: MouseEvent) {
       <input v-if="!hasShell && !store.viewerMode" ref="pickerInput" type="file" multiple class="file-picker" @change="onPicked" />
 
       <!-- 重新扫描：仅浏览器端显示——Electron 端走侧栏文件夹树右键菜单，只读查看不可写 -->
-      <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="重新扫描素材库（收敛监听漏事件）" @click="store.rescanFiles()">
+      <button v-if="!hasShell && !store.viewerMode" class="bar-btn" title="重新扫描素材库（收敛监听漏事件）" @click="rescanFiles()">
         <Icon name="refresh" :size="14" />
       </button>
 

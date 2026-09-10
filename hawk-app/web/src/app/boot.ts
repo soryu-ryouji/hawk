@@ -6,7 +6,7 @@ import { initApi, apiConfig, clearStoredToken, ApiError } from '@/shared/api/cli
 import { connectEvents } from '@/shared/api/events';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { useStartup } from './startup';
-import { useLibraryStore } from '@/stores/library';
+import { useLibraryStore } from '@/domains/library';
 import { useTaxonomyStore } from '@/stores/taxonomy';
 import { usePreviewStore } from '@/stores/preview';
 

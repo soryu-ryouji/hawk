@@ -2,8 +2,8 @@
 // 外观分区：缩略图尺寸滑杆（实时生效）+ 预览关闭按钮开关 + 关窗行为（仅 Electron，实时生效）。
 // 无保存语义，改动即时写入偏好。显隐由主组件 v-show 作用于本组件根元素。
 import { onMounted, ref } from 'vue';
-import { useLibraryStore } from '../stores/library';
-import { usePreviewStore } from '../stores/preview';
+import { useLibraryStore } from '@/domains/library';
+import { usePreviewStore } from '@/stores/preview';
 import { hasShell, shell } from '@/shared/lib/platform';
 import SelectBox from '@/shared/ui/SelectBox.vue';
 import type { CloseAction } from '@/shared/types';

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
+import { useLibraryStore } from '@/domains/library';
+import { addCategoryToSelected, addTagToSelected, refreshCache, rescanFiles } from '@/domains/library';
+import { useTaxonomyStore } from '@/stores/taxonomy';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { isItemsDrag, itemsDragOver, readItemsDrop, filesDragOver, droppedEntries } from '../dnd';
@@ -10,7 +11,7 @@ import FolderTreeNode from './FolderTreeNode.vue';
 import LibraryDropdown from './LibraryDropdown.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
-import { useImporterStore } from '../stores/importer';
+import { useImporterStore } from '@/stores/importer';
 import type { FolderNode } from '@/shared/types';
 
 const store = useLibraryStore();
@@ -94,12 +95,12 @@ function onTreeContextMenu(e: MouseEvent) {
       {
         label: '重新扫描（整库）',
         title: '重新遍历全部文件，拾取监听漏掉的新增/删除（不重建已有缓存）',
-        action: () => void store.rescanFiles(),
+        action: () => void rescanFiles(),
       },
       {
         label: '刷新缓存（整库）',
         title: '修复全部素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目',
-        action: () => void store.refreshCache('library', undefined, '整库'),
+        action: () => void refreshCache('library', undefined, '整库'),
       },
     ],
     e,
@@ -163,9 +164,9 @@ function onTreeDrop(kind: DropKind, e: DragEvent) {
     return;
   }
   if (kind === 'category') {
-    void store.addCategoryToSelected(name);
+    void addCategoryToSelected(name);
   } else {
-    void store.addTagToSelected(name);
+    void addTagToSelected(name);
   }
 }
 

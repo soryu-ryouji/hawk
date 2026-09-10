@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 
-import { useLibraryStore } from './library';
+import { useLibraryStore } from './store';
 
 beforeEach(() => {
   setActivePinia(createPinia());

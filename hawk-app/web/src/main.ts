@@ -33,7 +33,7 @@ function notifyError(scope: string, err: unknown): void {
   }
   notified.set(key, now);
   // 延迟取 store：错误可能发生在 pinia 安装完成前（此时只记录日志）
-  import('./stores/library').then(({ useLibraryStore }) => useLibraryStore().showToast(`界面错误（${scope}）：${detail.slice(0, 120)}`)).catch(() => {});
+  import('@/domains/library').then(({ useLibraryStore }) => useLibraryStore().showToast(`界面错误（${scope}）：${detail.slice(0, 120)}`)).catch(() => {});
 }
 
 app.config.errorHandler = (err, _instance, info) => notifyError(info || 'vue', err);

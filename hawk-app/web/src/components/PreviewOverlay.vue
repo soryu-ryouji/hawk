@@ -3,12 +3,13 @@ import { computed, onMounted, watch } from 'vue';
 import { useWindowSize } from '@vueuse/core';
 import { api } from '@/shared/api/endpoints';
 import { copyImageToClipboard } from '@/shared/lib/clipboard';
-import { useLibraryStore } from '../stores/library';
-import { usePreviewStore } from '../stores/preview';
+import { useLibraryStore } from '@/domains/library';
+import { trashSelected } from '@/domains/library';
+import { usePreviewStore } from '@/stores/preview';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLayout } from '@/shared/composables/useLayout';
 import { useZoomPan } from '../composables/useZoomPan';
-import { itemKey, splitKey } from '../viewLogic';
+import { itemKey, splitKey } from '@/domains/library';
 import { isRotatableImage } from '../imageEdit';
 import { saveImageToDisk } from '@/shared/lib/saveImage';
 import { showInFileManagerLabel, hasShell, shell } from '@/shared/lib/platform';
@@ -94,7 +95,7 @@ async function trashCurrent() {
   const key = itemKey(props.item.id, props.item.path);
   const fallback = preview.previewNavId(1) ?? preview.previewNavId(-1);
   store.select(key);
-  await store.trashSelected();
+  await trashSelected();
   if (fallback && fallback !== key) {
     preview.openPreview(fallback);
   } else {

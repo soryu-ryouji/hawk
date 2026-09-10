@@ -37,8 +37,8 @@ const { globalFilterSet } = mocks;
 import FolderTreeNode from './FolderTreeNode.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
+import { useLibraryStore } from '@/domains/library';
+import { useTaxonomyStore } from '@/stores/taxonomy';
 import type { FolderNode } from '@/shared/types';
 
 function makeNode(overrides?: Partial<FolderNode>): FolderNode {

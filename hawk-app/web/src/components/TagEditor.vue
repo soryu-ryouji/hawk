@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
+import { useLibraryStore } from '@/domains/library';
+import { useTaxonomyStore } from '@/stores/taxonomy';
 
 const props = defineProps<{ modelValue: string[] }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>();

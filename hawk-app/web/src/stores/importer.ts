@@ -6,7 +6,7 @@ import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
 import { runImportBatch } from '../importBatch';
 import { hasShell, shell } from '@/shared/lib/platform';
-import { useLibraryStore } from './library';
+import { useLibraryStore } from '@/domains/library';
 
 /** 拖入展开后的一个文件：relPath 相对拖入根（含拖入目录自身的名字） */
 interface DroppedFile {

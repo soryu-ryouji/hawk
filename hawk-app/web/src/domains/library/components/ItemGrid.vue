@@ -1,23 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, watchEffect } from 'vue';
 import { useResizeObserver } from '@vueuse/core';
-import { useLibraryStore } from '../stores/library';
-import { useTaxonomyStore } from '../stores/taxonomy';
-import { usePreviewStore } from '../stores/preview';
+import { useLibraryStore } from '../store';
+import { addCategoryToSelected, addTagToSelected, clearTrash, moveSelectedToFolder, restoreSelected, trashSelected } from '../actions';
+import { useTaxonomyStore } from '@/stores/taxonomy';
+import { usePreviewStore } from '@/stores/preview';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
-import { gridNavRows, consumeKeyboardNavScroll } from '../composables/useGridNav';
+import { gridNavRows, consumeKeyboardNavScroll } from '../logic/useGridNav';
 import { showInFileManagerLabel, hasShell, shell } from '@/shared/lib/platform';
 import type { Item } from '@/shared/types';
 import ItemCard from './ItemCard.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
-import FolderPickerDialog from './FolderPickerDialog.vue';
-import CategoryPickerDialog from './CategoryPickerDialog.vue';
-import { isRotatableImage } from '../imageEdit';
+import FolderPickerDialog from '@/components/FolderPickerDialog.vue';
+import CategoryPickerDialog from '@/components/CategoryPickerDialog.vue';
+import { isRotatableImage } from '@/imageEdit';
 import { saveImageToDisk } from '@/shared/lib/saveImage';
-import { itemKey } from '../viewLogic';
+import { itemKey } from '../logic/viewLogic';
 import { useLayout } from '@/shared/composables/useLayout';
-import { CARD_META_H, GRID_GAP, layoutRows, type LayoutCell, type LayoutRow } from '../layout';
+import { CARD_META_H, GRID_GAP, layoutRows, type LayoutCell, type LayoutRow } from '../logic/layout';
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
@@ -240,7 +241,7 @@ function onSelect(item: Item, e: MouseEvent) {
 
 function confirmClearTrash() {
   if (window.confirm('彻底删除回收站中的全部素材？此操作不可恢复。')) {
-    void store.clearTrash();
+    void clearTrash();
   }
 }
 
@@ -268,7 +269,7 @@ function onMenu(item: Item, e: MouseEvent) {
 
   const items = store.isTrash
     ? [
-        { label: '恢复', action: () => void store.restoreSelected() },
+        { label: '恢复', action: () => void restoreSelected() },
         { label: '清空回收站', danger: true, action: confirmClearTrash },
       ]
     : [
@@ -282,7 +283,7 @@ function onMenu(item: Item, e: MouseEvent) {
         // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现；定位本卡片对应的位置
         ...(hasShell ? [{ label: showInFileManagerLabel, action: () => void shell.showInFinder(item.path) }] : []),
         { separator: true, label: '' },
-        { label: '移入回收站', danger: true, action: () => void store.trashSelected() },
+        { label: '移入回收站', danger: true, action: () => void trashSelected() },
       ];
 
   menu.open(items, e);
@@ -330,7 +331,7 @@ function onMenu(item: Item, e: MouseEvent) {
       placeholder="输入标签，回车确认"
       :suggestions="taxonomy.tagList.map((t) => t.name)"
       @confirm="
-        store.addTagToSelected($event);
+        addTagToSelected($event);
         showTagDialog = false;
       "
       @cancel="showTagDialog = false"
@@ -339,7 +340,7 @@ function onMenu(item: Item, e: MouseEvent) {
       v-if="showCategoryDialog"
       title="添加到分类"
       @confirm="
-        store.addCategoryToSelected($event);
+        addCategoryToSelected($event);
         showCategoryDialog = false;
       "
       @cancel="showCategoryDialog = false"
@@ -348,7 +349,7 @@ function onMenu(item: Item, e: MouseEvent) {
       v-if="showFolderDialog"
       title="移动到文件夹"
       @confirm="
-        store.moveSelectedToFolder($event);
+        moveSelectedToFolder($event);
         showFolderDialog = false;
       "
       @cancel="showFolderDialog = false"

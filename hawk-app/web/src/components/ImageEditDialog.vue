@@ -5,7 +5,7 @@
 // 才经 preview.saveImageEdit 做客户端重编码(canvas + JPEG EXIF 回填)并提交 item/replace。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '@/shared/api/endpoints';
-import { usePreviewStore } from '../stores/preview';
+import { usePreviewStore } from '@/stores/preview';
 import type { Item } from '@/shared/types';
 
 const props = defineProps<{ item: Item }>();

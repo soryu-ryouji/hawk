@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import type { Directive } from 'vue';
-import { useTaxonomyStore } from '../stores/taxonomy';
+import { useTaxonomyStore } from '@/stores/taxonomy';
 
 defineProps<{ title: string }>();
 const emit = defineEmits<{ confirm: [name: string]; cancel: [] }>();
