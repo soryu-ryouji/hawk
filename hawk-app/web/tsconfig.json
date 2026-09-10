@@ -9,8 +9,7 @@
     "noUnusedLocals": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "../electron/src/ipc-contract.ts"]
 }
