@@ -7,7 +7,7 @@ import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
 import { splitKey, selectionUniqueIds } from './logic/viewLogic';
 import { useLibraryStore } from './store';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useTaxonomyStore } from '@/domains/taxonomy';
 
 /** 更新素材参数（名称/标签/评分/备注/URL/移动）：响应经 applyEvent 就地应用 */
 export async function updateItem(id: string, patch: Parameters<typeof api.itemUpdate>[1], path?: string) {

@@ -7,8 +7,8 @@ import { connectEvents } from '@/shared/api/events';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { useStartup } from './startup';
 import { useLibraryStore } from '@/domains/library';
-import { useTaxonomyStore } from '@/stores/taxonomy';
-import { usePreviewStore } from '@/stores/preview';
+import { useTaxonomyStore } from '@/domains/taxonomy';
+import { usePreviewStore } from '@/domains/preview';
 
 export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'error';
 

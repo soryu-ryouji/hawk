@@ -17,12 +17,11 @@ import {
   setStarForSelected,
   trashSelected,
 } from '../actions';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useTaxonomyStore } from '@/domains/taxonomy';
 import { formatSize } from '@/shared/lib/format';
 import { itemKey, selectionTotalSize, commonFoldersOf, commonStarOf } from '../logic/viewLogic';
 import StarRating from './StarRating.vue';
-import CategoryPickerDialog from '@/components/CategoryPickerDialog.vue';
-import FolderTreePicker from '@/components/FolderTreePicker.vue';
+import { CategoryPickerDialog, FolderTreePicker } from '@/domains/taxonomy';
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();

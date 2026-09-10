@@ -5,7 +5,7 @@
 // 幽灵条目（指向已不存在维度）由用户在此手动清除——级联跟随之外的兜底出口。
 import { computed } from 'vue';
 import { useLibraryStore } from '@/domains/library';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useTaxonomyStore } from '@/domains/taxonomy';
 import { TRASH_PREFIX, displayPath } from '@/domains/library';
 import Icon from '@/shared/ui/Icon.vue';
 

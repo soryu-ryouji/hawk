@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useLibraryStore } from '@/domains/library';
 import { refreshCache } from '@/domains/library';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useTaxonomyStore } from '@/domains/taxonomy';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import Icon from '@/shared/ui/Icon.vue';
 

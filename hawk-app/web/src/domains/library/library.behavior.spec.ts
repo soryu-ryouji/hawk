@@ -32,7 +32,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 
 import { useLibraryStore, registerTaxonomyHooks } from './store';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useTaxonomyStore } from '@/domains/taxonomy';
 import { trashSelected, setStarForSelected, addCategoryToSelected } from './actions';
 import { itemKey } from './logic/viewLogic';
 import type { Item, LibraryInfo, SkeletonItem } from '@/shared/types';

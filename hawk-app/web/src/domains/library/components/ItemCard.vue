@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { api } from '@/shared/api/endpoints';
-import { startItemsDrag } from '@/dnd';
+import { startItemsDrag } from '@/shared/lib/dnd';
 import { useLibraryStore } from '../store';
 import { itemKey } from '../logic/viewLogic';
 import { useLongPress } from '@/shared/composables/useLongPress';

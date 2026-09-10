@@ -2,7 +2,7 @@
 // 导入重复内容策略对话框：导入过程中首个「内容已在库内」的文件触发（importer.dupPrompt 挂起
 // 的 resolve），选择对整批生效。Esc/点遮罩按「忽略重复」处理（导入不中断）。
 import { computed } from 'vue';
-import { useImporterStore } from '@/stores/importer';
+import { useImporterStore } from '@/domains/import';
 
 const importer = useImporterStore();
 const visible = computed(() => importer.dupPrompt !== null);

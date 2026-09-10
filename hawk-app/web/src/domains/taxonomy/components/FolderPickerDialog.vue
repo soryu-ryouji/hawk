@@ -1,26 +1,14 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import type { Directive } from 'vue';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { computed, ref } from 'vue';
+import { useTaxonomyStore } from '@/domains/taxonomy';
+import SelectBox from '@/shared/ui/SelectBox.vue';
 
 defineProps<{ title: string }>();
-const emit = defineEmits<{ confirm: [name: string]; cancel: [] }>();
+const emit = defineEmits<{ confirm: [path: string]; cancel: [] }>();
 
 const taxonomy = useTaxonomyStore();
-const text = ref('');
-
-const vFocus: Directive<HTMLElement> = {
-  mounted: (el) => el.focus(),
-};
-
-function confirm() {
-  const name = text.value.trim();
-  if (name) {
-    emit('confirm', name);
-  } else {
-    emit('cancel');
-  }
-}
+const selected = ref('');
+const folderOptions = computed(() => taxonomy.flatFolders.map((f) => ({ value: f.path, label: f.label })));
 </script>
 
 <template>
@@ -28,20 +16,10 @@ function confirm() {
     <div class="mask" @click.self="emit('cancel')">
       <div class="dialog">
         <div class="title">{{ title }}</div>
-        <input
-          v-model="text"
-          v-focus
-          list="category-names"
-          placeholder="选择已有分类，或输入新分类名称"
-          @keydown.enter="confirm"
-          @keydown.esc="emit('cancel')"
-        />
-        <datalist id="category-names">
-          <option v-for="category in taxonomy.categories" :key="category.name" :value="category.name" />
-        </datalist>
+        <SelectBox v-model="selected" :options="folderOptions" placeholder="选择文件夹" />
         <div class="actions">
           <button @click="emit('cancel')">取消</button>
-          <button class="primary" @click="confirm">确定</button>
+          <button class="primary" @click="emit('confirm', selected)">确定</button>
         </div>
       </div>
     </div>
@@ -60,7 +38,7 @@ function confirm() {
 }
 
 .dialog {
-  width: 360px;
+  width: 320px;
   padding: 16px;
   border-radius: 8px;
   background: var(--bg-2);
@@ -72,10 +50,6 @@ function confirm() {
 
 .title {
   font-weight: 600;
-}
-
-.dialog input {
-  padding: 6px 8px;
 }
 
 .actions {

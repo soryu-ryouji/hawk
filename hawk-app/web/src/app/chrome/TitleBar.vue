@@ -10,7 +10,7 @@ import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLayout } from '@/shared/composables/useLayout';
 import Icon from '@/shared/ui/Icon.vue';
 import { hasShell, isMac, shell } from '@/shared/lib/platform';
-import { useImporterStore } from '@/stores/importer';
+import { useImporterStore } from '@/domains/import';
 import type { MenuItem, QueryState } from '@/shared/types';
 
 const store = useLibraryStore();

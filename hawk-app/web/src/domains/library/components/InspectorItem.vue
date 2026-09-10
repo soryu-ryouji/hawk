@@ -8,12 +8,10 @@ import { addCategoryToSelected, deleteLocation, updateItem } from '../actions';
 import { useLayout } from '@/shared/composables/useLayout';
 import { displayPath, itemKey } from '../logic/viewLogic';
 import { formatSize, formatTime } from '@/shared/lib/format';
-import TagEditor from '@/components/TagEditor.vue';
 import StarRating from './StarRating.vue';
 import Icon from '@/shared/ui/Icon.vue';
-import CategoryPickerDialog from '@/components/CategoryPickerDialog.vue';
-import FolderTreePicker from '@/components/FolderTreePicker.vue';
 import type { ViewState } from '@/shared/types';
+import { TagEditor, CategoryPickerDialog, FolderTreePicker } from '@/domains/taxonomy';
 
 const store = useLibraryStore();
 const { touch } = useLayout();

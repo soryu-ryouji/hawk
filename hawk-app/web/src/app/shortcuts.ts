@@ -4,7 +4,7 @@
 import { useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '@/domains/library';
 import { restoreSelected, trashSelected } from '@/domains/library';
-import { usePreviewStore } from '@/stores/preview';
+import { usePreviewStore } from '@/domains/preview';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { gridNavRows, markKeyboardNavScroll, moveGridSelection } from '@/domains/library';
 import { itemKey } from '@/domains/library';

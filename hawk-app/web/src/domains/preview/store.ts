@@ -5,7 +5,7 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
 import { ApiError } from '@/shared/api/client';
-import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
+import { blobToBase64, rotateImage, type RotateAngle } from '@/shared/lib/imageEdit';
 import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 import { useLibraryStore } from '@/domains/library';
 import { itemKey } from '@/domains/library';

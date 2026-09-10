@@ -5,8 +5,8 @@
 // 与本文件无关。
 import { useDropZone } from '@vueuse/core';
 import { useLibraryStore } from '@/domains/library';
-import { useImporterStore } from '@/stores/importer';
-import { ITEMS_MIME, droppedEntries } from '../dnd';
+import { useImporterStore } from '@/domains/import';
+import { ITEMS_MIME, droppedEntries } from '@/shared/lib/dnd';
 
 export function useDragImport() {
   const store = useLibraryStore();

@@ -4,7 +4,7 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
-import { runImportBatch } from '../importBatch';
+import { runImportBatch } from './logic/importBatch';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { useLibraryStore } from '@/domains/library';
 

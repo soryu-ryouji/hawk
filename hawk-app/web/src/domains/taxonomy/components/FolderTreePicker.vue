@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { onClickOutside, useEventListener } from '@vueuse/core';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useTaxonomyStore } from '@/domains/taxonomy';
 import Icon from '@/shared/ui/Icon.vue';
 import type { FolderNode } from '@/shared/types';
 

@@ -2,16 +2,16 @@
 import { computed, reactive, ref } from 'vue';
 import { useLibraryStore } from '@/domains/library';
 import { addCategoryToSelected, addTagToSelected, refreshCache, rescanFiles } from '@/domains/library';
-import { useTaxonomyStore } from '@/stores/taxonomy';
+import { useTaxonomyStore } from '@/domains/taxonomy';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { hasShell, shell } from '@/shared/lib/platform';
-import { isItemsDrag, itemsDragOver, readItemsDrop, filesDragOver, droppedEntries } from '../dnd';
+import { isItemsDrag, itemsDragOver, readItemsDrop, filesDragOver, droppedEntries } from '@/shared/lib/dnd';
 import Icon from '@/shared/ui/Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
 import LibraryDropdown from './LibraryDropdown.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
-import { useImporterStore } from '@/stores/importer';
+import { useImporterStore } from '@/domains/import';
 import type { FolderNode } from '@/shared/types';
 
 const store = useLibraryStore();
