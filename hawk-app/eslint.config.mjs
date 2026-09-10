@@ -31,6 +31,8 @@ export default tseslint.config(
       'vue/multi-word-component-names': 'off',
       // 闭包先读后赋的初始化模式（如 fail() 引用尚未创建的定时器句柄）是刻意的
       'prefer-const': ['error', { ignoreReadBeforeAssign: true }],
+      // `_` 前缀参数/变量为刻意占位（测试 mock 签名仅为类型推断而声明）
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
   prettier,
