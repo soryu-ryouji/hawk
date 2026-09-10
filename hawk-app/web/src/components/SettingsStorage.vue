@@ -4,8 +4,8 @@
 // 就绪后自动恢复——本对话框随主界面一同重现）。
 // 存储方案切换：daemon 侧全量迁移（写新权威层+删旧文件），成功后经 shell.restartServer 重启生效。
 import { computed, onMounted, ref } from 'vue';
-import { api } from '../api/endpoints';
-import { shell } from '../platform';
+import { api } from '@/shared/api/endpoints';
+import { shell } from '@/shared/lib/platform';
 import { useLibraryStore } from '../stores/library';
 
 const store = useLibraryStore();

@@ -1,6 +1,6 @@
 // 全局唯一右键菜单：模块级单例状态，ContextMenu.vue 渲染。
 import { reactive, readonly } from 'vue';
-import type { MenuItem } from '../types';
+import type { MenuItem } from '@/shared/types';
 
 const state = reactive({
   visible: false,

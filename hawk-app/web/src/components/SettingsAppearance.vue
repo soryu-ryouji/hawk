@@ -4,9 +4,9 @@
 import { onMounted, ref } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
-import { hasShell, shell } from '../platform';
-import SelectBox from './SelectBox.vue';
-import type { CloseAction } from '../types';
+import { hasShell, shell } from '@/shared/lib/platform';
+import SelectBox from '@/shared/ui/SelectBox.vue';
+import type { CloseAction } from '@/shared/types';
 
 const store = useLibraryStore();
 const preview = usePreviewStore();

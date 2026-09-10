@@ -2,17 +2,17 @@
 // 检查器单选区：完整编辑（布局参考 Eagle）。编辑字段为本地副本，切换选中项时重置；失焦/回车提交。
 // 只读的两个来源：触屏设备（编辑控件易误触）与只读查看（局域网 viewer token）——同结构全静态展示。
 import { computed, nextTick, ref, watch } from 'vue';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { useLibraryStore } from '../stores/library';
-import { useLayout } from '../composables/useLayout';
+import { useLayout } from '@/shared/composables/useLayout';
 import { displayPath, itemKey } from '../viewLogic';
-import { formatSize, formatTime } from '../format';
+import { formatSize, formatTime } from '@/shared/lib/format';
 import TagEditor from './TagEditor.vue';
 import StarRating from './StarRating.vue';
-import Icon from './Icon.vue';
+import Icon from '@/shared/ui/Icon.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
 import FolderTreePicker from './FolderTreePicker.vue';
-import type { ViewState } from '../types';
+import type { ViewState } from '@/shared/types';
 
 const store = useLibraryStore();
 const { touch } = useLayout();

@@ -1,7 +1,7 @@
 // SSE 订阅：EventSource 断线自动重连；重连成功后回调 onReconnect 做全量对齐。
 import { apiConfig } from './client';
 import type { components } from './schema';
-import type { GlobalFilter, Item, LibraryInfo } from '../types';
+import type { GlobalFilter, Item, LibraryInfo } from '@/shared/types';
 
 /** 后台任务进度快照（契约见 openapi.json 的 SseEvents/TaskProgress） */
 export type TaskProgress = components['schemas']['TaskProgress'];

@@ -3,9 +3,9 @@
 // 引用规则：可读主 store 的 state/getter、调其 action；主 store 不反向依赖本 store。
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { runImportBatch } from '../importBatch';
-import { hasShell, shell } from '../platform';
+import { hasShell, shell } from '@/shared/lib/platform';
 import { useLibraryStore } from './library';
 
 /** 拖入展开后的一个文件：relPath 相对拖入根（含拖入目录自身的名字） */

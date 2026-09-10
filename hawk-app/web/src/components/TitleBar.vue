@@ -5,13 +5,13 @@
 // 面包屑只显示当前层级（完整路径经侧栏抽屉导航）。横屏/宽屏布局不受影响。
 import { computed, nextTick, ref, watch } from 'vue';
 import { useLibraryStore } from '../stores/library';
-import { useContextMenu } from '../composables/useContextMenu';
-import { useLayout } from '../composables/useLayout';
-import Icon from './Icon.vue';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
+import { useLayout } from '@/shared/composables/useLayout';
+import Icon from '@/shared/ui/Icon.vue';
 import SearchBox from './SearchBox.vue';
-import { hasShell, isMac, shell } from '../platform';
+import { hasShell, isMac, shell } from '@/shared/lib/platform';
 import { useImporterStore } from '../stores/importer';
-import type { MenuItem, QueryState } from '../types';
+import type { MenuItem, QueryState } from '@/shared/types';
 
 const store = useLibraryStore();
 const importer = useImporterStore();

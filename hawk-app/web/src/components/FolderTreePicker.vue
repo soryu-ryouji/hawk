@@ -2,8 +2,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { onClickOutside, useEventListener } from '@vueuse/core';
 import { useTaxonomyStore } from '../stores/taxonomy';
-import Icon from './Icon.vue';
-import type { FolderNode } from '../types';
+import Icon from '@/shared/ui/Icon.vue';
+import type { FolderNode } from '@/shared/types';
 
 // Eagle 式文件夹树选择弹出层（检查器「文件夹」使用）：点击当前值弹出，
 // 点击文件夹行即选中移动（无确认，与 Eagle 一致）；点外部/Esc 关闭。

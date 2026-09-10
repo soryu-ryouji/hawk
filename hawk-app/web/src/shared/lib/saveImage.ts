@@ -1,8 +1,8 @@
 // 原图保存（浏览器端局域网查看）：拉原图 blob 后按平台能力分流。
 // iOS Safari 忽略 <a download>（点击直接开新标签页），带文件的 Web Share 是系统级
 // 「存储图像/存储到文件」路径（iOS 15+）；Android/桌面浏览器走 <a download>。
-import { api } from './api/endpoints';
-import type { Item } from './types';
+import { api } from '@/shared/api/endpoints';
+import type { Item } from '@/shared/types';
 
 export type SaveImageResult = 'saved' | 'cancelled';
 

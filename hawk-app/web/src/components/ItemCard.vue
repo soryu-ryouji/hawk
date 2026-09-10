@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { startItemsDrag } from '../dnd';
 import { useLibraryStore } from '../stores/library';
 import { itemKey } from '../viewLogic';
-import { useLongPress } from '../composables/useLongPress';
+import { useLongPress } from '@/shared/composables/useLongPress';
 import { CARD_BORDER, CARD_META_H } from '../layout';
-import type { Item } from '../types';
+import type { Item } from '@/shared/types';
 
 const props = withDefaults(defineProps<{ item: Item; selected: boolean; width?: number; height?: number }>(), { width: 0, height: 0 });
 const emit = defineEmits<{

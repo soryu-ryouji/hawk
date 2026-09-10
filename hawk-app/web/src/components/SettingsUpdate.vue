@@ -2,10 +2,10 @@
 // 更新分区（仅 Electron）：通道切换 + 检查/下载/安装（状态机见 useUpdater）。
 // 打开对话框即自载版本信息；v-show 保活（下载中切分区再回来进度不丢）。
 import { computed, onMounted, ref } from 'vue';
-import { shell } from '../platform';
+import { shell } from '@/shared/lib/platform';
 import { useUpdater } from '../composables/useUpdater';
-import SelectBox from './SelectBox.vue';
-import type { UpdateChannel } from '../types';
+import SelectBox from '@/shared/ui/SelectBox.vue';
+import type { UpdateChannel } from '@/shared/types';
 
 const updater = useUpdater();
 const appVersion = ref('');

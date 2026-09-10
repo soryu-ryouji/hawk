@@ -1,5 +1,5 @@
 // store 共用小工具：错误码翻译与防抖。从 library.ts 拆出，taxonomy store 与主 store 共用。
-import { ApiError } from '../api/client';
+import { ApiError } from '@/shared/api/client';
 
 const ERROR_TEXT: Record<string, string> = {
   FILE_EXISTS: '同名文件或文件夹已存在',

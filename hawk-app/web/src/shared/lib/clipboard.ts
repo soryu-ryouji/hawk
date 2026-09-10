@@ -1,7 +1,7 @@
 // 图片写入系统剪贴板（预览右键菜单与 Ctrl/Cmd+C 快捷键共用）。
 // Chromium 的 clipboard.write 只接受 image/png：非 PNG 统一经 canvas 转码（动图取首帧，
 // 元数据不保留），边长超 canvas 上限时等比降采样。失败以异常上抛，调用方负责 toast 原因。
-import { api } from './api/endpoints';
+import { api } from '@/shared/api/endpoints';
 
 /** canvas 单边长上限（与 imageEdit 的保守取值一致），超出时等比降采样避免编码失败 */
 const MAX_CANVAS_SIDE = 16384;

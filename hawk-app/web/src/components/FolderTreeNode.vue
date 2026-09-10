@@ -4,11 +4,11 @@ import type { Directive } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { useImporterStore } from '../stores/importer';
-import { useContextMenu } from '../composables/useContextMenu';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { isItemsDrag, itemsDragOver, readItemsDrop, isFilesDrag, filesDragOver, droppedEntries } from '../dnd';
-import { hasShell, shell, fileManagerName } from '../platform';
-import Icon from './Icon.vue';
-import type { FolderNode } from '../types';
+import { hasShell, shell, fileManagerName } from '@/shared/lib/platform';
+import Icon from '@/shared/ui/Icon.vue';
+import type { FolderNode } from '@/shared/types';
 
 // 输入框自动聚焦指令（<script setup> 中以 vFocus 局部变量形式注册）
 const vFocus: Directive<HTMLElement> = {

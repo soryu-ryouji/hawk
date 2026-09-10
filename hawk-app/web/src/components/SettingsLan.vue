@@ -6,11 +6,11 @@
 // 分区切换用 v-show 保活（编辑中的字段不丢）。错误条在主组件（v-model:error）。
 import { computed, onMounted, ref } from 'vue';
 import { useClipboard } from '@vueuse/core';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { errorText } from '../stores/util';
 import { useLibraryStore } from '../stores/library';
-import { shell } from '../platform';
-import Icon from './Icon.vue';
+import { shell } from '@/shared/lib/platform';
+import Icon from '@/shared/ui/Icon.vue';
 
 const store = useLibraryStore();
 const error = defineModel<string | null>('error', { default: null });

@@ -1,8 +1,8 @@
 // API 连接配置与请求封装：baseURL、Bearer 头、信封解包、ApiError。
 // 连接参数经 URL hash 注入（Electron 主进程），或开发时用 VITE_HAWK_API/TOKEN 环境变量。
 
-import { hasShell } from '../platform';
-import { loadText, removeKey, saveText, STORAGE_KEYS } from '../persist';
+import { hasShell } from '@/shared/lib/platform';
+import { loadText, removeKey, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 
 interface ApiConfig {
   api: string;

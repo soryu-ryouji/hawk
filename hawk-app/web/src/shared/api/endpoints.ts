@@ -12,7 +12,7 @@ import type {
   LibraryInfo,
   TagInfo,
   ViewPrefs,
-} from '../types';
+} from '@/shared/types';
 
 /** server 启动状态（GET /app/startup，浏览器无 IPC 时由前端轮询） */
 type StartupInfo = components['schemas']['StartupInfo'];

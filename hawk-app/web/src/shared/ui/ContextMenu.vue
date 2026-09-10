@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref, watch } from 'vue';
-import { CONTEXT_MENU_OPEN_GUARD_MS, useContextMenu } from '../composables/useContextMenu';
+import { CONTEXT_MENU_OPEN_GUARD_MS, useContextMenu } from '@/shared/composables/useContextMenu';
 
 const { state, close } = useContextMenu();
 

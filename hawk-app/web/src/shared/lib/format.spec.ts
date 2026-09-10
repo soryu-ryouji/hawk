@@ -1,6 +1,6 @@
 // format.ts 的单元测试：单位分档边界与精度。
 import { describe, expect, it } from 'vitest';
-import { formatSize } from './format';
+import { formatSize } from '@/shared/lib/format';
 
 describe('formatSize', () => {
   it('单位随量级自适应：B / KB / MB / GB', () => {

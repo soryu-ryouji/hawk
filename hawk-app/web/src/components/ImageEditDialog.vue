@@ -4,9 +4,9 @@
 // 编辑在关闭前只作用于预览角(CSS 变换);「保存」或带修改退出(保存/不保存/取消三选确认)
 // 才经 preview.saveImageEdit 做客户端重编码(canvas + JPEG EXIF 回填)并提交 item/replace。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { usePreviewStore } from '../stores/preview';
-import type { Item } from '../types';
+import type { Item } from '@/shared/types';
 
 const props = defineProps<{ item: Item }>();
 const emit = defineEmits<{ close: [] }>();

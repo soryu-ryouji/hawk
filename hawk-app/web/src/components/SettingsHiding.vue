@@ -7,7 +7,7 @@ import { computed } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
 import { TRASH_PREFIX, displayPath } from '../viewLogic';
-import Icon from './Icon.vue';
+import Icon from '@/shared/ui/Icon.vue';
 
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();

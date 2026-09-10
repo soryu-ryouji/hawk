@@ -4,10 +4,10 @@
 // 评分：点击 chip 弹星级菜单；颜色：条件激活时显示色块 chip，可就地清除；
 // 尺寸：SizeMenu（短边档位区间 / 宽高区间，面板内模式下拉切换）。
 import { useLibraryStore } from '../stores/library';
-import { useContextMenu } from '../composables/useContextMenu';
-import Icon from './Icon.vue';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
+import Icon from '@/shared/ui/Icon.vue';
 import SizeMenu from './SizeMenu.vue';
-import type { SizeFilter } from '../types';
+import type { SizeFilter } from '@/shared/types';
 
 const store = useLibraryStore();
 const { open: openMenu } = useContextMenu();

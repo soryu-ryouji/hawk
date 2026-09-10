@@ -26,20 +26,20 @@ const mocks = vi.hoisted(() => ({
   globalFilterList: vi.fn(() => Promise.resolve({ folders: [], categories: [], tags: [] })),
   openFolder: vi.fn(() => Promise.resolve()),
 }));
-vi.mock('../api/endpoints', () => ({ api: mocks }));
+vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 // Electron 壳分支：hasShell 置真，openFolder 用 spy 断言（其余方法 no-op）
-vi.mock('../platform', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../platform')>();
+vi.mock('@/shared/lib/platform', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/shared/lib/platform')>();
   return { ...actual, hasShell: true, shell: { ...actual.shell, openFolder: mocks.openFolder } };
 });
 const { globalFilterSet } = mocks;
 
 import FolderTreeNode from './FolderTreeNode.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
-import { useContextMenu } from '../composables/useContextMenu';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
-import type { FolderNode } from '../types';
+import type { FolderNode } from '@/shared/types';
 
 function makeNode(overrides?: Partial<FolderNode>): FolderNode {
   return { path: '素材堆', name: '素材堆', children: [], modification_time: 0, count: 3, ...overrides };

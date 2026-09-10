@@ -3,10 +3,10 @@
 // 排序偏好（scope 解析、沿父链继承在 viewLogic.resolveSort、持久化与失败回拉）。
 // 引用规则不变：本模块不反向依赖主 store，状态 ref 与副作用回调全部由主 store 注入。
 import { computed, ref, type Ref } from 'vue';
-import { api } from '../api/endpoints';
-import { loadJSON, saveJSON, STORAGE_KEYS } from '../persist';
+import { api } from '@/shared/api/endpoints';
+import { loadJSON, saveJSON, STORAGE_KEYS } from '@/shared/lib/persist';
 import { resolveSort } from '../viewLogic';
-import type { LibraryInfo, QueryState, ViewPrefs, ViewState } from '../types';
+import type { LibraryInfo, QueryState, ViewPrefs, ViewState } from '@/shared/types';
 
 /** restoreView 的存在性校验（文件夹/分类/标签数据在 taxonomy store，由组件层注入，保持引用方向 DAG） */
 export interface ViewValidators {

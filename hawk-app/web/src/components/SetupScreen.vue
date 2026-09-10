@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 引导页：素材库未配置或失效时展示，点击按钮才弹系统目录选择框。
 import { ref } from 'vue';
-import { hasShell, shell } from '../platform';
+import { hasShell, shell } from '@/shared/lib/platform';
 
 const emit = defineEmits<{ selected: [] }>();
 const busy = ref(false);

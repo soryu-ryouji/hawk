@@ -13,8 +13,8 @@
 //   -webkit-app-region: drag 由 OS 命中测试优先消费，不禁用的话点遮罩盖住的标题栏会变成拖动窗口。
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useEventListener } from '@vueuse/core';
-import { hasShell } from '../platform';
-import Icon from './Icon.vue';
+import { hasShell } from '@/shared/lib/platform';
+import Icon from '@/shared/ui/Icon.vue';
 import SettingsAppearance from './SettingsAppearance.vue';
 import SettingsHiding from './SettingsHiding.vue';
 import SettingsLan from './SettingsLan.vue';

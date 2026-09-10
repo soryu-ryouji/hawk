@@ -6,17 +6,17 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 
 const mocks = vi.hoisted(() => ({
-  itemSkeleton: vi.fn((): Promise<{ items: import('../types').SkeletonItem[]; total_size: number }> => Promise.resolve({ items: [], total_size: 0 })),
+  itemSkeleton: vi.fn((): Promise<{ items: import('@/shared/types').SkeletonItem[]; total_size: number }> => Promise.resolve({ items: [], total_size: 0 })),
   itemList: vi.fn(
     (): Promise<{
-      items: import('../types').Item[];
+      items: import('@/shared/types').Item[];
       total: number;
       offset: number;
       limit: number;
       total_size: number;
     }> => Promise.resolve({ items: [], total: 0, offset: 0, limit: 0, total_size: 0 }),
   ),
-  itemDetail: vi.fn((): Promise<import('../types').Item> => Promise.reject(new Error('detail 不应被调用'))),
+  itemDetail: vi.fn((): Promise<import('@/shared/types').Item> => Promise.reject(new Error('detail 不应被调用'))),
   itemBatchUpdate: vi.fn(
     (
       _ids: string[],
@@ -29,11 +29,11 @@ const mocks = vi.hoisted(() => ({
   itemDelete: vi.fn((_id: string, _path?: string): Promise<void> => Promise.resolve()),
   itemRestore: vi.fn((_id: string, _path?: string): Promise<void> => Promise.resolve()),
 }));
-vi.mock('../api/endpoints', () => ({ api: mocks }));
+vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 
 import { useLibraryStore, registerTaxonomyHooks } from './library';
 import { itemKey } from '../viewLogic';
-import type { Item, LibraryInfo, SkeletonItem } from '../types';
+import type { Item, LibraryInfo, SkeletonItem } from '@/shared/types';
 
 // ---- 夹具 ----
 

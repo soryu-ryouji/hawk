@@ -1,6 +1,6 @@
 // 视图/查询相关的纯决策逻辑（从 stores/library.ts 抽出以便单测；store 内只做状态接线）。
 // 全部为纯函数：不触碰响应式状态，调用方传入当前 state 并消化返回值。
-import type { Item, QueryState, SkeletonItem, ViewPrefs, ViewState } from './types';
+import type { Item, QueryState, SkeletonItem, ViewPrefs, ViewState } from '@/shared/types';
 
 /** 全局默认排序（无任何记忆时的回落） */
 export const DEFAULT_SORT: Pick<QueryState, 'orderBy' | 'order'> = { orderBy: 'modification_time', order: 'desc' };

@@ -5,10 +5,10 @@
 //   off 时不发起任何检查（静默检查跳过、设置面板禁用检查按钮）；切换通道后旧检查结果作废，需重新检查
 // - 静默检查（启动后延迟一次，App.vue 触发）：发现新版本 toast 一次，按 通道@版本 去重
 import { ref } from 'vue';
-import { hasShell, shell } from '../platform';
-import { loadText, saveText, STORAGE_KEYS } from '../persist';
+import { hasShell, shell } from '@/shared/lib/platform';
+import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 import { useLibraryStore } from '../stores/library';
-import { UPDATE_CANCELLED, type UpdateChannel, type UpdateInfo, type UpdateProgress } from '../types';
+import { UPDATE_CANCELLED, type UpdateChannel, type UpdateInfo, type UpdateProgress } from '@/shared/types';
 
 export type UpdaterPhase = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'ready' | 'error';
 

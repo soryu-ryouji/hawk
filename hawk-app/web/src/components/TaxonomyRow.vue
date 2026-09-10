@@ -2,8 +2,8 @@
 import { computed } from 'vue';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
-import { useContextMenu } from '../composables/useContextMenu';
-import Icon from './Icon.vue';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
+import Icon from '@/shared/ui/Icon.vue';
 
 // 侧栏分类/标签共用的行组件：两者结构完全相同（图标/名称/计数/右键菜单/拖入高亮），
 // 仅 kind 相关的图标、菜单文案与 API 不同。拖拽 enter/leave/drop 由 Sidebar 容器级委托

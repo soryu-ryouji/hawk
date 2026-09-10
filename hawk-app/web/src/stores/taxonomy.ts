@@ -3,10 +3,10 @@
 // init/SSE 的跨 store 编排由组件层（App.vue）负责，restoreView 的校验经 validators 参数注入。
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { debounce, errorText } from './util';
 import { registerTaxonomyHooks, useLibraryStore } from './library';
-import type { CategoryInfo, FolderNode, GlobalFilter, TagInfo } from '../types';
+import type { CategoryInfo, FolderNode, GlobalFilter, TagInfo } from '@/shared/types';
 
 export const useTaxonomyStore = defineStore('taxonomy', () => {
   const library = useLibraryStore();

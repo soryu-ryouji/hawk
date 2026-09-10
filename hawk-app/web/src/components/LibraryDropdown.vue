@@ -5,12 +5,12 @@
 // 历史由主进程记录（最近在前），当前库打勾且不可移除；目录已删的置灰不可切换但可移除记录。
 // 换库就绪经 hawk:server-started 事件驱动 App 原地重启数据。
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { shell } from '../platform';
-import { useContextMenu } from '../composables/useContextMenu';
+import { shell } from '@/shared/lib/platform';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLibraryStore } from '../stores/library';
-import Icon from './Icon.vue';
-import PromptDialog from './PromptDialog.vue';
-import type { LibraryHistoryItem, MenuItem } from '../types';
+import Icon from '@/shared/ui/Icon.vue';
+import PromptDialog from '@/shared/ui/PromptDialog.vue';
+import type { LibraryHistoryItem, MenuItem } from '@/shared/types';
 
 const store = useLibraryStore();
 const menu = useContextMenu();

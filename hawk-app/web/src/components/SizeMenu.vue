@@ -7,8 +7,8 @@
 // 清除入口：chip 激活时的 ×（与颜色 chip 一致）或清空全部输入后应用。
 // 自绘触发 chip + Teleport 浮层（SelectBox 同模式：fixed 定位、外点关闭、翻转防出屏）
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
-import Icon from './Icon.vue';
-import type { SizeFilter } from '../types';
+import Icon from '@/shared/ui/Icon.vue';
+import type { SizeFilter } from '@/shared/types';
 
 /** 标志性分辨率档位（短边像素值；label 为右侧淡色别名） */
 const TIERS = [

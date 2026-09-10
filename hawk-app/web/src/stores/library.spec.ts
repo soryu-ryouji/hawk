@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   viewPreferenceSet: vi.fn(() => Promise.resolve()),
   viewPreferenceReset: vi.fn(() => Promise.resolve()),
 }));
-vi.mock('../api/endpoints', () => ({ api: mocks }));
+vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 
 import { useLibraryStore } from './library';
 

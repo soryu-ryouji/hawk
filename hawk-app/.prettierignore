@@ -3,5 +3,5 @@ dist
 out
 build
 web/dist
-web/src/api/schema.d.ts
+web/src/shared/api/schema.d.ts
 package-lock.json

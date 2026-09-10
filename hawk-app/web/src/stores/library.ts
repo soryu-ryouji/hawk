@@ -3,7 +3,7 @@
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { useMediaQuery } from '@vueuse/core';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { createViewNavigation, type ViewValidators } from './libraryNavigation';
 import {
   isGlobalViewKind,
@@ -18,10 +18,10 @@ import {
   splitKey,
   taxonomyChanged,
 } from '../viewLogic';
-import { hasShell } from '../platform';
-import { loadText, saveText, STORAGE_KEYS } from '../persist';
+import { hasShell } from '@/shared/lib/platform';
+import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 import { debounce, errorText } from './util';
-import type { GlobalFilter, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, ViewPrefs, ViewState } from '../types';
+import type { GlobalFilter, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, ViewPrefs, ViewState } from '@/shared/types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
 const INITIAL_WINDOW = 150;

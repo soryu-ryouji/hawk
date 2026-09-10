@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue';
 import { useWindowSize } from '@vueuse/core';
-import { api } from '../api/endpoints';
-import { copyImageToClipboard } from '../clipboard';
+import { api } from '@/shared/api/endpoints';
+import { copyImageToClipboard } from '@/shared/lib/clipboard';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
-import { useContextMenu } from '../composables/useContextMenu';
-import { useLayout } from '../composables/useLayout';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
+import { useLayout } from '@/shared/composables/useLayout';
 import { useZoomPan } from '../composables/useZoomPan';
 import { itemKey, splitKey } from '../viewLogic';
 import { isRotatableImage } from '../imageEdit';
-import { saveImageToDisk } from '../saveImage';
-import { showInFileManagerLabel, hasShell, shell } from '../platform';
-import type { Item } from '../types';
+import { saveImageToDisk } from '@/shared/lib/saveImage';
+import { showInFileManagerLabel, hasShell, shell } from '@/shared/lib/platform';
+import type { Item } from '@/shared/types';
 
 const props = defineProps<{ item: Item }>();
 const emit = defineEmits<{ close: []; navigate: [step: 1 | -1] }>();

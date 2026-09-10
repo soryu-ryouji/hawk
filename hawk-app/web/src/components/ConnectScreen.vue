@@ -3,8 +3,8 @@
 // 先输入访问 token，验证通过后经 client.storeToken 记住（localStorage 按 api host 隔离），
 // 之后访问同一地址自动免输入直连。
 import { ref } from 'vue';
-import { apiConfig, setApiToken, storeToken, ApiError } from '../api/client';
-import { api } from '../api/endpoints';
+import { apiConfig, setApiToken, storeToken, ApiError } from '@/shared/api/client';
+import { api } from '@/shared/api/endpoints';
 
 const emit = defineEmits<{ connect: [] }>();
 

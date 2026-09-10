@@ -4,10 +4,10 @@
 import { useEventListener } from '@vueuse/core';
 import { useLibraryStore } from '../stores/library';
 import { usePreviewStore } from '../stores/preview';
-import { useContextMenu } from './useContextMenu';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { gridNavRows, markKeyboardNavScroll, moveGridSelection } from './useGridNav';
 import { itemKey } from '../viewLogic';
-import { copyImageToClipboard } from '../clipboard';
+import { copyImageToClipboard } from '@/shared/lib/clipboard';
 
 export function useShortcuts() {
   const store = useLibraryStore();

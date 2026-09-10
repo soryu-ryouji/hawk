@@ -3,14 +3,14 @@
 // 引用规则：可读主 store 的 skeleton/details（只读）、调 ensureWindow/showToast；主 store 不反向依赖本 store。
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { api } from '../api/endpoints';
-import { ApiError } from '../api/client';
+import { api } from '@/shared/api/endpoints';
+import { ApiError } from '@/shared/api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '../imageEdit';
-import { loadText, saveText, STORAGE_KEYS } from '../persist';
+import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 import { useLibraryStore } from './library';
 import { itemKey } from '../viewLogic';
 import { errorText } from './util';
-import type { Item } from '../types';
+import type { Item } from '@/shared/types';
 
 export const usePreviewStore = defineStore('preview', () => {
   const library = useLibraryStore();

@@ -21,7 +21,7 @@ import {
   splitKey,
   taxonomyChanged,
 } from './viewLogic';
-import type { Item, QueryState, ViewPrefs, ViewState } from './types';
+import type { Item, QueryState, ViewPrefs, ViewState } from '@/shared/types';
 
 const query = (patch: Partial<QueryState> = {}): QueryState => ({
   keywords: [],

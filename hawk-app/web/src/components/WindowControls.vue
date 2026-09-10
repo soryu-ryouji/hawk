@@ -3,8 +3,8 @@
 // macOS 用系统原生红绿灯（titleBarStyle: 'hidden'，压在侧栏顶部拖拽条上），本组件不渲染。
 // 仅 Electron 内渲染；纯浏览器调试时 hawkShell 不存在，整体不显示。
 import { ref } from 'vue';
-import Icon from './Icon.vue';
-import { hasShell, isMac, shell } from '../platform';
+import Icon from '@/shared/ui/Icon.vue';
+import { hasShell, isMac, shell } from '@/shared/lib/platform';
 
 const isMaximized = ref(false);
 

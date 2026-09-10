@@ -2,9 +2,9 @@
 // Electron 由主进程推送（hawk:server-started / hawk:server-error / hawk:server-progress）；
 // 纯浏览器（局域网查看）无 IPC，自行轮询 /app/startup 直至 ready/error（401 转 ConnectScreen）。
 import { onMounted, onUnmounted, ref } from 'vue';
-import { api } from '../api/endpoints';
-import { ApiError, configureApi } from '../api/client';
-import { hasShell, shell } from '../platform';
+import { api } from '@/shared/api/endpoints';
+import { ApiError, configureApi } from '@/shared/api/client';
+import { hasShell, shell } from '@/shared/lib/platform';
 
 export interface ServerProgress {
   phase: string;

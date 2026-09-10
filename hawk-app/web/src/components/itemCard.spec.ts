@@ -7,10 +7,10 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 
 // api 层整体 mock（组件测试只关心交互分支）
-vi.mock('../api/endpoints', () => ({ api: { thumbnailUrl: () => 'thumb', fileUrl: () => 'file' } }));
+vi.mock('@/shared/api/endpoints', () => ({ api: { thumbnailUrl: () => 'thumb', fileUrl: () => 'file' } }));
 
 import ItemCard from './ItemCard.vue';
-import type { Item } from '../types';
+import type { Item } from '@/shared/types';
 
 const item = {
   id: 'a1',

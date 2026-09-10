@@ -1,4 +1,4 @@
-// 从运行中的 hawk-daemon（Rust 版）拉取 OpenAPI schema，生成 TS 类型到 web/src/api/schema.d.ts。
+// 从运行中的 hawk-daemon（Rust 版）拉取 OpenAPI schema，生成 TS 类型到 web/src/shared/api/schema.d.ts。
 // 用法：npm run gen:types（需先构建 Rust 后端：cargo build --release，或 debug 亦可）
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -53,7 +53,7 @@ try {
 
   // .bin 下的 shim 在 Windows 上是 shell 脚本，直接定位包内真实 CLI 文件，绕开 exports 条件映射
   const cli = path.join(root, 'node_modules', 'openapi-typescript', 'bin', 'cli.js');
-  const out = path.join(root, 'web', 'src', 'api', 'schema.d.ts');
+  const out = path.join(root, 'web', 'src', 'shared', 'api', 'schema.d.ts');
   execFileSync(process.execPath, [cli, schemaFile, '-o', out]);
   console.log(`已生成 ${out}`);
 } finally {

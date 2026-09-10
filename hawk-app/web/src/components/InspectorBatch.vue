@@ -5,10 +5,10 @@
 // 交集数据源：标签/分类经服务端 item/aggregate（选择集可达数万项，详情缓存只覆盖视口），
 // 文件夹/评分/大小按选择集与骨架纯前端计算。
 import { computed, nextTick, ref } from 'vue';
-import { api } from '../api/endpoints';
+import { api } from '@/shared/api/endpoints';
 import { useLibraryStore } from '../stores/library';
 import { useTaxonomyStore } from '../stores/taxonomy';
-import { formatSize } from '../format';
+import { formatSize } from '@/shared/lib/format';
 import { itemKey, selectionTotalSize, commonFoldersOf, commonStarOf } from '../viewLogic';
 import StarRating from './StarRating.vue';
 import CategoryPickerDialog from './CategoryPickerDialog.vue';
