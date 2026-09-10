@@ -108,7 +108,7 @@ jobs:
       - name: Check generated types in sync
         run: |
           node scripts/gen-types.mjs
-          git diff --exit-code web/src/api/schema.d.ts
+          git diff --exit-code web/src/shared/api/schema.d.ts
 
       # 打包完整性冒烟：--dir 产出未压缩目录即可验证 files/extraResources 齐全（含 electron/out 主进程）
       - name: Pack smoke (dir)
