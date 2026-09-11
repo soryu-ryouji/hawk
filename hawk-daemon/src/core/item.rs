@@ -3,6 +3,7 @@
 //! 含回收站视图投影规则。
 
 use crate::core::color_math::{rgb_to_lab, LabColor};
+use crate::core::locks::LockGuard;
 use crate::core::metadata::ItemMetadata;
 use crate::core::paths::LibraryPaths;
 use serde::Serialize;
@@ -241,6 +242,9 @@ pub struct ItemQuery {
     pub max_height: Option<i32>,
     /// 颜色检索（已转 Lab）；命中条件为调色板任一颜色 ΔE ≤ 阈值
     pub color: Option<LabColor>,
+    /// 锁守卫（服务端强制）：未解锁的锁在此处排除（位置级 + 分类/标签级），
+    /// 由 API 层按请求票据构建后随查询传入；空守卫恒放行
+    pub lock_guard: LockGuard,
     pub in_trash: bool,
     pub order_by: Option<String>,
     pub order: Option<String>,

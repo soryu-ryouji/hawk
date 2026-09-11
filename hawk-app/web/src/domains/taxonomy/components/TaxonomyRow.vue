@@ -26,8 +26,40 @@ const menu = useContextMenu();
 /** 全局列表隐藏标记（行尾 eyeOff 图标与右键菜单文案共用） */
 const hidden = computed(() => taxonomy.isHidden(props.kind, props.name));
 
+/** 锁（服务端强制）：被锁的分类/标签点击时要求解锁 */
+const locked = computed(() => taxonomy.isLocked(props.kind, props.name));
+const unlocked = computed(() => taxonomy.isUnlocked(props.kind, props.name));
+
 function onClick() {
+  // 锁定的分类/标签照常进入，内容区由 lockedView 驱动锁占位界面（不弹模态框）
   store.setView(props.kind === 'category' ? { kind: 'category', name: props.name } : { kind: 'tag', name: props.name });
+}
+
+/** 锁定菜单段（admin）：未锁→设锁；已锁→锁定回去/改密/移除 */
+function lockMenuItems() {
+  if (!locked.value) {
+    return [
+      {
+        label: `锁定${props.kind === 'category' ? '分类' : '标签'}…`,
+        title: '设置密码后，该维度下的素材需要解锁才能查看',
+        action: () => (taxonomy.lockDialog = { mode: 'set', dimension: props.kind, name: props.name }),
+      },
+    ];
+  }
+  return [
+    ...(unlocked.value
+      ? [{ label: '锁定回去', title: '仅重新隐藏本客户端（其他已解锁的客户端不受影响）', action: () => taxonomy.relock(props.kind, props.name) }]
+      : []),
+    {
+      label: '修改锁密码…',
+      action: () => (taxonomy.lockDialog = { mode: 'change', dimension: props.kind, name: props.name }),
+    },
+    {
+      label: '移除锁…',
+      title: '移除后全部素材无需密码即可查看',
+      action: () => (taxonomy.lockDialog = { mode: 'remove', dimension: props.kind, name: props.name }),
+    },
+  ];
 }
 
 /** 右键：重命名/刷新缓存/删除（只读查看 viewer 无写操作菜单，整体不出） */
@@ -49,6 +81,9 @@ function onContextMenu(e: MouseEvent) {
         title: `修复该${kindLabel}下素材缺失的宽高/缩略图/调色板，并清除源文件已删除的残留条目`,
         action: () => void refreshCache(props.kind, props.name),
       },
+      { separator: true, label: '' },
+      ...lockMenuItems(),
+      { separator: true, label: '' },
       {
         label: `删除${kindLabel}`,
         danger: true,
@@ -68,6 +103,8 @@ function onContextMenu(e: MouseEvent) {
   <div class="tax-row" :class="{ active, 'drop-target': dropTarget }" :data-name="name" @click="onClick" @contextmenu.prevent.stop="onContextMenu">
     <Icon :name="kind === 'category' ? 'category' : 'tag'" :size="13" />
     <span class="tax-name">{{ name }}</span>
+    <Icon v-if="locked && !unlocked" name="lock" :size="12" class="tax-hidden" />
+    <Icon v-else-if="locked" name="unlock" :size="12" class="tax-hidden" />
     <Icon v-if="hidden" name="eyeOff" :size="12" class="tax-hidden" />
     <span class="tax-count">{{ count }}</span>
   </div>

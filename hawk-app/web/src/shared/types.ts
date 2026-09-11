@@ -19,6 +19,7 @@ export type SkeletonItem = components['schemas']['ItemSkeletonDto'];
 export type ItemSkeletonResult = components['schemas']['ItemSkeletonResponse'];
 /** 全局列表隐藏项（.hawk/global_filter.toml，随库同步）：folders 为库内相对路径（子树整体隐藏） */
 export type GlobalFilter = components['schemas']['GlobalFilterSnapshot'];
+export type Locks = components['schemas']['LocksSnapshot'];
 
 // 业务自有类型
 export type ViewState =

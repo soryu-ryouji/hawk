@@ -32,6 +32,47 @@ const editText = ref('');
 /** 全局列表隐藏标记（右键菜单文案与行尾 eyeOff 图标共用） */
 const hidden = computed(() => taxonomy.isHidden('folder', props.node.path));
 
+/** 锁（服务端强制）：被覆盖的文件夹点击时要求解锁；已解锁显示解锁图标 */
+const locked = computed(() => taxonomy.isLocked('folder', props.node.path));
+const unlocked = computed(() => taxonomy.isUnlocked('folder', props.node.path));
+
+/** 覆盖本节点的锁条目（菜单改密/移除/锁定回去的定位；可能锁定的是祖先文件夹） */
+const lockEntry = computed(() => taxonomy.coveringLock('folder', props.node.path));
+
+function onClick() {
+  // 锁定文件夹照常进入（可见性 A：树可见、内容需解锁）——内容区由 lockedView 驱动锁占位界面，
+  // 误点时点别处即可离开，不弹模态框
+  store.setView({ kind: 'folder', path: props.node.path });
+}
+
+/** 锁定菜单段（admin）：未锁→设锁；已锁→锁定回去/改密/移除 */
+function lockMenuItems() {
+  const entry = lockEntry.value;
+  if (!entry) {
+    return [
+      {
+        label: '锁定文件夹…',
+        title: '设置密码后，该文件夹（含子目录）的内容需要解锁才能查看',
+        action: () => (taxonomy.lockDialog = { mode: 'set', dimension: 'folder', name: props.node.path }),
+      },
+    ];
+  }
+  return [
+    ...(unlocked.value
+      ? [{ label: '锁定回去', title: '仅重新隐藏本客户端（其他已解锁的客户端不受影响）', action: () => taxonomy.relock('folder', props.node.path) }]
+      : []),
+    {
+      label: '修改锁密码…',
+      action: () => (taxonomy.lockDialog = { mode: 'change', dimension: 'folder', name: entry }),
+    },
+    {
+      label: '移除锁…',
+      title: '移除后全部内容无需密码即可查看',
+      action: () => (taxonomy.lockDialog = { mode: 'remove', dimension: 'folder', name: entry }),
+    },
+  ];
+}
+
 // ---- 侧栏筛选（底栏筛选框输入的关键词，调用方已转小写）：----
 // 匹配节点与其祖先可见（祖先仅作上下文）；含匹配后代的节点强制展开，保证匹配链可达
 function subtreeMatches(node: FolderNode): boolean {
@@ -101,6 +142,8 @@ function onContextMenu(e: MouseEvent) {
         action: () => void refreshCache('folder', props.node.path, props.node.name),
       },
       { separator: true, label: '' },
+      ...lockMenuItems(),
+      { separator: true, label: '' },
       {
         label: '删除（移入回收站）',
         danger: true,
@@ -158,7 +201,7 @@ function onDrop(e: DragEvent) {
       class="node"
       :class="{ active: isActive(), 'drop-target': dropDepth > 0 }"
       :style="{ paddingLeft: 12 + depth * 14 + 'px' }"
-      @click="store.setView({ kind: 'folder', path: node.path })"
+      @click="onClick"
       @contextmenu.prevent.stop="onContextMenu"
       @dragenter="onDragEnter"
       @dragleave="onDragLeave"
@@ -171,6 +214,8 @@ function onDrop(e: DragEvent) {
       <span v-else class="arrow-placeholder" />
       <template v-if="editing !== 'rename'">
         <span class="name">{{ node.name }}</span>
+        <Icon v-if="locked && !unlocked" name="lock" :size="12" class="node-hidden" />
+        <Icon v-else-if="locked" name="unlock" :size="12" class="node-hidden" />
         <Icon v-if="hidden" name="eyeOff" :size="12" class="node-hidden" />
       </template>
       <input v-else v-model="editText" v-focus class="edit" @keydown.enter="submitEdit" @keydown.esc="editing = false" @blur="submitEdit" @click.stop />

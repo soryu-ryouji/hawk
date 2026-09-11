@@ -1,7 +1,7 @@
 // SSE 订阅：EventSource 断线自动重连；重连成功后回调 onReconnect 做全量对齐。
 import { apiConfig } from './client';
 import type { components } from './schema';
-import type { GlobalFilter, Item, LibraryInfo } from '@/shared/types';
+import type { GlobalFilter, Item, LibraryInfo, Locks } from '@/shared/types';
 
 /** 后台任务进度快照（契约见 openapi.json 的 SseEvents/TaskProgress） */
 export type TaskProgress = components['schemas']['TaskProgress'];
@@ -23,6 +23,8 @@ export interface EventHandlers {
   onLibraryUpdated(info: LibraryInfo): void;
   /** 全局列表隐藏集变更（含级联跟随与外部同步重载）：负载为完整快照，就地替换即可 */
   onGlobalFilterChanged(filter: GlobalFilter): void;
+  /** 锁集变更（设锁/解除/改密、级联跟随、外部同步重载）：负载为名称快照 */
+  onLocksChanged(locks: Locks): void;
   onReconnect(): void;
 }
 
@@ -54,6 +56,7 @@ export function connectEvents(handlers: EventHandlers): () => void {
   listen<{ reason: string }>('folder.changed', (d) => handlers.onFolderChanged(d.reason));
   listen<LibraryInfo>('library.updated', handlers.onLibraryUpdated);
   listen<GlobalFilter>('global_filter.changed', handlers.onGlobalFilterChanged);
+  listen<Locks>('locks.changed', handlers.onLocksChanged);
 
   return () => source.close();
 }

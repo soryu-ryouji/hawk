@@ -10,6 +10,7 @@ pub mod global_filter;
 pub mod index;
 pub mod index_db;
 pub mod item;
+pub mod locks;
 pub mod metadata;
 pub mod metadata_store;
 pub mod paths;

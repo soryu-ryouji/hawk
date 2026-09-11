@@ -11,6 +11,7 @@ use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
 use crate::core::global_filter::{publish_changed as publish_global_filter_changed, GlobalFilter};
 use crate::core::index::ItemIndex;
+use crate::core::locks::{publish_changed as publish_locks_changed, Locks};
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::pipeline::IndexPipeline;
@@ -110,11 +111,13 @@ fn build_state(settings: Settings) -> SharedState {
     let tags = Arc::new(TagRegistry::new(&paths));
     let prefs = Arc::new(ViewPreferences::new(&paths));
     let global_filter = Arc::new(GlobalFilter::new(&paths));
+    let locks = Arc::new(Locks::new(&paths));
     let migrator = Arc::new(TaxonomyMigrator::new(
         store.clone(),
         index.clone(),
         categories.clone(),
         tags.clone(),
+        locks.clone(),
         bus.clone(),
     ));
 
@@ -133,6 +136,7 @@ fn build_state(settings: Settings) -> SharedState {
         migrator,
         prefs.clone(),
         global_filter.clone(),
+        locks.clone(),
         worker.clone(),
         startup.clone(),
         settings.clone(),
@@ -161,6 +165,7 @@ fn build_state(settings: Settings) -> SharedState {
         categories,
         tags,
         global_filter,
+        locks,
         lan,
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
     })
@@ -177,6 +182,7 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
         let folder_tree = state.folder_tree.clone();
         let prefs = state.prefs.clone();
         let global_filter = state.global_filter.clone();
+        let locks = state.locks.clone();
         let bus = state.bus.clone();
         let lan = state.lan.clone();
         Arc::new(move |event| match event {
@@ -218,6 +224,13 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
             WatcherEvent::GlobalFilterChanged => {
                 if global_filter.reload() {
                     publish_global_filter_changed(&bus, &global_filter.snapshot());
+                }
+            }
+            // 锁集外部变更（网盘同步落地）：重载后有变化才广播，客户端重拉标记并重查列表；
+            // 锁条目消失/改名时残留票据自然失效（guard 按当前锁集求差）
+            WatcherEvent::LocksChanged => {
+                if locks.reload() {
+                    publish_locks_changed(&bus, &locks.snapshot());
                 }
             }
             WatcherEvent::Overflow => pipeline.notify_overflow(),

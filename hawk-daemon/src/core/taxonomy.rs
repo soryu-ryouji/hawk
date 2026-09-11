@@ -4,6 +4,7 @@
 use crate::core::events::EventBus;
 use crate::core::index::ItemIndex;
 use crate::core::item::ItemDto;
+use crate::core::locks::Locks;
 use crate::core::metadata::ItemMetadata;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
@@ -196,27 +197,41 @@ impl ItemEvents {
     /// item.updated 的批量变体（调色板批量回写等），负载 `{ items: [...] }`
     pub const ITEMS_UPDATED: &'static str = "items.updated";
 
-    /// item 内容/元数据变更事件,负载为完整 Item 对象(回收站视图按需投影)
-    pub fn publish_changed(bus: &EventBus, item_dto: &ItemDto) {
-        bus.publish(Self::UPDATED, serde_json::to_value(item_dto).unwrap());
-    }
-
-    /// item 失去一个位置后的事件:无剩余位置 → removed;只剩回收站 → trashed;否则 updated。
-    /// 调用前索引已完成变更（位置已摘除）
-    pub fn publish_location_loss(bus: &EventBus, index: &ItemIndex, hash: &str) {
-        if !index.contains(hash) {
-            bus.publish(Self::REMOVED, serde_json::json!({ "id": hash }));
-        } else if !index.has_library_location(hash) {
-            bus.publish(Self::TRASHED, serde_json::json!({ "id": hash }));
-        } else if let Some(dto) = index.get_dto(hash) {
+    /// item 内容/元数据变更事件,负载为完整 Item 对象(回收站视图按需投影)。
+    /// 锁保守过滤：零解锁状态下不可见则不广播（SSE 广播无法按订阅者解锁状态定制，
+    /// 已解锁客户端可能漏收，靠 locks.changed 后的重查兕底）
+    pub fn publish_changed(bus: &EventBus, index: &ItemIndex, locks: &Locks, hash: &str) {
+        if !Self::lock_gates(locks, index, hash) {
+            return;
+        }
+        if let Some(dto) = index.get_dto(hash) {
             bus.publish(Self::UPDATED, serde_json::to_value(&dto).unwrap());
         }
     }
 
-    /// 位置进出回收站后的事件:首个库内位置进回收站 → trashed;首个回收站位置回归 → restored;其余 updated
+    /// item 失去一个位置后的事件:无剩余位置 → removed;只剩回收站 → trashed;否则 updated。
+    /// 调用前索引已完成变更（位置已摘除）。removed/trashed 只含 id（无元数据泄漏），不经锁过滤
+    pub fn publish_location_loss(
+        bus: &EventBus,
+        index: &ItemIndex,
+        locks: &Locks,
+        hash: &str,
+    ) {
+        if !index.contains(hash) {
+            bus.publish(Self::REMOVED, serde_json::json!({ "id": hash }));
+        } else if !index.has_library_location(hash) {
+            bus.publish(Self::TRASHED, serde_json::json!({ "id": hash }));
+        } else {
+            Self::publish_changed(bus, index, locks, hash);
+        }
+    }
+
+    /// 位置进出回收站后的事件:首个库内位置进回收站 → trashed;首个回收站位置回归 → restored;其余 updated。
+    /// trashed 只含 id，不过滤；restored/updated 带 DTO，经锁过滤
     pub fn publish_transition(
         bus: &EventBus,
         index: &ItemIndex,
+        locks: &Locks,
         hash: &str,
         was_in_trash: bool,
         now_in_trash: bool,
@@ -225,11 +240,24 @@ impl ItemEvents {
         if !was_in_trash && now_in_trash && library_count == 0 {
             bus.publish(Self::TRASHED, serde_json::json!({ "id": hash }));
         } else if was_in_trash && !now_in_trash && library_count == 1 {
-            if let Some(dto) = index.get_dto(hash) {
-                bus.publish(Self::RESTORED, serde_json::to_value(&dto).unwrap());
+            if Self::lock_gates(locks, index, hash) {
+                if let Some(dto) = index.get_dto(hash) {
+                    bus.publish(Self::RESTORED, serde_json::to_value(&dto).unwrap());
+                }
             }
-        } else if let Some(dto) = index.get_dto(hash) {
-            bus.publish(Self::UPDATED, serde_json::to_value(&dto).unwrap());
+        } else {
+            Self::publish_changed(bus, index, locks, hash);
+        }
+    }
+
+    /// 锁保守闸门：零解锁状态下 item 不可见 → false。判定用实际位置（含 trash 前缀）
+    /// 与当前分类/标签；索引无此条目时无从判定，按放行（id-only 事件不涉元数据）
+    pub fn lock_gates(locks: &Locks, index: &ItemIndex, hash: &str) -> bool {
+        match index.lock_projection(hash) {
+            Some((paths, categories, tags)) => {
+                locks.zero_guard().item_visible(paths.into_iter(), &categories, &tags)
+            }
+            None => true,
         }
     }
 }
@@ -240,6 +268,7 @@ pub struct TaxonomyMigrator {
     index: std::sync::Arc<ItemIndex>,
     categories: std::sync::Arc<CategoryRegistry>,
     tags: std::sync::Arc<TagRegistry>,
+    locks: std::sync::Arc<Locks>,
     bus: EventBus,
 }
 
@@ -249,6 +278,7 @@ impl TaxonomyMigrator {
         index: std::sync::Arc<ItemIndex>,
         categories: std::sync::Arc<CategoryRegistry>,
         tags: std::sync::Arc<TagRegistry>,
+        locks: std::sync::Arc<Locks>,
         bus: EventBus,
     ) -> TaxonomyMigrator {
         TaxonomyMigrator {
@@ -256,6 +286,7 @@ impl TaxonomyMigrator {
             index,
             categories,
             tags,
+            locks,
             bus,
         }
     }
@@ -297,7 +328,10 @@ impl TaxonomyMigrator {
         if self.index.contains(hash) {
             self.index.with_item_mut(hash, |item| item.sync_from(&meta));
             if let Some(dto) = self.index.get_dto(hash) {
-                ItemEvents::publish_changed(&self.bus, &dto);
+                if ItemEvents::lock_gates(&self.locks, &self.index, hash) {
+                    self.bus
+                        .publish(ItemEvents::UPDATED, serde_json::to_value(&dto).unwrap());
+                }
                 return Ok(Some(dto));
             }
         }

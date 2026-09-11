@@ -25,18 +25,22 @@ pub(crate) fn do_delete(ctx: &PipelineCtx, rel: &str) {
     if filter_changed {
         crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
     }
+    // 锁同款簿记：删除路径命中的锁条目一并清除（含清空回收站）
+    if ctx.locks.delete_folder_prefix(rel) {
+        crate::core::locks::publish_changed(&ctx.bus, &ctx.locks.snapshot());
+    }
 
     if let Some(hash) = ctx.index.remove_location(rel) {
         note_invalidated(ctx, rel);
         prune_meta_location(ctx, rel, &hash);
-        ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &hash);
+        ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &ctx.locks, &hash);
     }
 
     for loc in ctx.index.locations_under(&format!("{rel}/")) {
         if let Some(hash) = ctx.index.remove_location(&loc) {
             note_invalidated(ctx, &loc);
             prune_meta_location(ctx, &loc, &hash);
-            ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &hash);
+            ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &ctx.locks, &hash);
         }
     }
 
@@ -92,6 +96,7 @@ pub(crate) fn do_move(ctx: &Arc<PipelineCtx>, old_abs: &str, new_abs: &str) -> R
     ItemEvents::publish_transition(
         &ctx.bus,
         &ctx.index,
+        &ctx.locks,
         &hash,
         LibraryPaths::is_in_trash(&old_rel),
         LibraryPaths::is_in_trash(&new_rel),
@@ -131,11 +136,15 @@ pub(crate) fn do_dir_move(
     if ctx.global_filter.rename_folder_prefix(&old_rel, &new_rel) {
         crate::core::global_filter::publish_changed(&ctx.bus, &ctx.global_filter.snapshot());
     }
+    // 锁同款跟随（含移入回收站与恢复的往返迁移；回收站内保持锁定）
+    if ctx.locks.rename_folder_prefix(&old_rel, &new_rel) {
+        crate::core::locks::publish_changed(&ctx.bus, &ctx.locks.snapshot());
+    }
 
     let old_in_trash = LibraryPaths::is_in_trash(&format!("{old_rel}/"));
     let new_in_trash = LibraryPaths::is_in_trash(&format!("{new_rel}/"));
     for hash in &affected {
-        ItemEvents::publish_transition(&ctx.bus, &ctx.index, hash, old_in_trash, new_in_trash);
+        ItemEvents::publish_transition(&ctx.bus, &ctx.index, &ctx.locks, hash, old_in_trash, new_in_trash);
     }
 
     // 目录移动后目录结构必然变化,广播 folder.changed(folder/list 全量建树,客户端重拉即可)
@@ -225,8 +234,8 @@ pub(crate) fn do_clear_trash(ctx: &PipelineCtx) -> Result<(), String> {
         if item_gone {
             ctx.bus
                 .publish(ItemEvents::REMOVED, serde_json::json!({ "id": hash }));
-        } else if let Some(dto) = ctx.index.get_dto(&hash) {
-            ItemEvents::publish_changed(&ctx.bus, &dto);
+        } else {
+            ItemEvents::publish_changed(&ctx.bus, &ctx.index, &ctx.locks, &hash);
         }
     }
     Ok(())

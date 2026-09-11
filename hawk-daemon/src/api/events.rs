@@ -91,6 +91,9 @@ pub struct SseEvents {
     /// 全局列表隐藏集变更（含级联跟随与外部同步重载），负载为完整快照
     #[serde(rename = "global_filter.changed")]
     global_filter_changed: crate::core::global_filter::GlobalFilterSnapshot,
+    /// 锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照
+    #[serde(rename = "locks.changed")]
+    locks_changed: crate::core::locks::LocksSnapshot,
 }
 
 #[allow(dead_code)]

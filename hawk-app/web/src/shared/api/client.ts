@@ -57,9 +57,50 @@ export function setApiToken(token: string): void {
   apiConfig().token = token;
 }
 
-/** server 重启后整体更换连接（主进程经 hawk:server-started 推送新地址/token） */
+// ---- 文件夹/分类/标签锁的解锁票据（内存态；daemon 重启即失效，重新输密码即可） ----
+// 票据由各客户端独立持有：分享页面链接不带票据，解锁状态不扩散
+
+/** 已解锁的锁条目：key = `${dimension}:${name}`（name 为锁条目名，文件夹是覆盖该路径的最近锁定祖先） */
+const unlockTickets = new Map<string, string>();
+
+export function lockKey(dimension: 'folder' | 'category' | 'tag', name: string): string {
+  return `${dimension}:${name}`;
+}
+
+export function hasUnlockTicket(dimension: 'folder' | 'category' | 'tag', name: string): boolean {
+  return unlockTickets.has(lockKey(dimension, name));
+}
+
+/** 解锁成功后登记票据：后续请求自动附带（header + img/SSE 查询参数） */
+export function addUnlockTicket(dimension: 'folder' | 'category' | 'tag', name: string, ticket: string): void {
+  unlockTickets.set(lockKey(dimension, name), ticket);
+}
+
+/** 丢弃票据即「锁定回去」（仅影响本客户端；票据仍留在 daemon 内存，但无持有者） */
+export function dropUnlockTicket(dimension: 'folder' | 'category' | 'tag', name: string): void {
+  unlockTickets.delete(lockKey(dimension, name));
+}
+
+/** 清空全部票据（换连接/测试用） */
+export function clearUnlockTickets(): void {
+  unlockTickets.clear();
+}
+
+/** 全部票据的请求头值（逗号拼接；无票据返回 null） */
+export function unlockHeaderValue(): string | null {
+  return unlockTickets.size > 0 ? [...unlockTickets.values()].join(',') : null;
+}
+
+/** 全部票据的查询参数值（<img> 直链与 SSE 用；无票据返回 null） */
+export function unlockQueryValue(): string | null {
+  return unlockTickets.size > 0 ? [...unlockTickets.values()].join(',') : null;
+}
+
+/** server 重启后整体更换连接（主进程经 hawk:server-started 推送新地址/token）；
+ *  票据是 daemon 内存态，重启即失效 → 同步清空 */
 export function configureApi(next: { api: string; token: string }): void {
   config = { ...next };
+  clearUnlockTickets();
 }
 
 export function apiConfig(): ApiConfig {
@@ -85,6 +126,7 @@ export async function request<T>(method: string, path: string, opts?: { body?: u
       method,
       headers: {
         Authorization: `Bearer ${token}`,
+        ...(unlockHeaderValue() ? { 'X-Hawk-Unlock': unlockHeaderValue()! } : {}),
         ...(opts?.body !== undefined && !raw ? { 'Content-Type': 'application/json' } : {}),
       },
       body: raw ?? (opts?.body !== undefined ? JSON.stringify(opts.body) : undefined),

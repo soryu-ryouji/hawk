@@ -10,6 +10,7 @@ import Icon from '@/shared/ui/Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
 import LibraryDropdown from './LibraryDropdown.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
+import LockDialog from './LockDialog.vue';
 import TaxonomyRow from './TaxonomyRow.vue';
 import { useImporterStore } from '@/domains/import';
 import type { FolderNode } from '@/shared/types';
@@ -330,6 +331,7 @@ function onFolderTreeDrop(e: DragEvent) {
   </aside>
 
   <PromptDialog v-if="showCreateFolder" title="新建文件夹" placeholder="文件夹名称" @confirm="createRootFolder" @cancel="showCreateFolder = false" />
+  <LockDialog v-if="taxonomy.lockDialog" :mode="taxonomy.lockDialog.mode" :dimension="taxonomy.lockDialog.dimension" :name="taxonomy.lockDialog.name" @close="taxonomy.lockDialog = null" />
   <PromptDialog v-if="showCreateCategory" title="新建分类" placeholder="分类名称" @confirm="createRootCategory" @cancel="showCreateCategory = false" />
   <PromptDialog v-if="showRenameCategory" title="重命名分类" :placeholder="renameTarget" @confirm="submitRenameCategory" @cancel="showRenameCategory = false" />
   <PromptDialog v-if="showCreateTag" title="新建标签" placeholder="标签名称" @confirm="createTag" @cancel="showCreateTag = false" />

@@ -78,6 +78,7 @@ impl Rig {
         let tags = Arc::new(TagRegistry::new(&paths));
         let prefs = Arc::new(ViewPreferences::new(&paths));
         let global_filter = Arc::new(crate::core::global_filter::GlobalFilter::new(&paths));
+        let locks = Arc::new(crate::core::locks::Locks::new(&paths));
         let thumbs = ThumbnailService::new(Arc::new(paths.clone()));
         let worker = ThumbnailWorker::new(thumbs.clone(), bus.clone());
         let migrator = Arc::new(TaxonomyMigrator::new(
@@ -85,6 +86,7 @@ impl Rig {
             index.clone(),
             categories,
             tags,
+            locks.clone(),
             bus.clone(),
         ));
         let scanner = LibraryScanner::new(paths.clone(), config.clone());
@@ -107,6 +109,7 @@ impl Rig {
             migrator,
             prefs,
             global_filter,
+            locks,
             worker.clone(),
             startup.clone(),
             settings,

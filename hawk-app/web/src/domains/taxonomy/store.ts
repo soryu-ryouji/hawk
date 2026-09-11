@@ -4,9 +4,10 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
+import { addUnlockTicket, dropUnlockTicket, hasUnlockTicket } from '@/shared/api/client';
 import { debounce, errorText } from '@/shared/lib/storeUtil';
 import { registerTaxonomyHooks, useLibraryStore } from '@/domains/library';
-import type { CategoryInfo, FolderNode, GlobalFilter, TagInfo } from '@/shared/types';
+import type { CategoryInfo, FolderNode, GlobalFilter, Locks, TagInfo } from '@/shared/types';
 
 export const useTaxonomyStore = defineStore('taxonomy', () => {
   const library = useLibraryStore();
@@ -65,6 +66,110 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
       onGlobalFilterUpdated(globalFilter.value);
     } catch (e) {
       library.showToast(errorText(e));
+    }
+  }
+
+  // ---- 锁（.hawk/locks.toml，服务端强制；解锁票据由 client 层独立持有） ----
+  const locks = ref<Locks>({ folders: [], categories: [], tags: [] });
+  const lockFolderSet = computed(() => new Set(locks.value.folders));
+  const lockCategorySet = computed(() => new Set(locks.value.categories));
+  const lockTagSet = computed(() => new Set(locks.value.tags));
+
+  /** 锁管理对话框状态（右键菜单发起：设锁/改密/移除，admin）；解锁不走对话框——
+   *  进入锁定视图时内容区由主 store 的 lockedView 驱动锁占位界面（密码输入） */
+  const lockDialog = ref<{ mode: 'set' | 'change' | 'remove'; dimension: 'folder' | 'category' | 'tag'; name: string } | null>(null);
+
+  /** 覆盖该维度的锁条目：文件夹取自身或最近锁定祖先（锁条目名）；分类/标签为自身。无锁返回 null */
+  function coveringLock(kind: 'folder' | 'category' | 'tag', name: string): string | null {
+    if (kind === 'folder') {
+      let cur: string | null = name;
+      while (cur !== null) {
+        if (lockFolderSet.value.has(cur)) {
+          return cur;
+        }
+        cur = cur.includes('/') ? cur.slice(0, cur.lastIndexOf('/')) : null;
+      }
+      return null;
+    }
+    const set = kind === 'category' ? lockCategorySet.value : lockTagSet.value;
+    return set.has(name) ? name : null;
+  }
+
+  /** 该维度是否被锁覆盖（树/面板锁图标与点击拦截用） */
+  function isLocked(kind: 'folder' | 'category' | 'tag', name: string): boolean {
+    return coveringLock(kind, name) !== null;
+  }
+
+  /** 本客户端是否已解锁该维度（票据持有即视为解锁；文件夹按覆盖锁条目判定） */
+  function isUnlocked(kind: 'folder' | 'category' | 'tag', name: string): boolean {
+    const entry = coveringLock(kind, name);
+    return entry !== null && hasUnlockTicket(kind, entry);
+  }
+
+  /** 锁集落位 + 联动：列表成员与侧栏计数均可能变化 → 重查骨架与计数 */
+  function onLocksUpdated(next: Locks) {
+    locks.value = next;
+    debouncedRefreshTaxonomy(() => void refreshTaxonomy());
+    void library.reloadSkeleton();
+  }
+
+  async function refreshLocks() {
+    try {
+      locks.value = await api.lockList();
+    } catch (e) {
+      library.showToast(errorText(e));
+    }
+  }
+
+  /** 解锁（任何 token 可用）：登记票据 + 退锁占位界面 + 原地重查当前视图（导航早已发生，
+   *  密码正确即从锁界面替换为实际内容） */
+  async function unlock(kind: 'folder' | 'category' | 'tag', name: string, password: string): Promise<boolean> {
+    try {
+      const res = await api.lockUnlock(kind, name, password);
+      addUnlockTicket(kind, name, res.unlock_token);
+      library.setLockedView(null);
+      void library.reloadSkeleton();
+      refreshTaxonomySoon();
+      return true;
+    } catch (e) {
+      library.showToast(errorText(e));
+      return false;
+    }
+  }
+
+  /** 锁定回去：仅丢弃本客户端票据（不影响其他已解锁的客户端） */
+  function relock(kind: 'folder' | 'category' | 'tag', name: string) {
+    const entry = coveringLock(kind, name);
+    if (entry) {
+      dropUnlockTicket(kind, entry);
+      void library.reloadSkeleton();
+      refreshTaxonomySoon();
+    }
+  }
+
+  /** 设锁/改密（admin）：成功后刷新锁集（locks.changed 事件也会到达，幂等） */
+  async function lockSet(kind: 'folder' | 'category' | 'tag', name: string, password: string, oldPassword?: string): Promise<boolean> {
+    try {
+      await api.lockSet(kind, name, password, oldPassword);
+      await refreshLocks();
+      onLocksUpdated(locks.value);
+      return true;
+    } catch (e) {
+      library.showToast(errorText(e));
+      return false;
+    }
+  }
+
+  /** 解除锁（admin，需密码）：全部内容即刻无需解锁可见 */
+  async function lockRemove(kind: 'folder' | 'category' | 'tag', name: string, password: string): Promise<boolean> {
+    try {
+      await api.lockRemove(kind, name, password);
+      await refreshLocks();
+      onLocksUpdated(locks.value);
+      return true;
+    } catch (e) {
+      library.showToast(errorText(e));
+      return false;
     }
   }
 
@@ -147,7 +252,7 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
   /** 首屏/换库加载（组件层编排，先于主 store init：restoreView 的校验依赖本 store 数据）。
    *  隐藏集必须先于计数就绪：refreshTaxonomy 的计数查询带 exclude 参数，并发跑会按未过滤口径算错 */
   async function refreshAll() {
-    await refreshGlobalFilter();
+    await Promise.all([refreshGlobalFilter(), refreshLocks()]);
     await Promise.all([refreshFolders(), refreshTaxonomy()]);
   }
 
@@ -271,6 +376,19 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
     refreshTaxonomy: refreshTaxonomySoon,
     refreshFolders: refreshFoldersSoon,
     onGlobalFilterChanged: (filter) => onGlobalFilterUpdated(filter),
+    onLocksChanged: (next) => onLocksUpdated(next),
+    onLockedView: () => {
+      // 查询 403（进入未解锁的锁定维度视图 / 锁定回去 / 被其他客户端刚上锁）：
+      // 解析覆盖锁条目（文件夹可能是祖先）→ 主 store 置 lockedView，内容区切锁占位界面
+      const v = library.view;
+      if (v.kind === 'folder') {
+        const entry = coveringLock('folder', v.path);
+        if (entry) library.setLockedView({ dimension: 'folder', name: entry });
+      } else if (v.kind === 'category' || v.kind === 'tag') {
+        const dim = v.kind === 'category' ? 'category' : 'tag';
+        if (coveringLock(dim, v.name)) library.setLockedView({ dimension: dim, name: v.name });
+      }
+    },
   });
 
   return {
@@ -290,6 +408,16 @@ export const useTaxonomyStore = defineStore('taxonomy', () => {
     tagExists,
     isHidden,
     setHidden,
+    locks,
+    isLocked,
+    isUnlocked,
+    coveringLock,
+    lockDialog,
+    unlock,
+    relock,
+    lockSet,
+    lockRemove,
+    refreshLocks,
     refreshGlobalFilter,
     refreshFolders,
     refreshFoldersSoon,

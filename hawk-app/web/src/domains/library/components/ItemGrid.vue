@@ -11,6 +11,7 @@ import { showInFileManagerLabel, hasShell, shell } from '@/shared/lib/platform';
 import type { Item } from '@/shared/types';
 import ItemCard from './ItemCard.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
+import LockScreen from './LockScreen.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
 import { isRotatableImage } from '@/shared/lib/imageEdit';
 import { saveImageToDisk } from '@/shared/lib/saveImage';
@@ -291,7 +292,9 @@ function onMenu(item: Item, e: MouseEvent) {
 
 <template>
   <div ref="gridRef" class="grid-scroll" @scroll.passive="onScroll">
-    <EmptyState v-if="!store.loading && store.total === 0" :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'" />
+    <!-- 锁定视图占位：优先于空态与网格（骨架已被清空），密码正确后替换为实际内容 -->
+    <LockScreen v-if="store.lockedView" />
+    <EmptyState v-else-if="!store.loading && store.total === 0" :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'" />
 
     <div v-if="totalHeight > 0" class="grid" :style="{ height: `${totalHeight}px`, '--grid-gap': `${GRID_GAP}px` }">
       <div v-for="row in renderedRows" :key="row.key" class="row" :style="{ transform: `translateY(${row.y}px)` }">

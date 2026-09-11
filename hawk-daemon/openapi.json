@@ -712,6 +712,47 @@
         ],
         "type": "object"
       },
+      "Envelope_LocksSnapshot": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "锁快照（API 响应/事件负载：仅名称，不含密码哈希）",
+            "properties": {
+              "categories": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "folders": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "folders",
+              "categories",
+              "tags"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_RefreshCacheResponse": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -837,6 +878,30 @@
               "index",
               "queue_overflow",
               "sse_lagged"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_UnlockResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "unlock_token": {
+                "description": "解锁票据：后续请求经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带（img/SSE 通道）；\ndaemon 重启失效，前端丢弃即「锁定回去」。注意：不要把带 unlock 参数的图片 URL 分享给他人",
+                "type": "string"
+              }
+            },
+            "required": [
+              "unlock_token"
             ],
             "type": "object"
           },
@@ -1995,6 +2060,114 @@
         ],
         "type": "object"
       },
+      "LockRemoveRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LockTarget"
+          },
+          {
+            "properties": {
+              "password": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "password"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LockSetRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LockTarget"
+          },
+          {
+            "properties": {
+              "old_password": {
+                "description": "已上锁条目修改密码时必须提供旧密码；首次设置省略",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "password": {
+                "description": "新密码（设置与修改共用）",
+                "type": "string"
+              }
+            },
+            "required": [
+              "password"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LockTarget": {
+        "properties": {
+          "dimension": {
+            "description": "维度：folder / category / tag",
+            "type": "string"
+          },
+          "name": {
+            "description": "folder 为库内相对路径（如 \"posters/2024\"）；category/tag 为名称",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dimension",
+          "name"
+        ],
+        "type": "object"
+      },
+      "LockUnlockRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LockTarget"
+          },
+          {
+            "properties": {
+              "password": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "password"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LocksSnapshot": {
+        "description": "锁快照（API 响应/事件负载：仅名称，不含密码哈希）",
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders",
+          "categories",
+          "tags"
+        ],
+        "type": "object"
+      },
       "PaletteColorDto": {
         "description": "API 的调色板颜色项",
         "properties": {
@@ -2214,6 +2387,10 @@
             "$ref": "#/components/schemas/LibraryInfo",
             "description": "改库显示名广播，负载为完整 LibraryInfo（含新显示名）"
           },
+          "locks.changed": {
+            "$ref": "#/components/schemas/LocksSnapshot",
+            "description": "锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照"
+          },
           "task.progress": {
             "$ref": "#/components/schemas/TaskProgress"
           }
@@ -2229,7 +2406,8 @@
           "folder.changed",
           "task.progress",
           "library.updated",
-          "global_filter.changed"
+          "global_filter.changed",
+          "locks.changed"
         ],
         "type": "object"
       },
@@ -2427,6 +2605,18 @@
         "required": [
           "status",
           "data"
+        ],
+        "type": "object"
+      },
+      "UnlockResponse": {
+        "properties": {
+          "unlock_token": {
+            "description": "解锁票据：后续请求经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带（img/SSE 通道）；\ndaemon 重启失效，前端丢弃即「锁定回去」。注意：不要把带 unlock 参数的图片 URL 分享给他人",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unlock_token"
         ],
         "type": "object"
       },
@@ -3012,9 +3202,12 @@
               }
             },
             "description": "OK"
+          },
+          "403": {
+            "description": "选择集含未解锁锁覆盖的 item（LOCKED）"
           }
         },
-        "summary": "选择集共有特性聚合（标签/分类交集）。多选面板的「共同标签/分类」数据源——\n前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算",
+        "summary": "选择集共有特性聚合（标签/分类交集）。多选面板的「共同标签/分类」数据源——\n前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算。\n任一 id 位于未解锁的锁覆盖内 → 403 LOCKED（正常流程拿不到被锁 id，锁状态变化后\n前端会收到 locks.changed 并重查）",
         "tags": [
           "item"
         ]
@@ -3136,6 +3329,9 @@
               }
             },
             "description": "OK"
+          },
+          "403": {
+            "description": "位置或内容位于未解锁的锁覆盖内（LOCKED）"
           }
         },
         "summary": "单 item 详情（锁内投影）",
@@ -3182,6 +3378,9 @@
               }
             },
             "description": "原图二进制"
+          },
+          "403": {
+            "description": "内容位于未解锁的锁覆盖内（LOCKED）"
           }
         },
         "summary": "主位置（优先库内）原图二进制：流式返回，Content-Type 按扩展名 mime_guess，Cache-Control immutable",
@@ -3213,6 +3412,9 @@
               }
             },
             "description": "OK"
+          },
+          "403": {
+            "description": "视图位于未解锁的锁定文件夹/分类/标签内（LOCKED）"
           }
         },
         "summary": "分页查询：全过滤条件 AND 组合，主键同值按 id 打破平局，次序与 skeleton 逐位一致",
@@ -3337,6 +3539,9 @@
               }
             },
             "description": "OK"
+          },
+          "403": {
+            "description": "视图位于未解锁的锁定文件夹/分类/标签内（LOCKED）"
           }
         },
         "summary": "骨架查询：与 list 同查询同排序，返回轻量骨架（虚拟网格布局依据）",
@@ -3374,6 +3579,9 @@
               }
             },
             "description": "缩略图（webp）或回源原图（Content-Type 按源格式）"
+          },
+          "403": {
+            "description": "内容位于未解锁的锁覆盖内（LOCKED）"
           },
           "404": {
             "description": "不可渲染格式，生成中"
@@ -3660,6 +3868,129 @@
         "summary": "切换元数据存储方案：单写者内完成全量迁移（写新权威层 + 删旧文件），成功后调用方应重启进程\n（打开库时按内容探测模式，见 metadata_store::detect_storage_mode）。已是目标模式时幂等成功",
         "tags": [
           "library"
+        ]
+      }
+    },
+    "/api/v1/lock/list": {
+      "get": {
+        "operationId": "lock_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LocksSnapshot"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全部锁（仅名称，不含密码哈希；folders 为库内相对路径）",
+        "tags": [
+          "lock"
+        ]
+      }
+    },
+    "/api/v1/lock/remove": {
+      "post": {
+        "operationId": "lock_remove",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LockRemoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "解除锁（admin 限定；需密码）。变更经 locks.changed 广播",
+        "tags": [
+          "lock"
+        ]
+      }
+    },
+    "/api/v1/lock/set": {
+      "post": {
+        "operationId": "lock_set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LockSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "description": "需要 admin 权限或旧密码错误（OLD_PASSWORD_REQUIRED）"
+          }
+        },
+        "summary": "设置/修改锁（admin 限定；已锁条目改密需旧密码）。变更经 locks.changed 广播",
+        "tags": [
+          "lock"
+        ]
+      }
+    },
+    "/api/v1/lock/unlock": {
+      "post": {
+        "operationId": "lock_unlock",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LockUnlockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_UnlockResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "description": "密码错误或锁不存在"
+          },
+          "429": {
+            "description": "失败次数过多，冷却中"
+          }
+        },
+        "summary": "解锁（任何有效 token，含只读 viewer）：校验密码发放票据，票据由各客户端独立持有",
+        "tags": [
+          "lock"
         ]
       }
     },

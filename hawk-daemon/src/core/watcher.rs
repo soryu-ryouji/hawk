@@ -30,6 +30,8 @@ pub enum WatcherEvent {
     PreferencesChanged,
     /// global_filter.toml 隐藏项注册表变更（含外部同步写入）
     GlobalFilterChanged,
+    /// locks.toml 锁注册表变更（含外部同步写入）
+    LocksChanged,
     /// 事件缓冲溢出，需要全量扫描兜底
     Overflow,
     /// 系统明确告知某路径下事件被丢弃（FSEvents must-scan-subdirs）：定向重扫该路径
@@ -309,6 +311,7 @@ fn dispatch_upsert(paths: &LibraryPaths, config: &Arc<LibraryConfig>, cb: &Callb
     let norm_tags = normalize_str(&paths.tags_file);
     let norm_view = normalize_str(&paths.view_file);
     let norm_global_filter = normalize_str(&paths.global_filter_file);
+    let norm_locks = normalize_str(&paths.locks_file);
     if abs == norm_config {
         cb(WatcherEvent::ConfigChanged);
         return;
@@ -323,6 +326,10 @@ fn dispatch_upsert(paths: &LibraryPaths, config: &Arc<LibraryConfig>, cb: &Callb
     }
     if abs == norm_global_filter {
         cb(WatcherEvent::GlobalFilterChanged);
+        return;
+    }
+    if abs == norm_locks {
+        cb(WatcherEvent::LocksChanged);
         return;
     }
     if is_excluded_path(paths, config, abs) {

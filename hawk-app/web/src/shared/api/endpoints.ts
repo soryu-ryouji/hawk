@@ -1,5 +1,5 @@
 // 端点封装：与 server-rest-api-v1.md 一一对应。请求/响应字段均为 snake_case（契约）。
-import { apiConfig, request } from './client';
+import { apiConfig, request, unlockQueryValue } from './client';
 import type { components } from './schema';
 import type {
   CategoryInfo,
@@ -10,6 +10,7 @@ import type {
   ItemListResult,
   ItemSkeletonResult,
   LibraryInfo,
+  Locks,
   TagInfo,
   ViewPrefs,
 } from '@/shared/types';
@@ -136,21 +137,32 @@ export const api = {
   globalFilterSet: (kind: 'folder' | 'category' | 'tag', name: string, hidden: boolean) =>
     request<void>('PUT', '/api/v1/global_filter', { body: { kind, name, hidden } }),
 
+  /** 锁（.hawk/locks.toml，服务端强制）：设锁/解除需 admin；解锁对任何有效 token 开放 */
+  lockList: () => request<Locks>('GET', '/api/v1/lock/list'),
+  lockSet: (dimension: 'folder' | 'category' | 'tag', name: string, password: string, oldPassword?: string) =>
+    request<void>('POST', '/api/v1/lock/set', { body: { dimension, name, password, old_password: oldPassword } }),
+  lockRemove: (dimension: 'folder' | 'category' | 'tag', name: string, password: string) =>
+    request<void>('POST', '/api/v1/lock/remove', { body: { dimension, name, password } }),
+  lockUnlock: (dimension: 'folder' | 'category' | 'tag', name: string, password: string) =>
+    request<{ unlock_token: string }>('POST', '/api/v1/lock/unlock', { body: { dimension, name, password } }),
+
   /** 视图排序偏好：folder 继承由前端沿父链解析，服务端只存取原始条目 */
   viewPreferences: () => request<ViewPrefs>('GET', '/api/v1/view/preferences'),
   viewPreferenceSet: (scope: string, orderBy: 'modification_time' | 'name' | 'size' | 'star', order: 'asc' | 'desc') =>
     request<void>('PUT', '/api/v1/view/preference', { body: { scope, order_by: orderBy, order } }),
   viewPreferenceReset: (scope: string) => request<void>('DELETE', '/api/v1/view/preference', { query: { scope } }),
 
-  /** 缩略图 URL：<img> 无法带请求头，token 走查询参数（后端已放行该端点） */
+  /** 缩略图 URL：<img> 无法带请求头，token/unlock 走查询参数（后端已放行该端点） */
   thumbnailUrl(id: string): string {
     const { api: base, token } = apiConfig();
-    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`;
+    const unlock = unlockQueryValue();
+    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
   },
 
-  /** 原图 URL：预览浮层用；token 同样走查询参数 */
+  /** 原图 URL：预览浮层用；token/unlock 同样走查询参数 */
   fileUrl(id: string): string {
     const { api: base, token } = apiConfig();
-    return `${base}/api/v1/item/file?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`;
+    const unlock = unlockQueryValue();
+    return `${base}/api/v1/item/file?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
   },
 };

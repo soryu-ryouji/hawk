@@ -1,6 +1,10 @@
 //! 内容服务与缩略图：thumbnail/file/refresh_thumbnail。
+//! 锁强制：两个内容端点按 item 级公式判定（位置 OR + 分类/标签 AND），未解锁 403 LOCKED——
+//! 这是防止「拿到 hash 直接拼 URL 绕过列表」的关键闸门
 
 use super::*;
+use axum::extract::Extension;
+use crate::core::locks::LockGuard;
 
 // ---------- thumbnail / file / refresh_thumbnail ----------
 
@@ -9,6 +13,20 @@ use super::*;
 pub(crate) struct ThumbnailQuery {
     /// item id（内容 BLAKE3 哈希 hex）
     id: String,
+}
+
+/// 锁闸门：item 级可见性判定（位置 OR + 分类/标签 AND）。不可见 → 403 LOCKED。
+/// 缩略图与原图共用；守卫空（无锁/全解锁）时零成本直通
+fn check_item_lock(state: &SharedState, guard: &LockGuard, id: &str) -> Result<(), ApiError> {
+    if guard.is_empty() {
+        return Ok(());
+    }
+    if let Some((paths, categories, tags)) = state.index.lock_projection(id) {
+        if !guard.item_visible(paths.into_iter(), &categories, &tags) {
+            return Err(ApiError::locked("内容已锁定，需要解锁后访问"));
+        }
+    }
+    Ok(())
 }
 
 /// 缩略图：单一尺寸 1024 的 webp 缓存，Cache-Control immutable。
@@ -21,16 +39,19 @@ pub(crate) struct ThumbnailQuery {
     params(ThumbnailQuery),
     responses(
         (status = 200, description = "缩略图（webp）或回源原图（Content-Type 按源格式）", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 403, description = "内容位于未解锁的锁覆盖内（LOCKED）"),
         (status = 404, description = "不可渲染格式，生成中")
     )
 )]
 pub(crate) async fn item_thumbnail(
     State(state): State<SharedState>,
+    Extension(guard): Extension<LockGuard>,
     Query(q): Query<ThumbnailQuery>,
 ) -> Result<Response, ApiError> {
     if !state.index.contains(&q.id) {
         return Err(ApiError::item_not_found(&q.id));
     }
+    check_item_lock(&state, &guard, &q.id)?;
     let file = state.thumbs.get_path(&q.id);
     if std::path::Path::new(&file).is_file() {
         return serve_file(file, "image/webp".to_string(), true).await;
@@ -65,12 +86,17 @@ pub(crate) async fn item_thumbnail(
     path = "/api/v1/item/file",
     tags = ["item"],
     params(IdQuery),
-    responses((status = 200, description = "原图二进制", content_type = "application/octet-stream", body = Vec<u8>))
+    responses(
+        (status = 200, description = "原图二进制", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 403, description = "内容位于未解锁的锁覆盖内（LOCKED）")
+    )
 )]
 pub(crate) async fn item_file(
     State(state): State<SharedState>,
+    Extension(guard): Extension<LockGuard>,
     Query(q): Query<IdQuery>,
 ) -> Result<Response, ApiError> {
+    check_item_lock(&state, &guard, &q.id)?;
     let file = state
         .index
         .main_source_abs(&q.id, &state.paths)

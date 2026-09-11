@@ -51,6 +51,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
         "/api/v1/global_filter",
         Some(r#"{"kind":"category","name":"契约隐藏","hidden":true}"#),
     ),
+    ("GET", "/api/v1/lock/list", None),
     ("GET", "/api/v1/item/count", None),
     ("GET", "/api/v1/library/info", None),
     (
@@ -109,6 +110,9 @@ const WRITE_SCRIPT: &[(&str, &str)] = &[
     ("POST", "/api/v1/folder/update"),
     ("POST", "/api/v1/folder/delete"),
     ("POST", "/api/v1/folder/restore"),
+    ("POST", "/api/v1/lock/set"),
+    ("POST", "/api/v1/lock/unlock"),
+    ("POST", "/api/v1/lock/remove"),
 ];
 
 /// 只校验路由存在的端点：app/lan PUT 需运行中的 LAN supervisor 收敛，不在测试内成功调用
@@ -156,6 +160,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
     let tags = Arc::new(TagRegistry::new(&paths));
     let prefs = Arc::new(ViewPreferences::new(&paths));
     let global_filter = Arc::new(crate::core::global_filter::GlobalFilter::new(&paths));
+    let locks = Arc::new(crate::core::locks::Locks::new(&paths));
     let thumbs = ThumbnailService::new(Arc::new(paths.clone()));
     let worker = ThumbnailWorker::new(thumbs.clone(), bus.clone());
     let migrator = Arc::new(TaxonomyMigrator::new(
@@ -163,6 +168,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         index.clone(),
         categories.clone(),
         tags.clone(),
+        locks.clone(),
         bus.clone(),
     ));
     let scanner = LibraryScanner::new(paths.clone(), config.clone());
@@ -185,6 +191,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         migrator,
         prefs.clone(),
         global_filter.clone(),
+        locks.clone(),
         worker.clone(),
         startup.clone(),
         settings.clone(),
@@ -208,6 +215,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         categories,
         tags,
         global_filter,
+        locks,
         worker,
         lan: LanSupervisor::new(),
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
@@ -298,13 +306,40 @@ async fn call_json(
     uri: &str,
     body: Option<Value>,
 ) -> (StatusCode, Vec<u8>) {
-    call(
-        router,
-        method,
-        uri,
-        body.map(|b| ("application/json", serde_json::to_vec(&b).unwrap())),
-    )
-    .await
+    call_json_hdr(router, method, uri, body, &[]).await
+}
+
+/// call_json 的带额外请求头变体（解锁票据 X-Hawk-Unlock 等）
+async fn call_json_hdr(
+    router: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    extra_headers: &[(&str, &str)],
+) -> (StatusCode, Vec<u8>) {
+    let (content_type, bytes) = match body.map(|b| serde_json::to_vec(&b).unwrap()) {
+        Some(b) => ("application/json", b),
+        None => ("application/json", Vec::new()),
+    };
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("host", "127.0.0.1")
+        .header("content-type", content_type);
+    for (k, v) in extra_headers {
+        builder = builder.header(*k, *v);
+    }
+    let resp = router
+        .clone()
+        .oneshot(builder.body(Body::from(bytes)).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024 * 1024)
+        .await
+        .unwrap();
+    (status, bytes.to_vec())
 }
 
 /// 取端点 200 响应的 JSON schema，包装为自包含文档（components 提升为根，
@@ -764,6 +799,32 @@ async fn write_endpoints_match_schema() {
     )
     .await;
 
+    // 锁生命周期：设锁 → 解锁（票据）→ 解除（剧本目录已建，锁其子树与根目录 item 互不影响）
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/lock/set",
+        Some(json!({"dimension": "folder", "name": "剧本目录", "password": "pw"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/lock/unlock",
+        Some(json!({"dimension": "folder", "name": "剧本目录", "password": "pw"})),
+    )
+    .await;
+    expect_ok(
+        &app,
+        &spec,
+        "POST",
+        "/api/v1/lock/remove",
+        Some(json!({"dimension": "folder", "name": "剧本目录", "password": "pw"})),
+    )
+    .await;
+
     // 文件夹生命周期（delete 入回收站后 restore 放回）
     expect_ok(
         &app,
@@ -916,6 +977,7 @@ async fn sse_events_match_schema() {
         ItemEvents::TASK_PROGRESS,
         LibraryEvents::UPDATED,
         crate::core::global_filter::GLOBAL_FILTER_CHANGED,
+        crate::core::locks::LOCKS_CHANGED,
     ]
     .map(str::to_string)
     .into_iter()
@@ -1043,6 +1105,146 @@ async fn global_filter_exclusion() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法维度应 400");
+}
+
+/// 锁：lock 端点生命周期 + 服务端强制（查询 403/内容 403/全局排除）+ 票据解锁（独立持有）
+#[tokio::test]
+async fn lock_enforcement() {
+    let app = test_app("locks");
+    std::fs::create_dir_all(app.library_root().join("私密")).unwrap();
+    let secret_id = app.add_test_item("私密/secret.png", [99, 20, 20]).await;
+    let open_id = app.add_test_item("open.png", [10, 10, 10]).await;
+
+    // 设锁（admin token）
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/set",
+        Some(json!({"dimension": "folder", "name": "私密", "password": "pw123"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "lock/set");
+    let (_, bytes) = call_json(&app.router, "GET", "/api/v1/lock/list", None).await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["folders"], json!(["私密"]), "锁列表读回");
+
+    // 锁定视图 403 LOCKED（list 与 skeleton）
+    for uri in ["/api/v1/item/list", "/api/v1/item/skeleton"] {
+        let (status, body) = call_json(
+            &app.router,
+            "POST",
+            uri,
+            Some(json!({"folders": ["私密"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri} 锁定视图应 403");
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"]["code"], "LOCKED");
+    }
+
+    // 全局视图：仅剩未锁定项（排除而非 403）
+    let (_, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/list",
+        Some(json!({})),
+    )
+    .await;
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["data"]["total"], 1, "全局视图只剩未锁定项");
+    assert_eq!(v["data"]["items"][0]["id"], json!(open_id));
+
+    // detail / file / thumbnail：内容直连 403 LOCKED（防 hash 拼 URL 绕过）
+    for uri in [
+        format!("/api/v1/item/detail?id={secret_id}"),
+        format!("/api/v1/item/file?id={secret_id}"),
+        format!("/api/v1/item/thumbnail?id={secret_id}"),
+    ] {
+        let (status, _) = call(&app.router, "GET", &uri, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri} 未解锁应 403");
+    }
+    // 未锁定项不受影响
+    let (status, _) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/file?id={open_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "未锁定内容不受影响");
+
+    // 解锁：错误密码 401；正确密码发放票据；票据经 X-Hawk-Unlock 头附带
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/unlock",
+        Some(json!({"dimension": "folder", "name": "私密", "password": "wrong"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "错误密码应 401");
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/unlock",
+        Some(json!({"dimension": "folder", "name": "私密", "password": "pw123"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unlock");
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    let ticket = v["data"]["unlock_token"].as_str().unwrap().to_string();
+
+    // 带票据：锁定视图 200、内容可见；不带票据的其他客户端仍 403（独立持有）
+    let (status, _) = call_json_hdr(
+        &app.router,
+        "POST",
+        "/api/v1/item/list",
+        Some(json!({"folders": ["私密"]})),
+        &[("x-hawk-unlock", &ticket)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "带票据的锁定视图应 200");
+    let (status, _) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/file?id={secret_id}&unlock={ticket}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "带票据的内容直连应 200（query 通道）");
+    let (status, _) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/file?id={secret_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "无票据客户端仍 403");
+
+    // 改密需旧密码；解除锁需密码；解除后无需票据即全部可见
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/set",
+        Some(json!({"dimension": "folder", "name": "私密", "password": "new", "old_password": "bad"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "旧密码错误应 403");
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/remove",
+        Some(json!({"dimension": "folder", "name": "私密", "password": "pw123"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "lock/remove");
+    let (status, _) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/file?id={secret_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "解除锁后无需票据可见");
 }
 
 /// 分辨率档位筛选：短边（min(width, height)）与阈值比较，gte/lte 可组合成区间；

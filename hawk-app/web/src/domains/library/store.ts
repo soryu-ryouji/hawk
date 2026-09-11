@@ -23,7 +23,8 @@ import {
 import { hasShell } from '@/shared/lib/platform';
 import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 import { debounce, errorText } from '@/shared/lib/storeUtil';
-import type { GlobalFilter, Item, ItemListRequest, LibraryInfo, QueryState, SkeletonItem, ViewPrefs, ViewState } from '@/shared/types';
+import { ApiError } from '@/shared/api/client';
+import type { GlobalFilter, Item, ItemListRequest, LibraryInfo, Locks, QueryState, SkeletonItem, ViewPrefs, ViewState } from '@/shared/types';
 
 /** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
 const INITIAL_WINDOW = 150;
@@ -37,6 +38,10 @@ export interface TaxonomyHooks {
   refreshFolders(): void;
   /** 全局列表隐藏集变更（SSE 负载为完整快照）→ 更新隐藏集并重查列表 */
   onGlobalFilterChanged(filter: GlobalFilter): void;
+  /** 锁集变更（SSE 负载为名称快照）→ 更新锁集并重查列表 */
+  onLocksChanged(locks: Locks): void;
+  /** 当前视图查询被服务端以 403 LOCKED 拒绝（其他客户端刚上锁的竞态）→ 弹解锁框 */
+  onLockedView(): void;
 }
 let taxonomyHooks: TaxonomyHooks | null = null;
 export function registerTaxonomyHooks(hooks: TaxonomyHooks): void {
@@ -151,6 +156,9 @@ export const useLibraryStore = defineStore('library', () => {
   /** 全局列表隐藏集（.hawk/global_filter.toml）：由 taxonomy store 拉取后经 setGlobalFilter 注入
    * （引用方向 DAG：主 store 不反向引用 taxonomy），listParams 在全局类视图附带排除参数 */
   const globalFilter = ref<GlobalFilter>({ folders: [], categories: [], tags: [] });
+  /** 当前视图被锁（覆盖视图的锁条目；403 LOCKED 时由 taxonomy hook 解析写入）：
+   *  非空时内容区显示锁占位界面（密码输入），查询成功或解锁后清位回到网格 */
+  const lockedView = ref<{ dimension: 'folder' | 'category' | 'tag'; name: string } | null>(null);
 
   // ---- getters ----
   const isTrash = computed(() => view.value.kind === 'trash');
@@ -245,6 +253,11 @@ export const useLibraryStore = defineStore('library', () => {
     globalFilter.value = gf;
   }
 
+  /** 锁占位视图置位（taxonomy 的 onLockedView hook 与 unlock 成功路径调用） */
+  function setLockedView(entry: { dimension: 'folder' | 'category' | 'tag'; name: string } | null) {
+    lockedView.value = entry;
+  }
+
   function showToast(message: string) {
     toast.value = message;
     clearTimeout(toastTimer);
@@ -337,9 +350,20 @@ export const useLibraryStore = defineStore('library', () => {
       skeleton.value = res.items;
       totalSize.value = Number(res.total_size);
       details.value = new Map();
+      lockedView.value = null; // 查询成功：视图未被锁（或已解锁），锁占位界面退场
       await ensureWindow(0, INITIAL_WINDOW);
     } catch (e) {
-      showToast(errorText(e));
+      if (e instanceof ApiError && e.code === 'LOCKED') {
+        // 进入未解锁的锁定维度视图（或被其他客户端刚上锁）：清空残留内容，
+        // taxonomy hook 解析覆盖锁条目后置 lockedView → 内容区切锁占位界面
+        skeleton.value = [];
+        totalSize.value = 0;
+        details.value = new Map();
+        selection.value = [];
+        taxonomyHooks?.onLockedView();
+      } else {
+        showToast(errorText(e));
+      }
     } finally {
       loading.value = false;
     }
@@ -418,6 +442,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
       skeleton.value = res.items;
       totalSize.value = Number(res.total_size);
+      lockedView.value = null;
       const keys = new Set(res.items.map((i) => itemKey(i.id, i.path)));
       selection.value = selection.value.filter((key) => keys.has(key));
       if (details.value.size > 0) {
@@ -433,8 +458,17 @@ export const useLibraryStore = defineStore('library', () => {
           details.value = map;
         }
       }
-    } catch {
-      // 下次事件或 SSE 重连再对齐
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'LOCKED') {
+        // 「锁定回去」等场景：当前视图重新被锁 → 回到锁占位界面
+        skeleton.value = [];
+        totalSize.value = 0;
+        details.value = new Map();
+        selection.value = [];
+        taxonomyHooks?.onLockedView();
+        return;
+      }
+      // 其他失败：下次事件或 SSE 重连再对齐
     }
   }
 
@@ -603,6 +637,10 @@ export const useLibraryStore = defineStore('library', () => {
         // 隐藏集变更（负载为完整快照）：由 taxonomy store 就地替换并联动重查
         taxonomyHooks?.onGlobalFilterChanged(payload as GlobalFilter);
         break;
+      case 'locks.changed':
+        // 锁集变更（负载为名称快照）：taxonomy store 更新锁集（树/面板锁图标）并重查列表
+        taxonomyHooks?.onLocksChanged(payload as Locks);
+        break;
     }
   }
 
@@ -633,6 +671,8 @@ export const useLibraryStore = defineStore('library', () => {
     filterBarVisible,
     viewerMode,
     viewPrefs,
+    lockedView,
+    setLockedView,
     isTrash,
     canGoBack,
     canGoForward,

@@ -909,6 +909,27 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 | GET | `/api/v1/global_filter/list` | 全部隐藏项：`{ "folders": [...], "categories": [...], "tags": [...] }` |
 | PUT | `/api/v1/global_filter` | `{ "kind": "folder" \| "category" \| "tag", "name", "hidden" }`，幂等；路径/名称非法返回 `INVALID_PARAM` |
 
+## lock
+
+文件夹/分类/标签锁（`.hawk/locks.toml`，参与同步）：被锁维度的内容需要密码解锁后才可见，由**服务端强制**（与 global_filter 的客户端约定式排除不同）：
+
+- 主动筛选（`item/list`、`item/skeleton` 的 `folders`/`categories`/`tags` 参数）命中未解锁的锁 → `403 LOCKED`
+- 全局视图：未解锁锁覆盖的条目由服务端直接排除（同查询同排序，skeleton 与 list 一致）
+- 内容直连（`item/thumbnail`、`item/file`、`item/detail`、`item/aggregate`）命中未解锁的锁 → `403 LOCKED`（防止拿到 hash 直接拼 URL 绕过）
+
+判定语义（OR 剔除）：条目命中任一未解锁的锁即不可见；同内容多路径时，存在任一「无锁或已解锁」位置即位置维度放行，分类/标签锁与位置无关（item 属性）。锁定文件夹移入回收站后保持锁定（条目随路径迁移）。**锁不是加密**：文件系统层面无保护，仅防止「通过 hawk 查看」；密码哈希（Argon2id）参与同步，拿到 `.hawk/` 的人可离线爆破（慢哈希缓解）。
+
+**解锁票据**：`lock/unlock` 校验密码后发放随机票据（daemon 内存态，重启失效），由各客户端独立持有——解锁状态不随分享的链接扩散。后续请求经 `X-Hawk-Unlock: <t1>,<t2>` 请求头附带；`<img>` 直链与 SSE 无法设头，改用查询参数 `?unlock=<t1>,<t2>`（路径集合与 token 查询参数通道一致）。**不要把带 unlock 参数的图片 URL 分享给他人**（等同分享该内容的解锁能力）。前端丢弃票据即「锁定回去」。
+
+级联跟随与 global_filter 同款：文件夹移动/重命名（含移入回收站，恢复时回归）自动迁移，删除/清空回收站自动清除；分类/标签重命名跟随（目标已锁时合并，保留目标密码）、删除清除。变更广播 `locks.changed`（含外部同步写入的重载）。验证失败全局节流：连续 5 次失败冷却 60s（`429 THROTTLED`）。
+
+| 方法 | 端点 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/api/v1/lock/list` | 全部锁（仅名称，不含密码哈希）：`{ "folders": [...], "categories": [...], "tags": [...] }` |
+| POST | `/api/v1/lock/set` | `{ "dimension": "folder" \| "category" \| "tag", "name", "password", "old_password"? }`；已锁条目改密必须带正确旧密码（否则 `403 OLD_PASSWORD_REQUIRED`）。admin 限定 |
+| POST | `/api/v1/lock/remove` | `{ "dimension", "name", "password" }`，解除锁需密码。admin 限定 |
+| POST | `/api/v1/lock/unlock` | `{ "dimension", "name", "password" }` → `{ "unlock_token": "..." }`；任何有效 token（含只读 viewer）可解锁；锁不存在 `404 LOCK_NOT_FOUND`、密码错误 `401` |
+
 ## trash
 
 回收站内容通过 `item/list`（`in_trash: true`）查询。
@@ -949,6 +970,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `folder.changed`  | `{ "reason": "external" }` | 目录结构可能变化,客户端应重拉 `folder/list`;reason 恒为 `external`,客户端必须忽略取值(结构为将来预留) |
 | `library.updated` | LibraryInfo 对象 | 库显示名变更（`PATCH library/info`）；负载为完整库信息，客户端就地替换 |
 | `global_filter.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 全局列表隐藏集变更（标记/取消、级联跟随、外部同步重载）；负载为完整快照，客户端就地替换并重查列表 |
+| `locks.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 锁集变更（设锁/解除/改密、级联跟随、外部同步重载）；负载为名称快照，客户端重拉锁标记并重查列表。锁覆盖内的素材不发 `item.*` 事件（保守过滤，已解锁客户端可能漏收，靠解锁后的重查兕底） |
 | `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(缩略图/调色板队列与索引管道;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
 
 事件名与负载即持久契约(Rust 重写必须逐字兼容);后端以常量集中定义(`ItemEvents`),客户端不许凭代码反推。

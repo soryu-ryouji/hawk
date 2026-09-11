@@ -81,7 +81,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const hooks = { refreshTaxonomy: vi.fn(), refreshFolders: vi.fn(), onGlobalFilterChanged: vi.fn() };
+const hooks = { refreshTaxonomy: vi.fn(), refreshFolders: vi.fn(), onGlobalFilterChanged: vi.fn(), onLocksChanged: vi.fn(), onLockedView: vi.fn() };
 
 beforeEach(() => {
   setActivePinia(createPinia());

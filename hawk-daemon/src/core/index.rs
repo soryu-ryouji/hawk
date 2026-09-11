@@ -91,6 +91,21 @@ impl ItemIndex {
         Some(item.to_dto_at(loc, trash_view))
     }
 
+    /// 锁可见性判定投影：全部库内实际路径（含回收站前缀）+ 分类 + 标签，供锁守卫消费
+    pub fn lock_projection(
+        &self,
+        hash: &str,
+    ) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
+        let inner = read_inner!(self);
+        inner.by_hash.get(hash).map(|i| {
+            (
+                i.locations.iter().map(|l| l.path.clone()).collect(),
+                i.categories.clone(),
+                i.tags.clone(),
+            )
+        })
+    }
+
     /// 宽高是否尚未解析（0 × 0）。只读访问，缩略图 worker 的补宽高闸门用
     pub fn dim_is_zero(&self, hash: &str) -> bool {
         let inner = read_inner!(self);
@@ -662,6 +677,13 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
         for loc in item.locations.iter().filter(|l| l.in_trash() == q.in_trash) {
             entries.push((item, loc));
         }
+    }
+    // 锁排除（服务端强制，先于其余位置级过滤减少工作量）：位置的祖先链与分类/标签
+    // 任一命中未解锁的锁即剔除。空守卫（无锁/全解锁）零成本直通
+    if !q.lock_guard.is_empty() {
+        entries.retain(|(i, l)| {
+            q.lock_guard.entry_visible(&l.path, &i.categories, &i.tags)
+        });
     }
     if let Some(keywords) = &q.keywords {
         if !keywords.is_empty() {

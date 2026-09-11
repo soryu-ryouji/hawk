@@ -16,6 +16,10 @@ pub mod codes {
     pub const CATEGORY_EXISTS: &str = "CATEGORY_EXISTS";
     pub const TAG_NOT_FOUND: &str = "TAG_NOT_FOUND";
     pub const NOT_READY: &str = "NOT_READY";
+    pub const LOCKED: &str = "LOCKED";
+    pub const LOCK_NOT_FOUND: &str = "LOCK_NOT_FOUND";
+    pub const OLD_PASSWORD_REQUIRED: &str = "OLD_PASSWORD_REQUIRED";
+    pub const THROTTLED: &str = "THROTTLED";
     pub const INTERNAL: &str = "INTERNAL";
     pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
     pub const READ_ONLY: &str = "READ_ONLY";
@@ -96,6 +100,28 @@ impl ApiError {
 
     pub fn internal(message: impl Into<String>) -> ApiError {
         ApiError::new(codes::INTERNAL, StatusCode::INTERNAL_SERVER_ERROR, message)
+    }
+
+    /// 锁保护中：目标位于未解锁的锁定文件夹/分类/标签内（或内容直连未解锁）
+    pub fn locked(message: impl Into<String>) -> ApiError {
+        ApiError::new(codes::LOCKED, StatusCode::FORBIDDEN, message)
+    }
+
+    pub fn unauthorized(message: impl Into<String>) -> ApiError {
+        ApiError::new(codes::UNAUTHORIZED, StatusCode::UNAUTHORIZED, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> ApiError {
+        ApiError::new(codes::ITEM_NOT_FOUND, StatusCode::NOT_FOUND, message)
+    }
+
+    /// 锁条目不存在（解锁/解除未上锁的条目）
+    pub fn lock_not_found(name: impl AsRef<str>) -> ApiError {
+        ApiError::new(
+            codes::LOCK_NOT_FOUND,
+            StatusCode::NOT_FOUND,
+            format!("未上锁: {}", name.as_ref()),
+        )
     }
 }
 

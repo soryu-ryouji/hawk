@@ -50,6 +50,7 @@ export function useBoot() {
         onFolderChanged: () => store.applyEvent('folder.changed', {}),
         onLibraryUpdated: (info) => store.applyEvent('library.updated', info),
         onGlobalFilterChanged: (filter) => store.applyEvent('global_filter.changed', filter),
+        onLocksChanged: (locks) => store.applyEvent('locks.changed', locks),
         onReconnect: () => {
           void store.reloadSkeleton();
           void taxonomy.refreshFolders();

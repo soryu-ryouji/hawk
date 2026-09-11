@@ -104,8 +104,11 @@ pub(crate) fn flush_palette_batch(ctx: &PipelineCtx) {
     for (hash, meta, _) in &applied {
         if ctx.index.contains(hash) {
             ctx.index.with_item_mut(hash, |item| item.sync_from(meta));
-            if let Some(dto) = ctx.index.get_dto(hash) {
-                dtos.push(dto);
+            // 锁保守过滤：不可见条目不进批量事件（防元数据经 SSE 泄漏）
+            if ItemEvents::lock_gates(&ctx.locks, &ctx.index, hash) {
+                if let Some(dto) = ctx.index.get_dto(hash) {
+                    dtos.push(dto);
+                }
             }
         }
     }
@@ -144,7 +147,5 @@ pub(crate) fn do_fix_dim(ctx: &PipelineCtx, hash: &str, w: i32, h: i32) {
             }
         }
     }
-    if let Some(dto) = ctx.index.get_dto(hash) {
-        ItemEvents::publish_changed(&ctx.bus, &dto);
-    }
+    ItemEvents::publish_changed(&ctx.bus, &ctx.index, &ctx.locks, hash);
 }

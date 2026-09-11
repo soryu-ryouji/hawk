@@ -18,6 +18,7 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
     ├── tags.toml       ← 标签注册表（参与同步）
     ├── view.toml       ← 视图偏好：文件夹/分类/标签的排序记忆（参与同步）
     ├── global_filter.toml ← 全局列表隐藏项：文件夹/分类/标签（参与同步）
+    ├── locks.toml      ← 文件夹/分类/标签锁：密码哈希（参与同步，见「锁」一节）
     ├── metadata/       ← 素材参数，纯文本 TOML（配置文件模式，参与同步）
     ├── metadata.db     ← 素材参数，SQLite（数据库模式，本地专用，不参与同步）
     ├── storage_mode    ← 存储方案标记文件（迁移的最后一步写入；探测时优先于文件存在性）
@@ -57,6 +58,7 @@ cache/<库标识>/
 | `tags.toml`       | 是           | 标签注册表（含空标签）     |
 | `view.toml`       | 是           | 视图偏好（排序记忆），扁平 map |
 | `global_filter.toml` | 是        | 全局列表隐藏项（文件夹/分类/标签） |
+| `locks.toml`      | 是           | 文件夹/分类/标签锁（Argon2id 密码哈希；服务端强制，见 server-rest-api-v1.md 的 lock 节） |
 | `metadata/`       | 是（配置文件模式） | 素材参数，该模式的唯一权威数据源 |
 | `metadata.db`     | 否（数据库模式）   | 素材参数，该模式的唯一权威数据源；**不要把数据库模式的库放进同步盘**（SQLite 文件跨机同步会腐蚀） |
 | `storage_mode`    | 是           | 存储方案标记（`database`/`toml`），迁移的原子收尾 |
@@ -106,6 +108,28 @@ annotation = "Beautiful sunset"         # 备注
 **派生信息的归属**：宽高与调色板是「内容的纯函数」（同 hash 各平台计算结果必然一致），直接写入元数据 TOML（`width`/`height` 标量 + `[[palette]]` 表）——一台计算、全平台（含未来 Rust 版）复用，无派生缓存与双写。文件大小/扩展名等随 paths 记录或从路径派生，不重复存储。元数据写入采用「临时文件 + rename」的原子写，避免网盘同步走写了一半的文件。
 
 只识别 `<hash>.toml` 命名的文件；网盘同步冲突产生的副本（如 `<hash>.sync-conflict-20250101.toml`）直接忽略，不参与索引。
+
+## 锁（文件夹/分类/标签）
+
+`.hawk/locks.toml` 存放三维度锁（每条独立密码，Argon2id PHC 字符串自含盐与参数）：
+
+```toml
+[[folders]]
+path = "private/photos"
+password = "$argon2id$v=19$m=19456,t=2,p=1$..."
+
+[[categories]]
+name = "私密"
+password = "..."
+
+[[tags]]
+name = "nsfw"
+password = "..."
+```
+
+与 global_filter 的客户端约定式隐藏不同，锁由**服务端强制**：未解锁时列表查询排除锁定条目、内容直连（thumbnail/file/detail/aggregate）403、SSE 不广播被锁素材的元数据事件；解锁票据（daemon 内存，重启失效）由各客户端独立持有，经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带。级联跟随与 global_filter 同款（文件夹移动/删除/回收站迁移、分类/标签改名删除）。判定口径与安全边界详见 docs/backend/server-rest-api-v1.md 的 lock 节。
+
+已知边界：锁不是加密（文件系统层面无保护，仅防「通过 hawk 查看」）；密码哈希参与同步意味着拿到 `.hawk/` 的人可离线爆破（Argon2id 慢哈希缓解）；验证失败全局节流（连续 5 次冷却 60s）防在线爆破。
 
 ## 回收站
 
@@ -203,6 +227,6 @@ size/mtime 复用不再触及该文件 → 永久滞留 `0 × 0`。三层兜底�
 
 ## 实时文件监听
 
-hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 与注册表文件（categories.toml / tags.toml / global_filter.toml）的变更同样被监听，修改后自动生效。
+hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 与注册表文件（categories.toml / tags.toml / global_filter.toml / locks.toml）的变更同样被监听，修改后自动生效。
 
 文件监听可能静默丢事件（尤其 macOS FSEvents，无溢出错误可捕获），最终一致由四层兜底：**周期兜底扫描**（`HAWK_FS_RESCAN_INTERVAL`，默认 900s，0 关闭；强制遍历全部文件、按 size/mtime 复用哈希不读内容——目录快照只能发现增删改名，漏掉的内容变更只有全量 stat 能收敛）、启动扫描（停机期间变更）、监听缓冲溢出自动触发全库强制遍历兜底；系统明确告知某路径丢事件（macOS FSEvents `Flag::Rescan`，must-scan-subdirs）则定向强制重扫该路径；另可手动 `POST /api/v1/library/rescan`（可带 `path` 限定文件夹）。**元数据对账**是另一条线（`HAWK_RECONCILE_INTERVAL`，默认 60s，0 关闭）：只并入 `.hawk/metadata/` 的外部变更，不跑文件系统扫描。周期兜底重扫的开关与间隔在库配置 `[scan]`（`periodic` / `interval`，保存即热生效，桌面端设置面板可开关）——关闭后实时监听仍是主路径，仅漏事件需手动重扫。

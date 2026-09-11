@@ -28,6 +28,7 @@ getrandom = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
+argon2 = "0.5"
 webp = { version = "0.3", default-features = false }
 filetime = "0.2.29"
 percent-encoding = "2.3.2"

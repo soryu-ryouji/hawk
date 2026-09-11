@@ -257,7 +257,7 @@ pub(crate) fn apply_upsert(
     if pending.old_hash.as_deref().is_some_and(|h| h != hash) {
         ctx.index.remove_location(&pending.rel);
         migrate_metadata(ctx, pending.old_hash.as_ref().unwrap(), &pending.lib_path)?;
-        ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, pending.old_hash.as_ref().unwrap());
+        ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &ctx.locks, pending.old_hash.as_ref().unwrap());
     }
 
     // 元数据登记路径并回写最新 size/mtime,保持哈希校验依据新鲜
@@ -333,16 +333,16 @@ pub(crate) fn apply_upsert(
             // 扫描批量路径：合并进 items.added（窗口/上限到期冲刷,扫描结束兜底）
             Some(batch) => batch.stage(&ctx.bus, hash),
             None => {
-                if let Some(dto) = ctx.index.get_dto(hash) {
-                    ctx.bus
-                        .publish(ItemEvents::ADDED, serde_json::to_value(&dto).unwrap());
+                if ItemEvents::lock_gates(&ctx.locks, &ctx.index, hash) {
+                    if let Some(dto) = ctx.index.get_dto(hash) {
+                        ctx.bus
+                            .publish(ItemEvents::ADDED, serde_json::to_value(&dto).unwrap());
+                    }
                 }
             }
         }
     } else if added_location || meta_changed || dim_persisted {
-        if let Some(dto) = ctx.index.get_dto(hash) {
-            ItemEvents::publish_changed(&ctx.bus, &dto);
-        }
+        ItemEvents::publish_changed(&ctx.bus, &ctx.index, &ctx.locks, hash);
     }
 
     // 缩略图是惰性缓存（读取端未命中时派发），入库/对账只保证调色板（颜色搜索依赖全量 palette）；

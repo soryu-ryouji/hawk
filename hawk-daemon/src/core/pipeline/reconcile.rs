@@ -102,8 +102,6 @@ fn sync_index_from_metadata(ctx: &PipelineCtx, hash: &str) {
     ctx.migrator.register_taxonomy(&meta);
     if ctx.index.contains(hash) {
         ctx.index.with_item_mut(hash, |item| item.sync_from(&meta));
-        if let Some(dto) = ctx.index.get_dto(hash) {
-            ItemEvents::publish_changed(&ctx.bus, &dto);
-        }
+        ItemEvents::publish_changed(&ctx.bus, &ctx.index, &ctx.locks, hash);
     }
 }

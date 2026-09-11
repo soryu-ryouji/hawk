@@ -4,6 +4,7 @@ use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
 use crate::core::global_filter::GlobalFilter;
 use crate::core::index::ItemIndex;
+use crate::core::locks::Locks;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::pipeline::IndexPipeline;
@@ -21,6 +22,7 @@ pub mod envelope;
 pub mod events;
 pub mod folder;
 pub mod global_filter;
+pub mod locks;
 pub mod item;
 pub mod lan;
 pub mod library;
@@ -101,6 +103,8 @@ pub struct AppState {
     pub tags: Arc<TagRegistry>,
     /// 全局列表隐藏项注册表（.hawk/global_filter.toml）
     pub global_filter: Arc<GlobalFilter>,
+    /// 文件夹/分类/标签锁（.hawk/locks.toml，服务端强制）
+    pub locks: Arc<Locks>,
     /// SSE 订阅因消费落后被断开（lagged）的累计次数（app/status 观测）
     pub sse_lagged: std::sync::atomic::AtomicU64,
     /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
@@ -120,6 +124,7 @@ pub fn api_router() -> (axum::Router<SharedState>, utoipa::openapi::OpenApi) {
         .merge(item::routes())
         .merge(taxonomy::routes())
         .merge(global_filter::routes())
+        .merge(locks::routes())
         .merge(view::routes())
         .merge(trash::routes())
         .merge(events::routes())
@@ -219,7 +224,50 @@ async fn auth(
     }
 
     req.extensions_mut().insert(access);
+    // 解锁票据 → 请求级锁守卫（未解锁锁集合）：列表/内容端点经 Extension 消费。
+    // 票据不是鉴权凭证（鉴权已过），仅扩展本请求的可见范围
+    let tickets = parse_unlock_tickets(&req);
+    let guard = state.locks.guard(&tickets);
+    req.extensions_mut().insert(guard);
     next.run(req).await
+}
+
+/// 解锁票据采集：`X-Hawk-Unlock` 头（逗号分隔多票）+ GET 的 `?unlock=` 查询参数
+/// （路径集合与 token 查询参数通道一致：img/SSE 无法设头）。票据为 hex，无需 URL 解码
+fn parse_unlock_tickets(req: &axum::extract::Request) -> Vec<String> {
+    let mut tickets = Vec::new();
+    if let Some(hv) = req.headers().get("x-hawk-unlock") {
+        if let Ok(v) = hv.to_str() {
+            tickets.extend(
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+            );
+        }
+    }
+    let path = req.uri().path();
+    let allow_query = matches!(
+        path,
+        "/api/v1/events" | "/api/v1/item/thumbnail" | "/api/v1/item/file"
+    );
+    if allow_query {
+        if let Some(query) = req.uri().query() {
+            for pair in query.split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    if k == "unlock" {
+                        tickets.extend(
+                            v.split(',')
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    tickets
 }
 
 /// 返回 access 级别（含 viewer 的 per-token 写能力），token 无效返回 None

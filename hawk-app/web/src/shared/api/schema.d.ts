@@ -338,7 +338,9 @@ export interface paths {
         put?: never;
         /**
          * 选择集共有特性聚合（标签/分类交集）。多选面板的「共同标签/分类」数据源——
-         *     前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算
+         *     前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算。
+         *     任一 id 位于未解锁的锁覆盖内 → 403 LOCKED（正常流程拿不到被锁 id，锁状态变化后
+         *     前端会收到 locks.changed 并重查）
          */
         post: operations["item_aggregate"];
         delete?: never;
@@ -725,6 +727,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lock/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全部锁（仅名称，不含密码哈希；folders 为库内相对路径） */
+        get: operations["lock_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lock/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 解除锁（admin 限定；需密码）。变更经 locks.changed 广播 */
+        post: operations["lock_remove"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lock/set": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 设置/修改锁（admin 限定；已锁条目改密需旧密码）。变更经 locks.changed 广播 */
+        post: operations["lock_set"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lock/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 解锁（任何有效 token，含只读 viewer）：校验密码发放票据，票据由各客户端独立持有 */
+        post: operations["lock_unlock"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tag/create": {
         parameters: {
             query?: never;
@@ -1081,6 +1151,16 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LocksSnapshot: {
+            /** @description 锁快照（API 响应/事件负载：仅名称，不含密码哈希） */
+            data?: {
+                categories: string[];
+                folders: string[];
+                tags: string[];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_RefreshCacheResponse: {
             data?: {
                 /** @description 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计） */
@@ -1118,6 +1198,17 @@ export interface components {
                  */
                 sse_lagged: number;
                 thumbnail: components["schemas"]["TaskBacklog"];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_UnlockResponse: {
+            data?: {
+                /**
+                 * @description 解锁票据：后续请求经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带（img/SSE 通道）；
+                 *     daemon 重启失效，前端丢弃即「锁定回去」。注意：不要把带 unlock 参数的图片 URL 分享给他人
+                 */
+                unlock_token: string;
             };
             status: string;
         };
@@ -1427,6 +1518,30 @@ export interface components {
             /** @description 新显示名；空白清除自定义名（回退库目录名） */
             name: string;
         };
+        LockRemoveRequest: components["schemas"]["LockTarget"] & {
+            password: string;
+        };
+        LockSetRequest: components["schemas"]["LockTarget"] & {
+            /** @description 已上锁条目修改密码时必须提供旧密码；首次设置省略 */
+            old_password?: string | null;
+            /** @description 新密码（设置与修改共用） */
+            password: string;
+        };
+        LockTarget: {
+            /** @description 维度：folder / category / tag */
+            dimension: string;
+            /** @description folder 为库内相对路径（如 "posters/2024"）；category/tag 为名称 */
+            name: string;
+        };
+        LockUnlockRequest: components["schemas"]["LockTarget"] & {
+            password: string;
+        };
+        /** @description 锁快照（API 响应/事件负载：仅名称，不含密码哈希） */
+        LocksSnapshot: {
+            categories: string[];
+            folders: string[];
+            tags: string[];
+        };
         /** @description API 的调色板颜色项 */
         PaletteColorDto: {
             /** @description # 前缀小写 hex，如 "#344441" */
@@ -1524,6 +1639,8 @@ export interface components {
             "items.updated": components["schemas"]["ItemsUpdatedPayload"];
             /** @description 改库显示名广播，负载为完整 LibraryInfo（含新显示名） */
             "library.updated": components["schemas"]["LibraryInfo"];
+            /** @description 锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照 */
+            "locks.changed": components["schemas"]["LocksSnapshot"];
             "task.progress": components["schemas"]["TaskProgress"];
         };
         StartupInfo: {
@@ -1587,6 +1704,13 @@ export interface components {
         TokenResponse: {
             data: string;
             status: string;
+        };
+        UnlockResponse: {
+            /**
+             * @description 解锁票据：后续请求经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带（img/SSE 通道）；
+             *     daemon 重启失效，前端丢弃即「锁定回去」。注意：不要把带 unlock 参数的图片 URL 分享给他人
+             */
+            unlock_token: string;
         };
         ViewPreferencePutRequest: {
             order: string;
@@ -2051,6 +2175,13 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_ItemAggregateResponse"];
                 };
             };
+            /** @description 选择集含未解锁锁覆盖的 item（LOCKED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     item_batch_update: {
@@ -2144,6 +2275,13 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_ItemDto"];
                 };
             };
+            /** @description 位置或内容位于未解锁的锁覆盖内（LOCKED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     item_file: {
@@ -2169,6 +2307,13 @@ export interface operations {
                     "application/octet-stream": number[];
                 };
             };
+            /** @description 内容位于未解锁的锁覆盖内（LOCKED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     item_list: {
@@ -2192,6 +2337,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Envelope_ItemListResponse"];
                 };
+            };
+            /** @description 视图位于未解锁的锁定文件夹/分类/标签内（LOCKED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2289,6 +2441,13 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_ItemSkeletonResponse"];
                 };
             };
+            /** @description 视图位于未解锁的锁定文件夹/分类/标签内（LOCKED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     item_thumbnail: {
@@ -2311,6 +2470,13 @@ export interface operations {
                 content: {
                     "application/octet-stream": number[];
                 };
+            };
+            /** @description 内容位于未解锁的锁覆盖内（LOCKED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description 不可渲染格式，生成中 */
             404: {
@@ -2546,6 +2712,119 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SuccessOnly"];
                 };
+            };
+        };
+    };
+    lock_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LocksSnapshot"];
+                };
+            };
+        };
+    };
+    lock_remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LockRemoveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+        };
+    };
+    lock_set: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LockSetRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
+                };
+            };
+            /** @description 需要 admin 权限或旧密码错误（OLD_PASSWORD_REQUIRED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    lock_unlock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LockUnlockRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_UnlockResponse"];
+                };
+            };
+            /** @description 密码错误或锁不存在 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 失败次数过多，冷却中 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
