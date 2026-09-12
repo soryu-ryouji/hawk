@@ -16,4 +16,22 @@
   2. `cd hawk-app && npm run gen:types`（依赖 hawk-daemon 的构建产物，先 `cargo build`）
   守护：daemon 契约测试 `openapi_json_in_sync` 校验 openapi.json 与代码同步；CI 重跑 gen:types 并 diff 检查 schema.d.ts 同步。漏跑任一步即测试/CI 失败。
 
+## 提交前自检（本地对齐 CI 门禁）
+
+生成或修改代码后，提交前必须先在本地跑完改动范围对应的检查、全绿再提交。命令与 `.github/workflows/ci.yml` 的质量门禁逐条对应，本地漏跑任何一条，CI 检查 job 即失败，整条构建/发布链被跳过：
+
+- 改动 `hawk-daemon`（Rust）：
+  1. `cargo fmt`（写入式格式化，直接执行，不要留给 CI 的 `--check` 报错）
+  2. `cargo clippy --all-targets -- -D warnings`
+  3. `cargo test`
+- 改动 `hawk-app`（web / electron）：
+  1. `npm run format`（写入式格式化）
+  2. `npm run lint`
+  3. `npm run build`（vue-tsc + 主进程 tsc 类型检查 + vite 构建）
+  4. `npm run test:unit`
+- 改动 `README.md` / `docs/` / `AGENTS.md`：仓库根 `python3 tools/check-docs.py`（相对链接检查）
+- 涉及 API 契约（含只改注释）：另执行上文三段式生成链，重新固化两份产物
+
+打包冒烟与 UI 端到端（`pack:dir`、ui-check）本地不强制；若改动打包配置或主进程/daemon 启动链路，提交前建议先跑 `npm run pack:dir` 验证。
+
 当前项目没有正式上线，你不需要考虑版本兼容性和提版本号，如果设计上需要版本号，则使用最小版本号（不需要考虑测试环境的版本兼容）
