@@ -19,7 +19,14 @@ function rate(i: number) {
 
 <template>
   <span class="rating" @mouseleave="hover = -1">
-    <span v-for="i in 5" :key="i" class="star" :class="starClass(i - 1)" @mouseenter="hover = i" @click="rate(i - 1)">★</span>
+    <span
+      v-for="i in 5"
+      :key="i"
+      class="star"
+      :class="starClass(i - 1)"
+      @mouseenter="hover = i"
+      @click="rate(i - 1)"
+    >★</span>
   </span>
 </template>
 
