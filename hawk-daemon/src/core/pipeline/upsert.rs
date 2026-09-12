@@ -257,7 +257,12 @@ pub(crate) fn apply_upsert(
     if pending.old_hash.as_deref().is_some_and(|h| h != hash) {
         ctx.index.remove_location(&pending.rel);
         migrate_metadata(ctx, pending.old_hash.as_ref().unwrap(), &pending.lib_path)?;
-        ItemEvents::publish_location_loss(&ctx.bus, &ctx.index, &ctx.locks, pending.old_hash.as_ref().unwrap());
+        ItemEvents::publish_location_loss(
+            &ctx.bus,
+            &ctx.index,
+            &ctx.locks,
+            pending.old_hash.as_ref().unwrap(),
+        );
     }
 
     // 元数据登记路径并回写最新 size/mtime,保持哈希校验依据新鲜

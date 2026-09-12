@@ -1130,26 +1130,15 @@ async fn lock_enforcement() {
 
     // 锁定视图 403 LOCKED（list 与 skeleton）
     for uri in ["/api/v1/item/list", "/api/v1/item/skeleton"] {
-        let (status, body) = call_json(
-            &app.router,
-            "POST",
-            uri,
-            Some(json!({"folders": ["私密"]})),
-        )
-        .await;
+        let (status, body) =
+            call_json(&app.router, "POST", uri, Some(json!({"folders": ["私密"]}))).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri} 锁定视图应 403");
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["error"]["code"], "LOCKED");
     }
 
     // 全局视图：仅剩未锁定项（排除而非 403）
-    let (_, bytes) = call_json(
-        &app.router,
-        "POST",
-        "/api/v1/item/list",
-        Some(json!({})),
-    )
-    .await;
+    let (_, bytes) = call_json(&app.router, "POST", "/api/v1/item/list", Some(json!({}))).await;
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["data"]["total"], 1, "全局视图只剩未锁定项");
     assert_eq!(v["data"]["items"][0]["id"], json!(open_id));
@@ -1210,7 +1199,11 @@ async fn lock_enforcement() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "带票据的内容直连应 200（query 通道）");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "带票据的内容直连应 200（query 通道）"
+    );
     let (status, _) = call(
         &app.router,
         "GET",

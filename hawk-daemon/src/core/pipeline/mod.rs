@@ -853,8 +853,9 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
         }
         Job::CategoryDelete { name, reply } => {
             let filter_changed = ctx.global_filter.delete_category(&name);
-            let locks_changed =
-                ctx.locks.delete_taxonomy(crate::core::locks::LockDim::Category, &name);
+            let locks_changed = ctx
+                .locks
+                .delete_taxonomy(crate::core::locks::LockDim::Category, &name);
             let result = ctx.migrator.delete_category(&name);
             if filter_changed {
                 crate::core::global_filter::publish_changed(
@@ -877,11 +878,9 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             reply,
         } => {
             let filter_changed = ctx.global_filter.rename_tag(&name, &new_name);
-            let locks_changed = ctx.locks.rename_taxonomy(
-                crate::core::locks::LockDim::Tag,
-                &name,
-                &new_name,
-            );
+            let locks_changed =
+                ctx.locks
+                    .rename_taxonomy(crate::core::locks::LockDim::Tag, &name, &new_name);
             let result = ctx.migrator.rename_tag(&name, &new_name);
             if filter_changed {
                 crate::core::global_filter::publish_changed(
@@ -896,7 +895,9 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
         }
         Job::TagDelete { name, reply } => {
             let filter_changed = ctx.global_filter.delete_tag(&name);
-            let locks_changed = ctx.locks.delete_taxonomy(crate::core::locks::LockDim::Tag, &name);
+            let locks_changed = ctx
+                .locks
+                .delete_taxonomy(crate::core::locks::LockDim::Tag, &name);
             let result = ctx.migrator.delete_tag(&name);
             if filter_changed {
                 crate::core::global_filter::publish_changed(

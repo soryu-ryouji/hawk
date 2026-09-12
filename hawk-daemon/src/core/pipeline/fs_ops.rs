@@ -144,7 +144,14 @@ pub(crate) fn do_dir_move(
     let old_in_trash = LibraryPaths::is_in_trash(&format!("{old_rel}/"));
     let new_in_trash = LibraryPaths::is_in_trash(&format!("{new_rel}/"));
     for hash in &affected {
-        ItemEvents::publish_transition(&ctx.bus, &ctx.index, &ctx.locks, hash, old_in_trash, new_in_trash);
+        ItemEvents::publish_transition(
+            &ctx.bus,
+            &ctx.index,
+            &ctx.locks,
+            hash,
+            old_in_trash,
+            new_in_trash,
+        );
     }
 
     // 目录移动后目录结构必然变化,广播 folder.changed(folder/list 全量建树,客户端重拉即可)

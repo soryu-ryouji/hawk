@@ -46,13 +46,19 @@ struct LockTarget {
 /// 维度解析 + 名称校验（folder 走路径校验，category 走受控词表校验，tag 非空即可）
 fn parse_target(body: &LockTarget) -> Result<(LockDim, String), ApiError> {
     let dim = LockDim::parse(&body.dimension).ok_or_else(|| {
-        ApiError::invalid_param(format!("非法维度: {}（支持 folder/category/tag）", body.dimension))
+        ApiError::invalid_param(format!(
+            "非法维度: {}（支持 folder/category/tag）",
+            body.dimension
+        ))
     })?;
     let name = match dim {
         LockDim::Folder => {
             let n = body.name.trim();
             if n.is_empty() || !LibraryPaths::is_valid_library_path(Some(n)) {
-                return Err(ApiError::invalid_param(format!("非法文件夹路径: {}", body.name)));
+                return Err(ApiError::invalid_param(format!(
+                    "非法文件夹路径: {}",
+                    body.name
+                )));
             }
             n.to_string()
         }
@@ -74,7 +80,10 @@ fn throttled_error(wait: std::time::Duration) -> ApiError {
     ApiError::new(
         crate::api::envelope::codes::THROTTLED,
         axum::http::StatusCode::TOO_MANY_REQUESTS,
-        format!("密码验证失败次数过多，请 {} 秒后重试", wait.as_secs().max(1)),
+        format!(
+            "密码验证失败次数过多，请 {} 秒后重试",
+            wait.as_secs().max(1)
+        ),
     )
 }
 
@@ -113,11 +122,10 @@ async fn lock_set(
     }
     let (dim_c, name_c, pwd, old) = (dim, name.clone(), req.password, req.old_password.clone());
     let locks = state.locks.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
-        locks.set(dim_c, &name_c, &pwd, old.as_deref())
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("密码哈希任务失败: {e}")))?;
+    let outcome =
+        tokio::task::spawn_blocking(move || locks.set(dim_c, &name_c, &pwd, old.as_deref()))
+            .await
+            .map_err(|e| ApiError::internal(format!("密码哈希任务失败: {e}")))?;
     match outcome {
         ManageOutcome::Ok => {
             publish_changed(&state.bus, &state.locks.snapshot());
@@ -158,11 +166,9 @@ async fn lock_remove(
     let (dim, name) = parse_target(&req.target)?;
     let (dim_c, name_c, pwd) = (dim, name, req.password);
     let locks = state.locks.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
-        locks.remove(dim_c, &name_c, &pwd)
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("密码验证任务失败: {e}")))?;
+    let outcome = tokio::task::spawn_blocking(move || locks.remove(dim_c, &name_c, &pwd))
+        .await
+        .map_err(|e| ApiError::internal(format!("密码验证任务失败: {e}")))?;
     match outcome {
         ManageOutcome::Ok => {
             publish_changed(&state.bus, &state.locks.snapshot());
@@ -208,11 +214,9 @@ async fn lock_unlock(
     let (dim, name) = parse_target(&req.target)?;
     let (dim_c, name_c, pwd) = (dim, name, req.password);
     let locks = state.locks.clone();
-    let outcome = tokio::task::spawn_blocking(move || {
-        locks.unlock(dim_c, &name_c, &pwd)
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("密码验证任务失败: {e}")))?;
+    let outcome = tokio::task::spawn_blocking(move || locks.unlock(dim_c, &name_c, &pwd))
+        .await
+        .map_err(|e| ApiError::internal(format!("密码验证任务失败: {e}")))?;
     match outcome {
         UnlockOutcome::Granted(ticket) => Ok(Json(Envelope::ok(UnlockResponse {
             unlock_token: ticket,

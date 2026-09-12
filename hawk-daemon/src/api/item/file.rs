@@ -3,8 +3,8 @@
 //! 这是防止「拿到 hash 直接拼 URL 绕过列表」的关键闸门
 
 use super::*;
-use axum::extract::Extension;
 use crate::core::locks::LockGuard;
+use axum::extract::Extension;
 
 // ---------- thumbnail / file / refresh_thumbnail ----------
 

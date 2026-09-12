@@ -15,7 +15,7 @@ const emit = defineEmits<{ close: [] }>();
 const taxonomy = useTaxonomyStore();
 
 const dimLabel = computed(() => (props.dimension === 'folder' ? '文件夹' : props.dimension === 'category' ? '分类' : '标签'));
-const displayName = computed(() => (props.dimension === 'folder' ? props.name.split('/').pop() ?? props.name : props.name));
+const displayName = computed(() => (props.dimension === 'folder' ? (props.name.split('/').pop() ?? props.name) : props.name));
 
 const title = computed(() => {
   switch (props.mode) {
@@ -81,14 +81,7 @@ async function submit() {
         <div class="title">{{ title }}</div>
         <div class="target">{{ dimLabel }}「{{ displayName }}」</div>
         <p v-if="mode === 'set'" class="hint">设置密码后，该{{ dimLabel }}的内容需要解锁才能查看（列表、缩略图、原图均受保护）。</p>
-        <input
-          v-if="mode === 'change'"
-          v-model="oldPassword"
-          class="text-input"
-          type="password"
-          placeholder="旧密码"
-          autocomplete="off"
-        />
+        <input v-if="mode === 'change'" v-model="oldPassword" class="text-input" type="password" placeholder="旧密码" autocomplete="off" />
         <input
           v-model="password"
           v-focus

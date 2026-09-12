@@ -211,12 +211,7 @@ impl ItemEvents {
 
     /// item 失去一个位置后的事件:无剩余位置 → removed;只剩回收站 → trashed;否则 updated。
     /// 调用前索引已完成变更（位置已摘除）。removed/trashed 只含 id（无元数据泄漏），不经锁过滤
-    pub fn publish_location_loss(
-        bus: &EventBus,
-        index: &ItemIndex,
-        locks: &Locks,
-        hash: &str,
-    ) {
+    pub fn publish_location_loss(bus: &EventBus, index: &ItemIndex, locks: &Locks, hash: &str) {
         if !index.contains(hash) {
             bus.publish(Self::REMOVED, serde_json::json!({ "id": hash }));
         } else if !index.has_library_location(hash) {
@@ -255,7 +250,9 @@ impl ItemEvents {
     pub fn lock_gates(locks: &Locks, index: &ItemIndex, hash: &str) -> bool {
         match index.lock_projection(hash) {
             Some((paths, categories, tags)) => {
-                locks.zero_guard().item_visible(paths.into_iter(), &categories, &tags)
+                locks
+                    .zero_guard()
+                    .item_visible(paths.into_iter(), &categories, &tags)
             }
             None => true,
         }

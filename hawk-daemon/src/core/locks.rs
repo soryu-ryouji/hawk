@@ -176,15 +176,11 @@ impl LockGuard {
 
     /// 分类/标签（item 属性，与位置无关）：任一命中未解锁的锁即不可见
     fn taxonomy_visible(&self, categories: &[String], tags: &[String]) -> bool {
-        if !self.categories.is_empty() {
-            if categories.iter().any(|c| self.categories.contains(c)) {
-                return false;
-            }
+        if !self.categories.is_empty() && categories.iter().any(|c| self.categories.contains(c)) {
+            return false;
         }
-        if !self.tags.is_empty() {
-            if tags.iter().any(|t| self.tags.contains(t)) {
-                return false;
-            }
+        if !self.tags.is_empty() && tags.iter().any(|t| self.tags.contains(t)) {
+            return false;
         }
         true
     }
@@ -216,21 +212,47 @@ impl Locks {
 
     /// 名称快照（小写排序，与各注册表一致）
     pub fn snapshot(&self) -> LocksSnapshot {
-        let mut folders: Vec<String> = self.folders.read().unwrap().iter().map(|e| e.name.clone()).collect();
-        let mut categories: Vec<String> =
-            self.categories.read().unwrap().iter().map(|e| e.name.clone()).collect();
-        let mut tags: Vec<String> = self.tags.read().unwrap().iter().map(|e| e.name.clone()).collect();
+        let mut folders: Vec<String> = self
+            .folders
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        let mut categories: Vec<String> = self
+            .categories
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        let mut tags: Vec<String> = self
+            .tags
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
         sort_entries(&mut folders);
         sort_entries(&mut categories);
         sort_entries(&mut tags);
-        LocksSnapshot { folders, categories, tags }
+        LocksSnapshot {
+            folders,
+            categories,
+            tags,
+        }
     }
 
     /// 是否存在某维度的锁（快速判定，供 folder/list 标记等）
     pub fn contains(&self, dim: LockDim, name: &str) -> bool {
         match dim {
             LockDim::Folder => self.folders.read().unwrap().iter().any(|e| e.name == name),
-            LockDim::Category => self.categories.read().unwrap().iter().any(|e| e.name == name),
+            LockDim::Category => self
+                .categories
+                .read()
+                .unwrap()
+                .iter()
+                .any(|e| e.name == name),
             LockDim::Tag => self.tags.read().unwrap().iter().any(|e| e.name == name),
         }
     }
@@ -294,7 +316,13 @@ impl Locks {
     }
 
     /// 设锁/改密：已存在时需旧密码（WrongOldPassword），新设时直接写入
-    pub fn set(&self, dim: LockDim, name: &str, password: &str, old_password: Option<&str>) -> ManageOutcome {
+    pub fn set(
+        &self,
+        dim: LockDim,
+        name: &str,
+        password: &str,
+        old_password: Option<&str>,
+    ) -> ManageOutcome {
         if let Some(wait) = self.check_throttle() {
             return ManageOutcome::Throttled(wait);
         }
@@ -467,7 +495,11 @@ impl Locks {
 
     /// 三段全量落盘（调用方须先完成对应段的写锁更新）
     fn persist(&self) {
-        let body = format_entries(&self.folders.read().unwrap(), &self.categories.read().unwrap(), &self.tags.read().unwrap());
+        let body = format_entries(
+            &self.folders.read().unwrap(),
+            &self.categories.read().unwrap(),
+            &self.tags.read().unwrap(),
+        );
         atomic_write(&self.file, &body);
     }
 
@@ -544,13 +576,25 @@ fn issue_ticket() -> String {
 fn format_entries(folders: &[LockEntry], categories: &[LockEntry], tags: &[LockEntry]) -> String {
     let mut out = String::new();
     for e in folders {
-        out.push_str(&format!("[[folders]]\npath = {}\npassword = {}\n\n", toml_string(&e.name), toml_string(&e.password)));
+        out.push_str(&format!(
+            "[[folders]]\npath = {}\npassword = {}\n\n",
+            toml_string(&e.name),
+            toml_string(&e.password)
+        ));
     }
     for e in categories {
-        out.push_str(&format!("[[categories]]\nname = {}\npassword = {}\n\n", toml_string(&e.name), toml_string(&e.password)));
+        out.push_str(&format!(
+            "[[categories]]\nname = {}\npassword = {}\n\n",
+            toml_string(&e.name),
+            toml_string(&e.password)
+        ));
     }
     for e in tags {
-        out.push_str(&format!("[[tags]]\nname = {}\npassword = {}\n\n", toml_string(&e.name), toml_string(&e.password)));
+        out.push_str(&format!(
+            "[[tags]]\nname = {}\npassword = {}\n\n",
+            toml_string(&e.name),
+            toml_string(&e.password)
+        ));
     }
     out
 }
@@ -605,7 +649,8 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> (std::path::PathBuf, Locks) {
-        let dir = std::env::temp_dir().join(format!("hawk-locks-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("hawk-locks-test-{name}-{}", std::process::id()));
         let root = dir.join("lib");
         std::fs::create_dir_all(root.join(".hawk")).unwrap();
         let paths = LibraryPaths::new(root.to_str().unwrap(), None);
@@ -627,7 +672,11 @@ mod tests {
         // 零解锁守卫：a/b 子树与「私密」分类均不可见
         let zero = locks.zero_guard();
         assert!(!zero.item_visible(["a/b/x.jpg".to_string()].into_iter(), &[], &[]));
-        assert!(!zero.item_visible(["free/x.jpg".to_string()].into_iter(), &["私密".to_string()], &[]));
+        assert!(!zero.item_visible(
+            ["free/x.jpg".to_string()].into_iter(),
+            &["私密".to_string()],
+            &[]
+        ));
         assert!(zero.item_visible(["free/x.jpg".to_string()].into_iter(), &[], &[]));
 
         // 解锁错误密码
@@ -639,19 +688,29 @@ mod tests {
         let UnlockOutcome::Granted(ticket) = locks.unlock(LockDim::Folder, "a/b", "pw123") else {
             panic!("应发放票据");
         };
-        let guard = locks.guard(&[ticket.clone()]);
+        let guard = locks.guard(std::slice::from_ref(&ticket));
         assert!(guard.item_visible(["a/b/x.jpg".to_string()].into_iter(), &[], &[]));
         // 「私密」分类仍锁
-        assert!(!guard.item_visible(["a/b/x.jpg".to_string()].into_iter(), &["私密".to_string()], &[]));
+        assert!(!guard.item_visible(
+            ["a/b/x.jpg".to_string()].into_iter(),
+            &["私密".to_string()],
+            &[]
+        ));
 
         // 票据对其他客户端无效（独立持有）
-        assert!(!locks.guard(&[]).item_visible(["a/b/x.jpg".to_string()].into_iter(), &[], &[]));
+        assert!(!locks
+            .guard(&[])
+            .item_visible(["a/b/x.jpg".to_string()].into_iter(), &[], &[]));
 
         // 落盘后可重载（新实例恢复；票据随之失效——内存态）
         let paths = LibraryPaths::new(dir.join("lib").to_str().unwrap(), None);
         let reloaded = Locks::new(&paths);
         assert_eq!(reloaded.snapshot().folders, vec!["a/b".to_string()]);
-        assert!(!reloaded.guard(&[ticket]).item_visible(["a/b/x.jpg".to_string()].into_iter(), &[], &[]));
+        assert!(!reloaded.guard(&[ticket]).item_visible(
+            ["a/b/x.jpg".to_string()].into_iter(),
+            &[],
+            &[]
+        ));
 
         // 解除锁需密码
         assert!(matches!(
@@ -676,13 +735,22 @@ mod tests {
         assert!(locks.rename_folder_prefix("posters", ".hawk/trash/posters"));
         let snap = locks.snapshot();
         assert!(snap.folders.contains(&".hawk/trash/posters".to_string()));
-        assert!(snap.folders.contains(&".hawk/trash/posters/2024".to_string()));
+        assert!(snap
+            .folders
+            .contains(&".hawk/trash/posters/2024".to_string()));
 
         // 迁移后锁住 trash 前缀（回收站保持锁定）
-        assert!(!locks.zero_guard().item_visible([".hawk/trash/posters/2024/a.jpg".to_string()].into_iter(), &[], &[]));
+        assert!(!locks.zero_guard().item_visible(
+            [".hawk/trash/posters/2024/a.jpg".to_string()].into_iter(),
+            &[],
+            &[]
+        ));
 
         assert!(locks.rename_folder_prefix(".hawk/trash/posters", "posters"));
-        assert!(locks.snapshot().folders.contains(&"posters/2024".to_string()));
+        assert!(locks
+            .snapshot()
+            .folders
+            .contains(&"posters/2024".to_string()));
 
         assert!(locks.delete_folder_prefix("posters"));
         assert_eq!(locks.snapshot().folders, vec!["other".to_string()]);

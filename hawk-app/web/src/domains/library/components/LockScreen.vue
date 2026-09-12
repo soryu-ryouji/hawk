@@ -47,14 +47,7 @@ async function submit() {
       <div class="title">此{{ dimLabel }}已锁定</div>
       <div class="target">{{ dimLabel }}「{{ displayName }}」的内容需要密码解锁后查看</div>
       <div class="input-row">
-        <input
-          v-model="password"
-          v-focus
-          type="password"
-          placeholder="输入密码"
-          autocomplete="off"
-          @keydown.enter="submit"
-        />
+        <input v-model="password" v-focus type="password" placeholder="输入密码" autocomplete="off" @keydown.enter="submit" />
         <button class="primary" :disabled="busy || !password" @click="submit">解锁</button>
       </div>
       <div class="hint">解锁仅对当前客户端生效</div>
