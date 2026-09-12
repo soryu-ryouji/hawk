@@ -129,7 +129,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 | 文件 | 改动 |
 | ---- | ---- |
-| `web/src/components/Inspector.vue` | 调色板色块行 |
+| `web/src/domains/library/components/inspector/InspectorItem.vue` | 调色板色块行 |
 | `web/src/components/TitleBar.vue` | 颜色筛选 chip |
 | `web/src/stores/library.ts`、`web/src/types.ts` | `QueryState.color`、list 参数透传 |
 | `web/src/api/schema.d.ts` | 重新生成 |

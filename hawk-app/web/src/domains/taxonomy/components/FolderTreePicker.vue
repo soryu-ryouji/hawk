@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { onClickOutside, useEventListener } from '@vueuse/core';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import Icon from '@/shared/ui/Icon.vue';
@@ -7,6 +7,8 @@ import type { FolderNode } from '@/shared/types';
 
 // Eagle 式文件夹树选择弹出层（检查器「文件夹」使用）：点击当前值弹出，
 // 点击文件夹行即选中移动（无确认，与 Eagle 一致）；点外部/Esc 关闭。
+// 视口定位（含高度预估与翻转判定）由本弹层挂载时自行测量触发按钮——
+// 使用方只管开/关，不感知定位细节。
 // 仅编辑版使用——只读端（触屏/viewer）的文件夹是纯文字跳转。
 const props = defineProps<{
   /** 当前所在文件夹（"" 为根目录），高亮并默认沿其路径展开 */
@@ -14,15 +16,34 @@ const props = defineProps<{
   /** 触发按钮（检查器的文件夹当前值按钮）：点击它属于 toggle，不得按「点外部」关闭——
    * 否则 pointerdown 先关、click 后开，再点一次永远关不上 */
   trigger: HTMLElement | null;
-  /** 触发按钮的视口定位（Inspector 计算，含下方空间不足时的翻转） */
-  anchor: { left: number; width: number; top: number; bottom: number; flip: boolean };
 }>();
 const emit = defineEmits<{ pick: [path: string]; close: [] }>();
 
 const taxonomy = useTaxonomyStore();
 const panelEl = ref<HTMLElement | null>(null);
 onClickOutside(panelEl, () => emit('close'), { ignore: [computed(() => props.trigger)] });
-onMounted(() => panelEl.value?.focus());
+
+// 视口锚点：挂载时测量触发按钮（null = 尚未定位，不渲染面板）。
+// flip = 下方空间不足时向上弹出；高度按面板 max-height 300px + 边距预估
+const anchor = ref<{ left: number; width: number; top: number; bottom: number; flip: boolean } | null>(null);
+
+onMounted(() => {
+  const rect = props.trigger?.getBoundingClientRect();
+  if (!rect) {
+    emit('close');
+    return;
+  }
+  const ESTIMATED_HEIGHT = 308;
+  anchor.value = {
+    left: rect.left,
+    width: rect.width,
+    top: rect.bottom + 4,
+    bottom: window.innerHeight - rect.top + 4,
+    flip: rect.bottom + ESTIMATED_HEIGHT > window.innerHeight,
+  };
+  // 面板由 anchor 驱动 v-if，渲染后再聚焦（按键拦截依赖焦点在面板内）
+  void nextTick(() => panelEl.value?.focus());
+});
 
 // 面板内按键不透传给全局快捷键（Delete/Backspace 不误删素材）；Esc 关闭
 useEventListener(panelEl, 'keydown', (e: KeyboardEvent) => {
@@ -77,6 +98,7 @@ function pick(path: string) {
 <template>
   <Teleport to="body">
     <div
+      v-if="anchor"
       ref="panelEl"
       class="folder-picker"
       tabindex="0"

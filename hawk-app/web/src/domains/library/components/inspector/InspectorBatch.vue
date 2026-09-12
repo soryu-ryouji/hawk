@@ -6,7 +6,7 @@
 // 文件夹/评分/大小按选择集与骨架纯前端计算。
 import { computed, nextTick, ref } from 'vue';
 import { api } from '@/shared/api/endpoints';
-import { useLibraryStore } from '../store';
+import { useLibraryStore } from '../../store';
 import {
   addCategoryToSelected,
   addTagToSelected,
@@ -16,10 +16,10 @@ import {
   restoreSelected,
   setStarForSelected,
   trashSelected,
-} from '../actions';
+} from '../../actions';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import { formatSize } from '@/shared/lib/format';
-import { itemKey, selectionTotalSize, commonFoldersOf, commonStarOf } from '../logic/viewLogic';
+import { itemKey, selectionTotalSize, commonFoldersOf, commonStarOf } from '../../logic/viewLogic';
 import StarRating from './StarRating.vue';
 import { CategoryPickerDialog, FolderTreePicker } from '@/domains/taxonomy';
 
@@ -71,29 +71,15 @@ function batchAddCategory(name: string) {
 
 // ---- 文件夹（点击当前值弹树选择，选择即统一移动；混值时显示「多个值」仍可统一） ----
 const folderValueEl = ref<HTMLButtonElement | null>(null);
-/** 树选择弹出层锚点（null = 关闭）；flip = 触发按钮下方空间不足，向上弹出 */
-const pickerAnchor = ref<{ left: number; width: number; top: number; bottom: number; flip: boolean } | null>(null);
+/** 树选择弹出层开关；视口定位由 FolderTreePicker 自行测量触发按钮 */
+const showFolderPicker = ref(false);
 
 function toggleFolderPicker() {
-  if (pickerAnchor.value) {
-    pickerAnchor.value = null;
-    return;
-  }
-  const rect = folderValueEl.value?.getBoundingClientRect();
-  if (!rect) {
-    return;
-  }
-  pickerAnchor.value = {
-    left: rect.left,
-    width: rect.width,
-    top: rect.bottom + 4,
-    bottom: window.innerHeight - rect.top + 4,
-    flip: rect.bottom + 308 > window.innerHeight,
-  };
+  showFolderPicker.value = !showFolderPicker.value;
 }
 
 function batchMoveFolder(path: string) {
-  pickerAnchor.value = null;
+  showFolderPicker.value = false;
   moveSelectedToFolder(path);
 }
 
@@ -168,12 +154,11 @@ function applyStarToAll(value: number) {
           </button>
         </div>
         <FolderTreePicker
-          v-if="pickerAnchor"
+          v-if="showFolderPicker"
           :current="commonFolders[0] ?? ''"
           :trigger="folderValueEl"
-          :anchor="pickerAnchor"
           @pick="batchMoveFolder"
-          @close="pickerAnchor = null"
+          @close="showFolderPicker = false"
         />
       </section>
 

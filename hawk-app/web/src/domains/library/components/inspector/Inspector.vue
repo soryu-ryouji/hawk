@@ -1,12 +1,13 @@
 <script setup lang="ts">
 // 检查器壳：顶部拖拽条（含触屏横屏时的搜索框）+ 按选中数分区分发：
-// 单选 → InspectorItem（完整编辑）；多选 → InspectorBatch（批量操作）；无选中 → 分区状态。
-import { useLibraryStore } from '../store';
-import { formatSize } from '@/shared/lib/format';
+// 单选 → InspectorItem（完整编辑）；多选 → InspectorBatch（批量操作）；无选中 → InspectorStatus（分区状态）。
+// 壳只做分发，三种形态的实现在各自组件内。
+import { useLibraryStore } from '../../store';
 import { shell } from '@/shared/lib/platform';
-import SearchBox from './SearchBox.vue';
+import SearchBox from '../SearchBox.vue';
 import InspectorItem from './InspectorItem.vue';
 import InspectorBatch from './InspectorBatch.vue';
+import InspectorViewSummary from './InspectorViewSummary.vue';
 
 const store = useLibraryStore();
 
@@ -30,19 +31,8 @@ function onHeadDblClick() {
       <!-- 多选：批量操作 -->
       <InspectorBatch v-else-if="store.selection.length > 1" />
 
-      <!-- 无选中：当前分区状态（参考 Eagle：分区名 + 基本信息） -->
-      <div v-else class="section-status">
-        <div class="status-title">{{ store.viewTitle }}</div>
-        <section>
-          <div class="section-title">基本信息</div>
-          <dl class="info">
-            <dt>文件数</dt>
-            <dd>{{ store.total }}</dd>
-            <dt>占用空间</dt>
-            <dd>{{ formatSize(store.totalSize) }}</dd>
-          </dl>
-        </section>
-      </div>
+      <!-- 无选中：当前视图概览（参考 Eagle：分区名 + 基本信息） -->
+      <InspectorViewSummary v-else />
     </div>
   </aside>
 </template>
@@ -72,20 +62,5 @@ function onHeadDblClick() {
   overflow-y: auto;
   /* 恒定预留滚动条槽位：内容增减触发滚动条出现/消失时不改变内容宽度（否则整栏跳变 8px） */
   scrollbar-gutter: stable;
-}
-
-.section-status {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.status-title {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg-3);
-  font-weight: 600;
 }
 </style>

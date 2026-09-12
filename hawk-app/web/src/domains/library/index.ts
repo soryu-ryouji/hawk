@@ -23,6 +23,6 @@ export {
 export { itemKey, splitKey, displayPath, TRASH_PREFIX, selectionUniqueIds } from './logic/viewLogic';
 export { gridNavRows, markKeyboardNavScroll, moveGridSelection } from './logic/useGridNav';
 export { default as ItemGrid } from './components/ItemGrid.vue';
-export { default as Inspector } from './components/Inspector.vue';
+export { default as Inspector } from './components/inspector/Inspector.vue';
 export { default as FilterBar } from './components/FilterBar.vue';
 export { default as SearchBox } from './components/SearchBox.vue';

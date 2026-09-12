@@ -3,13 +3,13 @@
 // 只读的两个来源：触屏设备（编辑控件易误触）与只读查看（局域网 viewer token）——同结构全静态展示。
 import { computed, nextTick, ref, watch } from 'vue';
 import { api } from '@/shared/api/endpoints';
-import { useLibraryStore } from '../store';
-import { addCategoryToSelected, deleteLocation, updateItem } from '../actions';
+import { useLibraryStore } from '../../store';
+import { addCategoryToSelected, deleteLocation, updateItem } from '../../actions';
 import { useLayout } from '@/shared/composables/useLayout';
-import { displayPath, itemKey } from '../logic/viewLogic';
-import { formatSize, formatTime } from '@/shared/lib/format';
+import { displayPath, itemKey } from '../../logic/viewLogic';
 import StarRating from './StarRating.vue';
-import Icon from '@/shared/ui/Icon.vue';
+import ItemMetaFields from './ItemMetaFields.vue';
+import ItemPathList from './ItemPathList.vue';
 import type { ViewState } from '@/shared/types';
 import { TagEditor, CategoryPickerDialog, FolderTreePicker } from '@/domains/taxonomy';
 
@@ -127,28 +127,21 @@ function addCategory(category: string) {
   addCategoryToSelected(category);
 }
 
+/** 按位置删除（ItemPathList 的 remove 事件；同内容多位置只删本条目对应的路径） */
+function removeLocation(path: string) {
+  if (item.value) {
+    deleteLocation(item.value.id, path);
+  }
+}
+
 // ---- 文件夹 ----
 
 const folderValueEl = ref<HTMLButtonElement | null>(null);
-/** 树选择弹出层锚点（null = 关闭）；flip = 触发按钮下方空间不足，向上弹出 */
-const pickerAnchor = ref<{ left: number; width: number; top: number; bottom: number; flip: boolean } | null>(null);
+/** 树选择弹出层开关；视口定位由 FolderTreePicker 自行测量触发按钮 */
+const showFolderPicker = ref(false);
 
 function toggleFolderPicker() {
-  if (pickerAnchor.value) {
-    pickerAnchor.value = null;
-    return;
-  }
-  const rect = folderValueEl.value?.getBoundingClientRect();
-  if (!rect) {
-    return;
-  }
-  pickerAnchor.value = {
-    left: rect.left,
-    width: rect.width,
-    top: rect.bottom + 4,
-    bottom: window.innerHeight - rect.top + 4,
-    flip: rect.bottom + 308 > window.innerHeight,
-  };
+  showFolderPicker.value = !showFolderPicker.value;
 }
 
 function moveToFolder(path: string) {
@@ -242,28 +235,12 @@ function searchColor(color: string) {
 
       <section>
         <div class="section-title">基本信息</div>
-        <dl class="info">
-          <dt>评分</dt>
-          <dd>{{ Number(item.star) > 0 ? '★'.repeat(Number(item.star)) : '—' }}</dd>
-          <dt>尺寸</dt>
-          <dd>{{ item.width }} × {{ item.height }}</dd>
-          <dt>文件大小</dt>
-          <dd>{{ formatSize(Number(item.size)) }}</dd>
-          <dt>格式</dt>
-          <dd>{{ item.ext.toUpperCase() }}</dd>
-          <dt>修改时间</dt>
-          <dd>{{ formatTime(Number(item.modification_time)) }}</dd>
-          <dt>ID</dt>
-          <dd :title="item.id">{{ item.id.slice(0, 12) }}…</dd>
-        </dl>
+        <ItemMetaFields :item="item" />
       </section>
 
       <section>
         <div class="section-title">文件位置</div>
-        <button v-for="path in item.paths" :key="path" class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(parentFolderViewOf(path))">
-          {{ path }}
-        </button>
-        <span v-if="!item.paths?.length" class="ro-empty">—</span>
+        <ItemPathList :paths="item.paths ?? []" @navigate="(p) => goView(parentFolderViewOf(p))" />
       </section>
     </div>
 
@@ -314,48 +291,19 @@ function searchColor(color: string) {
           </button>
           <button class="finder" title="打开所在文件夹" @click="goView(folderViewOf(currentDir))">›</button>
         </div>
-        <FolderTreePicker
-          v-if="pickerAnchor"
-          :current="currentDir"
-          :trigger="folderValueEl"
-          :anchor="pickerAnchor"
-          @pick="moveToFolder"
-          @close="pickerAnchor = null"
-        />
+        <FolderTreePicker v-if="showFolderPicker" :current="currentDir" :trigger="folderValueEl" @pick="moveToFolder" @close="showFolderPicker = false" />
       </section>
 
       <section>
         <div class="section-title">基本信息</div>
-        <dl class="info">
-          <dt>评分</dt>
-          <dd><StarRating v-model="star" /></dd>
-          <dt>尺寸</dt>
-          <dd>{{ item.width }} × {{ item.height }}</dd>
-          <dt>文件大小</dt>
-          <dd>{{ formatSize(Number(item.size)) }}</dd>
-          <dt>格式</dt>
-          <dd>{{ item.ext.toUpperCase() }}</dd>
-          <dt>修改时间</dt>
-          <dd>{{ formatTime(Number(item.modification_time)) }}</dd>
-          <dt>ID</dt>
-          <dd :title="item.id">{{ item.id.slice(0, 12) }}…</dd>
-        </dl>
+        <ItemMetaFields :item="item">
+          <StarRating v-model="star" />
+        </ItemMetaFields>
       </section>
 
       <section>
         <div class="section-title">文件位置</div>
-        <div v-for="path in item.paths" :key="path" class="path-row">
-          <button class="path jump" :title="`查看所在文件夹：${path}`" @click="goView(parentFolderViewOf(path))">{{ path }}</button>
-          <!-- 多位置素材：按位置删除（其余位置保留，最后一个库内位置被删时整项回收） -->
-          <button
-            v-if="!store.viewerMode && (item.paths?.length ?? 0) > 1"
-            class="finder danger-btn"
-            title="删除此位置（其余位置保留）"
-            @click="deleteLocation(item.id, path)"
-          >
-            <Icon name="trash" :size="13" />
-          </button>
-        </div>
+        <ItemPathList :paths="item.paths ?? []" removable @navigate="(p) => goView(parentFolderViewOf(p))" @remove="removeLocation" />
       </section>
     </div>
 
