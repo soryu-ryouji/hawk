@@ -317,7 +317,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 路径导入 / URL 下载 / base64 入库（三选一取内容）。目标已存在报 FILE_EXISTS；
+         * 路径导入 / base64 入库（二选一取内容）。目标已存在报 FILE_EXISTS；
          *     skip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）
          */
         post: operations["item_add"];
@@ -1283,8 +1283,7 @@ export interface components {
             /** @description 内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true */
             skip_existing?: boolean;
             tags?: string[] | null;
-            url?: string | null;
-            /** @description 来源网页(收集场景:图片所在的页面地址),记录为 Item.url;与下载用的 url 区分 */
+            /** @description 来源网页(收集场景:图片所在的页面地址),记录为 Item.url */
             website?: string | null;
         };
         ItemAddResponse: {

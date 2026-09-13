@@ -1,7 +1,7 @@
 // 后台：右键菜单「保存图片到 hawk」入口，负责与 hawk-daemon 通信并反馈结果。
 // MV3 下 contextMenus 须在 onInstalled 里创建，避免 service worker 重启后重复注册。
 import { browser } from 'wxt/browser';
-import { addItemByBase64, addItemByUrl, createFolder, fetchFolderList, HttpError, type FolderNode } from '../lib/api';
+import { addItemByBase64, createFolder, fetchFolderList, HttpError, type FolderNode } from '../lib/api';
 import { notify } from '../lib/notify';
 
 const MENU_ID = 'hawk-save-image';
@@ -64,6 +64,20 @@ export default defineBackground(() => {
     void saveImage(info.srcUrl, tab?.url);
   });
 
+  // Firefox(MV2) 无 DNR：webRequest blocking 改写防盗链站点的 Referer
+  //（URL filter 限定站点表域名，非匹配请求零开销）；Chrome/Safari 走按需注册的 DNR
+  if (
+    typeof browser.declarativeNetRequest?.updateSessionRules !== 'function' &&
+    browser.webRequest?.onBeforeSendHeaders &&
+    !browser.webRequest.onBeforeSendHeaders.hasListener(rewriteRefererFirefox)
+  ) {
+    browser.webRequest.onBeforeSendHeaders.addListener(
+      rewriteRefererFirefox,
+      { urls: REFERER_SITES.flatMap((site) => site.domains.map((d) => `*://*.${d}/*`)) },
+      ['blocking', 'requestHeaders'],
+    );
+  }
+
   // 拖拽保存：content script 经消息转发图片地址 / 索取与新建文件夹
   browser.runtime.onMessage.addListener((message: unknown) => {
     if (isSaveMessage(message)) {
@@ -109,17 +123,10 @@ async function saveImage(srcUrl: string, pageUrl?: string, folderPath?: string) 
       // data URL 直接转 base64 提交，无需下载
       await addItemByBase64(srcUrl.slice(srcUrl.indexOf(',') + 1), pageUrl, folderPath);
     } else if (/^https?:\/\//.test(srcUrl)) {
-      // 首选浏览器网络栈下载（真实 Chrome TLS 指纹；服务端 ureq/rustls 常被目标站拒连，
-      // 如 “io: unexpected end of file”），转 base64 提交；浏览器拿不到（需页面会话 cookie 等）
-      // 时回退服务端下载兑底
-      try {
-        await addItemByBase64(await downloadAsBase64(srcUrl), pageUrl, folderPath);
-      } catch (e) {
-        if (e instanceof HttpError && (e.status === 404 || e.status === 410)) {
-          throw e; // 资源确定不存在，服务端下载同样拿不到，不再兑底
-        }
-        await addItemByUrl(srcUrl, pageUrl, folderPath);
-      }
+      // 浏览器网络栈下载（真实 Chrome TLS 指纹 + 用户代理与会话），转 base64 提交。
+      // 服务端下载已移除：ureq 无代理无会话、TLS 指纹常被目标站拒连，
+      // 能力是浏览器网络栈的子集，回退兑底没有实际价值
+      await addItemByBase64(await downloadAsBase64(srcUrl), pageUrl, folderPath);
     } else {
       throw new Error('不支持的图片地址（blob: 需要页面脚本协助，暂未支持）');
     }
@@ -132,8 +139,67 @@ async function saveImage(srcUrl: string, pageUrl?: string, folderPath?: string) 
   }
 }
 
+// ---------- 防盗链 Referer 改写 ----------
+// 部分图床校验 Referer（如 pixiv 的 i.pximg.net：非 pixiv 来源一律 403），而
+// service worker 的 fetch 无法设置跨源 Referer（fetch 规范禁止），只能经请求头
+// 改写 API 补上。遇到新防盗链站点往表里加一行即可。
+const REFERER_SITES: { domains: string[]; referer: string }[] = [
+  { domains: ['pximg.net'], referer: 'https://www.pixiv.net/' },
+];
+
+/** url 命中站点表时返回对应改写规则 */
+function refererRewriteFor(url: string): { domains: string[]; referer: string } | undefined {
+  try {
+    const host = new URL(url).hostname;
+    return REFERER_SITES.find((site) => site.domains.some((d) => host === d || host.endsWith(`.${d}`)));
+  } catch {
+    return undefined;
+  }
+}
+
+const DNR_RULE_BASE = 1000; // 会话规则 id 基址，避开其他来源的规则
+let refererRulesInstalled: Promise<void> | null = null;
+
+/** Chrome/Safari：注册 Referer 改写的 DNR 会话规则（幂等；service worker 重启后规则丢失，会重新注册） */
+function installRefererRulesDnr(): Promise<void> {
+  const rules: Browser.declarativeNetRequest.Rule[] = REFERER_SITES.map((site, i) => ({
+    id: DNR_RULE_BASE + i,
+    priority: 1,
+    condition: { requestDomains: site.domains, resourceTypes: ['xmlhttprequest'] },
+    action: {
+      type: 'modifyHeaders',
+      requestHeaders: [{ header: 'Referer', operation: 'set', value: site.referer }],
+    },
+  }));
+  refererRulesInstalled ??= browser.declarativeNetRequest
+    .updateSessionRules({ removeRuleIds: rules.map((r) => r.id), addRules: rules })
+    .catch((e: unknown) => {
+      refererRulesInstalled = null; // 失败不缓存，下次保存重试
+      throw e;
+    });
+  return refererRulesInstalled;
+}
+
+/** 下载前确保防盗链站点的 Referer 改写已生效（Firefox 为常驻监听，无需准备） */
+async function ensureRefererRewrite(url: string): Promise<void> {
+  if (!refererRewriteFor(url)) return;
+  if (typeof browser.declarativeNetRequest?.updateSessionRules === 'function') {
+    await installRefererRulesDnr();
+  }
+}
+
+/** Firefox(MV2)：webRequest blocking 改写 Referer（仅站点表内域名命中） */
+function rewriteRefererFirefox(details: { url: string; requestHeaders?: { name: string; value?: string }[] }) {
+  const rule = refererRewriteFor(details.url);
+  if (!rule) return {};
+  const headers = (details.requestHeaders ?? []).filter((h) => h.name.toLowerCase() !== 'referer');
+  headers.push({ name: 'Referer', value: rule.referer });
+  return { requestHeaders: headers };
+}
+
 /** 浏览器网络栈下载并转 base64；分块拼接避免 String.fromCharCode 栈溢出，大图也在 service worker 可承受范围 */
 async function downloadAsBase64(url: string): Promise<string> {
+  await ensureRefererRewrite(url);
   const res = await fetch(url, { credentials: 'omit' });
   if (!res.ok) {
     throw new HttpError(res.status, `扩展下载失败：HTTP ${res.status}（${new URL(url).host}）`);

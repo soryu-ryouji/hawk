@@ -134,18 +134,9 @@ export function createFolder(name: string) {
 }
 
 // 收集来源网页对应 hawk 的 Item.url 字段（与 Eagle 的 website 参数同义）：
-// item/add 的 url 是下载来源（仅用于取文件），website 才是素材的「来源网址」，入库时记录到 Item.url。
+// 图片内容由扩展下载后以 base64 提交，website 即素材的「来源网址」，入库时记录到 Item.url。
 
-/** 按图片 URL 导入（服务端负责下载）；website 为来源网页（可选） */
-export function addItemByUrl(url: string, website?: string, folderPath?: string) {
-  return request('POST', '/api/v1/item/add', {
-    url,
-    ...(website ? { website } : {}),
-    ...(folderPath ? { folder_path: folderPath } : {}),
-  });
-}
-
-/** 按 base64 导入（data: URL 图片）；website 为来源网页（可选） */
+/** 按 base64 导入（浏览器下载后的图片内容）；website 为来源网页（可选） */
 export function addItemByBase64(imgBase64: string, website?: string, folderPath?: string) {
   return request('POST', '/api/v1/item/add', {
     img_base64: imgBase64,

@@ -1,4 +1,4 @@
-//! item/add：路径导入与 URL 下载入库。
+//! item/add：路径导入与 base64 入库。
 
 use super::*;
 
@@ -8,14 +8,13 @@ use super::*;
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ItemAddRequest {
     path: Option<String>,
-    url: Option<String>,
     img_base64: Option<String>,
     name: Option<String>,
     folder_path: Option<String>,
     tags: Option<Vec<String>>,
     categories: Option<Vec<String>>,
     annotation: Option<String>,
-    /// 来源网页(收集场景:图片所在的页面地址),记录为 Item.url;与下载用的 url 区分
+    /// 来源网页(收集场景:图片所在的页面地址),记录为 Item.url
     website: Option<String>,
     /// 内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true
     #[serde(default)]
@@ -32,7 +31,7 @@ pub(crate) struct ItemAddResponse {
     pub(crate) skipped: bool,
 }
 
-/// 路径导入 / URL 下载 / base64 入库（三选一取内容）。目标已存在报 FILE_EXISTS；
+/// 路径导入 / base64 入库（二选一取内容）。目标已存在报 FILE_EXISTS；
 /// skip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）
 #[utoipa::path(
     post,
@@ -45,10 +44,8 @@ pub(crate) async fn item_add(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemAddRequest>,
 ) -> Result<Json<Envelope<ItemAddResponse>>, ApiError> {
-    if req.path.is_none() && req.url.is_none() && req.img_base64.is_none() {
-        return Err(ApiError::invalid_param(
-            "path、url、img_base64 必须提供其一",
-        ));
+    if req.path.is_none() && req.img_base64.is_none() {
+        return Err(ApiError::invalid_param("path、img_base64 必须提供其一"));
     }
 
     let folder_rel = req.folder_path.clone().unwrap_or_default();
@@ -68,7 +65,7 @@ pub(crate) async fn item_add(
     std::fs::create_dir_all(&folder_abs)
         .map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
 
-    // 获取内容来源:本地文件直接引用,url/base64 内容在内存中
+    // 获取内容来源:本地文件直接引用,base64 内容在内存中
     let (ext, default_name, bytes, source_abs): (String, String, Option<Vec<u8>>, Option<String>) =
         if let Some(path) = &req.path {
             let source = std::path::Path::new(path);
@@ -82,29 +79,6 @@ pub(crate) async fn item_add(
             let ext = LibraryPaths::ext_of(&file_name);
             let stem = LibraryPaths::name_of(&file_name).to_string();
             (ext, stem, None, Some(crate::core::paths::full_path(path)))
-        } else if let Some(url) = &req.url {
-            let uri = url::Url::parse(url)
-                .map_err(|_| ApiError::invalid_param(format!("非法 URL: {url}")))?;
-            let bytes = download(url).await?;
-            let segment = uri
-                .path_segments()
-                .and_then(|mut s| s.next_back().map(str::to_string))
-                .unwrap_or_default();
-            let decoded = percent_decode(&segment);
-            let ext = LibraryPaths::ext_of(&decoded);
-            let ext = if ext.is_empty() {
-                crate::core::thumbnail::ThumbnailService::detect_extension_bytes(&bytes)
-                    .ok_or_else(|| ApiError::invalid_param("无法确定文件扩展名"))?
-            } else {
-                ext
-            };
-            let stem = LibraryPaths::name_of(&decoded).to_string();
-            let default_name = if stem.is_empty() {
-                "download".to_string()
-            } else {
-                stem
-            };
-            (ext, default_name, Some(bytes), None)
         } else {
             let bytes = decode_base64(req.img_base64.as_deref().unwrap_or_default())?;
             let ext = ThumbnailService::detect_extension_bytes(&bytes)
@@ -278,32 +252,6 @@ pub(crate) async fn item_add(
         already_existed: existed_before_write,
         skipped: false,
     })))
-}
-
-async fn download(url: &str) -> Result<Vec<u8>, ApiError> {
-    let url = url.to_string();
-    tokio::task::spawn_blocking(move || {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .into();
-        let response = agent
-            .get(&url)
-            .call()
-            .map_err(|e| ApiError::internal(format!("下载失败: {e}")))?;
-        response
-            .into_body()
-            .read_to_vec()
-            .map_err(|e| ApiError::internal(format!("读取下载内容失败: {e}")))
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("下载任务失败: {e}")))?
-}
-
-fn percent_decode(input: &str) -> String {
-    percent_encoding::percent_decode_str(input)
-        .decode_utf8_lossy()
-        .to_string()
 }
 
 /// path 导入保留原文件的创建时间与修改时间（File.Copy 默认会重置）

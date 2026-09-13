@@ -1197,14 +1197,8 @@
               "null"
             ]
           },
-          "url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "website": {
-            "description": "来源网页(收集场景:图片所在的页面地址),记录为 Item.url;与下载用的 url 区分",
+            "description": "来源网页(收集场景:图片所在的页面地址),记录为 Item.url",
             "type": [
               "string",
               "null"
@@ -3173,7 +3167,7 @@
             "description": "OK"
           }
         },
-        "summary": "路径导入 / URL 下载 / base64 入库（三选一取内容）。目标已存在报 FILE_EXISTS；\nskip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）",
+        "summary": "路径导入 / base64 入库（二选一取内容）。目标已存在报 FILE_EXISTS；\nskip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）",
         "tags": [
           "item"
         ]

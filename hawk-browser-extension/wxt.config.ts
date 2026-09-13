@@ -8,10 +8,22 @@ export default defineConfig({
   manifest: ({ browser }) => ({
     name: 'hawk 图片收集',
     description: '保存网页图片到 hawk 素材库',
-    permissions: ['contextMenus', 'storage', 'notifications'],
-    // 本机 daemon 直连；http(s) 任意源用于图片下载——保存首选浏览器网络栈
-    // （真实 Chrome TLS 指纹；服务端 ureq/rustls 常被目标站拒连，报 “io: unexpected end of file”），
-    // background 下载后转 base64 提交，浏览器拿不到时才由服务端兜底
+    // 防盗链站点（如 pixiv 的 i.pximg.net）校验 Referer，而 service worker 的 fetch
+    // 无法设置跨源 Referer（fetch 规范禁止），需请求头改写能力：Chrome/Safari 用
+    // declarativeNetRequest；Firefox(MV2) 不支持 DNR，用 webRequest blocking
+    permissions: [
+      'contextMenus',
+      'storage',
+      'notifications',
+      ...(browser === 'firefox'
+        ? (['webRequest', 'webRequestBlocking'] as const)
+        : browser === 'safari'
+          ? (['declarativeNetRequest'] as const)
+          : (['declarativeNetRequestWithHostAccess'] as const)),
+    ],
+    // 本机 daemon 直连；http(s) 任意源用于图片下载——内容一律经浏览器网络栈
+    // （真实 Chrome TLS 指纹 + 用户代理与会话，服务端无代理无会话拿不到），
+    // 下载后转 base64 提交，服务端不再自行下载
     host_permissions: ['http://127.0.0.1:27371/*', 'http://localhost:27371/*', 'http://*/*', 'https://*/*'],
     icons: {
       16: '/icons/16.png',

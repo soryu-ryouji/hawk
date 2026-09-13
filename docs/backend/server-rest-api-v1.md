@@ -624,19 +624,18 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 
 `POST /api/v1/item/add`
 
-向素材库添加新文件。`path`、`url`、`img_base64` 三者必须提供其一，作为文件内容来源；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。`url` 仅作为下载来源；来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
+向素材库添加新文件。`path`、`img_base64` 二者必须提供其一，作为文件内容来源；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
 
 **入库策略前置校验**（写盘前拒绝，避免落盘后又被入库判定剔除）：目标路径命中 `ignore` 规则返回 `INVALID_PARAM`；扩展名不在可见白名单（`.hawk/config.toml` 的 `extensions`）返回 `UNSUPPORTED_FORMAT`。`item/upload` 与 `item/update` 的改名/移动目标同样受此约束。
 
-`path` 导入时保留原文件的创建时间与修改时间（`File.Copy` 默认会重置）：按 `modification_time` 排序与文件管理器观感均以原文件为准；`url`/`img_base64` 无原文件时间，取入库时刻。
+`path` 导入时保留原文件的创建时间与修改时间（`File.Copy` 默认会重置）：按 `modification_time` 排序与文件管理器观感均以原文件为准；`img_base64` 无原文件时间，取入库时刻。
 
 #### 请求
 
 | 参数        | 类型     | 必填   | 说明                                   |
 | ----------- | -------- | ------ | -------------------------------------- |
-| path        | string   | 三选一 | 本地文件路径，导入该文件               |
-| url         | string   | 三选一 | 下载该 URL 的文件入库                  |
-| img_base64  | string   | 三选一 | Base64 编码的图像数据                  |
+| path        | string   | 二选一 | 本地文件路径，导入该文件               |
+| img_base64  | string   | 二选一 | Base64 编码的图像数据                  |
 | name        | string   | 否     | 文件名（不含扩展名），缺省取来源文件名 |
 | folder_path | string   | 否     | 目标文件夹路径，缺省为库根目录         |
 | tags        | string[] | 否     | 标签                                   |
