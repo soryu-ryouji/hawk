@@ -2,7 +2,7 @@
 import { computed, onMounted, watch } from 'vue';
 import { useWindowSize } from '@vueuse/core';
 import { api } from '@/shared/api/endpoints';
-import { copyImageToClipboard } from '@/shared/lib/clipboard';
+import { canCopyImageToClipboard, copyImageToClipboard } from '@/shared/lib/clipboard';
 import { useLibraryStore } from '@/domains/library';
 import { trashSelected } from '@/domains/library';
 import { usePreviewStore } from '@/domains/preview';
@@ -78,7 +78,8 @@ function onMenu(e: MouseEvent) {
           { label: '复制文件路径', action: () => void shell.copyPath(props.item.paths[0]) },
         ]
       : []),
-    { label: '复制图片', action: () => void copyImage() },
+    // 复制图片仅环境支持剪贴板写入时出现（局域网 HTTP 下无 navigator.clipboard，入口直接隐藏）
+    ...(canCopyImageToClipboard() ? [{ label: '复制图片', action: () => void copyImage() }] : []),
     // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口;viewer 下禁用
     ...(isRotatableImage(props.item.ext) && !store.viewerMode ? [{ label: '编辑图片…', action: () => preview.openEditor(props.item) }] : []),
     ...(!store.viewerMode ? [{ separator: true, label: '' }] : []),
