@@ -6,7 +6,20 @@ import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction } from './app-config';
 import { openLibraryAt, openRemoteViewer, pickLibrary, getStartedConn } from './server';
-import { currentDescriptor, remoteConnect, remoteDevices, remoteDisconnect, remotePatchDevice, remotePutConfig, remoteRotate, remoteStatus } from './remote';
+import {
+  currentDescriptor,
+  remoteConnect,
+  remoteCreateKey,
+  remoteDeleteKey,
+  remoteDevices,
+  remoteDisconnect,
+  remoteKeys,
+  remotePatchDevice,
+  remotePatchKey,
+  remotePutConfig,
+  remoteRotate,
+  remoteStatus,
+} from './remote';
 import type { RemoteConfig } from './ipc-contract';
 import { changeCacheParent, currentCacheParent } from './cache';
 import { lanAddresses } from './lan';
@@ -168,6 +181,22 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.remoteRotate, () => remoteRotate());
   ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string, mode?: 'direct' | 'relay') => remoteConnect(targetDeviceId, mode));
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
+
+  // 访问密钥管理（透传 daemon；id 只接受字符串）
+  ipcMain.handle(IPC.remoteKeys, () => remoteKeys());
+  ipcMain.handle(IPC.remoteCreateKey, (_event, input: { label?: string; read: boolean; write?: boolean; custom?: string }) => remoteCreateKey(input));
+  ipcMain.handle(IPC.remotePatchKey, (_event, id: unknown, patch: { label?: string; read?: boolean; write?: boolean }) => {
+    if (typeof id !== 'string' || !id) {
+      throw new Error('非法密钥 id');
+    }
+    return remotePatchKey(id, patch);
+  });
+  ipcMain.handle(IPC.remoteDeleteKey, (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id) {
+      throw new Error('非法密钥 id');
+    }
+    return remoteDeleteKey(id);
+  });
 }
 
 /** 库内相对路径 → 绝对路径（含越界守卫），非法路径返回 null */

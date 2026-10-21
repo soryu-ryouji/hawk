@@ -7,7 +7,7 @@ import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 
 export { initConnectionLabel, useConnectionLabel } from './connection';
 import { shell } from '@/shared/lib/platform';
-import type { RemoteConfig, RemoteDevice, RemoteDto } from '@/shared/types';
+import type { RemoteConfig, RemoteDevice, RemoteDto, RemoteKeyCreated, RemoteKeyEntry } from '@/shared/types';
 
 /** IPC invoke 错误消息剥壳：'Error invoking remote method ...: Error: <message>' → <message> */
 export function ipcMessage(e: unknown): string {
@@ -18,6 +18,8 @@ export function ipcMessage(e: unknown): string {
 export const useRemoteStore = defineStore('remote', () => {
   const dto = ref<RemoteDto | null>(null);
   const devices = ref<RemoteDevice[]>([]);
+  /** 本机签发的访问密钥（hawk-app key，不含明文） */
+  const keys = ref<RemoteKeyEntry[]>([]);
   const loading = ref(false);
   const saving = ref(false);
   /** 正在建立会话的设备 id（列表行内 spinner） */
@@ -51,6 +53,54 @@ export const useRemoteStore = defineStore('remote', () => {
       devices.value = (await shell.remoteDevices()).devices;
     } catch (e) {
       error.value = ipcMessage(e);
+    }
+  }
+
+  /** 访问密钥列表（远程未接入时清空——key 只有接入后才有意义） */
+  async function refreshKeys(): Promise<void> {
+    if (!dto.value?.enabled) {
+      keys.value = [];
+      return;
+    }
+    try {
+      keys.value = (await shell.remoteKeys()).keys;
+    } catch (e) {
+      error.value = ipcMessage(e);
+    }
+  }
+
+  /** 签发访问密钥：返回明文（只在本次返回值可见）；失败返回 null（error 已填） */
+  async function createKey(input: { label?: string; read: boolean; write?: boolean; custom?: string }): Promise<RemoteKeyCreated | null> {
+    error.value = null;
+    try {
+      const created = await shell.remoteCreateKey(input);
+      await refreshKeys();
+      return created;
+    } catch (e) {
+      error.value = ipcMessage(e);
+      return null;
+    }
+  }
+
+  async function patchKey(id: string, patch: { label?: string; read?: boolean; write?: boolean }): Promise<boolean> {
+    try {
+      await shell.remotePatchKey(id, patch);
+      await refreshKeys();
+      return true;
+    } catch (e) {
+      error.value = ipcMessage(e);
+      return false;
+    }
+  }
+
+  async function deleteKey(id: string): Promise<boolean> {
+    try {
+      await shell.remoteDeleteKey(id);
+      await refreshKeys();
+      return true;
+    } catch (e) {
+      error.value = ipcMessage(e);
+      return false;
     }
   }
 
@@ -139,6 +189,7 @@ export const useRemoteStore = defineStore('remote', () => {
   return {
     dto,
     devices,
+    keys,
     loading,
     saving,
     connectingId,
@@ -147,6 +198,10 @@ export const useRemoteStore = defineStore('remote', () => {
     setRelayFallback,
     refresh,
     refreshDevices,
+    refreshKeys,
+    createKey,
+    patchKey,
+    deleteKey,
     saveConfig,
     connect,
     disconnect,

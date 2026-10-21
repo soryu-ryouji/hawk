@@ -39,6 +39,10 @@ export const IPC = {
   remoteRotate: 'hawk:remote-rotate',
   remoteConnect: 'hawk:remote-connect',
   remoteDisconnect: 'hawk:remote-disconnect',
+  remoteKeys: 'hawk:remote-keys',
+  remoteCreateKey: 'hawk:remote-create-key',
+  remotePatchKey: 'hawk:remote-patch-key',
+  remoteDeleteKey: 'hawk:remote-delete-key',
   // ---- 主进程 → 渲染进程（webContents.send / ipcRenderer.on） ----
   winMaximized: 'hawk:win-maximized',
   serverProgress: 'hawk:server-progress',
@@ -116,7 +120,8 @@ export interface ConnectionDescriptor {
 export interface RemoteConfig {
   enabled: boolean;
   url: string;
-  key: string;
+  /** 服务端 service-key（池门禁凭证，hawk-server tenant add 生成） */
+  service_key: string;
   /** 允许广域网会话导入素材/新建文件夹（与 [web] 局域网写权限独立） */
   writable: boolean;
 }
@@ -154,6 +159,25 @@ export interface RemoteSessionDto {
   target_library_name: string;
   proxy_port: number;
   token: string;
+}
+
+/** 访问密钥条目（daemon /remote/keys 单条；不含明文——明文只在签发响应出现一次） */
+export interface RemoteKeyEntry {
+  id: string;
+  label: string;
+  read: boolean;
+  write: boolean;
+  /** key 前 4 字符（列表识别用） */
+  prefix: string;
+  created_at_ms: number;
+}
+
+/** 签发访问密钥的返回（明文 key 只在本次出现） */
+export interface RemoteKeyCreated {
+  id: string;
+  key: string;
+  /** 是否已同步到 server 映射（false = 远程未接入/推送失败，接入后自动重试） */
+  synced: boolean;
 }
 
 /** server 索引进度事件负载（total=0 表示不定态） */
@@ -252,6 +276,14 @@ export interface HawkShell {
   remoteConnect(targetDeviceId: string, mode?: 'direct' | 'relay'): Promise<ConnectionDescriptor>;
   /** 断开远程会话并回切本地库（幂等） */
   remoteDisconnect(): Promise<ConnectionDescriptor | null>;
+  /** 本机签发的访问密钥列表（不含明文） */
+  remoteKeys(): Promise<{ keys: RemoteKeyEntry[] }>;
+  /** 签发访问密钥（custom 省略 = 程序生成；明文只在返回值里出现一次） */
+  remoteCreateKey(input: { label?: string; read: boolean; write?: boolean; custom?: string }): Promise<RemoteKeyCreated>;
+  /** 更新访问密钥标签/权限 */
+  remotePatchKey(id: string, patch: { label?: string; read?: boolean; write?: boolean }): Promise<{ key: RemoteKeyEntry; synced: boolean }>;
+  /** 吊销访问密钥 */
+  remoteDeleteKey(id: string): Promise<{ synced: boolean }>;
   /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。
    *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 remoteGetConnection 拉取兜底 */
   onConnectionChanged(cb: (conn: ConnectionDescriptor) => void): () => void;

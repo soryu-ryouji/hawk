@@ -55,6 +55,10 @@ const shell: HawkShell = {
   remoteRotate: () => ipcRenderer.invoke(IPC.remoteRotate),
   remoteConnect: (targetDeviceId, mode) => ipcRenderer.invoke(IPC.remoteConnect, targetDeviceId, mode),
   remoteDisconnect: () => ipcRenderer.invoke(IPC.remoteDisconnect),
+  remoteKeys: () => ipcRenderer.invoke(IPC.remoteKeys),
+  remoteCreateKey: (input) => ipcRenderer.invoke(IPC.remoteCreateKey, input),
+  remotePatchKey: (id, patch) => ipcRenderer.invoke(IPC.remotePatchKey, id, patch),
+  remoteDeleteKey: (id) => ipcRenderer.invoke(IPC.remoteDeleteKey, id),
   onConnectionChanged: (cb) => subscribe(IPC.connectionChanged, cb),
 };
 

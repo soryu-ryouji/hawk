@@ -867,6 +867,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/remote/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出本机签发的访问密钥（admin 限定；不含明文——明文只在签发时返回一次） */
+        get: operations["list_keys"];
+        put?: never;
+        /** 签发访问密钥（admin 限定）：本地保管验证子，推送 server 哈希映射（best-effort） */
+        post: operations["create_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/remote/keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 吊销访问密钥（admin 限定）：本地删除并推送 server 移除映射，该 key 的后续会话即被拒 */
+        delete: operations["delete_key"];
+        options?: never;
+        head?: never;
+        /** 更新访问密钥的标签/权限（admin 限定；权限收窄对后续会话立即生效） */
+        patch: operations["patch_key"];
+        trace?: never;
+    };
     "/api/v1/remote/session": {
         parameters: {
             query?: never;
@@ -1077,10 +1113,29 @@ export interface components {
             /** @description 清除的条目总数（= hidden + ignored + missing） */
             removed: number;
         };
+        CreateKeyBody: {
+            /** @description 自定义密钥（可空 = 程序生成 128 位随机串） */
+            custom?: string | null;
+            /** @description 展示标签（如「iPhone 插件」；可空） */
+            label?: string | null;
+            read: boolean;
+            /** @description 写权限（广域网导入素材/新建文件夹；自定义 key 携带写权限时至少 12 字符） */
+            write?: boolean;
+        };
+        CreateKeyDto: {
+            id: string;
+            /** @description 明文 key：只在本次响应出现，服务端/本地均不存明文 */
+            key: string;
+            /** @description 是否已同步到 server 映射（false = 远程未接入/推送失败，下次接入自动重试） */
+            synced: boolean;
+        };
         CreateSessionBody: {
             /** @description direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用） */
             mode?: string;
             target_device_id: string;
+        };
+        DeleteKeyDto: {
+            synced: boolean;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_ActiveSessionDto: {
@@ -1128,6 +1183,24 @@ export interface components {
                 missing: number;
                 /** @description 清除的条目总数（= hidden + ignored + missing） */
                 removed: number;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_CreateKeyDto: {
+            data?: {
+                id: string;
+                /** @description 明文 key：只在本次响应出现，服务端/本地均不存明文 */
+                key: string;
+                /** @description 是否已同步到 server 映射（false = 远程未接入/推送失败，下次接入自动重试） */
+                synced: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_DeleteKeyDto: {
+            data?: {
+                synced: boolean;
             };
             status: string;
         };
@@ -1307,6 +1380,14 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_PatchKeyDto: {
+            data?: {
+                key: components["schemas"]["RemoteKeyDto"];
+                synced: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_RefreshCacheResponse: {
             data?: {
                 /** @description 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计） */
@@ -1342,12 +1423,20 @@ export interface components {
         Envelope_RemoteDto: {
             data?: {
                 enabled: boolean;
-                key: string;
+                /** @description 服务端 service-key（池门禁凭证，hawk-server tenant add 生成） */
+                service_key: string;
                 /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
                 status: components["schemas"]["RemoteStatus"];
                 url: string;
                 /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
                 writable: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_RemoteKeysDto: {
+            data?: {
+                keys: components["schemas"]["RemoteKeyDto"][];
             };
             status: string;
         };
@@ -1745,6 +1834,15 @@ export interface components {
             library_name?: string | null;
             name?: string | null;
         };
+        PatchKeyBody: {
+            label?: string | null;
+            read?: boolean | null;
+            write?: boolean | null;
+        };
+        PatchKeyDto: {
+            key: components["schemas"]["RemoteKeyDto"];
+            synced: boolean;
+        };
         PutLanBody: {
             enabled: boolean;
             /** Format: int32 */
@@ -1756,7 +1854,8 @@ export interface components {
         };
         PutRemoteBody: {
             enabled: boolean;
-            key: string;
+            /** @description 服务端 service-key */
+            service_key: string;
             url: string;
             /** @description 允许广域网会话导入素材/新建文件夹；省略时按关闭处理 */
             writable?: boolean;
@@ -1789,12 +1888,26 @@ export interface components {
         };
         RemoteDto: {
             enabled: boolean;
-            key: string;
+            /** @description 服务端 service-key（池门禁凭证，hawk-server tenant add 生成） */
+            service_key: string;
             /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
             status: components["schemas"]["RemoteStatus"];
             url: string;
             /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
             writable: boolean;
+        };
+        RemoteKeyDto: {
+            /** Format: int64 */
+            created_at_ms: number;
+            id: string;
+            label: string;
+            /** @description key 前 4 字符（识别用；明文不存也不可得） */
+            prefix: string;
+            read: boolean;
+            write: boolean;
+        };
+        RemoteKeysDto: {
+            keys: components["schemas"]["RemoteKeyDto"][];
         };
         RemoteSessionPayload: {
             session_id: string;
@@ -3177,6 +3290,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_RemoteDevicesDto"];
+                };
+            };
+        };
+    };
+    list_keys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_RemoteKeysDto"];
+                };
+            };
+        };
+    };
+    create_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateKeyBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_CreateKeyDto"];
+                };
+            };
+        };
+    };
+    delete_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 密钥 id */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_DeleteKeyDto"];
+                };
+            };
+        };
+    };
+    patch_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 密钥 id */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchKeyBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_PatchKeyDto"];
                 };
             };
         };

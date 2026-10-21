@@ -3,7 +3,16 @@
 // 主进程始终持有本地 daemon 的地址与 admin token，经正规 REST 调用（不经 IPC 传业务数据之外的状态）。
 import { getStartedConn } from './server';
 import { getMainWindow } from './window';
-import { IPC, type ConnectionDescriptor, type RemoteConfig, type RemoteDevice, type RemoteDto, type RemoteSessionDto } from './ipc-contract';
+import {
+  IPC,
+  type ConnectionDescriptor,
+  type RemoteConfig,
+  type RemoteDevice,
+  type RemoteDto,
+  type RemoteKeyCreated,
+  type RemoteKeyEntry,
+  type RemoteSessionDto,
+} from './ipc-contract';
 
 /** 当前远程连接（null = 本地库）。渲染进程拿到的是完整描述符（api_base + token + label） */
 let remoteConn: ConnectionDescriptor | null = null;
@@ -101,6 +110,27 @@ export async function remotePatchDevice(patch: { name?: string; allow_remote?: b
 
 export async function remoteRotate(): Promise<{ fingerprint: string }> {
   return daemonCall<{ fingerprint: string }>('POST', '/api/v1/remote/device/rotate');
+}
+
+// ---------- 访问密钥（hawk-app key）管理：透传 daemon（admin token 不出主进程） ----------
+
+export async function remoteKeys(): Promise<{ keys: RemoteKeyEntry[] }> {
+  return daemonCall<{ keys: RemoteKeyEntry[] }>('GET', '/api/v1/remote/keys');
+}
+
+export async function remoteCreateKey(input: { label?: string; read: boolean; write?: boolean; custom?: string }): Promise<RemoteKeyCreated> {
+  return daemonCall<RemoteKeyCreated>('POST', '/api/v1/remote/keys', input);
+}
+
+export async function remotePatchKey(
+  id: string,
+  patch: { label?: string; read?: boolean; write?: boolean },
+): Promise<{ key: RemoteKeyEntry; synced: boolean }> {
+  return daemonCall<{ key: RemoteKeyEntry; synced: boolean }>('PATCH', `/api/v1/remote/keys/${encodeURIComponent(id)}`, patch);
+}
+
+export async function remoteDeleteKey(id: string): Promise<{ synced: boolean }> {
+  return daemonCall<{ synced: boolean }>('DELETE', `/api/v1/remote/keys/${encodeURIComponent(id)}`);
 }
 
 /** 建立远程会话并切换连接描述符；失败抛错（message 直接展示） */

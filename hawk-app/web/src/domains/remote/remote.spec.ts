@@ -6,11 +6,13 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { ConnectionDescriptor, RemoteDto } from '@/shared/types';
 
 const env = vi.hoisted(() => ({
-  status: { enabled: true, url: 'https://hub', key: 'k', writable: false, status: { state: 'online', device_id: 'd_self' } } as RemoteDto,
+  status: { enabled: true, url: 'https://hub', service_key: 'hs_k', writable: false, status: { state: 'online', device_id: 'd_self' } } as RemoteDto,
   putOk: true,
   connectError: null as string | null,
   connection: null as ConnectionDescriptor | null,
   connCbs: [] as Array<(conn: ConnectionDescriptor) => void>,
+  keys: [] as Array<{ id: string; label: string; read: boolean; write: boolean; prefix: string; created_at_ms: number }>,
+  createKeyOk: true,
 }));
 
 const shellMock = vi.hoisted(() => ({
@@ -33,6 +35,20 @@ const shellMock = vi.hoisted(() => ({
   remoteDisconnect: vi.fn(() => Promise.resolve(null)),
   remotePatchDevice: vi.fn(() => Promise.resolve({})),
   remoteRotate: vi.fn(() => Promise.resolve({ fingerprint: 'fp' })),
+  remoteKeys: vi.fn(() => Promise.resolve({ keys: env.keys })),
+  remoteCreateKey: vi.fn(() =>
+    env.createKeyOk
+      ? Promise.resolve({ id: 'k_new', key: 'hk_plain-once', synced: true })
+      : Promise.reject(new Error('自定义密钥至少 12 个字符（携带写权限）')),
+  ),
+  remotePatchKey: vi.fn((_id: string, patch: { read?: boolean; write?: boolean }) => {
+    env.keys = env.keys.map((k) => (k.id === _id ? { ...k, ...patch } : k));
+    return Promise.resolve({ key: env.keys.find((k) => k.id === _id)!, synced: true });
+  }),
+  remoteDeleteKey: vi.fn((id: string) => {
+    env.keys = env.keys.filter((k) => k.id !== id);
+    return Promise.resolve({ synced: true });
+  }),
   remoteGetConnection: vi.fn(() => Promise.resolve(env.connection)),
   onConnectionChanged: vi.fn((cb: (conn: ConnectionDescriptor) => void) => {
     env.connCbs.push(cb);
@@ -73,11 +89,11 @@ describe('useRemoteStore', () => {
 
   it('saveConfig 成功回写 dto；失败写入 error 并返回 false', async () => {
     const store = useRemoteStore();
-    expect(await store.saveConfig({ enabled: true, url: 'https://hub', key: 'k', writable: false })).toBe(true);
+    expect(await store.saveConfig({ enabled: true, url: 'https://hub', service_key: 'hs_k', writable: false })).toBe(true);
     expect(store.dto?.url).toBe('https://hub');
 
     env.putOk = false;
-    expect(await store.saveConfig({ enabled: true, url: '', key: '', writable: false })).toBe(false);
+    expect(await store.saveConfig({ enabled: true, url: '', service_key: '', writable: false })).toBe(false);
     expect(store.error).toBe('校验失败');
   });
 
@@ -121,6 +137,41 @@ describe('useRemoteStore', () => {
     store.dto = env.status;
     await store.refreshDevices();
     expect(store.devices.map((d) => d.device_id)).toContain('d_on');
+  });
+
+  it('访问密钥：签发返回明文并刷新列表；失败写 error', async () => {
+    const store = useRemoteStore();
+    const created = await store.createKey({ label: '插件', read: true });
+    expect(created?.key).toBe('hk_plain-once');
+    expect(shellMock.remoteCreateKey).toHaveBeenCalledWith({ label: '插件', read: true });
+
+    env.createKeyOk = false;
+    const failed = await store.createKey({ read: true, write: true, custom: 'short' });
+    expect(failed).toBeNull();
+    expect(store.error).toContain('至少 12 个字符');
+    env.createKeyOk = true;
+  });
+
+  it('访问密钥：改权限/吊销后列表同步', async () => {
+    const store = useRemoteStore();
+    store.dto = env.status;
+    env.keys = [{ id: 'k_1', label: '插件', read: true, write: false, prefix: 'hk_a', created_at_ms: 1 }];
+    await store.refreshKeys();
+    expect(store.keys).toHaveLength(1);
+
+    await store.patchKey('k_1', { write: true });
+    expect(store.keys[0].write).toBe(true);
+
+    await store.deleteKey('k_1');
+    expect(store.keys).toHaveLength(0);
+  });
+
+  it('refreshKeys 远程未启用时清空', async () => {
+    const store = useRemoteStore();
+    store.dto = { ...env.status, enabled: false };
+    env.keys = [{ id: 'k_1', label: '', read: true, write: false, prefix: 'hk_', created_at_ms: 1 }];
+    await store.refreshKeys();
+    expect(store.keys).toEqual([]);
   });
 });
 
