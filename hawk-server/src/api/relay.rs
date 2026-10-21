@@ -84,6 +84,7 @@ async fn handle_socket(
         }
         pair.paired()
     };
+    state.relay_changed.notify_waiters();
     if paired {
         tracing::info!("中继会话 {session_id} 配对完成，开始转发");
     }
@@ -136,6 +137,7 @@ async fn handle_socket(
         }
     };
     state.relay_pairs.write().unwrap().remove(&session_id);
+    state.relay_changed.notify_waiters();
     if let Some(peer_tx) = peer {
         let _ = peer_tx.send(Message::Close(None));
     }

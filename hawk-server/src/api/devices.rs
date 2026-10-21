@@ -236,6 +236,15 @@ fn cancel_device_sessions(state: &Arc<AppState>, device_id: &str) -> Vec<(String
     notifications
 }
 
+/// 设备视图构建（控制面列表与网页版查看面共用）
+pub(crate) fn device_view_pub(
+    record: &DeviceRecord,
+    presence: Option<&Presence>,
+    now: u64,
+) -> Value {
+    device_view(record, presence, now)
+}
+
 fn device_view(record: &DeviceRecord, presence: Option<&Presence>, now: u64) -> Value {
     let last_seen = presence.and_then(|p| p.last_heartbeat_ms);
     let online = last_seen.is_some_and(|last| now.saturating_sub(last) <= HEARTBEAT_OFFLINE_MS);

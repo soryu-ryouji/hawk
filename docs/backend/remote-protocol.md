@@ -262,6 +262,7 @@ wss://<base>/api/v1/relay?key=<access_key>&device_id=<device_id>&session_id=<ses
 ```
 
 - `role=a` 为目标设备（素材库所在机），`role=b` 为发起方；服务端校验：会话存在且 `state=ready`、`mode=relay`、device_id 与该会话对应角色一致（不符 403/404）
+- **B 侧可以是服务端自身**：官方 hawk-server 的网页版宿主即以「网页版」设备身份（`platform="server"`）作为发起方走本流程——进程内中继 socket 取代真实 WS，协议字节零差异。浏览器与服务器之间的查看面 API（登录/设备/会话/代理）是服务端实现细节，不进本协议
 - 双方到齐后逐条转发二进制帧（**一帧 = 一个 QUIC 数据报**），不解析内容；文本帧忽略
 - 任一方断开 → 双方连接关闭，会话置 `cancelled`（双方控制通道收到 `session.cancelled`）
 - 客户端行为约定：直连失败（候选全部超时或无候选/unreachable）且「中继回退」开启时，经用户确认后以 `mode=relay` 另建会话；任何环节都不自动回落

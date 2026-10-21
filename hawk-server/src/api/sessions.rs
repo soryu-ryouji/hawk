@@ -26,7 +26,7 @@ fn new_session_id() -> String {
     format!("s_{:016x}", rand::random::<u64>())
 }
 
-/// `POST /api/v1/sessions`：发起会话（本期仅 mode=direct）
+/// `POST /api/v1/sessions`：发起会话（access_key 鉴权）
 pub async fn create(
     State(state): State<Arc<AppState>>,
     _: AccessKey,
@@ -38,16 +38,34 @@ pub async fn create(
             "不支持的会话模式（direct / relay）",
         ));
     }
-    if req.source_device_id == req.target_device_id {
+    let (session_id, initial) = create_session_internal(
+        &state,
+        &req.source_device_id,
+        &req.target_device_id,
+        &req.mode,
+    )?;
+    Ok(ok(
+        json!({ "session_id": session_id, "state": initial.as_str() }),
+    ))
+}
+
+/// 会话创建核心（REST handler 与网页版宿主共用）：校验双方与在线、插入会话、推送 session.request
+pub fn create_session_internal(
+    state: &Arc<AppState>,
+    source_device_id: &str,
+    target_device_id: &str,
+    mode: &str,
+) -> Result<(String, SessionState), ApiError> {
+    if source_device_id == target_device_id {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "不能与自身建立会话"));
     }
-    if state.device(&req.source_device_id).is_none() {
+    if state.device(source_device_id).is_none() {
         return Err(ApiError::not_found("来源设备不存在"));
     }
-    let Some(target) = state.device(&req.target_device_id) else {
+    let Some(target) = state.device(target_device_id) else {
         return Err(ApiError::not_found("目标设备不存在"));
     };
-    if !state.online(&req.target_device_id) {
+    if !state.online(target_device_id) {
         return Err(ApiError::not_found("目标设备不在线"));
     }
 
@@ -59,9 +77,9 @@ pub async fn create(
     };
     let session = Session {
         session_id: new_session_id(),
-        source_device_id: req.source_device_id.clone(),
-        target_device_id: req.target_device_id.clone(),
-        mode: req.mode.clone(),
+        source_device_id: source_device_id.to_string(),
+        target_device_id: target_device_id.to_string(),
+        mode: mode.to_string(),
         state: initial,
         created_at_ms: now_ms(),
         connect: None,
@@ -74,24 +92,22 @@ pub async fn create(
         .insert(session_id.clone(), session);
 
     if initial == SessionState::Pending {
-        let source = state.device(&req.source_device_id);
+        let source = state.device(source_device_id);
         state.push_ws(
-            &req.target_device_id,
+            target_device_id,
             &json!({
                 "type": "session.request",
                 "session_id": session_id,
                 "from": {
-                    "device_id": req.source_device_id,
+                    "device_id": source_device_id,
                     "name": source.as_ref().map(|s| s.name.as_str()).unwrap_or_default(),
                     "library_name": source.as_ref().map(|s| s.library_name.as_str()).unwrap_or_default(),
                 },
-                "mode": req.mode,
+                "mode": mode,
             }),
         );
     }
-    Ok(ok(
-        json!({ "session_id": session_id, "state": initial.as_str() }),
-    ))
+    Ok((session_id, initial))
 }
 
 /// `GET /api/v1/sessions/{session_id}`：会话状态即全部结果语义（发起方轮询兜底，1s 间隔上限 30s）

@@ -5,7 +5,7 @@ use axum::extract::ws::Message;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
@@ -156,6 +156,8 @@ pub struct AppState {
     pub sessions: RwLock<HashMap<String, Session>>,
     /// 中继会话的 WS 配对（session_id → 双方发送端）
     pub relay_pairs: RwLock<HashMap<String, RelayPair>>,
+    /// 配对表变更通知（进程内中继 socket 的 poller 等待源）
+    pub relay_changed: Arc<tokio::sync::Notify>,
     conn_seq: AtomicU64,
 }
 
@@ -167,6 +169,7 @@ impl AppState {
             presence: RwLock::new(HashMap::new()),
             sessions: RwLock::new(HashMap::new()),
             relay_pairs: RwLock::new(HashMap::new()),
+            relay_changed: Arc::new(tokio::sync::Notify::new()),
             conn_seq: AtomicU64::new(1),
         }
     }

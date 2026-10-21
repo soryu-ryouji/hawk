@@ -7,11 +7,13 @@ pub mod sessions;
 pub mod ws;
 
 use crate::state::AppState;
+use crate::viewer::ViewerManager;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -71,8 +73,12 @@ where
     }
 }
 
-pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
+pub fn router(
+    state: Arc<AppState>,
+    viewer: Arc<ViewerManager>,
+    web_dist: Option<PathBuf>,
+) -> Router {
+    let control = Router::new()
         .route(
             "/api/v1/devices",
             post(devices::register).get(devices::list),
@@ -98,5 +104,27 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/ws", get(ws::control_channel))
         .route("/api/v1/relay", get(relay::relay_channel))
-        .with_state(state)
+        .with_state(state);
+
+    let mut router = Router::new()
+        .route("/", get(crate::viewer::page::picker))
+        .merge(control)
+        .merge(crate::viewer::api::routes().with_state(viewer.clone()));
+
+    // 查看器 SPA（--web-dist 指定 hawk-app web 构建产物）
+    if let Some(dist) = web_dist {
+        router = router
+            .nest_service("/app", tower_http::services::ServeDir::new(dist.clone()))
+            .nest_service(
+                "/assets",
+                tower_http::services::ServeDir::new(dist.join("assets")),
+            );
+    }
+
+    // 回退：/api/v1/* 非控制面路径 → 浏览器令牌绑定的隧道代理；其余 404
+    router.merge(
+        Router::new()
+            .fallback(crate::viewer::proxy::api_fallback)
+            .with_state(viewer),
+    )
 }

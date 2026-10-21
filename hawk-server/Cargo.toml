@@ -15,9 +15,18 @@ clap = { version = "4", features = ["derive", "env"] }
 rand = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+quinn = "0.11.12"
+rcgen = "0.14.10"
+sha2 = "0.11.1"
+base64 = "0.23.1"
+hyper = { version = "1.12.0", features = ["http1", "client"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+tower-http = { version = "0.7.1", features = ["fs"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 tokio-tungstenite = "0.26"
 futures-util = "0.3"
 tempfile = "3"
+# 互操作测试：以真 A 侧（daemon 数据面）验证网页版全链路。仅测试依赖，产物零共享
+hawk-daemon = { path = "../hawk-daemon" }

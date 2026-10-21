@@ -17,12 +17,20 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 async fn spawn_server(dir: &Path) -> String {
     let store = Store::load(dir).unwrap();
     let state = Arc::new(AppState::new(KEY.to_string(), store));
+    let identity = hawk_server::identity::Identity::load_or_create(dir).unwrap();
+    let device_id = hawk_server::viewer::ensure_viewer_device(&state, &identity).unwrap();
+    let mut identity = identity;
+    if identity.device_id.is_none() {
+        identity.device_id = Some(device_id);
+        identity.persist(dir).unwrap();
+    }
+    let viewer = hawk_server::viewer::ViewerManager::new(state.clone(), identity, dir);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
         axum::serve(
             listener,
-            api::router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            api::router(state, viewer, None).into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .unwrap();
@@ -147,9 +155,11 @@ async fn register_heartbeat_and_list() {
         .await
         .unwrap();
     let devices = resp["data"]["devices"].as_array().unwrap();
-    assert_eq!(devices.len(), 2);
-    assert_eq!(devices[0]["online"], false);
-    assert_eq!(devices[0]["last_seen_at_ms"], Value::Null);
+    // 列表含 upsert 的「网页版」服务端设备（platform=server，注册时间最早排首位）
+    assert_eq!(devices.len(), 3);
+    assert_eq!(devices[0]["platform"], "server");
+    assert_eq!(devices[1]["online"], false);
+    assert_eq!(devices[1]["last_seen_at_ms"], Value::Null);
 
     let resp = heartbeat(&base, &a, full_reachability()).await;
     assert_eq!(resp.status(), 200);
@@ -166,13 +176,13 @@ async fn register_heartbeat_and_list() {
         .await
         .unwrap();
     let devices = resp["data"]["devices"].as_array().unwrap();
-    let da = &devices[0];
+    let da = &devices[1];
     assert_eq!(da["device_id"], a);
     assert_eq!(da["online"], true);
     assert_eq!(da["reachability"]["public_ip"], "127.0.0.1");
     assert_eq!(da["reachability"]["mapped_port"], 27373);
     assert_eq!(da["reachability"]["public_ipv6"], "240e::1");
-    let db = &devices[1];
+    let db = &devices[2];
     assert_eq!(db["device_id"], b);
     assert_eq!(db["online"], false);
 }
@@ -533,7 +543,7 @@ async fn device_table_persists_across_restart() {
         .await
         .unwrap();
     let devices = resp["data"]["devices"].as_array().unwrap();
-    assert_eq!(devices.len(), 1);
-    assert_eq!(devices[0]["name"], "台式机");
-    assert_eq!(devices[0]["online"], false);
+    assert_eq!(devices.len(), 2); // 网页版服务端设备 + 已注册设备
+    assert_eq!(devices[1]["name"], "台式机");
+    assert_eq!(devices[1]["online"], false);
 }

@@ -14,7 +14,11 @@ pub struct Settings {
     #[arg(long, env = "HAWK_SERVER_ACCESS_KEY")]
     pub access_key: String,
 
-    /// 数据目录（设备注册表 devices.json）
+    /// 数据目录（设备注册表 devices.json、网页版身份与令牌）
     #[arg(long, env = "HAWK_SERVER_DATA_DIR", default_value = "hawk-server-data")]
     pub data_dir: PathBuf,
+
+    /// 网页查看器前端产物目录（hawk-app web 构建输出；缺省则不提供网页版浏览）
+    #[arg(long, env = "HAWK_SERVER_WEB_DIST")]
+    pub web_dist: Option<PathBuf>,
 }
