@@ -21,7 +21,7 @@
 }
 ```
 
-错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer/远程写令牌访问未授权写端点，403；见 storage.md 的 `[web]`/`[remote]` 写权限配置）、`UNAUTHORIZED`（token 缺失或无效，401）、`NOT_READY`（初始索引构建中，503；唯一放行端点为 `app/startup`）
+错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer/远程写令牌访问未授权写端点，403；见 storage.md 的 `[web]` 与远程 `writable` 写权限配置）、`UNAUTHORIZED`（token 缺失或无效，401）、`NOT_READY`（初始索引构建中，503；唯一放行端点为 `app/startup`）
 
 ### ID 规范
 
@@ -224,8 +224,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 | 方法 | 端点 | 说明 |
 | ---- | ---- | ---- |
-| GET | `/api/v1/remote` | 读取远程访问接入配置（`[remote]` 段）与信令运行状态（admin 限定） |
-| PUT | `/api/v1/remote` | 写回 `[remote]` 配置并热重启信令（admin 限定） |
+| GET | `/api/v1/remote` | 读取远程访问接入配置（应用级 `remote.toml`）与信令运行状态（admin 限定） |
+| PUT | `/api/v1/remote` | 写回应用级 `remote.toml` 并热重启信令（admin 限定） |
 | GET | `/api/v1/remote/devices` | 拉取服务端设备列表（admin 限定） |
 | PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定；allow_write 由目标设备配置上报，不经此端点修改） |
 | POST | `/api/v1/remote/device/rotate` | 证书轮换（重新生成自签证书并同步服务端，admin 限定） |
@@ -237,7 +237,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `GET /api/v1/remote`
 
-读取 `.hawk/config.toml` 的 `[remote]` 段配置与 remote supervisor 的运行快照。
+读取应用级 `remote.toml`（`~/.config/hawk/remote.toml`；独立运行 daemon 时回退 `.hawk/remote.toml`）与 remote supervisor 的运行快照。配置跨素材库共享，切换库不丢失。
 
 #### 响应
 
@@ -260,13 +260,13 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 key 无效，`error` 字段携带服务端返回的原因）。
 
-`writable` 对应 `[remote].writable`：允许广域网写会话向本库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
+`writable` 对应应用级远程配置的 `writable`：允许广域网写会话向当前库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
 
 ---
 
 `PUT /api/v1/remote`
 
-写回 `[remote]` 配置并热重启信令：daemon 权威写配置（同 `app/lan` 模型）→ 唤醒 remote supervisor 重启信令即返回。接入是异步过程（注册/心跳/WSS 重连由 supervisor 驱动），进展经 GET 轮询。
+写回应用级 `remote.toml` 并热重启信令：daemon 权威写配置（同 `app/lan` 模型）→ 唤醒 remote supervisor，连接参数变化才重启信令。接入是异步过程（注册/心跳/WSS 重连由 supervisor 驱动），进展经 GET 轮询。
 
 #### 请求
 

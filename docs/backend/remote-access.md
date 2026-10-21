@@ -50,20 +50,32 @@
 
 素材库服务本体 + `remote/` 模块承载全部广域网能力：
 
-- 信令客户端：设备注册、周期心跳（30s）、WSS 控制通道（自动重连）、设备列表、会话发起与响应
+- 信令客户端：设备注册、周期心跳（30s，携带当前库名与可达性）、WSS 控制通道（自动重连）、设备列表、会话发起与响应
 - 可达性：UPnP/NAT-PMP 端口映射（igd）、公网 IPv4 / 全局 IPv6 探测上报（阶段 1b）
 - 数据面（阶段 1b）：QUIC 隧道端与 B 侧会话代理
   - A 侧隧道端：隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级或受限远程写权限标记（见安全模型）
   - B 侧会话代理：环回监听器（supervisor 管理，同 LAN web 模型），每次会话随机 token，web 查看器以 `?token=` 携带，响应不带 CORS 头
 - 状态与事件：经 daemon 现有 REST（`/api/v1/remote/*`）与 SSE 事件暴露给 app 前端与主进程
 
-**可选子系统约束**：`[remote]` 配置段 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——接入参数变化热重启信令，`writable` 变更热生效不重启；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。热重启时旧数据面（QUIC 端点 + A 侧 accept 循环）随任务一起关停，supervisor 等其结束再拉起新任务，并对端口绑定做短暂重试——避免新一轮绑定自己刚占用的端口；停用后端口立即释放。
+**可选子系统约束**：应用级 `remote.toml` 的 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——接入参数变化热重启信令，`writable` 变更热生效不重启；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。热重启时旧数据面（QUIC 端点 + A 侧 accept 循环）随任务一起关停，supervisor 等其结束再拉起新任务，并对端口绑定做短暂重试——避免新一轮绑定自己刚占用的端口；停用后端口立即释放。
+
+**应用级配置与设备身份**：接入配置存 `~/.config/hawk/remote.toml`（Electron 经 `--remote-config` 传入），设备身份存同级的 `remote/identity.json`。两者不再随素材库切换：同一台机器在服务端始终是一台设备，切换库后心跳把设备表的 `library_name` 收敛到当前库。独立运行 daemon 时不传 `--remote-config`，回退到库内 `.hawk/remote.toml` 与 `.hawk/remote/`（测试/单库脚本用）。手工修改 `remote.toml` 需重启 daemon；设置面板经 API 写入即时生效。
+
+```toml
+# ~/.config/hawk/remote.toml（应用级；设备身份在 ~/.config/hawk/remote/）
+enabled = true
+url = "https://hawk.example.com"
+key = "<access-key>"
+quic_port = 27373
+writable = false
+```
 
 ### hawk-app（Electron 壳，接线枢纽）
 
 主进程职责不变（拉起/回收 daemon、注入 admin token），远程相关只做两件事：
 
 - 维护「当前活动连接」（见连接模型），向渲染进程下发连接变更；远程库的 `api_base` 指向 daemon 的会话代理端口
+- 无本地素材库时提供「仅浏览远程素材库」入口：自动创建远程查看宿主库（`~/.config/hawk/remote-library`，不含素材），拉起 daemon 后自动打开设置→远程
 - 订阅 daemon SSE 的 remote 会话生命周期事件，驱动断线回切
 
 不再拉起第三进程，无端口预选下发、无受托 token 注入、无额外状态 API 通道。
@@ -117,7 +129,7 @@ Connection {
 
 **1. remote 是 daemon 内模块，不是独立进程**
 
-原方案（独立进程 hawk-remote）的两个动机在当前前提下已失效或可用更省的方式满足：闭源云端边界（社区构建物理剔除云端代码）随服务端开源自托管而消失；崩溃域隔离在 Rust 里可用 supervisor 任务级重启达到同等实效——daemon 已有先例：LAN web 就是 reconcile 模型的可选网络子系统，故障只写状态不崩进程。合并后省掉三块接线：第三进程的 spawn/传参/回收、受托 token 双进程注入机制、独立状态 API 端口（设备列表/会话事件走 daemon 现有 REST + SSE）。代价是 quinn/igd 等依赖进入 daemon 依赖树（未启用时运行成本为零），以及 WAN 代码与素材库服务同进程（以 supervisor + `[remote]` 可关闭缓解）。
+原方案（独立进程 hawk-remote）的两个动机在当前前提下已失效或可用更省的方式满足：闭源云端边界（社区构建物理剔除云端代码）随服务端开源自托管而消失；崩溃域隔离在 Rust 里可用 supervisor 任务级重启达到同等实效——daemon 已有先例：LAN web 就是 reconcile 模型的可选网络子系统，故障只写状态不崩进程。合并后省掉三块接线：第三进程的 spawn/传参/回收、受托 token 双进程注入机制、独立状态 API 端口（设备列表/会话事件走 daemon 现有 REST + SSE）。代价是 quinn/igd 等依赖进入 daemon 依赖树（未启用时运行成本为零），以及 WAN 代码与素材库服务同进程（以 supervisor + 应用级远程配置可关闭缓解）。
 
 **2. 直连优先，服务器只做撮合**
 
@@ -133,18 +145,18 @@ QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P
 
 **5. 客户端最小知识：URL + KEY，无登录**
 
-桌面端配置只有服务端地址 URL 与访问密钥 KEY（`[remote]` 配置段）。协议无登录端点、无会话令牌；key 无效即 401，客户端直接展示服务端返回的 message。浏览器插件的广域网保存额外使用服务端可选的写入密钥（`--write-key`），换取写作用域令牌；该密钥不参与控制面鉴权。
+桌面端配置只有服务端地址 URL 与访问密钥 KEY（应用级 `remote.toml`，跨素材库共享）。协议无登录端点、无会话令牌；key 无效即 401，客户端直接展示服务端返回的 message。浏览器插件的广域网保存额外使用服务端可选的写入密钥（`--write-key`），换取写作用域令牌；该密钥不参与控制面鉴权。
 
 **6. 会话认证在 QUIC 层，隧道内 HTTP 进程内授权**
 
-设备自签名证书指纹在服务端登记（TOFU），会话建立时经控制面交换指纹，QUIC 对端以指纹钉扎验证。隧道内 HTTP 由 A 侧隧道端在进程内标记权限：只读会话为 viewer 级；写会话需服务端写令牌 + 目标设备 `[remote].writable=true`，且仅开放导入素材/新建文件夹。查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到 daemon admin token。
+设备自签名证书指纹在服务端登记（TOFU），会话建立时经控制面交换指纹，QUIC 对端以指纹钉扎验证。隧道内 HTTP 由 A 侧隧道端在进程内标记权限：只读会话为 viewer 级；写会话需服务端写令牌 + 目标设备 `remote.writable=true`，且仅开放导入素材/新建文件夹。查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到 daemon admin token。
 
 ### 广域网写权限分层
 
 | 层 | 控制项 | 作用 |
 | -- | ------ | ---- |
 | hawk-server | `--write-key` / `HAWK_SERVER_WRITE_KEY` | 只有该密钥能换发写作用域浏览器令牌；不配置则广域网写整体关闭 |
-| 目标设备 | `[remote].writable` | 允许广域网写会话导入素材/新建文件夹；默认关闭，每请求校验，关闭立即失效 |
+| 目标设备 | `remote.writable` | 允许广域网写会话导入素材/新建文件夹；默认关闭，每请求校验，关闭立即失效 |
 | 目标 daemon | `AccessLevel::RemoteWriter` 端点白名单 | 只放行 GET、查询类 POST、`item/add`（禁止 `path`）与 `folder/create`；其余写端点 403 |
 
 局域网写权限 `[web]` 与以上链路完全独立：开启局域网写不会放开广域网写，反之亦然。
@@ -153,12 +165,23 @@ QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P
 
 连接顺序：IPv4 直连（UPnP）→ IPv6 直连 → 询问用户是否中继。中继消耗自己的服务器带宽，任何环节都不自动回落——「中继回退」是客户端设置项（默认关闭），开启后直连失败时弹确认，用户同意才建立中继会话。IPv6 直连是免映射、不经服务器的 P2P 路径；候选可达性由客户端实际连接尝试判定，服务端只负责收集上报、不下结论。
 
+## 远程查看模式（没有本地素材库）
+
+首次启动或本地库失效时，引导页提供「仅浏览远程素材库」：主进程在 `~/.config/hawk/remote-library` 创建/复用宿主库（名为「远程查看」，不含用户素材），拉起 daemon 后自动打开 设置 → 远程。宿主库只承载 daemon 运行（API、会话代理、远程 supervisor）；接入配置与设备身份都在应用级，切到真实本地库后仍保留。之后启动直接进入宿主库（`libraryPath` 记忆），不再弹目录选择；真实本地库从侧栏库下拉切换。
+
+```text
+无 libraryPath → SetupScreen
+  ├─ 打开资源文件夹 → 系统目录选择框 → 本地库
+  └─ 仅浏览远程素材库 → 创建/复用 ~/.config/hawk/remote-library → 拉起 daemon
+       → 自动打开设置→远程 → 填服务端/密钥 → 选设备 → 连接
+```
+
 ## 连接建立流程
 
 ### 直连模式（阶段 1）
 
 ```text
-B 配置接入（config.toml [remote] url + key）→ 拉取设备列表（A 在线 + 心跳携带可达性信息）
+B 配置接入（应用级 remote.toml url + key）→ 拉取设备列表（A 在线 + 心跳携带可达性信息）
 B 前端发起会话（mode=direct）
 hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）？
   ├─ 是 → 创建会话，经 WSS 推送给 A：session.request
@@ -181,16 +204,16 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 | -------- | ---- |
 | 控制面   | HTTPS/WSS（TLS 由前置反代终结）；access_key 由部署者生成配置（建议 256-bit 随机值），服务端恒定时间比较 |
 | 数据面   | QUIC TLS 1.3 端到端加密，证书指纹经控制面交换 + 钉扎；服务端接触不到素材内容（直连不过服务端，中继只搬运密文） |
-| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与 QUIC 对端指纹匹配的会话标识，且目标 `[remote].writable=true`。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
+| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与 QUIC 对端指纹匹配的会话标识，且目标 `remote.writable=true`。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
 | 本地防护 | B 侧会话代理：每次会话随机 token、响应无 CORS、环回监听 |
-| 凭据存储 | 接入配置（`[remote]` 的 url + key）存 `config.toml`——与 `[web]` token 同级先例，明文但随库同步（配一次全设备生效，单用户场景是特性）；设备身份（device_id、自签证书私钥）存 `.hawk/remote/`（库级，本地专用目录，不参与同步）。浏览器插件的写入密钥存 `browser.storage.local`，与本地 daemon token 同级 |
+| 凭据存储 | 接入配置（url + key）存应用级 `~/.config/hawk/remote.toml`（与壳偏好 `config.toml` 分开，daemon 权威写入；明文，权限 0600）；设备身份（device_id、自签证书私钥）存同级 `remote/identity.json`（应用级，0600）。浏览器插件的写入密钥存 `browser.storage.local`，与本地 daemon token 同级 |
 | 网页版   | **隧道在服务器终结**：素材明文过服务器（自托管单用户信任前提，与「中继只见密文」刻意不同的取舍）。浏览器令牌 bt 随机换发、服务端存 sha256 哈希与 read/write 作用域、可随时注销；access_key 只换发只读令牌，写入密钥换发写令牌；access_key 不离开服务器（浏览器只接触 bt） |
 | 广域网写 | 服务端写入密钥 + 目标设备开关双重准入；远程写只覆盖导入与建文件夹，禁止 `path` 导入（防读本机文件）；目标关闭开关后现有会话的下一个写请求即 403 |
 
 ## 分发形态
 
 - hawk-server 位于本仓库 `hawk-server/`，随 AGPL 开源，自托管部署（单二进制 + CLI/env 配置，TLS 交反代）
-- daemon 单二进制内含 remote 模块，无第三进程、无构建期门控；`[remote]` 未启用则运行时该能力不存在（任务不 spawn、端口不绑定）
+- daemon 单二进制内含 remote 模块，无第三进程、无构建期门控；远程配置未启用则运行时该能力不存在（任务不 spawn、端口不绑定）
 - app 远程 UI 以 daemon `/api/v1/remote/*` 状态为准：未配置时展示接入引导，无独立构建开关
 
 ## 对 hawk 仓库的改动清单
@@ -199,17 +222,17 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 | -------------------------- | ---- |
 | `hawk-server/`             | 远程访问服务端（已实现 P1 控制面：设备/心跳/WSS/会话撮合；P2 中继二期） |
 | `hawk-daemon/src/remote/`  | 新模块：信令客户端 / 可达性 / QUIC 隧道端 / B 侧会话代理，supervisor reconcile 管理 |
-| `hawk-daemon` config       | `[remote]` 配置段（enabled/url/key/writable），保存即热生效（同 `[web]`；写开关不重启信令） |
+| `hawk-daemon` config       | 应用级 `remote.toml`（enabled/url/key/writable），保存即热生效（写开关不重启信令）；设备身份同级 `remote/` |
 | `hawk-daemon` 鉴权中间件   | 进程内 viewer / remote_writer 权限标记（供隧道转发请求使用），无 remote 语义、无门控 |
 | `hawk-daemon` API          | `/api/v1/remote/*` 状态端点 + SSE remote 会话生命周期事件 |
 | `hawk-app`（主进程 + 前端） | 远程 UI（接入配置/设备列表/会话流程）；连接描述符与 `connection-changed`；订阅 daemon SSE remote 事件驱动断线回切 |
-| `.hawk/remote/`            | 本地专用设备身份目录（device_id、自签证书私钥），不参与同步 |
+| `~/.config/hawk/remote/`   | 应用级设备身份目录（device_id、自签证书私钥），不参与素材库同步 |
 
 ## 分级落地计划
 
 | 阶段 | 内容 | 验收标准 |
 | ---- | ---- | -------- |
-| 1a   | ~~hawk-server P1 控制面 + daemon remote/ 信令~~（已完成）：`[remote]` 配置、设备身份、注册/心跳/WSS 自动重连、状态 API | 设备配置后可注册上线、维持在线、接收并自动响应会话请求 |
+| 1a   | ~~hawk-server P1 控制面 + daemon remote/ 信令~~（已完成）：应用级远程配置、设备身份、注册/心跳/WSS 自动重连、状态 API | 设备配置后可注册上线、维持在线、接收并自动响应会话请求 |
 | 1b   | ~~daemon 数据面~~（已完成：可达性 UPnP/IPv6、QUIC 双向指纹钉扎、A 侧隧道端进程内转发 TunneledPeer、B 侧会话代理、会话编排 API + SSE remote.session）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
 | 2    | ~~服务端中继 + 客户端中继逻辑 +「中继回退」开关与确认弹窗~~（已完成：relay WS 配对转发 + AsyncUdpSocket over WS + 回退确认） | 直连失败经用户确认走中继；QUIC 端到端语义不变（服务端只见密文） |
 | 3    | QUIC 打洞（免端口映射 P2P，心跳已预留 `nat_type`） | 视阶段 1 直连成功率数据决定是否投入 |
@@ -218,8 +241,9 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 
 ```text
 hawk-daemon/src/remote/
-├── mod.rs          # supervisor（reconcile：[remote] 配置变更 → 热重启信令）+ 状态快照
-├── identity.rs     # .hawk/remote/identity.json（device_id、rcgen 自签证书与指纹）
+├── mod.rs          # supervisor（reconcile：remote.toml 变更 → 热重启信令）+ 状态快照
+├── config.rs       # 应用级 remote.toml 读写（设备身份目录由配置位置派生）
+├── identity.rs     # remote/identity.json（device_id、rcgen 自签证书与指纹）
 ├── signal.rs       # REST 客户端（注册/心跳/设备/会话）+ WSS 通道 + 自动重连
 ├── tls.rs          # QUIC 双向指纹钉扎（rustls verifier：B 钉 A、A 放行已接受对端）
 ├── reachability.rs # 全局 IPv6 探测（UDP connect 出接口）+ UPnP 映射维护（igd 阻塞任务）

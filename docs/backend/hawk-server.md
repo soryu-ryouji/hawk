@@ -227,14 +227,14 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 | 插件登录提示「该密钥只有浏览权限」 | 插件里填的是访问密钥；改为服务端 `--write-key` 对应的写入密钥 |
 | 控制面返回 401 `访问密钥无效` | 客户端/登录页的密钥与服务端配置不一致 |
 | 查看面返回 401 `未登录` / `令牌无效或已注销` | `bt` 已注销或 `viewer_tokens.json` 被清空，重新登录 |
-| 设备列表里 `online: false` | daemon 未运行、未配置 `[remote]`、心跳已过期（90s），或 HTTPS 链路不通 |
+| 设备列表里 `online: false` | daemon 未运行、未启用远程访问、心跳已过期（90s），或 HTTPS 链路不通 |
 | 网页版登录成功但打开查看器失败 | 目标设备离线、`allow_remote` 关闭，或反代拦截了中继 WebSocket；服务端日志有会话建立记录 |
 | `/app` 返回 302 回到登录页 | 未建查看会话（`bt` 未绑设备）或 `bt` 已失效：在选择器页重新登录并选设备 |
 | `/app` 返回 502 | 目标设备 daemon 已离线或隧道断开，回选择器页重新选设备 |
 | 查看器白屏、`/assets/*` 返回 401 | 浏览器丢了 `hawk_bt` cookie（清过站点数据/隐私模式拦截）：回 `/` 重新选设备 |
 | 网页版列表/图片不更新、大文件超时 | 反代缓冲了 SSE 或超时过短：`proxy_buffering off`、加大 `proxy_read_timeout` |
 | 插件保存返回 413 | 反代请求体上限过小（nginx 默认 1MB）：配置 `client_max_body_size 256m` |
-| 插件保存返回 403 `目标设备未开启广域网写入` / `remote writer is limited...` | 目标设备未开启 `[remote].writable`，或该会话不是写会话；按提示检查目标设备设置与服务端写入密钥 |
+| 插件保存返回 403 `目标设备未开启广域网写入` / `remote writer is limited...` | 目标设备未开启远程访问的 `writable`，或该会话不是写会话；按提示检查目标设备设置与服务端写入密钥 |
 | 心跳返回 429 | 心跳间隔小于 10s，检查客户端配置 |
 | 服务端日志看会话细节 | `RUST_LOG=debug` 重启；systemd 部署用 `journalctl -u hawk-server -f` |
 

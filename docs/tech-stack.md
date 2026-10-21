@@ -20,7 +20,7 @@ Rust，见 [hawk-daemon](backend/server-rust.md)（`hawk-daemon/`，axum、notif
 
 ## 远程访问客户端：hawk-daemon 的 remote/ 模块（信令进行中）
 
-广域网连接能力（信令/心跳/WSS/UPnP/QUIC 隧道/会话代理）收编为 daemon 内模块，`[remote]` 配置启用才激活（supervisor reconcile，同 LAN web 先例），见 [远程访问设计](backend/remote-access.md)。新增依赖：tokio-tungstenite、reqwest（rustls）、rcgen、sha2；数据面阶段增加 quinn、igd。
+广域网连接能力（信令/心跳/WSS/UPnP/QUIC 隧道/会话代理）收编为 daemon 内模块，应用级远程配置（`remote.toml`）启用才激活（supervisor reconcile，同 LAN web 先例），见 [远程访问设计](backend/remote-access.md)。新增依赖：tokio-tungstenite、reqwest（rustls）、rcgen、sha2；数据面阶段增加 quinn、igd。
 
 ## 前端与桌面壳：hawk-app/
 

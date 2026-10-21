@@ -24,7 +24,7 @@
 
 - 鉴权头：`Authorization: Bearer <access_key>`。控制面唯一凭据是 access_key：部署者启动服务端时经 `--access-key` / `HAWK_SERVER_ACCESS_KEY` 配置（建议 256-bit 随机值，服务端恒定时间比较）。客户端配置 = 一个 URL（服务端地址）+ 一个 KEY（访问密钥），无登录流程、无会话令牌
 - 查看面令牌 `bt`：由 `POST /api/v1/viewer/login` 换发（`access_key` → read，可选 `--write-key` → write），服务端只存哈希与作用域。它只用于查看面，不参与控制面鉴权
-- **device_id**：设备注册时由服务端分配，客户端持久化，随请求携带（用于心跳、会话响应、WSS 等需要标识设备身份的场合）
+- **device_id**：设备注册时由服务端分配，客户端持久化，随请求携带（用于心跳、会话响应、WSS 等需要标识设备身份的场合）。客户端设备身份是**应用级**的（不随素材库切换）；同一设备切换素材库后由心跳更新 `library_name`
 - 控制面全量 TLS：由前置反代（Caddy 等）终结，hawk-server 进程监听明文 HTTP
 - 限速：心跳最小间隔 10s（违反返回 429）
 
@@ -59,7 +59,8 @@
 ```
 
 `allow_remote`：设备级开关，关闭时该设备的会话请求被直接置 `rejected`（UI 里可改）。
-`allow_write`：目标设备当前是否允许广域网写会话（对应 `[remote].writable`）；由设备注册/心跳上报，服务端用于设备列表展示与写会话预检，最终仍由目标 daemon 每请求裁决。
+`allow_write`：目标设备当前是否允许广域网写会话（对应应用级 `remote.toml` 的 `writable`）；由设备注册/心跳上报，服务端用于设备列表展示与写会话预检，最终仍由目标 daemon 每请求裁决。
+`library_name`：设备当前打开的素材库名。设备身份跨库共享，同一台设备切换库后经心跳更新设备表，避免列表展示旧库名。
 
 ### `[P1] POST /api/v1/devices/heartbeat`
 
@@ -70,6 +71,7 @@
 {
   "device_id": "d_42",
   "allow_write": false,
+  "library_name": "我的素材库",      // 当前打开的库名；服务端据此收敛设备表（可省略）
   "reachability": {
     "public_ip": "1.2.3.4",          // 设备自报公网 IPv4；服务端与连接源地址比对，以服务端为准（自报值可不填）
     "mapped_port": 27373,             // UPnP/NAT-PMP 映射成功的 QUIC UDP 端口；无映射为 null
@@ -278,7 +280,7 @@ wss://<base>/api/v1/relay?key=<access_key>&device_id=<device_id>&session_id=<ses
 - 隧道内 HTTP 请求必须携带会话标识头 `x-hawk-session: <session_id>`（B 侧代理写入，客户端自带的同名头一律覆盖）。A 侧校验会话已接受、且与该 QUIC 连接的对端指纹一致后，在进程内插入 `TunneledPeer { writable }`；HTTP 客户端无法伪造该标记
 - A 侧按会话权限转发到 `127.0.0.1:27371`：
   - 只读会话：viewer 级，仅 GET 与查询类 POST
-  - 写会话：`access=write`，且请求时 `[remote].writable=true` 才生效；仅放行 GET、查询类 POST、`POST /api/v1/item/add`（禁止 `path`）与 `POST /api/v1/folder/create`，其余写端点 403
+  - 写会话：`access=write`，且请求时 `remote.writable=true` 才生效；仅放行 GET、查询类 POST、`POST /api/v1/item/add`（禁止 `path`）与 `POST /api/v1/folder/create`，其余写端点 403
 - **隧道端必须拒绝转发 `GET /api/v1/app/token`（直接返回 404）**。该端点免鉴权返回主 token（完全读写权限），仅服务于本机浏览器插件的零配置发现（插件直连环回，不经隧道）；远程查看方不需要它——B 侧已持有代理会话 token
 - B 侧本地代理：监听 `127.0.0.1:27374`，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口由 Electron 预选后经参数下发（见 remote-access.md 进程接线），会话 token 由 B 侧 hawk-remote 生成，web 查看器 URL 由客户端拼装，不经过服务端
 - 同一设备指纹可同时承载多个查看会话（例如 hawk-server 的网页版与插件）：A 侧指纹放行按会话引用计数，连接与会话绑定，取消一个会话只关闭该会话的连接与请求

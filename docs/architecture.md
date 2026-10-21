@@ -96,7 +96,7 @@ Electron 退出
 
 ### 远程访问（服务端已实现 P1，客户端信令进行中）
 
-远程访问不走服务器版路线：每台设备只有 hawk-app 与 hawk-daemon 两个进程，广域网连接能力（信令、心跳、UPnP、QUIC 隧道、会话代理）全部收在 daemon 的 **`remote/` 模块**——可选子系统，`[remote]` 配置启用才激活，supervisor reconcile 管理（同 LAN web 先例）；隧道内请求在进程内转发并标记 viewer 级权限或受限远程写权限（写会话需服务端写入密钥 + 目标设备开关），无需受托 token 机制。hawk-app 主进程只做连接描述符与断线回切（订阅 daemon SSE 的 remote 事件）。远程查看时数据面为端到端 QUIC 直连，素材数据始终由素材库所在机的 daemon 产出，复用现有 API 与只读/受限写鉴权。远程访问服务端 **hawk-server**（本仓库 `hawk-server/`，独立 crate）为单用户自托管方案：无账号/会员体系，准入即一把固定 access key；与客户端零代码共享，协议契约是唯一共享物。数据面直连优先（服务器只做撮合、不承素材带宽），中继为二期兜底。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)，服务端使用见 [hawk-server 使用指南](backend/hawk-server.md)。
+远程访问不走服务器版路线：每台设备只有 hawk-app 与 hawk-daemon 两个进程，广域网连接能力（信令、心跳、UPnP、QUIC 隧道、会话代理）全部收在 daemon 的 **`remote/` 模块**——可选子系统，应用级 `remote.toml` 启用才激活，supervisor reconcile 管理（同 LAN web 先例）；隧道内请求在进程内转发并标记 viewer 级权限或受限远程写权限（写会话需服务端写入密钥 + 目标设备开关），无需受托 token 机制。hawk-app 主进程只做连接描述符与断线回切（订阅 daemon SSE 的 remote 事件）。远程查看时数据面为端到端 QUIC 直连，素材数据始终由素材库所在机的 daemon 产出，复用现有 API 与只读/受限写鉴权。远程访问服务端 **hawk-server**（本仓库 `hawk-server/`，独立 crate）为单用户自托管方案：无账号/会员体系，准入即一把固定 access key；与客户端零代码共享，协议契约是唯一共享物。数据面直连优先（服务器只做撮合、不承素材带宽），中继为二期兜底。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)，服务端使用见 [hawk-server 使用指南](backend/hawk-server.md)。
 
 ## 仓库结构
 
