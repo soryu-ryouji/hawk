@@ -13,7 +13,7 @@ let sseAbort: AbortController | null = null;
 /** 本地库描述符（label 恒为「我的库」） */
 function localDescriptor(): ConnectionDescriptor | null {
   const conn = getStartedConn();
-  return conn ? { api_base: conn.address, token: conn.token, label: '我的库', remote: false } : null;
+  return conn ? { api_base: conn.address, token: conn.token, label: '我的库', remote: false, remoteHost: conn.remoteHost } : null;
 }
 
 /** 当前活动连接描述符：远程会话代理优先，其次本地库 */

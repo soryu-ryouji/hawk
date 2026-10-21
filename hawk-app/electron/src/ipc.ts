@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction } from './app-config';
-import { openLibraryAt, pickLibrary, getStartedConn } from './server';
+import { openLibraryAt, openRemoteViewer, pickLibrary, getStartedConn } from './server';
 import { currentDescriptor, remoteConnect, remoteDevices, remoteDisconnect, remotePatchDevice, remotePutConfig, remoteRotate, remoteStatus } from './remote';
 import type { RemoteConfig } from './ipc-contract';
 import { changeCacheParent, currentCacheParent } from './cache';
@@ -55,6 +55,17 @@ export function registerIpc(): void {
       return true;
     } catch (error) {
       // 失败时留在引导页并给出可见错误，而不是让 IPC 静默 reject
+      dialog.showErrorBox('hawk-daemon 启动失败', String(error instanceof Error ? error.message : error));
+      return false;
+    }
+  });
+
+  ipcMain.handle(IPC.openRemoteViewer, async (): Promise<boolean> => {
+    try {
+      // 远程查看模式：自动创建宿主库，不弹目录选择框；就绪经 hawk:server-started 通知
+      await openRemoteViewer();
+      return true;
+    } catch (error) {
       dialog.showErrorBox('hawk-daemon 启动失败', String(error instanceof Error ? error.message : error));
       return false;
     }

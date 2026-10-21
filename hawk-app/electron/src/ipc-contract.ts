@@ -5,6 +5,7 @@
 export const IPC = {
   // ---- 渲染进程 → 主进程（ipcRenderer.invoke / ipcMain.handle） ----
   selectLibrary: 'hawk:select-library',
+  openRemoteViewer: 'hawk:open-remote-viewer',
   listLibraries: 'hawk:list-libraries',
   openLibrary: 'hawk:open-library',
   openLibraryFolder: 'hawk:open-library-folder',
@@ -96,6 +97,8 @@ export type UpdateProgress = { phase: 'downloading'; received: number; total: nu
 export interface ServerConn {
   address: string;
   token: string;
+  /** 远程查看专用宿主库（serve 就绪后自动打开远程设置） */
+  remoteHost?: boolean;
 }
 
 /** 连接描述符：前端唯一面对的连接语义（api_base + token + 展示名），本地库/远程库同构 */
@@ -105,9 +108,11 @@ export interface ConnectionDescriptor {
   /** 「我的库」| 远端设备名 */
   label: string;
   remote: boolean;
+  /** 本地库是否为远程查看宿主库（远端连接恒为 false） */
+  remoteHost?: boolean;
 }
 
-/** [remote] 配置（读写 daemon /remote 的载荷） */
+/** 远程访问接入配置（读写 daemon /remote 的载荷；应用级，跨素材库共享） */
 export interface RemoteConfig {
   enabled: boolean;
   url: string;
@@ -163,6 +168,8 @@ export interface HawkShell {
   platform: string;
   /** 更换素材库：弹目录选择框并拉起新 server；就绪经 onServerStarted 通知 */
   selectLibrary(): Promise<boolean>;
+  /** 没有本地素材库时进入远程查看模式：自动创建宿主库并拉起 server（不弹目录选择框） */
+  openRemoteViewer(): Promise<boolean>;
   /** 本机打开过的素材库历史与当前库路径 */
   listLibraries(): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 打开历史素材库（仅限历史记录内的路径） */
@@ -232,7 +239,7 @@ export interface HawkShell {
   remoteGetConnection(): Promise<ConnectionDescriptor | null>;
   /** 远程接入配置与信令运行状态（daemon /remote） */
   remoteStatus(): Promise<RemoteDto>;
-  /** 写回 [remote] 配置并热重启信令 */
+  /** 写回应用级远程配置并热重启信令 */
   remotePutConfig(config: RemoteConfig): Promise<RemoteDto>;
   /** 服务端设备列表 */
   remoteDevices(): Promise<{ devices: RemoteDevice[] }>;

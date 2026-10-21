@@ -23,6 +23,7 @@ export const showInFileManagerLabel = `在${fileManagerName}中显示`;
 const noopShell: NonNullable<Window['hawkShell']> = {
   platform,
   selectLibrary: async () => false,
+  openRemoteViewer: async () => false,
   listLibraries: async () => ({ current: null, libraries: [] }),
   openLibrary: async () => false,
   openLibraryFolder: async () => {},

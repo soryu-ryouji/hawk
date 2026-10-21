@@ -17,6 +17,8 @@ export function useStartup() {
   const readyCount = ref(0);
   /** 启动/运行失败原因；'UNAUTHORIZED' 为哨兵值（浏览器 token 失效 → ConnectScreen） */
   const failed = ref<string | null>(null);
+  /** 当前连接是否为远程查看宿主库（启动后自动打开远程设置） */
+  const remoteHost = ref(false);
   const progress = ref<ServerProgress | null>(null);
 
   let pollTimer = 0;
@@ -80,7 +82,7 @@ export function useStartup() {
     // 故挂载时同时经 remoteGetConnection 拉取——同连接只 boot 一次。
     // 远程切换（connection-changed）与断线回切走同一条重配路径：连接描述符即「一个 api base + 一个 token」
     let bootedKey: string | null = null;
-    const onConn = (conn: { address?: string; api_base?: string; token: string }) => {
+    const onConn = (conn: { address?: string; api_base?: string; token: string; remoteHost?: boolean }) => {
       const api = conn.api_base ?? conn.address;
       if (!api) {
         return;
@@ -90,6 +92,7 @@ export function useStartup() {
         return;
       }
       bootedKey = key;
+      remoteHost.value = conn.remoteHost === true;
       configureApi({ api, token: conn.token });
       readyCount.value++;
     };
@@ -103,5 +106,5 @@ export function useStartup() {
   });
   onUnmounted(() => stopPolling());
 
-  return { readyCount, failed, progress, poll };
+  return { readyCount, failed, progress, remoteHost, poll };
 }

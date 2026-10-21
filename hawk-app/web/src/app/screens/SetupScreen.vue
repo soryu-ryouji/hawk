@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 引导页：素材库未配置或失效时展示，点击按钮才弹系统目录选择框。
+// 引导页：素材库未配置或失效时展示。打开本地库弹系统目录选择框；
+// 「仅浏览远程素材库」自动创建远程查看宿主库，不需要本地素材目录。
 import { ref } from 'vue';
 import { hasShell, shell } from '@/shared/lib/platform';
 
@@ -20,13 +21,32 @@ async function openLibrary() {
     busy.value = false;
   }
 }
+
+/** 远程查看模式：主进程自动创建宿主库并拉起 server，就绪后自动打开远程设置 */
+async function openRemote() {
+  if (!hasShell) {
+    return;
+  }
+  busy.value = true;
+  try {
+    if (await shell.openRemoteViewer()) {
+      emit('selected');
+    }
+  } finally {
+    busy.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="setup">
     <!-- 动态绑定避免 vite 按模块解析；icon.png 来自 publicDir（build/） -->
     <img class="logo" :src="'./icon.png'" alt="hawk" />
-    <button class="open" :disabled="busy" @click="openLibrary">打开资源文件夹</button>
+    <div class="options">
+      <button class="open" :disabled="busy" @click="openLibrary">打开资源文件夹</button>
+      <button class="open secondary" :disabled="busy" @click="openRemote">仅浏览远程素材库</button>
+      <p class="hint">不需要本地素材目录；配置服务端后直接查看其他设备上的素材库。</p>
+    </div>
   </div>
 </template>
 
@@ -45,9 +65,27 @@ async function openLibrary() {
   height: 128px;
 }
 
+.options {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
 .open {
   padding: 10px 28px;
   font-size: 15px;
   border-color: var(--accent);
+}
+
+.open.secondary {
+  border-color: var(--border);
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary, #999);
+  text-align: center;
 }
 </style>

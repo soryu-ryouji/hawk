@@ -13,6 +13,7 @@ const shell: HawkShell = {
   // 运行平台（darwin/win32/linux），前端据此区分系统称呼
   platform: process.platform,
   selectLibrary: () => ipcRenderer.invoke(IPC.selectLibrary),
+  openRemoteViewer: () => ipcRenderer.invoke(IPC.openRemoteViewer),
   listLibraries: () => ipcRenderer.invoke(IPC.listLibraries),
   openLibrary: (path) => ipcRenderer.invoke(IPC.openLibrary, path),
   openLibraryFolder: (path) => ipcRenderer.invoke(IPC.openLibraryFolder, path),

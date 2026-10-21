@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 远程访问分区（仅 Electron）：接入自托管 hawk-server（[remote] 段配置）+ 设备列表与会话入口。
+// 远程访问分区（仅 Electron）：接入自托管 hawk-server（应用级 remote.toml）+ 设备列表与会话入口。
 // 配置读写/设备列表/会话动作全部经 IPC 委托主进程（切到远程后渲染进程的 API base 已指向会话代理，
 // 管理面必须在主进程）。状态自管：保存按钮内联（不占用主组件 footer）；打开期间轮询信令状态。
 // 错误条在主组件（v-model:error）；分区切换 v-show 保活（编辑中的字段不丢）。
@@ -117,7 +117,7 @@ async function rotate() {
     <div class="switch-row">
       <div>
         <div class="switch-label">启用远程访问</div>
-        <p class="hint">接入自托管 hawk-server 后，可在其他设备上浏览本素材库（只读），也可浏览其他在线设备。</p>
+        <p class="hint">接入自托管 hawk-server 后，可在其他设备上浏览本素材库（只读），也可浏览其他在线设备。接入配置跨素材库共享。</p>
       </div>
       <label class="switch" title="启用远程访问">
         <input v-model="enabled" type="checkbox" />

@@ -6,10 +6,10 @@ import net from 'node:net';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { APP_DIR } from './paths';
+import { APP_DIR, CONFIG_DIR, REMOTE_CONFIG_FILE } from './paths';
 import { getMainWindow } from './window';
 import { readConfig, setLibraryRoot, writeConfig } from './app-config';
-import { IPC } from './ipc-contract';
+import { IPC, type ServerConn } from './ipc-contract';
 import { onServerReady, onServerStopped } from './remote';
 
 const isDev = !app.isPackaged;
@@ -18,16 +18,29 @@ export interface ServerHandle {
   child: ChildProcess;
   address: string;
   token: string;
+  /** 远程查看专用宿主库：启动后自动打开远程设置 */
+  remoteHost: boolean;
   markStopped(): void;
 }
 
 let server: ServerHandle | null = null;
 /** 已就绪 server 的连接参数（ready 时写入，停服/换库时清空）；页面加载晚于就绪时事件会丢，
- *  渲染进程经 hawk:server-conn 主动拉取兜底 */
-let startedConn: { address: string; token: string } | null = null;
+ *  渲染进程经 hawk:server-conn / remoteGetConnection 主动拉取兜底 */
+let startedConn: ServerConn | null = null;
 
-export function getStartedConn(): { address: string; token: string } | null {
+export function getStartedConn(): ServerConn | null {
   return startedConn;
+}
+
+/** 远程查看专用宿主库：daemon 必须带库运行（远程配置与设备身份已在应用级），
+ *  这个库不含用户素材，只作为远程查看模式的运行载体；与 remote.toml/remote/ 同目录，
+ *  应用级远程状态集中在一处 */
+export function remoteHostDir(): string {
+  return path.join(CONFIG_DIR, 'remote-library');
+}
+
+function isRemoteHost(libPath: string): boolean {
+  return path.resolve(libPath) === path.resolve(remoteHostDir());
 }
 
 function resolveServerCommand(): { command: string; args: string[] } {
@@ -102,6 +115,7 @@ function webDistDir(): string {
  * spawn 失败、异常退出（stopServer 除外）、停滞 120s 超时就 hawk:server-error。
  */
 function startServer(libPath: string, address: string, token: string): ServerHandle {
+  const remoteHost = isRemoteHost(libPath);
   const { command, args } = resolveServerCommand();
   // 全局缓存父目录（设置面板「存储」配置；未配置用系统默认）
   const cacheParent = readConfig().cacheParent;
@@ -114,6 +128,9 @@ function startServer(libPath: string, address: string, token: string): ServerHan
     '--web-dist',
     webDistDir(),
     ...(cacheParent ? ['--cache-parent', cacheParent] : []),
+    // 远程接入配置跨素材库共享：固定指向应用级 remote.toml（身份目录由其同级派生）
+    '--remote-config',
+    REMOTE_CONFIG_FILE,
   ];
   // 闭包级标志：有意停止（换库/应用设置重启）时抑制 exit 广播——旧子进程终止可能晚于
   // 新 server 的拉起，全局标志会被新一轮复位，造成误报异常退出
@@ -173,8 +190,8 @@ function startServer(libPath: string, address: string, token: string): ServerHan
       clearInterval(poll);
       clearInterval(watchdog);
       if (state.status === 'ready') {
-        startedConn = { address, token };
-        getMainWindow()?.webContents.send(IPC.serverStarted, { address, token });
+        startedConn = { address, token, remoteHost };
+        getMainWindow()?.webContents.send(IPC.serverStarted, startedConn);
         // remote SSE 订阅重建（remote.session 断线回切依赖；见 remote.ts）
         onServerReady();
       } else {
@@ -192,7 +209,7 @@ function startServer(libPath: string, address: string, token: string): ServerHan
     }
   }, 1000);
 
-  return { child, address, token, markStopped: () => (intentionalExit = true) };
+  return { child, address, token, remoteHost, markStopped: () => (intentionalExit = true) };
 }
 
 export function stopServer(): void {
@@ -240,4 +257,16 @@ export async function openLibraryAt(libPath: string): Promise<ServerHandle> {
   const port = await probeFreePort();
   server = await switchLibrary(libPath, `http://127.0.0.1:${port}`, token);
   return server;
+}
+
+/** 没有本地素材库时进入远程查看模式：创建/复用宿主库并拉起 server，不弹目录选择框 */
+export async function openRemoteViewer(): Promise<ServerHandle> {
+  const dir = remoteHostDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const configFile = path.join(dir, '.hawk', 'config.toml');
+  if (!fs.existsSync(configFile)) {
+    fs.mkdirSync(path.dirname(configFile), { recursive: true });
+    fs.writeFileSync(configFile, '# 远程查看专用宿主库（不含素材，仅承载 daemon 运行）\nname = "远程查看"\n');
+  }
+  return openLibraryAt(dir);
 }

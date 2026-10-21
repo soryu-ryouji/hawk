@@ -23,10 +23,11 @@ import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
 import SettingsConnection from './SettingsConnection.vue';
 
+const props = defineProps<{ initialRemote?: boolean }>();
 const emit = defineEmits<{ close: []; logout: [] }>();
 
 /** 当前分区：外观 / 隐藏项 / 局域网（Electron）/ 远程（Electron）/ 存储（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
-const section = ref<'appearance' | 'hiding' | 'lan' | 'remote' | 'storage' | 'update' | 'connection'>('appearance');
+const section = ref<'appearance' | 'hiding' | 'lan' | 'remote' | 'storage' | 'update' | 'connection'>(props.initialRemote ? 'remote' : 'appearance');
 /** 错误条（各分区经 v-model:error 写入；LAN 分区的读取/校验/保存错误） */
 const error = ref<string | null>(null);
 

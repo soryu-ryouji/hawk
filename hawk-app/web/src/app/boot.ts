@@ -15,7 +15,7 @@ export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'error';
 export function useBoot() {
   const phase = ref<BootPhase>('starting');
   const bootError = ref<string | null>(null);
-  const { readyCount, failed, progress, poll } = useStartup();
+  const { readyCount, failed, progress, remoteHost, poll } = useStartup();
   let disconnectEvents: (() => void) | null = null;
 
   // 连接就绪（冷启动/换库/应用设置重启都会触发）：拉取数据 + 重连 SSE，成功后进入主界面。
@@ -124,5 +124,5 @@ export function useBoot() {
     disconnectEvents?.();
   });
 
-  return { phase, bootError, progress, runBoot };
+  return { phase, bootError, progress, remoteHost, runBoot };
 }

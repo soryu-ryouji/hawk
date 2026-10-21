@@ -16,3 +16,7 @@ export const APP_ICON = path.join(APP_DIR, 'build', 'icon.png');
  *  Electron 平台默认 userData 不可直接用：打包版 productName=hawk 会让 Linux 默认 userData
  *  恰好解析为本目录，Chromium 缓存会混进来——main.ts 把 userData 固定到 appData/hawk-app */
 export const CONFIG_DIR = path.join(os.homedir(), '.config', 'hawk');
+
+/** 应用级远程访问配置（跨素材库共享；daemon 读写，设备身份在其同级 remote/ 目录）。
+ *  与 config.toml（壳偏好）分开：远程配置由 daemon 权威写入，避免两个进程争同一文件 */
+export const REMOTE_CONFIG_FILE = path.join(CONFIG_DIR, 'remote.toml');
