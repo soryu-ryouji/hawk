@@ -236,11 +236,16 @@ jobs:
       - name: Build web & native (parallel)
         shell: bash
         run: |
-          node scripts/build-server.mjs &
-          node scripts/build-update.mjs &
-          npm run build &
-          node scripts/build-electron.mjs &
-          wait
+          node scripts/build-server.mjs & p1=$!
+          node scripts/build-update.mjs & p2=$!
+          npm run build & p3=$!
+          node scripts/build-electron.mjs & p4=$!
+          # 逐个 wait 传播后台失败（裸 wait 无论子任务成败都返回 0，
+          # 曾导致 Windows 上 daemon 编译失败被吞、打包继续产出无 daemon 的 zip）
+          wait $p1
+          wait $p2
+          wait $p3
+          wait $p4
 
       - name: Pack
         # --publish never：禁用 electron-builder 自带发布（CI 下会隐式触发并索要 GH_TOKEN；
@@ -337,10 +342,12 @@ jobs:
       # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
       - name: Build web & daemon (parallel)
         run: |
-          node scripts/build-server.mjs &
-          npm run build &
-          node scripts/build-electron.mjs &
-          wait
+          node scripts/build-server.mjs & p1=$!
+          npm run build & p2=$!
+          node scripts/build-electron.mjs & p3=$!
+          wait $p1
+          wait $p2
+          wait $p3
 
       - name: Pack
         # --publish never 同 windows job（禁用隐式发布）

@@ -101,6 +101,7 @@ fn upnp_round(quic_port: u16) -> Result<(), String> {
 #[cfg(windows)]
 pub async fn ensure_firewall_rule_windows(quic_port: u16) {
     let rule_name = format!("hawk-remote QUIC {quic_port}");
+    let rule = rule_name.clone();
     let outcome = tokio::task::spawn_blocking(move || {
         let exists = std::process::Command::new("netsh")
             .args([
@@ -108,7 +109,7 @@ pub async fn ensure_firewall_rule_windows(quic_port: u16) {
                 "firewall",
                 "show",
                 "rule",
-                &format!("name={rule_name}"),
+                &format!("name={rule}"),
             ])
             .output()
             .map(|o| o.status.success())
@@ -122,7 +123,7 @@ pub async fn ensure_firewall_rule_windows(quic_port: u16) {
                 "firewall",
                 "add",
                 "rule",
-                &format!("name={rule_name}"),
+                &format!("name={rule}"),
                 "dir=in",
                 "action=allow",
                 "protocol=UDP",
