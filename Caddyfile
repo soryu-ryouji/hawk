@@ -1,0 +1,5 @@
+# 把 hawk.example.com 改成你的域名（DNS A 记录指向本机），Caddy 自动签发/续期证书。
+# WSS 透传无需额外配置。
+hawk.example.com {
+	reverse_proxy hawk-server:27370
+}

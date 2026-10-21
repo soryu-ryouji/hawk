@@ -11,7 +11,33 @@
 | 域名 + TLS 反代 | Caddy（自动签发续期，推荐）或 nginx；控制面 WSS 与网页版都要求 HTTPS/WSS |
 | web 查看器产物（网页版需要） | `hawk-app/web/dist`（`cd hawk-app && npm run build` 产出），整目录上传到服务器 |
 
-## 启动
+## Docker（推荐）
+
+仓库根目录提供一体化 `Dockerfile`（镜像内同时构建 hawk-server 与 web 查看器产物）与 `docker-compose.yml`：
+
+```bash
+# 1. 准备密钥（写入 .env，不会烘进镜像）
+echo "HAWK_SERVER_ACCESS_KEY=$(openssl rand -hex 32)" > .env
+
+# 2. 仅 hawk-server（127.0.0.1:27370，自行反代）
+docker compose up -d --build
+
+# 3. 或连同 Caddy（编辑 Caddyfile 填入域名，自动 HTTPS/WSS）
+docker compose --profile tls up -d --build
+```
+
+数据在命名卷 `hawk-server-data`（即容器内 `/data`）；不使用 compose 时等价命令：
+
+```bash
+docker build -t hawk-server .
+docker run -d --name hawk-server --restart unless-stopped \
+  -e HAWK_SERVER_ACCESS_KEY=<密钥> \
+  -v hawk-server-data:/data \
+  -p 127.0.0.1:27370:27370 \
+  hawk-server
+```
+
+## 手动启动
 
 ```bash
 # 生成一把访问密钥（保存好，客户端与网页登录都用它）
