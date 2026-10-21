@@ -185,6 +185,33 @@ async fn register_heartbeat_and_list() {
     let db = &devices[2];
     assert_eq!(db["device_id"], b);
     assert_eq!(db["online"], false);
+
+    // 反代部署：X-Real-IP / X-Forwarded-For 覆盖连接源地址（直连候选依赖真实公网 IP）
+    let c = register(&base, "第三台", true).await;
+    let d = register(&base, "第四台", true).await;
+    let resp = client()
+        .post(format!("http://{base}/api/v1/devices/heartbeat"))
+        .bearer_auth(KEY)
+        .header("x-real-ip", "1.2.3.4")
+        .json(&json!({ "device_id": c, "reachability": full_reachability() }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["data"]["public_ip_seen"], "1.2.3.4");
+
+    let resp = client()
+        .post(format!("http://{base}/api/v1/devices/heartbeat"))
+        .bearer_auth(KEY)
+        .header("x-forwarded-for", "5.6.7.8, 10.0.0.1")
+        .json(&json!({ "device_id": d, "reachability": full_reachability() }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["data"]["public_ip_seen"], "5.6.7.8");
 }
 
 #[tokio::test]

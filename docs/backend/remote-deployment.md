@@ -13,20 +13,13 @@
 
 ## Docker（推荐）
 
-仓库根目录提供一体化 `Dockerfile`（镜像内同时构建 hawk-server 与 web 查看器产物）与 `docker-compose.yml`：
+仓库根目录提供一体化 `Dockerfile`（镜像内同时构建 hawk-server 与 web 查看器产物）与 `docker-compose.yml`。编辑 compose 文件中的 `HAWK_SERVER_ACCESS_KEY`（`openssl rand -hex 32` 生成）后一键部署：
 
 ```bash
-# 1. 准备密钥（写入 .env，不会烘进镜像）
-echo "HAWK_SERVER_ACCESS_KEY=$(openssl rand -hex 32)" > .env
-
-# 2. 仅 hawk-server（127.0.0.1:27370，自行反代）
 docker compose up -d --build
-
-# 3. 或连同 Caddy（编辑 Caddyfile 填入域名，自动 HTTPS/WSS）
-docker compose --profile tls up -d --build
 ```
 
-数据在命名卷 `hawk-server-data`（即容器内 `/data`）；不使用 compose 时等价命令：
+数据在命名卷 `hawk-server-data`（即容器内 `/data`）；明文端口只绑环回（127.0.0.1:27370），公网入口交给宿主机 nginx。不使用 compose 时等价命令：
 
 ```bash
 docker build -t hawk-server .
@@ -68,18 +61,41 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-## 域名与 TLS（反代）
+## 域名与 TLS（nginx 反代）
 
-```text
-# Caddyfile：自动签发/续期证书，WSS 透传无需额外配置
-hawk.example.com {
-    reverse_proxy 127.0.0.1:27370
+宿主机 nginx 终结 TLS（主域名证书已有），反代到环回的 27370。控制面 WSS 与中继 WS 需要显式的升级头，查看器事件流（SSE）需要关闭响应缓冲：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name hawk.example.com;
+    # ssl_certificate / ssl_certificate_key 沿用主域名已有配置
+
+    location / {
+        proxy_pass http://127.0.0.1:27370;
+        proxy_http_version 1.1;
+
+        # WebSocket（控制面 WSS / 中继 WS）
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # 转发头（hawk-server 据 X-Real-IP / X-Forwarded-For 还原设备公网 IP，直连候选依赖它）
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE（查看器事件流）：关闭缓冲，否则事件被延迟聚合
+        proxy_buffering off;
+
+        # 素材大文件流式响应
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
 }
 ```
 
-防火墙只放行 443/80；**27370 不要对公网开放**（明文 HTTP，密钥虽兜底但 TLS 是底线）。
-
-nginx 等价配置需显式放行 WebSocket 升级头（`Upgrade`/`Connection`）。
+防火墙只放行 443/80；**27370 不要对公网开放**（明文 HTTP，密钥虽兜底但 TLS 是底线，且 X-Real-IP 头可信的前提是流量必经反代）。用 Caddy 则只需 `reverse_proxy 127.0.0.1:27370`（WSS 透传无需额外配置，同样建议补 `X-Real-IP` 头）。
 
 ## 客户端接入
 

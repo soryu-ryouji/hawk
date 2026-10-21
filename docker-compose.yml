@@ -1,9 +1,6 @@
-# hawk-server 一键部署：hawk-server + 可选 Caddy（域名/TLS）。
-# 用法：
-#   echo 'HAWK_SERVER_ACCESS_KEY=<随机密钥>' > .env
-#   docker compose up -d --build              # 仅 hawk-server（127.0.0.1:27370，自行反代）
-#   编辑 Caddyfile 填入域名后：
-#   docker compose --profile tls up -d --build # hawk-server + Caddy（自动 HTTPS/WSS）
+# hawk-server 一键部署：编辑下方密钥后 `docker compose up -d --build` 即完成。
+# 域名/TLS 由宿主机 nginx 终结（配置示例见 docs/backend/remote-deployment.md），
+# 本服务的明文端口只绑环回，公网入口只经 nginx。
 services:
   hawk-server:
     build: .
@@ -11,29 +8,13 @@ services:
     container_name: hawk-server
     restart: unless-stopped
     environment:
-      HAWK_SERVER_ACCESS_KEY: ${HAWK_SERVER_ACCESS_KEY:?请在 .env 设置 HAWK_SERVER_ACCESS_KEY}
+      # ↓↓↓ 部署前改成你的访问密钥（openssl rand -hex 32 生成），客户端与网页登录都用它
+      HAWK_SERVER_ACCESS_KEY: '在此填入访问密钥'
     volumes:
       - hawk-server-data:/data
     ports:
-      # 明文端口只绑环回：公网入口只经 Caddy（TLS）
+      # 明文端口只绑环回：nginx 同台机反代到 127.0.0.1:27370
       - '127.0.0.1:27370:27370'
-
-  caddy:
-    image: caddy:2
-    container_name: hawk-caddy
-    restart: unless-stopped
-    profiles: ['tls']
-    ports:
-      - '80:80'
-      - '443:443'
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      - hawk-server
 
 volumes:
   hawk-server-data:
-  caddy-data:
-  caddy-config:

@@ -102,13 +102,14 @@ pub async fn heartbeat(
     State(state): State<Arc<AppState>>,
     _: AccessKey,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     JsonBody(req): JsonBody<HeartbeatRequest>,
 ) -> Result<Json<Value>, ApiError> {
     if state.device(&req.device_id).is_none() {
         return Err(ApiError::not_found("设备不存在"));
     }
     let now = now_ms();
-    let public_ip_seen = peer.ip().to_string();
+    let public_ip_seen = client_ip(&headers, peer);
     let mut presence = state.presence.write().unwrap();
     let p = presence.entry(req.device_id.clone()).or_default();
     if let Some(last) = p.last_heartbeat_ms {
@@ -130,6 +131,30 @@ pub async fn heartbeat(
     Ok(ok(
         json!({ "server_time_ms": now, "public_ip_seen": public_ip_seen }),
     ))
+}
+
+/// 权威客户端地址：反代部署（nginx/Caddy）时 TCP 对端是反代的环回地址，直连候选依赖
+/// 真实公网 IP——优先 X-Real-IP，其次 X-Forwarded-For 首跳，回退 TCP 对端。
+/// 信任前提：明文端口只绑环回（部署文档要求），全部流量必经反代，头不被伪造
+fn client_ip(headers: &axum::http::HeaderMap, peer: SocketAddr) -> String {
+    if let Some(real_ip) = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return real_ip.to_string();
+    }
+    if let Some(first) = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        return first.to_string();
+    }
+    peer.ip().to_string()
 }
 
 /// `GET /api/v1/devices`：账号下设备列表（单用户即全部已注册设备）
