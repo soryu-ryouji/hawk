@@ -1,32 +1,54 @@
-//! 鉴权：单用户方案下全部端点共用一把固定 access key（启动时经 CLI/env 配置）。
+//! 控制面鉴权：Bearer service-key → 租户。验证失败按来源 IP 计入风控（冷却中直接 429）。
 
 use crate::api::ApiError;
 use crate::state::AppState;
-use axum::extract::FromRequestParts;
+use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
 use axum::http::{header, StatusCode};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-/// REST 鉴权提取器：`Authorization: Bearer <access_key>`
-pub struct AccessKey;
+/// REST 鉴权提取器：`Authorization: Bearer <service_key>` → 解析为所属租户
+pub struct ServiceKey {
+    /// 该 service-key 所属租户（池）。设备/会话等资源按租户隔离
+    pub tenant_id: String,
+}
 
-impl FromRequestParts<Arc<AppState>> for AccessKey {
+impl FromRequestParts<Arc<AppState>> for ServiceKey {
     type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
+        let peer_ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip());
+        if let Some(ip) = peer_ip {
+            if let Some(secs) = state.ratelimit.check_ip(ip) {
+                return Err(ApiError::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    format!("验证失败次数过多，请 {secs} 秒后再试"),
+                ));
+            }
+        }
         let key = parts
             .headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "));
-        match key {
-            Some(key) if constant_time_eq(key.as_bytes(), state.access_key.as_bytes()) => {
-                Ok(AccessKey)
+        let tenant = key.and_then(|key| state.keys.resolve_tenant(key));
+        match tenant {
+            Some(tenant) => Ok(ServiceKey {
+                tenant_id: tenant.id,
+            }),
+            None => {
+                if let Some(ip) = peer_ip {
+                    state.ratelimit.fail_ip(ip);
+                }
+                Err(ApiError::new(StatusCode::UNAUTHORIZED, "服务密钥无效"))
             }
-            _ => Err(ApiError::new(StatusCode::UNAUTHORIZED, "访问密钥无效")),
         }
     }
 }

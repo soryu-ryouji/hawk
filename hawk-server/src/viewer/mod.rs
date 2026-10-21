@@ -36,8 +36,8 @@ pub struct ViewerSession {
 }
 
 struct ViewerInner {
-    /// 有效浏览器令牌哈希（sha256 hex）→ 访问级别
-    token_hashes: HashMap<String, Access>,
+    /// 有效浏览器令牌哈希（sha256 hex）→ 授权（级别 + 绑定设备 + 查看者凭证）
+    token_hashes: HashMap<String, tokens::Grant>,
     /// session_token → 会话
     sessions: HashMap<String, Arc<ViewerSession>>,
     /// bt 哈希 → session_token（当前绑定）
@@ -74,30 +74,49 @@ impl ViewerManager {
         &self.state
     }
 
-    // ---------- 浏览器令牌 ----------
+    // ---------- 浏览器令牌（两级串联验证：service-key → 门令牌 → hawk-app key → bt） ----------
 
-    /// 登录：access_key 换发只读令牌，write_key 换发写令牌（bt），服务端只存哈希与级别
-    pub fn login(&self, key: &str) -> Option<(String, Access)> {
-        let access =
-            if crate::auth::constant_time_eq(key.as_bytes(), self.state.access_key.as_bytes()) {
-                Access::Read
-            } else if self.state.write_key.as_deref().is_some_and(|write_key| {
-                crate::auth::constant_time_eq(key.as_bytes(), write_key.as_bytes())
-            }) {
-                Access::Write
-            } else {
-                return None;
-            };
+    /// 第一级：service-key 换门令牌（短时效 + 有限尝试预算）。验证失败返回 None
+    pub fn gate(&self, service_key: &str) -> Option<String> {
+        let tenant = self.state.keys.resolve_tenant(service_key)?;
+        Some(self.state.keys.issue_gate(&tenant.id))
+    }
+
+    /// 门令牌所属租户（登录前的池冷却检查用；不消耗尝试预算）
+    pub fn gate_tenant(&self, gate_token: &str) -> Option<String> {
+        self.state.keys.gate_tenant(gate_token)
+    }
+
+    /// 第二级：门令牌 + hawk-app key 换发 bt（消耗门令牌一次尝试）。
+    /// bt 绑定目标设备与权限；服务端只存哈希
+    pub fn login(&self, gate_token: &str, key: &str) -> Option<(String, tokens::Grant)> {
+        let tenant_id = self.state.keys.consume_gate_attempt(gate_token)?;
+        let entry = self.state.keys.resolve_app_key(key)?;
+        // key 必须落在门令牌绑定的池里（跨池 key 同按无效处理，不泄露存在性）
+        if entry.tenant_id != tenant_id {
+            return None;
+        }
+        // 设备可能已被注销：key 映射随之失效（设备注销时服务端已清理映射，此处兑底）
+        self.state.device(&entry.device_id)?;
         let token = format!(
             "hb_{:016x}{:016x}",
             rand::random::<u64>(),
             rand::random::<u64>()
         );
+        let grant = tokens::Grant {
+            access: if entry.write {
+                Access::Write
+            } else {
+                Access::Read
+            },
+            device_id: entry.device_id,
+            credential: entry.s,
+        };
         let hash = tokens::hash(&token);
         let mut inner = self.inner.lock().unwrap();
-        inner.token_hashes.insert(hash, access);
+        inner.token_hashes.insert(hash, grant.clone());
         tokens::save(&self.tokens_file, &inner.token_hashes).ok()?;
-        Some((token, access))
+        Some((token, grant))
     }
 
     pub fn logout(&self, token: &str) {
@@ -108,10 +127,10 @@ impl ViewerManager {
         let _ = tokens::save(&self.tokens_file, &inner.token_hashes);
     }
 
-    /// 校验浏览器令牌：有效返回访问级别
-    pub fn validate(&self, token: &str) -> Option<Access> {
+    /// 校验浏览器令牌：有效返回授权（级别 + 绑定设备 + 凭证）
+    pub fn validate(&self, token: &str) -> Option<tokens::Grant> {
         let hash = tokens::hash(token);
-        self.inner.lock().unwrap().token_hashes.get(&hash).copied()
+        self.inner.lock().unwrap().token_hashes.get(&hash).cloned()
     }
 
     // ---------- 会话 ----------
@@ -129,17 +148,21 @@ impl ViewerManager {
         self.session_for(token).map(|s| session_view(&s))
     }
 
-    /// 打开（或复用）到目标设备的查看会话：建会话 → 轮询 ready → 进程内中继 → QUIC 钉扎连接
+    /// 打开（或复用）到绑定设备的查看会话：建会话 → 轮询 ready → 进程内中继 → QUIC 钉扎连接。
+    /// bt 在建令牌时已绑定唯一目标设备，target 只能等于它
     pub async fn open_session(
         self: &Arc<Self>,
         token: &str,
         target_device_id: &str,
         access: Access,
     ) -> Result<Value, String> {
-        let Some(token_access) = self.validate(token) else {
+        let Some(grant) = self.validate(token) else {
             return Err("未登录或令牌无效".to_string());
         };
-        if access == Access::Write && token_access != Access::Write {
+        if target_device_id != grant.device_id {
+            return Err("该令牌无权访问此设备".to_string());
+        }
+        if access == Access::Write && grant.access != Access::Write {
             return Err("当前令牌没有写入权限".to_string());
         }
         let bt_hash = tokens::hash(token);
@@ -158,9 +181,15 @@ impl ViewerManager {
             .device_id
             .clone()
             .ok_or_else(|| "服务端设备身份未初始化".to_string())?;
-        let (hawk_session_id, initial) =
-            create_session_internal(&self.state, &source, target_device_id, "relay", access)
-                .map_err(|e| e.message)?;
+        let (hawk_session_id, initial) = create_session_internal(
+            &self.state,
+            &source,
+            target_device_id,
+            "relay",
+            access,
+            Some(grant.credential.clone()),
+        )
+        .map_err(|e| e.message)?;
         if initial == SessionState::Rejected {
             return Err("对方设备已关闭远程访问".to_string());
         }
@@ -323,6 +352,8 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
     if exists {
         store
             .update(&device_id, |rec| {
+                // 「网页版」是全局设备（不属于任何租户池）：它作为 B 侧为全部租户撮合会话
+                rec.tenant_id = String::new();
                 rec.name = crate::identity::VIEWER_DEVICE_NAME.to_string();
                 rec.platform = "server".to_string();
                 rec.library_name = "网页查看器".to_string();
@@ -335,6 +366,7 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
         store
             .insert(DeviceRecord {
                 device_id: device_id.clone(),
+                tenant_id: String::new(),
                 name: crate::identity::VIEWER_DEVICE_NAME.to_string(),
                 platform: "server".to_string(),
                 fingerprint: identity.fingerprint.clone(),

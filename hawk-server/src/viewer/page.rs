@@ -1,4 +1,5 @@
-//! 设备选择器页（原生 HTML，无构建步骤）：登录（access_key 换 bt）→ 设备列表 → 打开查看器。
+//! 设备选择器页（原生 HTML，无构建步骤）：两级登录（service-key 换门令牌 → hawk-app key 换 bt）
+//! → 设备列表（bt 绑定的单个设备）→ 打开查看器。
 
 use axum::response::Html;
 
@@ -42,8 +43,17 @@ const PICKER_HTML: &str = r##"<!doctype html>
   <div class="sub">远程浏览你的素材库（只读）</div>
 
   <section id="login">
-    <input id="key" type="password" placeholder="访问密钥（access key）" autocomplete="off">
-    <div class="row"><button id="loginBtn" onclick="doLogin()">登录</button></div>
+    <div id="stepKey" class="hidden">
+      <input id="appKey" type="password" placeholder="访问密钥（hawk-app key）" autocomplete="off">
+      <div class="row">
+        <button onclick="doLogin()">登录</button>
+        <button class="ghost" onclick="backToServiceKey()">上一步</button>
+      </div>
+    </div>
+    <div id="stepService">
+      <input id="serviceKey" type="password" placeholder="服务密钥（service-key）" autocomplete="off">
+      <div class="row"><button onclick="doGate()">下一步</button></div>
+    </div>
     <div id="loginErr" class="err"></div>
   </section>
 
@@ -80,18 +90,50 @@ async function call(method, path, body) {
   return env.data;
 }
 
+let gateToken = sessionStorage.getItem('hawk_gt') || '';
+// 有门令牌（刷新/回退后）直接进第二级
+if (gateToken) { $('stepService').classList.add('hidden'); $('stepKey').classList.remove('hidden'); }
+
+function backToServiceKey() {
+  gateToken = ''; sessionStorage.removeItem('hawk_gt');
+  $('stepKey').classList.add('hidden'); $('stepService').classList.remove('hidden');
+  $('loginErr').textContent = '';
+}
+
+async function doGate() {
+  $('loginErr').textContent = '';
+  const serviceKey = $('serviceKey').value.trim();
+  if (!serviceKey) return;
+  try {
+    const res = await fetch('/api/v1/viewer/gate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service_key: serviceKey }),
+    });
+    const env = await res.json().catch(() => null);
+    if (!res.ok || !env || env.status === 'error') throw new Error(env?.error?.message || '验证失败');
+    gateToken = env.data.gate_token;
+    sessionStorage.setItem('hawk_gt', gateToken);
+    $('stepService').classList.add('hidden'); $('stepKey').classList.remove('hidden');
+  } catch (e) { $('loginErr').textContent = e.message; }
+}
+
 async function doLogin() {
   $('loginErr').textContent = '';
-  const key = $('key').value.trim();
+  const key = $('appKey').value.trim();
   if (!key) return;
   try {
     const res = await fetch('/api/v1/viewer/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key }),
+      body: JSON.stringify({ gate_token: gateToken, key }),
     });
     const env = await res.json().catch(() => null);
-    if (!res.ok || !env || env.status === 'error') throw new Error(env?.error?.message || '登录失败');
+    if (!res.ok || !env || env.status === 'error') {
+      // 门令牌过期/耗尽：回第一级重新验证 service-key
+      if (res.status === 401) backToServiceKey();
+      throw new Error(env?.error?.message || '登录失败');
+    }
     token = env.data.token;
     localStorage.setItem(KEY, token);
     render();

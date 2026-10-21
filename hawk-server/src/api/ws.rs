@@ -2,11 +2,10 @@
 //! hello_ack/pong，业务动作一律走 REST（协议「控制通道」一节）。
 
 use super::ApiError;
-use crate::auth::constant_time_eq;
+use crate::auth::ServiceKey;
 use crate::state::{now_ms, AppState};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
 use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -20,21 +19,20 @@ const PONG_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Deserialize)]
 pub struct WsQuery {
-    key: String,
     device_id: String,
 }
 
-/// `GET /api/v1/ws?key=<access_key>&device_id=<device_id>`（升级前鉴权，失败走错误信封）
+/// `GET /api/v1/ws?device_id=<id>`（`Authorization: Bearer <service_key>` 升级前鉴权；
+/// key 不走 URL——反代 access log 会记录完整查询串）。失败走错误信封
 pub async fn control_channel(
     State(state): State<Arc<AppState>>,
+    key: ServiceKey,
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    if !constant_time_eq(query.key.as_bytes(), state.access_key.as_bytes()) {
-        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "访问密钥无效"));
-    }
-    if state.device(&query.device_id).is_none() {
-        return Err(ApiError::not_found("设备不存在"));
+    match state.device(&query.device_id) {
+        Some(device) if device.tenant_id == key.tenant_id => {}
+        _ => return Err(ApiError::not_found("设备不存在")),
     }
     Ok(ws.on_upgrade(move |socket| handle_socket(state, socket, query.device_id)))
 }

@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DeviceRecord {
     pub device_id: String,
+    /// 所属租户（池）；空串 = 全局设备（服务端的「网页版」查看设备，不属于任何池）
+    #[serde(default)]
+    pub tenant_id: String,
     pub name: String,
     pub platform: String,
     pub fingerprint: String,
@@ -55,6 +58,14 @@ impl Store {
         let mut devices: Vec<DeviceRecord> = self.devices.values().cloned().collect();
         devices.sort_by_key(|d| d.registered_at_ms);
         devices
+    }
+
+    /// 某租户的设备列表（不含全局设备）
+    pub fn list_tenant(&self, tenant_id: &str) -> Vec<DeviceRecord> {
+        self.list()
+            .into_iter()
+            .filter(|d| d.tenant_id == tenant_id)
+            .collect()
     }
 
     pub fn insert(&mut self, record: DeviceRecord) -> io::Result<()> {

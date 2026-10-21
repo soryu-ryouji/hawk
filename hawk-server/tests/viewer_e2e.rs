@@ -1,5 +1,6 @@
-//! 网页版全链路互操作测试：浏览器 → hawk-server（登录/选择器/会话/代理）→ 中继 → 真 A 侧
+//! 网页版全链路互操作测试：浏览器 → hawk-server（两级登录/会话/代理）→ 中继 → 真 A 侧
 //! （dev-dep hawk-daemon 的 DataPlane/relay serve，协议级真实对端，产物零代码共享）。
+//! 鉴权模型：service-key（池门禁）→ 门令牌 → hawk-app key（逐 key 读/写权限）→ bt。
 
 use axum::extract::Request;
 use axum::routing::get;
@@ -9,6 +10,7 @@ use hawk_daemon::remote::data::{DataPlane, TunneledPeer};
 use hawk_daemon::remote::identity::Identity as DaemonIdentity;
 use hawk_daemon::remote::{relay as daemon_relay, tls as daemon_tls};
 use hawk_server::api;
+use hawk_server::keystore::{sha256_hex, KeyStore};
 use hawk_server::state::AppState;
 use hawk_server::store::Store;
 use serde_json::{json, Value};
@@ -17,16 +19,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-const KEY: &str = "viewer-e2e-key";
-const WRITE_KEY: &str = "viewer-e2e-write-key";
+/// A 侧素材库对外发放的 hawk-app key（明文只在测试内可见）
+const READ_KEY: &str = "viewer-read-key";
+const WRITE_KEY: &str = "viewer-write-key-0123456789";
 
-async fn spawn_server(dir: &Path) -> String {
-    let store = Store::load(dir).unwrap();
-    let state = Arc::new(AppState::new(
-        KEY.to_string(),
-        Some(WRITE_KEY.to_string()),
-        store,
-    ));
+async fn spawn_server(dir: &Path) -> (String, String) {
+    let keys = KeyStore::open(dir).unwrap();
+    let (_, service_key) = keys.tenant_add("test").unwrap();
+    let state = Arc::new(AppState::new(Arc::new(keys), Store::load(dir).unwrap()));
     let identity = hawk_server::identity::Identity::load_or_create(dir).unwrap();
     let device_id = hawk_server::viewer::ensure_viewer_device(&state, &identity).unwrap();
     let mut identity = identity;
@@ -45,7 +45,7 @@ async fn spawn_server(dir: &Path) -> String {
         .await
         .unwrap();
     });
-    format!("127.0.0.1:{port}")
+    (format!("127.0.0.1:{port}"), service_key)
 }
 
 /// A 侧素材路由：/api/v1/hello 校验 TunneledPeer 标记（只读/写会话）；
@@ -77,8 +77,9 @@ fn a_router() -> Router {
         )
 }
 
-/// 模拟 A 侧 daemon remote 模块：注册/心跳/WSS 待命 → session.request(relay) → 放行+接受+中继服务
-async fn start_device_a(base: &str, dir: &Path) -> (String, Arc<DataPlane>) {
+/// 模拟 A 侧 daemon remote 模块：注册/心跳/key 映射同步/WSS 待命 → session.request(relay)
+/// → 凭证执法 + 放行 + 接受 + 中继服务
+async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, Arc<DataPlane>) {
     let remote_dir = dir.join("remote");
     let identity = DaemonIdentity::load_or_create(remote_dir.to_str().unwrap()).unwrap();
     let client = reqwest::Client::new();
@@ -86,7 +87,7 @@ async fn start_device_a(base: &str, dir: &Path) -> (String, Arc<DataPlane>) {
     // 注册 + 心跳上线
     let resp: Value = client
         .post(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(KEY)
+        .bearer_auth(service_key)
         .json(&json!({
             "name": "家里台式机", "platform": "macos", "fingerprint": identity.fingerprint,
             "library_name": "A 的库", "allow_remote": true, "allow_write": true,
@@ -100,7 +101,7 @@ async fn start_device_a(base: &str, dir: &Path) -> (String, Arc<DataPlane>) {
     let device_a = resp["data"]["device_id"].as_str().unwrap().to_string();
     client
         .post(format!("http://{base}/api/v1/devices/heartbeat"))
-        .bearer_auth(KEY)
+        .bearer_auth(service_key)
         .json(&json!({
             "device_id": device_a,
             "reachability": { "mapped_port": null, "mapping_type": "none", "public_ipv6": null, "ipv6_port": null }
@@ -109,17 +110,45 @@ async fn start_device_a(base: &str, dir: &Path) -> (String, Arc<DataPlane>) {
         .await
         .unwrap();
 
+    // key 映射同步（daemon 上送 sha256，server 不见明文）
+    let resp = client
+        .put(format!("http://{base}/api/v1/devices/{device_a}/keys"))
+        .bearer_auth(service_key)
+        .json(&json!({ "keys": [
+            { "s": sha256_hex(READ_KEY), "read": true, "write": false },
+            { "s": sha256_hex(WRITE_KEY), "read": true, "write": true },
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "key 映射同步失败");
+
     let plane = DataPlane::bind(&identity, 0, a_router()).unwrap();
 
-    // WSS 待命：收到 relay 会话请求 → 放行对端指纹 → accept → 经中继 WS 提供 QUIC
+    // A 侧本地 key 执法依据（真实 daemon 由 remote::keys::KeyStore 承载；此处内联模拟）
+    let known_keys: Arc<std::sync::Mutex<Vec<(String, bool)>>> =
+        Arc::new(std::sync::Mutex::new(vec![
+            (sha256_hex(READ_KEY), false),
+            (sha256_hex(WRITE_KEY), true),
+        ]));
+
+    // WSS 待命：收到 relay 会话请求 → 凭证执法 → 放行对端指纹 → accept → 经中继 WS 提供 QUIC
     {
         let base = base.to_string();
+        let service_key = service_key.to_string();
         let device_a = device_a.clone();
         let plane = plane.clone();
         let identity = identity.clone();
         tokio::spawn(async move {
-            let url = format!("ws://{base}/api/v1/ws?key={KEY}&device_id={device_a}");
-            let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+            use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+            let mut req = format!("ws://{base}/api/v1/ws?device_id={device_a}")
+                .into_client_request()
+                .unwrap();
+            req.headers_mut().insert(
+                "Authorization",
+                format!("Bearer {service_key}").parse().unwrap(),
+            );
+            let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
             let http = reqwest::Client::new();
             while let Some(Ok(msg)) = ws.next().await {
                 let Ok(text) = msg.into_text() else { continue };
@@ -130,47 +159,52 @@ async fn start_device_a(base: &str, dir: &Path) -> (String, Arc<DataPlane>) {
                     continue;
                 }
                 let session_id = v["session_id"].as_str().unwrap().to_string();
-                let from = v["from"]["device_id"].as_str().unwrap().to_string();
-                // 对端指纹（设备列表中的「网页版」服务端设备）
-                let devices: Value = http
-                    .get(format!("http://{base}/api/v1/devices"))
-                    .bearer_auth(KEY)
-                    .send()
-                    .await
-                    .unwrap()
-                    .json()
-                    .await
-                    .unwrap();
-                let fp_hex = devices["data"]["devices"]
-                    .as_array()
+                // 本地执法：credential 必须命中本地 key 映射，且写会话需写权限
+                let requested_write = v["access"].as_str() == Some("write");
+                let credential = v["credential"].as_str().unwrap_or_default();
+                let granted = known_keys
+                    .lock()
                     .unwrap()
                     .iter()
-                    .find(|d| d["device_id"] == from)
-                    .unwrap()["fingerprint"]
-                    .as_str()
-                    .unwrap()
-                    .to_string();
+                    .find(|(s, _)| s == credential)
+                    .map(|(_, w)| *w);
+                match granted {
+                    Some(write_perm) if !requested_write || write_perm => {}
+                    _ => {
+                        let _ = http
+                            .post(format!("http://{base}/api/v1/sessions/{session_id}/reject"))
+                            .bearer_auth(&service_key)
+                            .json(&json!({ "device_id": device_a }))
+                            .send()
+                            .await;
+                        continue;
+                    }
+                }
+                // 对端指纹随 session.request 下发（协议：from.fingerprint）
+                let fp_hex = match v["from"]["fingerprint"].as_str() {
+                    Some(fp) => fp.to_string(),
+                    None => continue,
+                };
                 let fp = daemon_tls::parse_fingerprint(&fp_hex).unwrap();
-                let writable = v["access"].as_str() == Some("write");
-                plane.allow_session(&session_id, fp, writable);
+                plane.allow_session(&session_id, fp, requested_write);
                 // accept
                 let _resp = http
                     .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
-                    .bearer_auth(KEY)
+                    .bearer_auth(&service_key)
                     .json(&json!({ "device_id": device_a }))
                     .send()
                     .await
                     .unwrap();
                 // 中继 WS（role=a）+ QUIC 服务
-                let relay_url = daemon_relay::relay_ws_url(
+                let relay_req = daemon_relay::relay_ws_request(
                     &format!("http://{base}"),
-                    KEY,
+                    &service_key,
                     &device_a,
                     &session_id,
                     "a",
                 )
                 .unwrap();
-                let (relay_ws, _) = match tokio_tungstenite::connect_async(&relay_url).await {
+                let (relay_ws, _) = match tokio_tungstenite::connect_async(relay_req).await {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
@@ -197,40 +231,76 @@ fn init_log() {
         .try_init();
 }
 
+/// 两级登录：service-key → 门令牌；门令牌 + hawk-app key → bt
+async fn gate_and_login(base: &str, service_key: &str, app_key: &str) -> Value {
+    let client = reqwest::Client::new();
+    let resp: Value = client
+        .post(format!("http://{base}/api/v1/viewer/gate"))
+        .json(&json!({ "service_key": service_key }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["status"], "success", "gate 失败: {resp}");
+    let gate_token = resp["data"]["gate_token"].as_str().unwrap();
+    client
+        .post(format!("http://{base}/api/v1/viewer/login"))
+        .json(&json!({ "gate_token": gate_token, "key": app_key }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn viewer_browses_library_through_domain() {
     init_log();
     let server_dir = tempfile::tempdir().unwrap();
-    let base = spawn_server(server_dir.path()).await;
+    let (base, service_key) = spawn_server(server_dir.path()).await;
     let a_dir = tempfile::tempdir().unwrap();
-    let (device_a, _plane_a) = start_device_a(&base, a_dir.path()).await;
+    let (device_a, _plane_a) = start_device_a(&base, &service_key, a_dir.path()).await;
 
     let client = reqwest::Client::new();
-    // ---- 登录（access_key 换浏览器令牌） ----
-    let resp: Value = client
-        .post(format!("http://{base}/api/v1/viewer/login"))
-        .json(&json!({ "key": "wrong" }))
+    // ---- 第一级：错误 service-key → 401 ----
+    let resp = client
+        .post(format!("http://{base}/api/v1/viewer/gate"))
+        .json(&json!({ "service_key": "hs_wrong" }))
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
-    assert_eq!(resp["status"], "error");
+    assert_eq!(resp.status(), 401);
 
+    // ---- 第二级：错误 hawk-app key → 401 ----
     let resp: Value = client
-        .post(format!("http://{base}/api/v1/viewer/login"))
-        .json(&json!({ "key": KEY }))
+        .post(format!("http://{base}/api/v1/viewer/gate"))
+        .json(&json!({ "service_key": service_key }))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
+    let gate_token = resp["data"]["gate_token"].as_str().unwrap().to_string();
+    let resp = client
+        .post(format!("http://{base}/api/v1/viewer/login"))
+        .json(&json!({ "gate_token": gate_token, "key": "wrong" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // ---- 正确两级登录 → bt（绑定设备） ----
+    let resp = gate_and_login(&base, &service_key, READ_KEY).await;
+    assert_eq!(resp["status"], "success", "登录失败: {resp}");
     let bt = resp["data"]["token"].as_str().unwrap().to_string();
     assert_eq!(resp["data"]["access"], "read");
+    assert_eq!(resp["data"]["device_id"], device_a);
 
-    // ---- 设备列表（含 A，不含服务端自身在前端过滤前的原始列表） ----
+    // ---- 设备列表只含 bt 绑定的设备（无池枚举面） ----
     let resp: Value = client
         .get(format!("http://{base}/api/v1/viewer/devices"))
         .bearer_auth(&bt)
@@ -241,8 +311,8 @@ async fn viewer_browses_library_through_domain() {
         .await
         .unwrap();
     let devices = resp["data"]["devices"].as_array().unwrap();
-    assert!(devices.iter().any(|d| d["device_id"] == device_a));
-    assert!(devices.iter().any(|d| d["platform"] == "server"));
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0]["device_id"], device_a);
 
     // ---- 打开查看会话（服务端作为 B 侧经中继连到 A） ----
     let resp: Value = client
@@ -397,32 +467,26 @@ async fn viewer_browses_library_through_domain() {
         .unwrap();
     assert_eq!(resp["data"], Value::Null);
 
-    // 选择器页可访问
+    // 选择器页可访问（两级登录表单）
     let resp = client.get(format!("http://{base}/")).send().await.unwrap();
     assert_eq!(resp.status(), 200);
-    assert!(resp.text().await.unwrap().contains("hawk 网页版"));
+    let html = resp.text().await.unwrap();
+    assert!(html.contains("hawk 网页版"));
+    assert!(html.contains("service-key"));
 }
 
-/// 写令牌 → 写会话 → A 侧收到 writable 标记；只读令牌不能开写会话
+/// 只读 key 不能开写会话；写 key 开写会话且隧道请求带 writable 标记
 #[tokio::test]
-async fn viewer_writes_through_write_key() {
+async fn viewer_write_requires_write_key() {
     init_log();
     let server_dir = tempfile::tempdir().unwrap();
-    let base = spawn_server(server_dir.path()).await;
+    let (base, service_key) = spawn_server(server_dir.path()).await;
     let a_dir = tempfile::tempdir().unwrap();
-    let (device_a, _plane_a) = start_device_a(&base, a_dir.path()).await;
+    let (device_a, _plane_a) = start_device_a(&base, &service_key, a_dir.path()).await;
     let client = reqwest::Client::new();
 
-    // 只读令牌不能开写会话
-    let resp: Value = client
-        .post(format!("http://{base}/api/v1/viewer/login"))
-        .json(&json!({ "key": KEY }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    // 只读 key 的 bt 不能开写会话
+    let resp = gate_and_login(&base, &service_key, READ_KEY).await;
     let read_bt = resp["data"]["token"].as_str().unwrap().to_string();
     let resp = client
         .post(format!("http://{base}/api/v1/viewer/session"))
@@ -431,37 +495,12 @@ async fn viewer_writes_through_write_key() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 403, "只读令牌不应能开写会话");
+    assert_eq!(resp.status(), 403, "只读 key 不应能开写会话");
 
-    // 写令牌：设备列表带 allow_write，写会话返回 access=write，隧道请求带 writable 标记
-    let resp: Value = client
-        .post(format!("http://{base}/api/v1/viewer/login"))
-        .json(&json!({ "key": WRITE_KEY }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    // 写 key：bt access=write，写会话成功，隧道请求带 writable 标记
+    let resp = gate_and_login(&base, &service_key, WRITE_KEY).await;
     assert_eq!(resp["data"]["access"], "write");
     let write_bt = resp["data"]["token"].as_str().unwrap().to_string();
-
-    let resp: Value = client
-        .get(format!("http://{base}/api/v1/viewer/devices"))
-        .bearer_auth(&write_bt)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let device = resp["data"]["devices"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|d| d["device_id"] == device_a)
-        .unwrap();
-    assert_eq!(device["allow_write"], true);
 
     let resp: Value = client
         .post(format!("http://{base}/api/v1/viewer/session"))
@@ -486,25 +525,44 @@ async fn viewer_writes_through_write_key() {
     assert_eq!(resp.text().await.unwrap(), "write from A");
 }
 
+/// 已吊销的 key（映射被设备侧移除）登录即失败
+#[tokio::test]
+async fn revoked_key_cannot_login() {
+    init_log();
+    let server_dir = tempfile::tempdir().unwrap();
+    let (base, service_key) = spawn_server(server_dir.path()).await;
+    let a_dir = tempfile::tempdir().unwrap();
+    let (device_a, _plane_a) = start_device_a(&base, &service_key, a_dir.path()).await;
+    let client = reqwest::Client::new();
+
+    // 吊销 READ_KEY（覆盖式同步只剩 WRITE_KEY）
+    let resp = client
+        .put(format!("http://{base}/api/v1/devices/{device_a}/keys"))
+        .bearer_auth(&service_key)
+        .json(&json!({ "keys": [
+            { "s": sha256_hex(WRITE_KEY), "read": true, "write": true },
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = gate_and_login(&base, &service_key, READ_KEY).await;
+    assert_eq!(resp["status"], "error", "已吊销 key 不应登录成功");
+}
+
 /// 隧道断开后代理返回 401/502 而非挂起（断线清理路径）
 #[tokio::test]
 async fn viewer_session_expires_when_tunnel_drops() {
     let server_dir = tempfile::tempdir().unwrap();
-    let base = spawn_server(server_dir.path()).await;
+    let (base, service_key) = spawn_server(server_dir.path()).await;
     let a_dir = tempfile::tempdir().unwrap();
-    let (device_a, plane_a) = start_device_a(&base, a_dir.path()).await;
+    let (_device_a, plane_a) = start_device_a(&base, &service_key, a_dir.path()).await;
 
-    let client = reqwest::Client::new();
-    let resp: Value = client
-        .post(format!("http://{base}/api/v1/viewer/login"))
-        .json(&json!({ "key": KEY }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let resp = gate_and_login(&base, &service_key, READ_KEY).await;
     let bt = resp["data"]["token"].as_str().unwrap().to_string();
+    let device_a = resp["data"]["device_id"].as_str().unwrap().to_string();
+    let client = reqwest::Client::new();
     client
         .post(format!("http://{base}/api/v1/viewer/session"))
         .bearer_auth(&bt)

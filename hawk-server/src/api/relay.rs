@@ -2,7 +2,7 @@
 //! （一帧 = 一个 QUIC 数据报，不解析内容）；任一方断开 → 双方关闭，会话置 cancelled。
 
 use super::ApiError;
-use crate::auth::constant_time_eq;
+use crate::auth::ServiceKey;
 use crate::state::{AppState, SessionState};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -15,21 +15,19 @@ use tokio::sync::mpsc;
 
 #[derive(Deserialize)]
 pub struct RelayQuery {
-    key: String,
     device_id: String,
     session_id: String,
     role: String,
 }
 
-/// `GET /api/v1/relay?key&device_id&session_id&role=a|b`（升级前鉴权与角色校验）
+/// `GET /api/v1/relay?device_id&session_id&role=a|b`（`Authorization: Bearer <service_key>`
+/// 升级前鉴权与角色校验；key 不走 URL——反代 access log 会记录完整查询串）
 pub async fn relay_channel(
     State(state): State<Arc<AppState>>,
+    key: ServiceKey,
     Query(query): Query<RelayQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    if !constant_time_eq(query.key.as_bytes(), state.access_key.as_bytes()) {
-        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "访问密钥无效"));
-    }
     if query.role != "a" && query.role != "b" {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -55,6 +53,11 @@ pub async fn relay_channel(
         };
         if !matches {
             return Err(ApiError::new(StatusCode::FORBIDDEN, "设备与会话角色不符"));
+        }
+        // 本机设备须属调用者租户（网页版的进程内中继不经过本端点，无需豁免）
+        match state.device(&query.device_id) {
+            Some(device) if device.tenant_id == key.tenant_id => {}
+            _ => return Err(ApiError::not_found("设备不存在")),
         }
     }
     let role = query.role.clone();

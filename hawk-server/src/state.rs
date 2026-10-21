@@ -115,6 +115,9 @@ pub struct Session {
     pub mode: String,
     /// read（只读查看）/ write（广域网受限写）
     pub access: Access,
+    /// 查看者凭证（hawk-app key 的 sha256）：仅网页版/插件发起的会话携带，
+    /// 随 session.request 下发给目标 daemon 本地执法（server 声称的权限不可信）
+    pub credential: Option<String>,
     pub state: SessionState,
     pub created_at_ms: u64,
     /// ready 时组装的连接信息（direct: 候选列表 + 指纹；relay: 仅指纹）
@@ -170,9 +173,10 @@ impl Session {
 }
 
 pub struct AppState {
-    pub access_key: String,
-    /// 广域网写入密钥（可选）；只用于查看面登录换发写令牌，不参与控制面鉴权
-    pub write_key: Option<String>,
+    /// 凭证存储（租户 service-key / hawk-app key 映射 / 门令牌；管理面监听口共享同一实例）
+    pub keys: Arc<crate::keystore::KeyStore>,
+    /// 凭证验证面风控（按 IP + 按租户）
+    pub ratelimit: crate::ratelimit::RateLimiter,
     pub store: Mutex<Store>,
     pub presence: RwLock<HashMap<String, Presence>>,
     pub sessions: RwLock<HashMap<String, Session>>,
@@ -184,10 +188,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(access_key: String, write_key: Option<String>, store: Store) -> AppState {
+    pub fn new(keys: Arc<crate::keystore::KeyStore>, store: Store) -> AppState {
         AppState {
-            access_key,
-            write_key,
+            keys,
+            ratelimit: crate::ratelimit::RateLimiter::new(),
             store: Mutex::new(store),
             presence: RwLock::new(HashMap::new()),
             sessions: RwLock::new(HashMap::new()),

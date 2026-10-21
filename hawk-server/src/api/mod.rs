@@ -83,6 +83,10 @@ pub fn router(state: Arc<AppState>, viewer: Arc<ViewerManager>) -> Router {
             "/api/v1/devices/{device_id}",
             axum::routing::patch(devices::update).delete(devices::remove),
         )
+        .route(
+            "/api/v1/devices/{device_id}/keys",
+            axum::routing::put(devices::sync_keys),
+        )
         .route("/api/v1/sessions", post(sessions::create))
         .route("/api/v1/sessions/{session_id}", get(sessions::get))
         .route(
