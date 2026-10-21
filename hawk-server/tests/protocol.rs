@@ -187,6 +187,36 @@ async fn register_heartbeat_and_list() {
     assert_eq!(db["device_id"], b);
     assert_eq!(db["online"], false);
 
+    // 设备身份跨库共享：心跳携带 library_name，服务端设备表随之更新
+    let resp = client()
+        .post(format!("http://{base}/api/v1/devices/heartbeat"))
+        .bearer_auth(KEY)
+        .json(&json!({
+            "device_id": b,
+            "library_name": "改名后的库",
+            "reachability": full_reachability(),
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp: Value = client()
+        .get(format!("http://{base}/api/v1/devices"))
+        .bearer_auth(KEY)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let db = resp["data"]["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["device_id"] == b)
+        .unwrap();
+    assert_eq!(db["library_name"], "改名后的库");
+
     // 反代部署：X-Real-IP / X-Forwarded-For 覆盖连接源地址（直连候选依赖真实公网 IP）
     let c = register(&base, "第三台", true).await;
     let d = register(&base, "第四台", true).await;

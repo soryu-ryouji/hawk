@@ -1,7 +1,8 @@
 //! 远程访问客户端模块（可选子系统）：信令（注册/心跳/WSS）与数据面（QUIC，阶段 1b）。
-//! `[remote]` 配置启用才激活；supervisor reconcile 管理（同 LAN web 先例）——
+//! 应用级 `remote.toml` 启用才激活；supervisor reconcile 管理（同 LAN web 先例）——
 //! 配置变更热重启信令，连接失败只写状态不崩进程。设计见 docs/backend/remote-access.md。
 
+pub mod config;
 pub mod data;
 pub mod identity;
 pub mod reachability;
@@ -10,9 +11,10 @@ pub mod session;
 pub mod signal;
 pub mod tls;
 
-use crate::core::config::{LibraryConfig, RemoteSettings};
+use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
 use crate::core::paths::LibraryPaths;
+use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
@@ -51,16 +53,23 @@ pub struct Supervisor {
     bus: EventBus,
     /// B 侧会话编排（单活动会话；生命周期事件经 SSE 推送）
     pub sessions: Arc<session::SessionManager>,
+    /// 应用级远程配置（接入参数跨素材库共享；身份目录由配置位置派生）
+    config: Arc<RemoteConfigStore>,
 }
 
 impl Supervisor {
-    pub fn new(bus: EventBus) -> Arc<Supervisor> {
+    pub fn new(bus: EventBus, config: Arc<RemoteConfigStore>) -> Arc<Supervisor> {
         Arc::new(Supervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new(RemoteStatus::default()),
             sessions: session::SessionManager::new(bus.clone()),
             bus,
+            config,
         })
+    }
+
+    pub fn remote_config(&self) -> &Arc<RemoteConfigStore> {
+        &self.config
     }
 
     /// 唤醒收敛（watcher 配置变更回调同步调用；Notify 无等待者时记 permit，不丢事件）
@@ -80,16 +89,17 @@ impl Supervisor {
             .publish(REMOTE_STATUS_EVENT, serde_json::json!(status));
     }
 
-    /// 常驻任务：唤醒 → 收敛 → 等待下一轮。router 为 daemon API 路由克隆（A 侧隧道端进程内转发目标）
+    /// 常驻任务：唤醒 → 收敛 → 等待下一轮。router 为 daemon API 路由克隆（A 侧隧道端进程内转发目标）。
+    /// library 提供注册时的库名（设备身份是应用级，切换库后心跳会同步库名）
     pub async fn run(
         self: Arc<Self>,
         paths: LibraryPaths,
-        config: Arc<LibraryConfig>,
+        library: Arc<LibraryConfig>,
         router: axum::Router,
     ) {
         let mut current: Option<(RemoteSettings, tokio::task::JoinHandle<()>)> = None;
         loop {
-            let cfg = config.current().remote;
+            let cfg = self.config.current();
             // 写权限是请求级热配置（auth 每请求读 current），不触发信令/数据面重启；
             // 只有接入参数变化才需要重建连接。
             let need_restart = match current.as_ref() {
@@ -113,7 +123,8 @@ impl Supervisor {
                     });
                     let handle = tokio::spawn(signal::run(
                         paths.clone(),
-                        config.clone(),
+                        library.clone(),
+                        self.config.clone(),
                         cfg.clone(),
                         self.clone(),
                         router.clone(),
@@ -121,7 +132,7 @@ impl Supervisor {
                     Some((cfg, handle))
                 } else {
                     if cfg.enabled {
-                        tracing::warn!("[remote] enabled 但缺少 url 或 key，远程访问未启动");
+                        tracing::warn!("远程访问已启用但缺少 url 或 key，远程访问未启动");
                         self.set_status(RemoteStatus {
                             state: RemoteState::Error,
                             server_url: None,
@@ -159,7 +170,10 @@ mod tests {
     async fn status_change_publishes_sse_event() {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
-        let supervisor = Supervisor::new(bus);
+        let dir = tempfile::tempdir().unwrap();
+        let paths = LibraryPaths::new(dir.path().to_str().unwrap(), None);
+        let config = RemoteConfigStore::open(None, &paths);
+        let supervisor = Supervisor::new(bus, config);
         supervisor.set_status(RemoteStatus {
             state: RemoteState::Online,
             server_url: Some("https://example.com".to_string()),

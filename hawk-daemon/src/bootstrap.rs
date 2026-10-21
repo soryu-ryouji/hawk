@@ -155,8 +155,10 @@ fn build_state(settings: Settings) -> SharedState {
     // ---- LAN 监听 supervisor：期望态收敛（首轮回合即按配置绑定，变更由 watcher 唤醒重绑） ----
     let lan = api::lan::LanSupervisor::new();
 
-    // ---- 远程访问 supervisor：[remote] 启用才激活信令（同 LAN 的 reconcile 模型） ----
-    let remote = crate::remote::Supervisor::new(bus.clone());
+    // ---- 远程访问 supervisor：remote.toml 启用才激活信令（同 LAN 的 reconcile 模型） ----
+    let remote_config =
+        crate::remote::config::RemoteConfigStore::open(settings.remote_config.as_deref(), &paths);
+    let remote = crate::remote::Supervisor::new(bus.clone(), remote_config);
 
     // 组件图落位：字段分组见 AppState 定义处注释
     Arc::new(api::AppState {
@@ -196,7 +198,6 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
         let locks = state.locks.clone();
         let bus = state.bus.clone();
         let lan = state.lan.clone();
-        let remote = state.remote.clone();
         Arc::new(move |event| match event {
             WatcherEvent::FileUpsert(abs) => pipeline.notify_upsert(abs),
             WatcherEvent::Deleted(abs) => {
@@ -228,9 +229,6 @@ fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
                 }
                 if change.web_changed {
                     lan.wake();
-                }
-                if change.remote_changed {
-                    remote.wake();
                 }
             }
             WatcherEvent::RegistryChanged => pipeline.notify_registry_changed(),

@@ -195,6 +195,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为
         cache_parent: None,
         web_dist: None,
+        remote_config: None,
     };
     let pipeline = IndexPipeline::new(
         paths.clone(),
@@ -216,6 +217,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
     pipeline.start();
     startup.mark_ready();
 
+    let remote_config = crate::remote::config::RemoteConfigStore::open(None, &paths);
     let state: SharedState = Arc::new(AppState {
         settings,
         paths,
@@ -234,7 +236,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         locks,
         worker,
         lan: LanSupervisor::new(),
-        remote: crate::remote::Supervisor::new(bus.clone()),
+        remote: crate::remote::Supervisor::new(bus.clone(), remote_config),
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
     });
     let router = build_router(state.clone());
@@ -1584,9 +1586,9 @@ async fn aggregate_and_batch_remove() {
 #[tokio::test]
 async fn remote_writer_is_limited_to_import_and_folder_create() {
     let app = test_app("remote-writer");
-    let mut remote = app.state.config.current().remote;
+    let mut remote = app.state.remote.remote_config().current();
     remote.writable = true;
-    app.state.config.update_remote(&remote).unwrap();
+    app.state.remote.remote_config().update(&remote).unwrap();
 
     fn tunnel_req(method: &str, uri: &str, body: Value, writable: bool) -> Request<Body> {
         let mut req = Request::builder()

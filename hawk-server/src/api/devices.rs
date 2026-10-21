@@ -33,6 +33,9 @@ pub struct HeartbeatRequest {
     /// 目标设备当前是否允许广域网写入；变化时更新设备表，供查看面筛选
     #[serde(default)]
     allow_write: Option<bool>,
+    /// 当前打开的素材库名（设备身份跨库共享，切换库后靠心跳收敛设备表）
+    #[serde(default)]
+    library_name: Option<String>,
     reachability: HeartbeatReachability,
 }
 
@@ -115,20 +118,30 @@ pub async fn heartbeat(
     let Some(device) = state.device(&req.device_id) else {
         return Err(ApiError::not_found("设备不存在"));
     };
-    if let Some(allow_write) = req.allow_write {
-        if allow_write != device.allow_write {
-            state
-                .store
-                .lock()
-                .unwrap()
-                .update(&req.device_id, |record| record.allow_write = allow_write)
-                .map_err(|e| {
-                    ApiError::new(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("设备注册表写入失败: {e}"),
-                    )
-                })?;
-        }
+    let library_name = req
+        .library_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != device.library_name);
+    if req.allow_write.is_some_and(|w| w != device.allow_write) || library_name.is_some() {
+        state
+            .store
+            .lock()
+            .unwrap()
+            .update(&req.device_id, |record| {
+                if let Some(allow_write) = req.allow_write {
+                    record.allow_write = allow_write;
+                }
+                if let Some(library_name) = library_name {
+                    record.library_name = library_name.to_string();
+                }
+            })
+            .map_err(|e| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("设备注册表写入失败: {e}"),
+                )
+            })?;
     }
     let now = now_ms();
     let public_ip_seen = client_ip(&headers, peer);

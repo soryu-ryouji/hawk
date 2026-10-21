@@ -1,9 +1,9 @@
-//! 远程访问端点（admin 限定）：接入配置读写与运行状态。配置写回 config.toml [remote] 段，
+//! 远程访问端点（admin 限定）：接入配置读写与运行状态。配置写回应用级 remote.toml，
 //! 保存即热生效（remote supervisor 经 wake 热重启信令），模型与 app/lan 一致。
 
 use super::envelope::{codes, ApiError, Envelope, SuccessOnly};
 use super::{require_admin, AccessLevel, SharedState};
-use crate::core::config::RemoteSettings;
+use crate::remote::config::RemoteSettings;
 use crate::remote::session::ActiveSessionDto;
 use crate::remote::RemoteStatus;
 use axum::extract::State;
@@ -33,7 +33,7 @@ struct RemoteDto {
 }
 
 fn remote_dto(state: &SharedState) -> RemoteDto {
-    let cfg = state.config.current().remote;
+    let cfg = state.remote.remote_config().current();
     RemoteDto {
         enabled: cfg.enabled,
         url: cfg.url,
@@ -68,7 +68,7 @@ struct PutRemoteBody {
     writable: bool,
 }
 
-/// 写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。
+/// 写回应用级 remote.toml 并热重启信令（admin 限定）。
 /// 接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态
 #[utoipa::path(
     put,
@@ -83,12 +83,12 @@ async fn put_remote(
     Json(body): Json<PutRemoteBody>,
 ) -> Result<Json<Envelope<RemoteDto>>, ApiError> {
     require_admin(&access)?;
-    // quic_port 不在 PUT 体（高级项，手编 config.toml 调整）：保留现值
+    // quic_port 不在 PUT 体（高级项，编辑 remote.toml 后重启 daemon 调整）：保留现值
     let new_remote = RemoteSettings {
         enabled: body.enabled,
         url: body.url.trim().trim_end_matches('/').to_string(),
         key: body.key.trim().to_string(),
-        quic_port: state.config.current().remote.quic_port,
+        quic_port: state.remote.remote_config().current().quic_port,
         writable: body.writable,
     };
     if new_remote.enabled {
@@ -107,13 +107,17 @@ async fn put_remote(
             ));
         }
     }
-    state.config.update_remote(&new_remote).map_err(|e| {
-        ApiError::new(
-            codes::INTERNAL,
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            e,
-        )
-    })?;
+    state
+        .remote
+        .remote_config()
+        .update(&new_remote)
+        .map_err(|e| {
+            ApiError::new(
+                codes::INTERNAL,
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                e,
+            )
+        })?;
     state.remote.wake();
     Ok(Json(Envelope::ok(remote_dto(&state))))
 }
@@ -122,7 +126,7 @@ async fn put_remote(
 
 /// 取接入配置并构建信令 HTTP 客户端；未配置返回 400
 fn signal_client(state: &SharedState) -> Result<(reqwest::Client, String, String), ApiError> {
-    let cfg = state.config.current().remote;
+    let cfg = state.remote.remote_config().current();
     if cfg.url.is_empty() || cfg.key.is_empty() {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
@@ -267,14 +271,16 @@ async fn create_session(
         ));
     }
     let (http, base, key) = signal_client(&state)?;
-    let identity = crate::remote::identity::Identity::load_or_create(&state.paths.remote_dir)
-        .map_err(|e| {
-            ApiError::new(
-                codes::INTERNAL,
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                e,
-            )
-        })?;
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
     let dto = state
         .remote
         .sessions
@@ -409,8 +415,10 @@ async fn rotate_device(
 ) -> Result<Json<Envelope<RotateDeviceDto>>, ApiError> {
     require_admin(&access)?;
     let (http, base, key) = signal_client(&state)?;
-    let mut identity = crate::remote::identity::Identity::load_or_create(&state.paths.remote_dir)
-        .map_err(|e| {
+    let mut identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
         ApiError::new(
             codes::INTERNAL,
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -443,13 +451,15 @@ async fn rotate_device(
     if !resp.status().is_success() {
         return Err(bad_gateway(server_message(resp).await));
     }
-    identity.persist(&state.paths.remote_dir).map_err(|e| {
-        ApiError::new(
-            codes::INTERNAL,
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            e,
-        )
-    })?;
+    identity
+        .persist(state.remote.remote_config().identity_dir())
+        .map_err(|e| {
+            ApiError::new(
+                codes::INTERNAL,
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                e,
+            )
+        })?;
     state.remote.wake();
     Ok(Json(Envelope::ok(RotateDeviceDto {
         fingerprint: identity.fingerprint,
@@ -458,14 +468,16 @@ async fn rotate_device(
 
 /// 本机已注册的 device_id（未注册 → 400）
 fn registered_device_id(state: &SharedState) -> Result<String, ApiError> {
-    let identity = crate::remote::identity::Identity::load_or_create(&state.paths.remote_dir)
-        .map_err(|e| {
-            ApiError::new(
-                codes::INTERNAL,
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                e,
-            )
-        })?;
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
     identity.device_id.ok_or_else(|| {
         ApiError::new(
             codes::INVALID_PARAM,

@@ -805,7 +805,7 @@ export interface paths {
         /** 读取远程访问接入配置与运行状态（admin 限定；viewer 403，防止只读 token 看到接入信息） */
         get: operations["get_remote"];
         /**
-         * 写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。
+         * 写回应用级 remote.toml 并热重启信令（admin 限定）。
          *     接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态
          */
         put: operations["put_remote"];

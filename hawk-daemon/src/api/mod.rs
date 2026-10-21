@@ -124,7 +124,7 @@ pub struct AppState {
     pub sse_lagged: std::sync::atomic::AtomicU64,
     /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
     pub lan: Arc<lan::LanSupervisor>,
-    /// 远程访问 supervisor（[remote] 配置启用才激活；状态快照供 api/remote）
+    /// 远程访问 supervisor（remote.toml 启用才激活；状态快照供 api/remote）
     pub remote: Arc<crate::remote::Supervisor>,
 }
 
@@ -221,9 +221,9 @@ async fn auth(
     }
 
     // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledPeer（HTTP 客户端无法伪造扩展，
-    // 忽略其携带的任何 token 头）。写会话是否生效还要看当前 [remote].writable（热生效）。
+    // 忽略其携带的任何 token 头）。写会话是否生效还要看当前 remote.writable（应用级配置，热生效）。
     let access = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
-        if tunnel.writable && state.config.current().remote.writable {
+        if tunnel.writable && state.remote.remote_config().current().writable {
             Some(AccessLevel::RemoteWriter)
         } else {
             Some(AccessLevel::Viewer { writable: false })

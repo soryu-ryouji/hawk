@@ -97,6 +97,7 @@ impl Rig {
             reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为
             cache_parent: None,
             web_dist: None,
+            remote_config: None,
         };
         let pipeline = IndexPipeline::new(
             paths.clone(),

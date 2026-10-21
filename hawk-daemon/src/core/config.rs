@@ -22,33 +22,6 @@ pub struct WebSettings {
     pub write_token: Option<String>,
 }
 
-/// 远程访问接入设置（[remote] 段，随库同步）：单用户自托管 hawk-server 的接入信息。
-/// key 明文存放（与 [web] token 同级先例），随库同步意味着配一次全设备生效
-#[derive(Clone, PartialEq)]
-pub struct RemoteSettings {
-    pub enabled: bool,
-    /// 服务端地址（http(s):// 开头；TLS 由前置反代终结）
-    pub url: String,
-    /// 服务端 access key
-    pub key: String,
-    /// QUIC 隧道 UDP 端口（UPnP 映射目标；同机多库需错开）
-    pub quic_port: u16,
-    /// 允许广域网会话导入素材/新建文件夹（受限写，与 [web] 的局域网写权限独立）
-    pub writable: bool,
-}
-
-impl Default for RemoteSettings {
-    fn default() -> RemoteSettings {
-        RemoteSettings {
-            enabled: false,
-            url: String::new(),
-            key: String::new(),
-            quic_port: 27373,
-            writable: false,
-        }
-    }
-}
-
 /// 周期兜底扫描设置（库级，随库同步）：监听漏事件时的最终一致保证
 #[derive(Clone, PartialEq)]
 pub struct ScanSettings {
@@ -76,8 +49,6 @@ pub struct ConfigChange {
     /// 周期兜底扫描设置变化（消费循环的定时检查自读配置，仅用于日志/事件语义）
     pub scan_changed: bool,
     pub web_changed: bool,
-    /// [remote] 变化 → remote supervisor 热重启信令
-    pub remote_changed: bool,
 }
 
 #[derive(Clone, Default)]
@@ -89,8 +60,6 @@ pub struct Snapshot {
     /// 周期兜底扫描设置
     pub scan: ScanSettings,
     pub web: WebSettings,
-    /// 远程访问接入
-    pub remote: RemoteSettings,
 }
 
 pub struct LibraryConfig {
@@ -155,7 +124,6 @@ impl LibraryConfig {
                 extensions_changed: cur.extensions != snapshot.extensions,
                 scan_changed: cur.scan != snapshot.scan,
                 web_changed: cur.web != snapshot.web,
-                remote_changed: cur.remote != snapshot.remote,
             };
             *cur = snapshot;
             change
@@ -232,28 +200,6 @@ impl LibraryConfig {
         !self.is_ignored(rel) && self.is_extension_included(rel)
     }
 
-    /// 写回 [remote] 段并热更（toml_edit 保注释；原子写），返回前后差异（调用方据此 wake remote supervisor）
-    pub fn update_remote(&self, remote: &RemoteSettings) -> Result<ConfigChange, String> {
-        let file = &self.paths.config_file;
-        let text =
-            std::fs::read_to_string(file).map_err(|e| format!("读取配置失败 {file}: {e}"))?;
-        let mut doc = text
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("配置解析失败 {file}: {e}"))?;
-        doc["remote"]["enabled"] = toml_edit::value(remote.enabled);
-        doc["remote"]["url"] = toml_edit::value(remote.url.trim());
-        doc["remote"]["key"] = toml_edit::value(remote.key.trim());
-        doc["remote"]["quic_port"] = toml_edit::value(i64::from(remote.quic_port));
-        doc["remote"]["writable"] = toml_edit::value(remote.writable);
-        let tmp = format!("{file}.tmp");
-        std::fs::write(&tmp, doc.to_string()).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
-        if let Err(e) = std::fs::rename(&tmp, file) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("配置替换失败 {file}: {e}"));
-        }
-        Ok(self.reload())
-    }
-
     /// 写回 [web] 段并热更：toml_edit 就地改键值，保留文件其余段与注释。
     /// 原子写（临时文件 + rename），成功后 reload 返回前后差异（调用方据此 wake LAN supervisor）
     pub fn update_web(&self, web: &WebSettings) -> Result<ConfigChange, String> {
@@ -322,16 +268,6 @@ writable = false
 separate_write_token = false
 write_token = ""
 
-# 远程访问：接入自托管 hawk-server，其他设备可远程浏览本库（只读）。
-# url 为服务端地址（http(s):// 开头）；key 为服务端 access key。随库同步，配一次全设备生效。
-[remote]
-enabled = false
-url = ""
-key = ""
-# QUIC 隧道 UDP 端口（UPnP 映射目标；同机多库需错开，一般不用改）
-quic_port = 27373
-# 允许广域网会话导入素材/新建文件夹（仅插件保存场景，与 [web] 的局域网写权限独立）
-writable = false
 "#;
 
 /// 读取并解析 config.toml；文件不存在视为新库（默认快照，非错误），
@@ -369,37 +305,7 @@ fn load(paths: &LibraryPaths) -> Result<Snapshot, String> {
         }
     }
     snapshot.web = table.get("web").map(parse_web_value).unwrap_or_default();
-    snapshot.remote = table
-        .get("remote")
-        .map(parse_remote_value)
-        .unwrap_or_default();
     Ok(snapshot)
-}
-
-fn parse_remote_value(value: &toml::Value) -> RemoteSettings {
-    let mut remote = RemoteSettings::default();
-    if let Some(table) = value.as_table() {
-        remote.enabled = table
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if let Some(url) = table.get("url").and_then(|v| v.as_str()) {
-            remote.url = url.trim().to_string();
-        }
-        if let Some(key) = table.get("key").and_then(|v| v.as_str()) {
-            remote.key = key.trim().to_string();
-        }
-        if let Some(port) = table.get("quic_port").and_then(|v| v.as_integer()) {
-            if (0..=65535).contains(&port) {
-                remote.quic_port = port as u16;
-            }
-        }
-        remote.writable = table
-            .get("writable")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-    }
-    remote
 }
 
 fn parse_web_value(value: &toml::Value) -> WebSettings {

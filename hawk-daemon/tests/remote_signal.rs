@@ -8,8 +8,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use hawk_daemon::core::config::{LibraryConfig, RemoteSettings};
+use hawk_daemon::core::config::LibraryConfig;
 use hawk_daemon::core::paths::LibraryPaths;
+use hawk_daemon::remote::config::{RemoteConfigStore, RemoteSettings};
 use hawk_daemon::remote::{RemoteState, Supervisor};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -213,6 +214,7 @@ struct TestLibrary {
     _dir: tempfile::TempDir,
     paths: LibraryPaths,
     config: Arc<LibraryConfig>,
+    remote: Arc<RemoteConfigStore>,
 }
 
 fn test_library() -> TestLibrary {
@@ -224,10 +226,15 @@ fn test_library() -> TestLibrary {
         Some(dir.path().join("cache").to_str().unwrap().to_string()),
     );
     let config = Arc::new(LibraryConfig::new(paths.clone()));
+    let remote = RemoteConfigStore::open(
+        Some(dir.path().join("remote.toml").to_str().unwrap()),
+        &paths,
+    );
     TestLibrary {
         _dir: dir,
         paths,
         config,
+        remote,
     }
 }
 
@@ -250,8 +257,8 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
     let _guard = TEST_LOCK.lock().await;
     let (base, hub) = spawn_mock_hub().await;
     let lib = test_library();
-    lib.config
-        .update_remote(&RemoteSettings {
+    lib.remote
+        .update(&RemoteSettings {
             enabled: true,
             url: base,
             key: KEY.to_string(),
@@ -260,7 +267,10 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
         })
         .unwrap();
 
-    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
     let task = tokio::spawn(supervisor.clone().run(
         lib.paths.clone(),
         lib.config.clone(),
@@ -274,7 +284,7 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
 
     // 设备身份落盘（含服务端分配的 device_id）
     let identity =
-        hawk_daemon::remote::identity::Identity::load_or_create(&lib.paths.remote_dir).unwrap();
+        hawk_daemon::remote::identity::Identity::load_or_create(lib.remote.identity_dir()).unwrap();
     assert_eq!(identity.device_id.as_deref(), Some("d_1"));
 
     // mock 推送 session.request → 客户端自动 accept
@@ -292,8 +302,8 @@ async fn signal_reports_fatal_on_invalid_key() {
     let _guard = TEST_LOCK.lock().await;
     let (base, _hub) = spawn_mock_hub().await;
     let lib = test_library();
-    lib.config
-        .update_remote(&RemoteSettings {
+    lib.remote
+        .update(&RemoteSettings {
             enabled: true,
             url: base,
             key: "wrong-key".to_string(),
@@ -302,7 +312,10 @@ async fn signal_reports_fatal_on_invalid_key() {
         })
         .unwrap();
 
-    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
     let task = tokio::spawn(supervisor.clone().run(
         lib.paths.clone(),
         lib.config.clone(),
@@ -327,8 +340,8 @@ async fn signal_re_registers_when_server_forgets_device() {
     unsafe { std::env::set_var("HAWK_REMOTE_HEARTBEAT_MS", "200") };
     let (base, hub) = spawn_mock_hub().await;
     let lib = test_library();
-    lib.config
-        .update_remote(&RemoteSettings {
+    lib.remote
+        .update(&RemoteSettings {
             enabled: true,
             url: base,
             key: KEY.to_string(),
@@ -337,7 +350,10 @@ async fn signal_re_registers_when_server_forgets_device() {
         })
         .unwrap();
 
-    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
     let task = tokio::spawn(supervisor.clone().run(
         lib.paths.clone(),
         lib.config.clone(),
@@ -399,10 +415,10 @@ async fn hot_restart_rebinds_quic_port() {
         quic_port: port,
         writable: false,
     };
-    lib.config.update_remote(&remote(&base)).unwrap();
+    lib.remote.update(&remote(&base)).unwrap();
 
     let bus = hawk_daemon::core::events::EventBus::new();
-    let supervisor = Supervisor::new(bus.clone());
+    let supervisor = Supervisor::new(bus.clone(), lib.remote.clone());
     let task = tokio::spawn(supervisor.clone().run(
         lib.paths.clone(),
         lib.config.clone(),
@@ -413,9 +429,7 @@ async fn hot_restart_rebinds_quic_port() {
     // 热重启：改地址写法（末尾斜杠，normalize 后同一个服务端）→ watcher 语义（update_remote + wake）。
     // 端口不变，正是「新任务绑定自己刚占用的端口」这条回归路径
     let mut events = bus.subscribe();
-    lib.config
-        .update_remote(&remote(&format!("{base}/")))
-        .unwrap();
+    lib.remote.update(&remote(&format!("{base}/"))).unwrap();
     supervisor.wake();
     // 状态流：connecting → online；中途停到 error 就是本回归要防的绑定失败
     let mut seen_connecting = false;
@@ -434,8 +448,8 @@ async fn hot_restart_rebinds_quic_port() {
     .expect("热重启后未回到在线");
 
     // 停用：数据面随任务收尾，端口立即可被其他进程绑定
-    lib.config
-        .update_remote(&RemoteSettings {
+    lib.remote
+        .update(&RemoteSettings {
             enabled: false,
             url: String::new(),
             key: String::new(),
@@ -465,8 +479,8 @@ async fn ws_404_triggers_re_register() {
     let _guard = TEST_LOCK.lock().await;
     let (base, hub) = spawn_mock_hub().await;
     let lib = test_library();
-    lib.config
-        .update_remote(&RemoteSettings {
+    lib.remote
+        .update(&RemoteSettings {
             enabled: true,
             url: base,
             key: KEY.to_string(),
@@ -475,7 +489,10 @@ async fn ws_404_triggers_re_register() {
         })
         .unwrap();
 
-    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
     let task = tokio::spawn(supervisor.clone().run(
         lib.paths.clone(),
         lib.config.clone(),
@@ -515,15 +532,15 @@ async fn ws_404_triggers_re_register() {
     task.abort();
 }
 
-/// 目标设备未开启 [remote].writable 时，写会话请求必须被拒绝而不是接受
+/// 目标设备未开启远程访问的 writable 时，写会话请求必须被拒绝而不是接受
 #[tokio::test]
 async fn write_session_rejected_when_writable_off() {
     let _guard = TEST_LOCK.lock().await;
     let (base, hub) = spawn_mock_hub().await;
     hub.set_write_request(true);
     let lib = test_library();
-    lib.config
-        .update_remote(&RemoteSettings {
+    lib.remote
+        .update(&RemoteSettings {
             enabled: true,
             url: base,
             key: KEY.to_string(),
@@ -532,7 +549,10 @@ async fn write_session_rejected_when_writable_off() {
         })
         .unwrap();
 
-    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
     let task = tokio::spawn(supervisor.clone().run(
         lib.paths.clone(),
         lib.config.clone(),
@@ -551,15 +571,15 @@ async fn write_session_rejected_when_writable_off() {
     task.abort();
 }
 
-/// 开启 [remote].writable 后写会话正常接受
+/// 开启远程访问的 writable 后写会话正常接受
 #[tokio::test]
 async fn write_session_accepted_when_writable_on() {
     let _guard = TEST_LOCK.lock().await;
     let (base, hub) = spawn_mock_hub().await;
     hub.set_write_request(true);
     let lib = test_library();
-    lib.config
-        .update_remote(&RemoteSettings {
+    lib.remote
+        .update(&RemoteSettings {
             enabled: true,
             url: base,
             key: KEY.to_string(),
@@ -568,7 +588,10 @@ async fn write_session_accepted_when_writable_on() {
         })
         .unwrap();
 
-    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
     let task = tokio::spawn(supervisor.clone().run(
         lib.paths.clone(),
         lib.config.clone(),

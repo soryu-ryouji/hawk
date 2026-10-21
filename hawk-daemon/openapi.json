@@ -4541,7 +4541,7 @@
             "description": "OK"
           }
         },
-        "summary": "写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。\n接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态",
+        "summary": "写回应用级 remote.toml 并热重启信令（admin 限定）。\n接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态",
         "tags": [
           "remote"
         ]

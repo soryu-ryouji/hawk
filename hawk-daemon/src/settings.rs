@@ -29,6 +29,10 @@ pub struct Cli {
     #[arg(long, env = "HAWK_CACHE_PARENT")]
     pub cache_parent: Option<String>,
 
+    /// 应用级远程访问配置（remote.toml，含身份目录）；缺省为 <library>/.hawk/remote.toml
+    #[arg(long, env = "HAWK_REMOTE_CONFIG")]
+    pub remote_config: Option<String>,
+
     /// 打印 OpenAPI schema 到 stdout 后退出（openapi.json 的固化来源）
     #[arg(long)]
     pub dump_openapi: bool,
@@ -50,6 +54,8 @@ pub struct Settings {
     pub reconcile_interval_seconds: u64,
     /// 全局缓存父目录（桌面端设置面板配置，主进程经 --cache-parent 传入）；None 用系统缓存目录
     pub cache_parent: Option<String>,
+    /// 应用级远程访问配置路径（Electron 传 ~/.config/hawk/remote.toml）；None 用库内缺省
+    pub remote_config: Option<String>,
     /// 局域网 web 查看托管的前端静态文件目录（Electron 传入 web/dist）；不存在则不托管
     pub web_dist: Option<String>,
 }
@@ -86,6 +92,10 @@ impl Settings {
                 .unwrap_or(60),
             cache_parent: cli.cache_parent,
             web_dist: cli.web_dist,
+            remote_config: cli
+                .remote_config
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty()),
         }
     }
 }

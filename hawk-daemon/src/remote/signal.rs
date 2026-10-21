@@ -3,8 +3,9 @@
 //! 致命错误（401 key 无效、url 非法）返回给 supervisor 置错误状态，等配置变更重启。
 //! 协议契约见 docs/backend/remote-protocol.md。
 
-use crate::core::config::{LibraryConfig, RemoteSettings};
+use crate::core::config::LibraryConfig;
 use crate::core::paths::LibraryPaths;
+use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
 use crate::remote::reachability::{self, SharedUpnpReport, UpnpReport};
@@ -46,13 +47,14 @@ type Result<T> = std::result::Result<T, SignalError>;
 /// router 为 daemon API 路由克隆：A 侧隧道端进程内转发的目标
 pub async fn run(
     paths: LibraryPaths,
-    config: Arc<LibraryConfig>,
+    library: Arc<LibraryConfig>,
+    remote: Arc<RemoteConfigStore>,
     cfg: RemoteSettings,
     supervisor: Arc<Supervisor>,
     router: axum::Router,
 ) {
     if let Err(SignalError::Fatal(msg)) =
-        run_inner(&paths, &config, &cfg, &supervisor, router).await
+        run_inner(&paths, &library, &remote, &cfg, &supervisor, router).await
     {
         tracing::error!("远程访问信令终止（等配置变更重启）: {msg}");
         supervisor.set_status(RemoteStatus {
@@ -66,7 +68,8 @@ pub async fn run(
 
 async fn run_inner(
     paths: &LibraryPaths,
-    config: &Arc<LibraryConfig>,
+    library: &Arc<LibraryConfig>,
+    remote: &Arc<RemoteConfigStore>,
     cfg: &RemoteSettings,
     supervisor: &Arc<Supervisor>,
     router: axum::Router,
@@ -76,7 +79,8 @@ async fn run_inner(
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(|e| SignalError::Fatal(format!("HTTP 客户端构建失败: {e}")))?;
-    let mut identity = Identity::load_or_create(&paths.remote_dir).map_err(SignalError::Fatal)?;
+    let mut identity =
+        Identity::load_or_create(remote.identity_dir()).map_err(SignalError::Fatal)?;
 
     // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护（重注册循环复用，不重复绑定）。
     // 两者都装在守卫里：热重启（supervisor abort）或停用时必须随任务一起收尾，
@@ -92,12 +96,12 @@ async fn run_inner(
     loop {
         // 注册（含服务端设备表丢失后的重注册）：瞬时失败退避重试，直到成功或致命
         while identity.device_id.is_none() {
-            match register(&http, &base, &cfg.key, paths, config, &identity).await {
+            match register(&http, &base, &cfg.key, paths, library, remote, &identity).await {
                 Ok(device_id) => {
                     tracing::info!("远程访问设备已注册: {device_id}（{base}）");
                     identity.device_id = Some(device_id);
                     identity
-                        .persist(&paths.remote_dir)
+                        .persist(remote.identity_dir())
                         .map_err(SignalError::Fatal)?;
                 }
                 Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
@@ -123,7 +127,9 @@ async fn run_inner(
             upnp_report: &upnp_report,
             quic_port: cfg.quic_port,
             router: &router,
-            config,
+            library,
+            library_root: &paths.root,
+            remote,
         };
         match channel_loop(&ctx, supervisor).await {
             Ok(()) => retry = RETRY_MIN, // 对端正常关闭：立即重连
@@ -132,7 +138,7 @@ async fn run_inner(
                 tracing::warn!("服务端已不再认识本设备（{device_id}），重新注册");
                 identity.device_id = None;
                 identity
-                    .persist(&paths.remote_dir)
+                    .persist(remote.identity_dir())
                     .map_err(SignalError::Fatal)?;
                 retry = RETRY_MIN;
                 continue;
@@ -205,7 +211,9 @@ struct ChannelContext<'a> {
     upnp_report: &'a SharedUpnpReport,
     quic_port: u16,
     router: &'a axum::Router,
-    config: &'a Arc<LibraryConfig>,
+    library: &'a Arc<LibraryConfig>,
+    library_root: &'a str,
+    remote: &'a Arc<RemoteConfigStore>,
 }
 
 /// 一轮控制通道：WSS 连接 → hello/hello_ack → 心跳与推送处理，直到断开
@@ -252,16 +260,7 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                send_heartbeat(
-                    ctx.http,
-                    ctx.base,
-                    ctx.key,
-                    ctx.device_id,
-                    ctx.upnp_report,
-                    ctx.quic_port,
-                    ctx.config.current().remote.writable,
-                )
-                .await?;
+                send_heartbeat(ctx).await?;
             }
             msg = ws.next() => {
                 match msg {
@@ -300,8 +299,8 @@ async fn handle_message(
         Some("session.request") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
                 let writable = value.get("access").and_then(|a| a.as_str()) == Some("write");
-                if writable && !ctx.config.current().remote.writable {
-                    tracing::info!("拒绝广域网写会话 {session_id}：本机未开启 [remote].writable");
+                if writable && !ctx.remote.current().writable {
+                    tracing::info!("拒绝广域网写会话 {session_id}：本机未开启远程访问的 writable");
                     reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
                     return Ok(());
                 }
@@ -423,6 +422,17 @@ async fn handle_message(
     Ok(())
 }
 
+/// 当前库显示名：库内配置的 name，缺失回退目录名。注册与心跳共用，
+/// 设备身份跨库共享后由心跳保持服务端设备表的库名最新
+fn library_name(config: &Arc<LibraryConfig>, root: &str) -> String {
+    config.current().name.unwrap_or_else(|| {
+        std::path::Path::new(root)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "素材库".to_string())
+    })
+}
+
 /// 设备列表中查对端指纹（QUIC 客户端证书放行依据）
 async fn fetch_fingerprint(
     http: &reqwest::Client,
@@ -451,24 +461,18 @@ async fn fetch_fingerprint(
     Ok(fingerprint)
 }
 
-async fn send_heartbeat(
-    http: &reqwest::Client,
-    base: &str,
-    key: &str,
-    device_id: &str,
-    upnp_report: &SharedUpnpReport,
-    quic_port: u16,
-    allow_write: bool,
-) -> Result<()> {
+async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
     // 可达性：UPnP 映射（维护任务异步更新）+ 全局 IPv6（每次心跳探测，零成本）。
     // public_ip 不自报——以服务端 public_ip_seen 为准
-    let mapped_port = upnp_report.read().unwrap().mapped_port;
-    let (public_ipv6, ipv6_port) = reachability::probe_ipv6(base, quic_port)
+    let mapped_port = ctx.upnp_report.read().unwrap().mapped_port;
+    let (public_ipv6, ipv6_port) = reachability::probe_ipv6(ctx.base, ctx.quic_port)
         .map(|(ip, port)| (Some(ip), Some(port)))
         .unwrap_or((None, None));
     let body = json!({
-        "device_id": device_id,
-        "allow_write": allow_write,
+        "device_id": ctx.device_id,
+        // 设备身份应用级：切换素材库后靠心跳把服务端设备表的库名收敛到当前库
+        "library_name": library_name(ctx.library, ctx.library_root),
+        "allow_write": ctx.remote.current().writable,
         "reachability": {
             "public_ip": null,
             "mapped_port": mapped_port,
@@ -478,9 +482,10 @@ async fn send_heartbeat(
             "nat_type": "unknown",
         }
     });
-    let resp = http
-        .post(format!("{base}/api/v1/devices/heartbeat"))
-        .bearer_auth(key)
+    let resp = ctx
+        .http
+        .post(format!("{}/api/v1/devices/heartbeat", ctx.base))
+        .bearer_auth(ctx.key)
         .json(&body)
         .send()
         .await
@@ -551,7 +556,8 @@ async fn register(
     base: &str,
     key: &str,
     paths: &LibraryPaths,
-    config: &Arc<LibraryConfig>,
+    library: &Arc<LibraryConfig>,
+    remote: &Arc<RemoteConfigStore>,
     identity: &Identity,
 ) -> Result<String> {
     let hostname = gethostname::gethostname();
@@ -561,19 +567,13 @@ async fn register(
     } else {
         hostname.trim().to_string()
     };
-    let library_name = config.current().name.unwrap_or_else(|| {
-        std::path::Path::new(&paths.root)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "素材库".to_string())
-    });
     let body = json!({
         "name": name,
         "platform": std::env::consts::OS,
         "fingerprint": identity.fingerprint,
-        "library_name": library_name,
+        "library_name": library_name(library, &paths.root),
         "allow_remote": true,
-        "allow_write": config.current().remote.writable,
+        "allow_write": remote.current().writable,
     });
     let resp = http
         .post(format!("{base}/api/v1/devices"))

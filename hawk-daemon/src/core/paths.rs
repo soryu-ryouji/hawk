@@ -33,8 +33,6 @@ pub struct LibraryPaths {
     pub global_filter_file: String,
     /// 文件夹/分类/标签锁注册表（.hawk/locks.toml，参与同步）
     pub locks_file: String,
-    /// 远程访问设备身份目录（.hawk/remote/，本地专用，不参与同步）
-    pub remote_dir: String,
     /// 缓存目录（缩略图与 index.db 所在）：默认 <系统缓存>/hawk/cache/<库名>_<哈希>，
     /// 可经 --cache-parent 指定全局父目录（桌面端设置面板配置）
     pub cache_dir: String,
@@ -64,7 +62,6 @@ impl LibraryPaths {
         let view_file = join_path(&hawk_dir, "view.toml");
         let global_filter_file = join_path(&hawk_dir, "global_filter.toml");
         let locks_file = join_path(&hawk_dir, "locks.toml");
-        let remote_dir = join_path(&hawk_dir, "remote");
         let index_db_file = join_path(&cache_dir, "index.db");
         LibraryPaths {
             root,
@@ -81,7 +78,6 @@ impl LibraryPaths {
             view_file,
             global_filter_file,
             locks_file,
-            remote_dir,
             cache_dir,
         }
     }
