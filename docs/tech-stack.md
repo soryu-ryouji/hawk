@@ -16,7 +16,7 @@ Rust，见 [hawk-daemon](backend/server-rust.md)（`hawk-daemon/`，axum、notif
 
 ## 远程访问服务端：hawk-server/
 
-独立 Rust crate（与 daemon 零代码共享），单用户方案：设备注册/心跳/WSS 控制通道/会话撮合（P1 已实现，中继二期），见 [远程访问设计](backend/remote-access.md) 与 [协议契约](backend/remote-protocol.md)。技术栈：tokio、axum（含 ws）、serde_json（设备表 JSON 持久化）；无数据库、无账号体系，准入即一把固定 access key。
+独立 Rust crate（与 daemon 零代码共享），单用户方案：设备注册/心跳/WSS 控制通道/会话撮合（P1 已实现，中继二期），见 [远程访问设计](backend/remote-access.md)、[协议契约](backend/remote-protocol.md) 与 [hawk-server 使用指南](backend/hawk-server.md)。技术栈：tokio、axum（含 ws）、serde_json（设备表 JSON 持久化）；无数据库、无账号体系，准入即一把固定 access key。
 
 ## 远程访问客户端：hawk-daemon 的 remote/ 模块（信令进行中）
 

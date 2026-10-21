@@ -223,4 +223,6 @@ hawk-daemon/src/remote/
 ## 相关文档
 
 - [远程访问协议](remote-protocol.md)（接口契约，唯一共享物）
+- [hawk-server 使用指南](hawk-server.md)（启动配置、接口、运维排查）
+- [远程访问部署](remote-deployment.md)（Docker、反代、TLS）
 - [hawk-app 设计](../frontend/hawk-app.md)（进程模型、打包分发）

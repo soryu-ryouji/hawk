@@ -115,6 +115,13 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 - [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配
 - [存储设计](docs/backend/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存
 
+**远程访问（hawk-server/）**
+
+- [hawk-server 使用指南](docs/backend/hawk-server.md)：启动配置、接口与凭据、网页版使用、运维与排查
+- [远程访问设计](docs/backend/remote-access.md)：控制面/中继/网页版宿主、连接模型与安全模型
+- [远程访问部署](docs/backend/remote-deployment.md)：Docker 一键部署、nginx 反代与 TLS
+- [远程访问协议](docs/backend/remote-protocol.md)：设备/心跳/会话/中继的接口契约
+
 ## 许可证
 
 Copyright (c) 2026 soryu-ryouji. 本项目基于 [AGPL-3.0](LICENSE) 授权发布。
