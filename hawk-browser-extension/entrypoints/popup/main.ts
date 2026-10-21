@@ -8,6 +8,7 @@ const remoteFields = document.querySelector<HTMLDivElement>('#remote-fields')!;
 const localUrlInput = document.querySelector<HTMLInputElement>('#local-url')!;
 const localTokenInput = document.querySelector<HTMLInputElement>('#local-token')!;
 const remoteUrlInput = document.querySelector<HTMLInputElement>('#remote-url')!;
+const serviceKeyInput = document.querySelector<HTMLInputElement>('#service-key')!;
 const remoteKeyInput = document.querySelector<HTMLInputElement>('#remote-key')!;
 const targetSelect = document.querySelector<HTMLSelectElement>('#target')!;
 const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
@@ -64,18 +65,19 @@ function fillTargets(preferredId: string) {
 
 async function refreshDevices(showErrors = true): Promise<void> {
   const url = remoteUrlInput.value.trim();
+  const sk = serviceKeyInput.value.trim();
   const key = remoteKeyInput.value.trim();
-  if (!url || !key) {
+  if (!url || !sk || !key) {
     if (showErrors) {
-      setStatus('请先填写 hawk-server 域名和写入密钥', 'err');
+      setStatus('请先填写 hawk-server 域名、服务密钥与访问密钥', 'err');
     }
     return;
   }
   if (showErrors) {
-    setStatus('加载素材库列表…', 'wait');
+    setStatus('验证密钥中…', 'wait');
   }
   try {
-    devices = await listRemoteDevices(url, key);
+    devices = await listRemoteDevices(url, sk, key);
     fillTargets(targetSelect.value || settings.targetDeviceId);
     const writable = devices.filter((d) => d.online && d.allow_remote && d.allow_write);
     setStatus(
@@ -106,6 +108,7 @@ async function init() {
   localUrlInput.value = settings.localUrl;
   localTokenInput.value = settings.localToken;
   remoteUrlInput.value = settings.remoteUrl;
+  serviceKeyInput.value = settings.serviceKey;
   remoteKeyInput.value = settings.remoteKey;
   showMode();
 
@@ -122,7 +125,7 @@ async function init() {
   }
 
   void refreshStatus();
-  if (settings.mode === 'remote' && settings.remoteUrl && settings.remoteKey) {
+  if (settings.mode === 'remote' && settings.remoteUrl && settings.serviceKey && settings.remoteKey) {
     void refreshDevices(false);
   }
 }
@@ -151,6 +154,7 @@ saveBtn.addEventListener('click', async () => {
       localUrl: localUrlInput.value,
       localToken: localTokenInput.value,
       remoteUrl: remoteUrlInput.value,
+      serviceKey: serviceKeyInput.value,
       remoteKey: remoteKeyInput.value,
       ...(mode === 'remote' ? target : {}),
     });

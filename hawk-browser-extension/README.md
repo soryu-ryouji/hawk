@@ -21,11 +21,11 @@ hawk 浏览器图片收集插件：右键或拖拽网页图片，保存到 hawk 
 
 ### 远程模式
 
-1. 设置里填 hawk-server 域名与服务端 `--write-key` 对应的写入密钥
-2. 插件用写入密钥调用 `POST /api/v1/viewer/login`，换取写作用域令牌（服务端只存哈希与作用域）
-3. 拉取 `/api/v1/viewer/devices`，选择目标素材库；保存前用 `POST /api/v1/viewer/session` 打开 `access=write` 会话
+1. 设置里填 hawk-server 域名、服务密钥（service-key，server 侧 `tenant add` 生成）与访问密钥（hawk 设置 → 远程中签发，须带写权限）
+2. 插件两级登录：`POST /api/v1/viewer/gate`（service-key 换门令牌）→ `POST /api/v1/viewer/login`（门令牌 + 访问密钥换写作用域令牌 bt；bt 绑定唯一目标素材库，服务端只存哈希）
+3. 素材库即访问密钥绑定的那一台（无需选择）；保存前用 `POST /api/v1/viewer/session` 打开 `access=write` 会话
 4. 之后的库信息、文件夹树、保存请求经 hawk-server 查看面代理转发到目标 daemon
-5. 目标设备必须同时开启「允许广域网保存素材」（`.hawk/config.toml` 的 `[remote].writable`）；广域网写只开放导入素材与新建文件夹，不开放删除、改标签等操作
+5. 目标设备必须同时开启「允许广域网保存素材」（应用级 `remote.toml` 的 `writable`）；广域网写只开放导入素材与新建文件夹，不开放删除、改标签等操作；权限最终由目标 daemon 按本地 key 映射裁决
 
 来源网页随保存请求经 `website` 传入，入库为素材的 `url` 字段（与 Eagle 的 `website` 参数同义）。
 
@@ -33,9 +33,9 @@ hawk 浏览器图片收集插件：右键或拖拽网页图片，保存到 hawk 
 
 - 连接方式：本地 hawk / 远程 hawk-server
 - 本地：服务器地址、Token（可选，留空自动发现）
-- 远程：hawk-server 域名（建议 HTTPS）、写入密钥、目标素材库（刷新列表后选择）
+- 远程：hawk-server 域名（建议 HTTPS）、服务密钥（service-key）、访问密钥（须带写权限）；验证后自动绑定访问密钥对应的素材库
 
-远程写入密钥与本地 daemon token 都以明文存于 `browser.storage.local`；请只在可信浏览器配置文件中使用。
+远程密钥与本地 daemon token 都以明文存于 `browser.storage.local`；请只在可信浏览器配置文件中使用。访问密钥泄露时让库主在 hawk 设置 → 远程中吊销该密钥即可（不影响其他密钥）。
 
 ## 开发
 

@@ -2,8 +2,8 @@
 // 请求一律从 background 发起（配合 host_permissions，不受页面 CORS 限制）。
 //
 // 本地模式：Bearer token 自动发现（GET /api/v1/app/token 仅环回地址可读）。
-// 远程模式：用 hawk-server 写入密钥登录查看面，换取写作用域令牌，打开目标设备会话，
-// 之后的素材请求经查看面代理转发到目标 daemon。
+// 远程模式：两级验证——service-key（池门禁）换门令牌，门令牌 + hawk-app key（须带写权限）
+// 换写作用域令牌（bt 绑定唯一目标素材库），之后的素材请求经查看面代理转发到目标 daemon。
 import { getSettings, saveSettings, type HawkSettings } from './settings';
 
 interface Envelope<T> {
@@ -131,24 +131,43 @@ async function localContext(): Promise<{ base: string; token: string }> {
   return { base: s.localUrl, token };
 }
 
-async function remoteLogin(settings: HawkSettings): Promise<string> {
-  let data: { token: string; access: string };
+interface RemoteLoginResult {
+  token: string;
+  /** bt 绑定的目标设备（hawk-app key 映射决定，无需用户再选） */
+  deviceId: string;
+}
+
+/** 两级登录：service-key → 门令牌（5min/5 次尝试）；门令牌 + hawk-app key → bt */
+async function remoteLogin(settings: HawkSettings): Promise<RemoteLoginResult> {
+  let gate: { gate_token: string };
   try {
-    data = await call<{ token: string; access: string }>(
+    gate = await call<{ gate_token: string }>(settings.remoteUrl, '/api/v1/viewer/gate', {
+      method: 'POST',
+      body: { service_key: settings.serviceKey },
+    });
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 401) {
+      throw new Error('服务密钥（service-key）无效');
+    }
+    throw e;
+  }
+  let data: { token: string; access: string; device_id: string };
+  try {
+    data = await call<{ token: string; access: string; device_id: string }>(
       settings.remoteUrl,
       '/api/v1/viewer/login',
-      { method: 'POST', body: { key: settings.remoteKey } },
+      { method: 'POST', body: { gate_token: gate.gate_token, key: settings.remoteKey } },
     );
   } catch (e) {
     if (e instanceof HttpError && e.status === 401) {
-      throw new Error('hawk-server 写入密钥无效');
+      throw new Error('访问密钥无效或已吊销');
     }
     throw e;
   }
   if (data.access !== 'write') {
-    throw new Error('该密钥只有浏览权限，请在插件设置中填写 hawk-server 写入密钥');
+    throw new Error('该访问密钥没有写权限，请在 hawk 设置 → 远程中为该密钥开启写权限');
   }
-  return data.token;
+  return { token: data.token, deviceId: data.device_id };
 }
 
 /** 确保当前令牌已绑定到目标素材库的写会话 */
@@ -184,17 +203,27 @@ async function remoteContext(forceLogin = false): Promise<{ base: string; token:
   if (!settings.remoteUrl) {
     throw new Error('请先在插件设置中填写 hawk-server 域名');
   }
-  if (!settings.remoteKey) {
-    throw new Error('请先在插件设置中填写 hawk-server 写入密钥');
+  if (!settings.serviceKey) {
+    throw new Error('请先在插件设置中填写服务密钥（service-key）');
   }
-  if (!settings.targetDeviceId) {
-    throw new Error('请先在插件设置中选择要保存到的素材库');
+  if (!settings.remoteKey) {
+    throw new Error('请先在插件设置中填写访问密钥（须带写权限）');
   }
 
   let token = forceLogin ? '' : settings.remoteToken;
   if (!token) {
-    token = await remoteLogin(settings);
-    await saveSettings({ remoteToken: token });
+    const login = await remoteLogin(settings);
+    token = login.token;
+    // bt 绑定的目标设备即素材库（访问密钥映射决定），同步进设置免再选
+    await saveSettings({ remoteToken: token, targetDeviceId: login.deviceId });
+    settings.targetDeviceId = login.deviceId;
+  }
+  if (!settings.targetDeviceId) {
+    // 有缓存令牌但无目标记录（旧版残留）：重登一次拿绑定设备
+    const login = await remoteLogin(settings);
+    token = login.token;
+    await saveSettings({ remoteToken: token, targetDeviceId: login.deviceId });
+    settings.targetDeviceId = login.deviceId;
   }
 
   try {
@@ -205,10 +234,11 @@ async function remoteContext(forceLogin = false): Promise<{ base: string; token:
       throw e;
     }
     // 缓存的令牌已失效（服务端数据重置/注销）：重登后重开会话
-    const fresh = await remoteLogin(settings);
-    await saveSettings({ remoteToken: fresh });
-    await ensureRemoteSession(settings, fresh);
-    return { base: settings.remoteUrl, token: fresh };
+    const login = await remoteLogin(settings);
+    await saveSettings({ remoteToken: login.token, targetDeviceId: login.deviceId });
+    settings.targetDeviceId = login.deviceId;
+    await ensureRemoteSession(settings, login.token);
+    return { base: settings.remoteUrl, token: login.token };
   }
 }
 
@@ -269,20 +299,31 @@ export function addItemByBase64(imgBase64: string, website?: string, folderPath?
 }
 
 /**
- * 远程模式：用写入密钥登录并列出可写素材库。
- * 不依赖已保存设置，供设置弹窗在保存前预览设备列表。
+ * 远程模式：两级登录并列出访问密钥绑定的素材库（新模型下恒为单个——bt 绑定唯一设备）。
+ * 不依赖已保存设置，供设置弹窗在保存前预览。
  */
-export async function listRemoteDevices(remoteUrl: string, remoteKey: string): Promise<RemoteDevice[]> {
+export async function listRemoteDevices(
+  remoteUrl: string,
+  serviceKey: string,
+  remoteKey: string,
+): Promise<RemoteDevice[]> {
   if (!remoteUrl.trim()) {
     throw new Error('请填写 hawk-server 域名');
   }
+  if (!serviceKey.trim()) {
+    throw new Error('请填写服务密钥（service-key）');
+  }
   if (!remoteKey.trim()) {
-    throw new Error('请填写 hawk-server 写入密钥');
+    throw new Error('请填写访问密钥（须带写权限）');
   }
   const base = remoteUrl.trim().replace(/\/+$/, '');
+  const sk = serviceKey.trim();
   const key = remoteKey.trim();
   const settings = await getSettings();
-  const reusable = settings.remoteUrl === base && settings.remoteKey === key ? settings.remoteToken : '';
+  const reusable =
+    settings.remoteUrl === base && settings.serviceKey === sk && settings.remoteKey === key
+      ? settings.remoteToken
+      : '';
   if (reusable) {
     try {
       const data = await call<{ devices: RemoteDevice[] }>(base, '/api/v1/viewer/devices', {
@@ -296,13 +337,13 @@ export async function listRemoteDevices(remoteUrl: string, remoteKey: string): P
       }
     }
   }
-  const token = await remoteLogin({ ...settings, remoteUrl: base, remoteKey: key });
-  if (settings.remoteUrl === base && settings.remoteKey === key) {
-    await saveSettings({ remoteToken: token });
+  const login = await remoteLogin({ ...settings, remoteUrl: base, serviceKey: sk, remoteKey: key });
+  if (settings.remoteUrl === base && settings.serviceKey === sk && settings.remoteKey === key) {
+    await saveSettings({ remoteToken: login.token, targetDeviceId: login.deviceId });
   }
   const data = await call<{ devices: RemoteDevice[] }>(base, '/api/v1/viewer/devices', {
     method: 'GET',
-    token,
+    token: login.token,
   });
   return data.devices;
 }

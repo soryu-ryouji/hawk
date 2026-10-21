@@ -11,7 +11,9 @@ export interface HawkSettings {
   localToken: string;
   /** hawk-server 域名（http(s):// 开头） */
   remoteUrl: string;
-  /** hawk-server 写入密钥：换取写作用域令牌，仅能用于查看面会话 */
+  /** 服务密钥（service-key）：池门禁凭证，hawk-server tenant add 生成 */
+  serviceKey: string;
+  /** 访问密钥（hawk-app key，须带写权限）： hawk 设置 → 远程中签发，逐把吊销 */
   remoteKey: string;
   /** 写作用域令牌缓存（服务端重启/注销后 401 会自动重登） */
   remoteToken: string;
@@ -26,6 +28,7 @@ const DEFAULTS: HawkSettings = {
   localUrl: 'http://127.0.0.1:27371',
   localToken: '',
   remoteUrl: '',
+  serviceKey: '',
   remoteKey: '',
   remoteToken: '',
   targetDeviceId: '',
@@ -53,6 +56,9 @@ export async function saveSettings(patch: Partial<HawkSettings>): Promise<HawkSe
   if (patch.remoteKey !== undefined) {
     normalized.remoteKey = patch.remoteKey.trim();
   }
+  if (patch.serviceKey !== undefined) {
+    normalized.serviceKey = patch.serviceKey.trim();
+  }
   if (patch.localToken !== undefined) {
     normalized.localToken = patch.localToken.trim();
   }
@@ -61,6 +67,7 @@ export async function saveSettings(patch: Partial<HawkSettings>): Promise<HawkSe
   // 密钥/域名变化后旧令牌不再可信，清掉缓存（下次请求自动重登）
   const connectionChanged =
     (patch.remoteKey !== undefined && next.remoteKey !== current.remoteKey) ||
+    (patch.serviceKey !== undefined && next.serviceKey !== current.serviceKey) ||
     (patch.remoteUrl !== undefined && next.remoteUrl !== current.remoteUrl);
   if (connectionChanged) {
     next.remoteToken = '';
