@@ -3,7 +3,13 @@
 # 本服务的明文端口只绑环回，公网入口只经 nginx。
 services:
   hawk-server:
-    build: .
+    build:
+      context: .
+      args:
+        # 国内拉不动 docker.io 时，用环境变量覆盖为镜像代理（默认官方源）
+        NODE_IMAGE: ${NODE_IMAGE:-node:26-slim}
+        RUST_IMAGE: ${RUST_IMAGE:-rust:1-slim-bookworm}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim}
     image: hawk-server:latest
     container_name: hawk-server
     restart: unless-stopped
