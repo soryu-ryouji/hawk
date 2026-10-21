@@ -96,7 +96,17 @@ async fn run_inner(
     loop {
         // 注册（含服务端设备表丢失后的重注册）：瞬时失败退避重试，直到成功或致命
         while identity.device_id.is_none() {
-            match register(&http, &base, &cfg.key, paths, library, remote, &identity).await {
+            match register(
+                &http,
+                &base,
+                &cfg.service_key,
+                paths,
+                library,
+                remote,
+                &identity,
+            )
+            .await
+            {
                 Ok(device_id) => {
                     tracing::info!("远程访问设备已注册: {device_id}（{base}）");
                     identity.device_id = Some(device_id);
@@ -120,7 +130,7 @@ async fn run_inner(
         let ctx = ChannelContext {
             http: &http,
             base: &base,
-            key: &cfg.key,
+            key: &cfg.service_key,
             device_id: &device_id,
             identity: &identity,
             data_plane: &data_plane.0,
@@ -130,6 +140,7 @@ async fn run_inner(
             library,
             library_root: &paths.root,
             remote,
+            keys: &supervisor.keys,
         };
         match channel_loop(&ctx, supervisor).await {
             Ok(()) => retry = RETRY_MIN, // 对端正常关闭：立即重连
@@ -204,6 +215,7 @@ async fn bind_data_plane(
 struct ChannelContext<'a> {
     http: &'a reqwest::Client,
     base: &'a str,
+    /// service-key（池门禁凭证）
     key: &'a str,
     device_id: &'a str,
     identity: &'a Identity,
@@ -214,13 +226,15 @@ struct ChannelContext<'a> {
     library: &'a Arc<LibraryConfig>,
     library_root: &'a str,
     remote: &'a Arc<RemoteConfigStore>,
+    /// 访问密钥本地存储（查看者会话执法 + 接入后推送 server）
+    keys: &'a Arc<crate::remote::keys::KeyStore>,
 }
 
 /// 一轮控制通道：WSS 连接 → hello/hello_ack → 心跳与推送处理，直到断开
 async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) -> Result<()> {
     let (base, key, device_id) = (ctx.base, ctx.key, ctx.device_id);
-    let url = ws_url(base, key, device_id)?;
-    let (mut ws, _) = tokio_tungstenite::connect_async(&url)
+    let request = ws_request(base, key, device_id)?;
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
         .await
         .map_err(ws_connect_error)?;
 
@@ -248,6 +262,23 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
         error: None,
     });
     tracing::info!("远程访问控制通道已连接: {device_id}");
+
+    // 接入成功：全量推送本机访问密钥映射到 server（覆盖式幂等；失败等下次变更/重连重试）
+    {
+        let keys = ctx.keys.clone();
+        let http = ctx.http.clone();
+        let base = base.to_string();
+        let service_key = key.to_string();
+        let device_id = device_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = keys
+                .sync_to_server(&http, &base, &service_key, &device_id)
+                .await
+            {
+                tracing::warn!("访问密钥同步失败（下次变更或重连时重试）: {e}");
+            }
+        });
+    }
 
     // 通道（重）建立：上一轮会话的放行与连接全部失效（B 侧会感知断开自行收尾）
     ctx.data_plane.reset_peers();
@@ -298,36 +329,19 @@ async fn handle_message(
         }
         Some("session.request") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
-                let writable = value.get("access").and_then(|a| a.as_str()) == Some("write");
-                if writable && !ctx.remote.current().writable {
-                    tracing::info!("拒绝广域网写会话 {session_id}：本机未开启远程访问的 writable");
-                    reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
-                    return Ok(());
-                }
-
-                // 先放行对端指纹（B 在 ready 后可能立即连接），再回 accept
-                let peer = value["from"]["device_id"].as_str();
-                if let Some(peer_id) = peer {
-                    match fetch_fingerprint(ctx.http, ctx.base, ctx.key, peer_id).await {
-                        Ok(Some(fingerprint)) => {
-                            ctx.data_plane
-                                .allow_session(session_id, fingerprint, writable);
-                            accepted_peers.insert(session_id.to_string(), fingerprint);
-                            // 接受后超时清理：60s 内对端未连接 → 收回放行（幂等，
-                            // cancelled/重连时的重复收回无害）
-                            let plane = ctx.data_plane.clone();
-                            let session_id = session_id.to_string();
-                            tokio::spawn(async move {
-                                if !plane
-                                    .await_first_conn(&session_id, ACCEPT_PEER_TIMEOUT)
-                                    .await
-                                {
-                                    plane.disallow_session(&session_id);
-                                }
-                            });
-                        }
-                        Ok(None) => {
-                            if writable {
+                let requested_write = value.get("access").and_then(|a| a.as_str()) == Some("write");
+                // 本地执法（权限以本机 key 映射为准，server 声称的 access 只是参考）：
+                // - 查看者会话（携带 key 验证子）：key 必须存在且权限覆盖请求；
+                //   写会话另需本机 writable 总开关
+                // - app 间会话（无验证子）：不开放写（写只对 key 持有者开放）
+                let credential = value.get("credential").and_then(|c| c.as_str());
+                let writable = match credential {
+                    Some(hash) => match ctx.keys.resolve(hash) {
+                        Some(entry) => {
+                            if requested_write && !(entry.write && ctx.remote.current().writable) {
+                                tracing::info!(
+                                    "拒绝广域网写会话 {session_id}：key 无写权限或未开启 writable"
+                                );
                                 reject_session(
                                     ctx.http,
                                     ctx.base,
@@ -338,29 +352,58 @@ async fn handle_message(
                                 .await?;
                                 return Ok(());
                             }
-                            tracing::warn!("会话对端 {peer_id} 不在设备列表中，仍接受但不可连接");
+                            requested_write
                         }
-                        Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
-                        Err(SignalError::Transient(msg)) => {
-                            if writable {
-                                reject_session(
-                                    ctx.http,
-                                    ctx.base,
-                                    ctx.key,
-                                    session_id,
-                                    ctx.device_id,
-                                )
+                        None => {
+                            tracing::info!("拒绝查看者会话 {session_id}：访问密钥已吊销");
+                            reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id)
                                 .await?;
-                                return Ok(());
-                            }
-                            // 只读会话放行失败不阻断：接受后对端连不上会自行超时
-                            tracing::warn!("对端指纹获取失败（接受但不放行）: {msg}");
+                            return Ok(());
                         }
-                        Err(SignalError::Unregistered) => return Err(SignalError::Unregistered),
+                    },
+                    None => {
+                        if requested_write {
+                            tracing::info!("拒绝广域网写会话 {session_id}：写会话必须携带访问密钥");
+                            reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id)
+                                .await?;
+                            return Ok(());
+                        }
+                        false
                     }
-                } else if writable {
-                    reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
-                    return Ok(());
+                };
+
+                // 对端指纹随 session.request 下发（服务端持有双方设备记录），
+                // 先放行（B 在 ready 后可能立即连接）再回 accept
+                let fingerprint = value["from"]["fingerprint"]
+                    .as_str()
+                    .and_then(crate::remote::tls::parse_fingerprint);
+                match fingerprint {
+                    Some(fingerprint) => {
+                        ctx.data_plane
+                            .allow_session(session_id, fingerprint, writable);
+                        accepted_peers.insert(session_id.to_string(), fingerprint);
+                        // 接受后超时清理：60s 内对端未连接 → 收回放行（幂等，
+                        // cancelled/重连时的重复收回无害）
+                        let plane = ctx.data_plane.clone();
+                        let session_id = session_id.to_string();
+                        tokio::spawn(async move {
+                            if !plane
+                                .await_first_conn(&session_id, ACCEPT_PEER_TIMEOUT)
+                                .await
+                            {
+                                plane.disallow_session(&session_id);
+                            }
+                        });
+                    }
+                    None => {
+                        if writable {
+                            reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id)
+                                .await?;
+                            return Ok(());
+                        }
+                        // 只读会话指纹缺失不阻断：接受后对端连不上会自行超时
+                        tracing::warn!("会话对端指纹缺失（接受但不放行）");
+                    }
                 }
                 if let Err(e) =
                     accept_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await
@@ -372,20 +415,20 @@ async fn handle_message(
 
                 // 中继模式：accept 后经服务端中继 WS 建立 QUIC（role=a 目标设备）
                 if value.get("mode").and_then(|m| m.as_str()) == Some("relay") {
-                    match crate::remote::relay::relay_ws_url(
+                    match crate::remote::relay::relay_ws_request(
                         ctx.base,
                         ctx.key,
                         ctx.device_id,
                         session_id,
                         "a",
                     ) {
-                        Ok(url) => {
+                        Ok(request) => {
                             let identity = ctx.identity.clone();
                             let plane = ctx.data_plane.clone();
                             let router = ctx.router.clone();
                             let session_id = session_id.to_string();
                             tokio::spawn(async move {
-                                match tokio_tungstenite::connect_async(&url).await {
+                                match tokio_tungstenite::connect_async(request).await {
                                     Ok((ws, _)) => {
                                         tracing::info!("中继会话 {session_id}：A 侧通道已连接");
                                         if let Err(e) = crate::remote::relay::serve_over_ws(
@@ -431,34 +474,6 @@ fn library_name(config: &Arc<LibraryConfig>, root: &str) -> String {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "素材库".to_string())
     })
-}
-
-/// 设备列表中查对端指纹（QUIC 客户端证书放行依据）
-async fn fetch_fingerprint(
-    http: &reqwest::Client,
-    base: &str,
-    key: &str,
-    device_id: &str,
-) -> Result<Option<[u8; 32]>> {
-    let resp = http
-        .get(format!("{base}/api/v1/devices"))
-        .bearer_auth(key)
-        .send()
-        .await
-        .map_err(|e| SignalError::Transient(format!("设备列表获取失败: {e}")))?;
-    if !resp.status().is_success() {
-        return Err(response_error(resp, "设备列表获取").await);
-    }
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| SignalError::Transient(format!("设备列表解析失败: {e}")))?;
-    let fingerprint = body["data"]["devices"]
-        .as_array()
-        .and_then(|devices| devices.iter().find(|d| d["device_id"] == device_id))
-        .and_then(|d| d["fingerprint"].as_str())
-        .and_then(crate::remote::tls::parse_fingerprint);
-    Ok(fingerprint)
 }
 
 async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
@@ -638,14 +653,18 @@ fn normalize_base(url: &str) -> Result<String> {
     }
 }
 
-/// REST base → WSS 控制通道地址（查询参数编码经 Url 处理）
-fn ws_url(base: &str, key: &str, device_id: &str) -> Result<String> {
+/// REST base → WSS 控制通道请求。service-key 走 Authorization 头而非 URL 查询串
+/// （反代 access log 会记录完整 URL，查询串带 key 等于明文落日志）
+fn ws_request(
+    base: &str,
+    key: &str,
+    device_id: &str,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let mut url = reqwest::Url::parse(base)
         .map_err(|e| SignalError::Fatal(format!("remote url 解析失败: {e}")))?;
     url.set_path("/api/v1/ws");
-    url.query_pairs_mut()
-        .append_pair("key", key)
-        .append_pair("device_id", device_id);
+    url.query_pairs_mut().append_pair("device_id", device_id);
     let scheme = if base.starts_with("https://") {
         "wss"
     } else {
@@ -653,7 +672,17 @@ fn ws_url(base: &str, key: &str, device_id: &str) -> Result<String> {
     };
     url.set_scheme(scheme)
         .map_err(|_| SignalError::Fatal("remote url scheme 非法".to_string()))?;
-    Ok(url.to_string())
+    let mut request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|e| SignalError::Fatal(format!("控制通道请求构建失败: {e}")))?;
+    request.headers_mut().insert(
+        tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
+        format!("Bearer {key}")
+            .parse()
+            .map_err(|_| SignalError::Fatal("service-key 含非法字符".to_string()))?,
+    );
+    Ok(request)
 }
 
 #[cfg(test)]
@@ -663,18 +692,22 @@ mod tests {
     #[test]
     fn normalize_base_requires_http_scheme() {
         assert!(normalize_base("https://hawk.example.com/").is_ok());
-        assert_eq!(normalize_base("http://a:27370/").unwrap(), "http://a:27370");
+        assert_eq!(normalize_base("http://a:9100/").unwrap(), "http://a:9100");
         assert!(normalize_base("hawk.example.com").is_err());
     }
 
     #[test]
-    fn ws_url_switches_scheme_and_encodes_query() {
-        let url = ws_url("https://hawk.example.com", "k+e/y=", "d_1").unwrap();
+    fn ws_request_switches_scheme_and_carries_bearer_header() {
+        let req = ws_request("https://hawk.example.com", "k+e/y=", "d_1").unwrap();
         assert_eq!(
-            url,
-            "wss://hawk.example.com/api/v1/ws?key=k%2Be%2Fy%3D&device_id=d_1"
+            req.uri().to_string(),
+            "wss://hawk.example.com/api/v1/ws?device_id=d_1"
         );
-        let url = ws_url("http://127.0.0.1:27370", "abc", "d_1").unwrap();
-        assert_eq!(url, "ws://127.0.0.1:27370/api/v1/ws?key=abc&device_id=d_1");
+        assert_eq!(req.headers().get("authorization").unwrap(), "Bearer k+e/y=");
+        let req = ws_request("http://127.0.0.1:9100", "abc", "d_1").unwrap();
+        assert_eq!(
+            req.uri().to_string(),
+            "ws://127.0.0.1:9100/api/v1/ws?device_id=d_1"
+        );
     }
 }

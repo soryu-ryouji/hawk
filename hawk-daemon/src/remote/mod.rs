@@ -5,6 +5,7 @@
 pub mod config;
 pub mod data;
 pub mod identity;
+pub mod keys;
 pub mod reachability;
 pub mod relay;
 pub mod session;
@@ -46,13 +47,15 @@ pub struct RemoteStatus {
     pub error: Option<String>,
 }
 
-/// remote supervisor：期望态（enabled && url/key 非空 → 信令运行中）与实际任务的 reconcile
+/// remote supervisor：期望态（enabled && url/service_key 非空 → 信令运行中）与实际任务的 reconcile
 pub struct Supervisor {
     notify: tokio::sync::Notify,
     status: Mutex<RemoteStatus>,
     bus: EventBus,
     /// B 侧会话编排（单活动会话；生命周期事件经 SSE 推送）
     pub sessions: Arc<session::SessionManager>,
+    /// 访问密钥（hawk-app key）本地签发与保管（查看者会话的本地执法依据）
+    pub keys: Arc<keys::KeyStore>,
     /// 应用级远程配置（接入参数跨素材库共享；身份目录由配置位置派生）
     config: Arc<RemoteConfigStore>,
 }
@@ -63,6 +66,7 @@ impl Supervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new(RemoteStatus::default()),
             sessions: session::SessionManager::new(bus.clone()),
+            keys: keys::KeyStore::open(config.identity_dir()),
             bus,
             config,
         })
@@ -154,12 +158,15 @@ impl Supervisor {
 }
 
 fn activatable(cfg: &RemoteSettings) -> bool {
-    cfg.enabled && !cfg.url.is_empty() && !cfg.key.is_empty()
+    cfg.enabled && !cfg.url.is_empty() && !cfg.service_key.is_empty()
 }
 
 /// 是否需要重建信令/数据面：写权限等运行期配置不算连接参数
 fn same_connection(a: &RemoteSettings, b: &RemoteSettings) -> bool {
-    a.enabled == b.enabled && a.url == b.url && a.key == b.key && a.quic_port == b.quic_port
+    a.enabled == b.enabled
+        && a.url == b.url
+        && a.service_key == b.service_key
+        && a.quic_port == b.quic_port
 }
 
 #[cfg(test)]

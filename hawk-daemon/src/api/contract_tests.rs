@@ -58,7 +58,13 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     (
         "PUT",
         "/api/v1/remote",
-        Some(r#"{"enabled":false,"url":"","key":""}"#),
+        Some(r#"{"enabled":false,"url":"","service_key":""}"#),
+    ),
+    ("GET", "/api/v1/remote/keys", None),
+    (
+        "POST",
+        "/api/v1/remote/keys",
+        Some(r#"{"label":"契约密钥","read":true,"write":false}"#),
     ),
     ("GET", "/api/v1/item/count", None),
     ("GET", "/api/v1/library/info", None),
@@ -132,6 +138,9 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     ("DELETE", "/api/v1/remote/session"),
     ("PATCH", "/api/v1/remote/device"),
     ("POST", "/api/v1/remote/device/rotate"),
+    // key 的 PATCH/DELETE 路径参数依赖前置签发，由 SUCCESS_CASES 的 POST 覆盖创建路径
+    ("PATCH", "/api/v1/remote/keys/{key_id}"),
+    ("DELETE", "/api/v1/remote/keys/{key_id}"),
 ];
 
 /// SSE 长连接端点：不发 HTTP 请求（oneshot 会挂起），只做 schema 存在性与事件集合校验

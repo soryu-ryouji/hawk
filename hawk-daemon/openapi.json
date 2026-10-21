@@ -142,6 +142,56 @@
         ],
         "type": "object"
       },
+      "CreateKeyBody": {
+        "properties": {
+          "custom": {
+            "description": "自定义密钥（可空 = 程序生成 128 位随机串）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "description": "展示标签（如「iPhone 插件」；可空）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "write": {
+            "description": "写权限（广域网导入素材/新建文件夹；自定义 key 携带写权限时至少 12 字符）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "read"
+        ],
+        "type": "object"
+      },
+      "CreateKeyDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "description": "明文 key：只在本次响应出现，服务端/本地均不存明文",
+            "type": "string"
+          },
+          "synced": {
+            "description": "是否已同步到 server 映射（false = 远程未接入/推送失败，下次接入自动重试）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "synced"
+        ],
+        "type": "object"
+      },
       "CreateSessionBody": {
         "properties": {
           "mode": {
@@ -154,6 +204,17 @@
         },
         "required": [
           "target_device_id"
+        ],
+        "type": "object"
+      },
+      "DeleteKeyDto": {
+        "properties": {
+          "synced": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "synced"
         ],
         "type": "object"
       },
@@ -285,6 +346,62 @@
               "hidden",
               "ignored",
               "missing"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_CreateKeyDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "key": {
+                "description": "明文 key：只在本次响应出现，服务端/本地均不存明文",
+                "type": "string"
+              },
+              "synced": {
+                "description": "是否已同步到 server 映射（false = 远程未接入/推送失败，下次接入自动重试）",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "key",
+              "synced"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_DeleteKeyDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "synced": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "synced"
             ],
             "type": "object"
           },
@@ -904,6 +1021,33 @@
         ],
         "type": "object"
       },
+      "Envelope_PatchKeyDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "key": {
+                "$ref": "#/components/schemas/RemoteKeyDto"
+              },
+              "synced": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "key",
+              "synced"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_RefreshCacheResponse": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -1024,7 +1168,8 @@
               "enabled": {
                 "type": "boolean"
               },
-              "key": {
+              "service_key": {
+                "description": "服务端 service-key（池门禁凭证，hawk-server tenant add 生成）",
                 "type": "string"
               },
               "status": {
@@ -1042,9 +1187,35 @@
             "required": [
               "enabled",
               "url",
-              "key",
+              "service_key",
               "writable",
               "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_RemoteKeysDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "keys": {
+                "items": {
+                  "$ref": "#/components/schemas/RemoteKeyDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "keys"
             ],
             "type": "object"
           },
@@ -2501,6 +2672,44 @@
         },
         "type": "object"
       },
+      "PatchKeyBody": {
+        "properties": {
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "read": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "write": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PatchKeyDto": {
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/RemoteKeyDto"
+          },
+          "synced": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "synced"
+        ],
+        "type": "object"
+      },
       "PutLanBody": {
         "properties": {
           "enabled": {
@@ -2542,7 +2751,8 @@
           "enabled": {
             "type": "boolean"
           },
-          "key": {
+          "service_key": {
+            "description": "服务端 service-key",
             "type": "string"
           },
           "url": {
@@ -2556,7 +2766,7 @@
         "required": [
           "enabled",
           "url",
-          "key"
+          "service_key"
         ],
         "type": "object"
       },
@@ -2660,7 +2870,8 @@
           "enabled": {
             "type": "boolean"
           },
-          "key": {
+          "service_key": {
+            "description": "服务端 service-key（池门禁凭证，hawk-server tenant add 生成）",
             "type": "string"
           },
           "status": {
@@ -2678,9 +2889,57 @@
         "required": [
           "enabled",
           "url",
-          "key",
+          "service_key",
           "writable",
           "status"
+        ],
+        "type": "object"
+      },
+      "RemoteKeyDto": {
+        "properties": {
+          "created_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "prefix": {
+            "description": "key 前 4 字符（识别用；明文不存也不可得）",
+            "type": "string"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "read",
+          "write",
+          "prefix",
+          "created_at_ms"
+        ],
+        "type": "object"
+      },
+      "RemoteKeysDto": {
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/RemoteKeyDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
         ],
         "type": "object"
       },
@@ -4615,6 +4874,128 @@
           }
         },
         "summary": "拉取服务端设备列表（admin 限定）。本机设备与对端设备同列，app 据 online/allow_remote 展示",
+        "tags": [
+          "remote"
+        ]
+      }
+    },
+    "/api/v1/remote/keys": {
+      "get": {
+        "operationId": "list_keys",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RemoteKeysDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "列出本机签发的访问密钥（admin 限定；不含明文——明文只在签发时返回一次）",
+        "tags": [
+          "remote"
+        ]
+      },
+      "post": {
+        "operationId": "create_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateKeyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_CreateKeyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "签发访问密钥（admin 限定）：本地保管验证子，推送 server 哈希映射（best-effort）",
+        "tags": [
+          "remote"
+        ]
+      }
+    },
+    "/api/v1/remote/keys/{key_id}": {
+      "delete": {
+        "operationId": "delete_key",
+        "parameters": [
+          {
+            "description": "密钥 id",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_DeleteKeyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "吊销访问密钥（admin 限定）：本地删除并推送 server 移除映射，该 key 的后续会话即被拒",
+        "tags": [
+          "remote"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_key",
+        "parameters": [
+          {
+            "description": "密钥 id",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchKeyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_PatchKeyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "更新访问密钥的标签/权限（admin 限定；权限收窄对后续会话立即生效）",
         "tags": [
           "remote"
         ]

@@ -107,10 +107,15 @@ impl SessionManager {
 
         // ---- 建立数据面：relay 经服务端中继 WS；direct 依序尝试候选 ----
         let (endpoint, conn, relay_driver) = if mode == "relay" {
-            let ws_url =
-                crate::remote::relay::relay_ws_url(base, key, &self_device_id, &session_id, "b")
-                    .map_err(ConnectError::server)?;
-            let (ws, _) = tokio_tungstenite::connect_async(&ws_url)
+            let ws_request = crate::remote::relay::relay_ws_request(
+                base,
+                key,
+                &self_device_id,
+                &session_id,
+                "b",
+            )
+            .map_err(ConnectError::server)?;
+            let (ws, _) = tokio_tungstenite::connect_async(ws_request)
                 .await
                 .map_err(|e| ConnectError::server(format!("中继通道连接失败: {e}")))?;
             let (endpoint, conn, driver) =

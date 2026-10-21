@@ -341,9 +341,9 @@ async fn relay_session_end_to_end() {
     let (base, _pairs) = spawn_relay_hub(fingerprint_hex(&identity_a)).await;
 
     // A 侧连中继 WS（role=a）并在其上接受 QUIC
-    let ws_url_a =
-        hawk_daemon::remote::relay::relay_ws_url(&base, "key", "d_a", "s_r", "a").unwrap();
-    let (ws_a, _) = tokio_tungstenite::connect_async(&ws_url_a).await.unwrap();
+    let ws_req_a =
+        hawk_daemon::remote::relay::relay_ws_request(&base, "key", "d_a", "s_r", "a").unwrap();
+    let (ws_a, _) = tokio_tungstenite::connect_async(ws_req_a).await.unwrap();
     let serve = {
         let identity_a = identity_a.clone();
         let plane_a = plane_a.clone();
