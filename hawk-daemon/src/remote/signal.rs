@@ -339,6 +339,18 @@ async fn handle_message(
         Some("session.request") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
                 let requested_write = value.get("access").and_then(|a| a.as_str()) == Some("write");
+                // 时间线日志：与中继配对/查看方日志按 session_id 对齐
+                tracing::info!(
+                    "收到会话请求 {session_id}（mode={}，access={}）",
+                    value
+                        .get("mode")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or_default(),
+                    value
+                        .get("access")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or_default()
+                );
                 // 本地执法（权限以本机 key 映射为准，server 声称的 access 只是参考）：
                 // - 查看者会话（携带 key 验证子）：key 必须存在且权限覆盖请求；
                 //   写会话另需本机 writable 总开关
@@ -437,8 +449,21 @@ async fn handle_message(
                             let router = ctx.router.clone();
                             let session_id = session_id.to_string();
                             tokio::spawn(async move {
-                                match tokio_tungstenite::connect_async(request).await {
-                                    Ok((ws, _)) => {
+                                // connect_async 无内置超时：反代对 Upgrade 处理不当时会静默
+                                // 挂起（查看方 15s 就超时放弃了），必须自己掐表
+                                match tokio::time::timeout(
+                                    Duration::from_secs(10),
+                                    tokio_tungstenite::connect_async(request),
+                                )
+                                .await
+                                {
+                                    Err(_) => {
+                                        tracing::warn!("中继会话 {session_id} 通道连接超时（10s，检查反代的 WebSocket Upgrade 配置）")
+                                    }
+                                    Ok(Err(e)) => {
+                                        tracing::warn!("中继会话 {session_id} 通道连接失败: {e}")
+                                    }
+                                    Ok(Ok((ws, _))) => {
                                         tracing::info!("中继会话 {session_id}：A 侧通道已连接");
                                         if let Err(e) = crate::remote::relay::serve_over_ws(
                                             &identity, &plane, ws, router,
@@ -449,9 +474,6 @@ async fn handle_message(
                                                 "中继会话 {session_id} 服务端点失败: {e}"
                                             );
                                         }
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("中继会话 {session_id} 通道连接失败: {e}");
                                     }
                                 }
                             });

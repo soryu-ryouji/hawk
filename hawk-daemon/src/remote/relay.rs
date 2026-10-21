@@ -14,6 +14,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -66,6 +67,10 @@ fn runtime() -> Result<Arc<dyn quinn::Runtime>, String> {
     quinn::default_runtime().ok_or_else(|| "tokio runtime 不可用".to_string())
 }
 
+/// 中继隧道 QUIC 握手超时：15s。中继比直连多一串串行链路（accept RTT → 对端经反代
+/// 连 relay WS → 配对 → WS 上的 QUIC 往返），直连候选的 5s 在跨网中继下过紧
+pub const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// B 侧：经中继连接 A 侧（钉扎指纹）。返回 (endpoint, connection, WS 驱动句柄)；
 /// 驱动句柄须随会话持有，中止即关闭中继通道
 pub async fn connect_over_ws(
@@ -92,7 +97,7 @@ pub async fn connect_over_ws(
     let connecting = endpoint
         .connect(RELAY_ADDR, "hawk-remote")
         .map_err(|e| format!("中继隧道发起失败: {e}"))?;
-    let conn = tokio::time::timeout(crate::remote::data::CANDIDATE_TIMEOUT, connecting)
+    let conn = tokio::time::timeout(RELAY_CONNECT_TIMEOUT, connecting)
         .await
         .map_err(|_| "中继隧道握手超时".to_string())?
         .map_err(|e| format!("中继隧道握手失败: {e}"))?;

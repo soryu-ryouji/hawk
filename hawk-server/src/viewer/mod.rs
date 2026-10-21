@@ -22,7 +22,9 @@ use std::time::Duration;
 /// 会话 ready 轮询（A 侧经 WSS 异步接受）
 const READY_POLL: Duration = Duration::from_secs(1);
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// 中继隧道 QUIC 握手超时：中继比直连多一串串行链路（A 收 WSS 推送 → accept RTT →
+/// A 经反代连 relay WS → 配对 → WS 上的 QUIC 往返），5s 在真实跨网环境下太紧
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct ViewerSession {
     pub session_token: String,
@@ -205,13 +207,18 @@ impl ViewerManager {
                     .unwrap()
                     .get(&hawk_session_id)
                     .map(|session| session.state.as_str().to_string());
-                return Err(match state.as_deref() {
+                let message = match state.as_deref() {
                     Some("rejected") => "对方设备拒绝会话（可能未开启广域网写入）".to_string(),
                     Some("unreachable") => "目标设备不可达".to_string(),
                     Some("expired") => "会话建立超时".to_string(),
                     Some("cancelled") => "会话已取消".to_string(),
                     _ => "会话建立超时或失败".to_string(),
-                });
+                };
+                // 带 session_id 落日志：与中继配对日志（同 id）可对齐时间线
+                tracing::warn!(
+                    "查看会话 {hawk_session_id} 建立失败（目标 {target_device_id}）: {message}"
+                );
+                return Err(message);
             }
         };
 
@@ -231,8 +238,14 @@ impl ViewerManager {
             .map_err(|e| format!("中继隧道发起失败: {e}"))?;
         let conn = tokio::time::timeout(CONNECT_TIMEOUT, connecting)
             .await
-            .map_err(|_| "中继隧道握手超时".to_string())?
-            .map_err(|e| format!("中继隧道握手失败: {e}"))?;
+            .map_err(|_| {
+                tracing::warn!("查看会话 {hawk_session_id} 中继隧道握手超时（{CONNECT_TIMEOUT:?}，目标 {target_device_id}）");
+                "中继隧道握手超时".to_string()
+            })?
+            .map_err(|e| {
+                tracing::warn!("查看会话 {hawk_session_id} 中继隧道握手失败: {e}");
+                format!("中继隧道握手失败: {e}")
+            })?;
 
         let (target_name, target_library_name) = self
             .state
