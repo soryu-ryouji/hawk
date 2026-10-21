@@ -20,8 +20,7 @@ files:
   - build-info.json
 extraResources:
   # 各平台 hawk-daemon 二进制（cargo build --release，见 scripts/build-server.mjs）。
-  # 注意：平台段（win/mac/linux）的 extraResources 会覆盖而非追加本节——
-  # Windows 段必须再列一次，否则产物缺少 daemon（见 win 段）
+  # 平台段（win）的 extraResources 与本段追加合并，不覆盖——不要在 win 段重复列 daemon
   - from: resources/hawk-daemon
     to: hawk-daemon
 # LAN web 查看：hawk-daemon 以物理路径托管该目录（asar 归档内不可读取）
@@ -35,12 +34,10 @@ win:
   # 绿色软件：zip 解压即用，免安装。相比 portable（NSIS 单文件）无 32 位启动壳，产物全 64 位，构建也不依赖 GitHub 下载 NSIS 工具链
   target: zip
   artifactName: ${productName}-windows-${arch}.${ext}
-  # 平台段 extraResources 覆盖顶层配置（electron-builder 语义），必须列全：
-  # hawk-daemon（顶层已有，但 Windows 段会覆盖掉）+ Windows 更新辅助程序
-  # （hawk-update/，替代 PowerShell 脚本的安装接力，见 scripts/build-update.mjs）
+  # 平台级 extraResources 与顶层追加合并非覆盖，只写增量：Windows 更新辅助程序
+  # （hawk-update/，替代 PowerShell 脚本的安装接力，见 scripts/build-update.mjs）。
+  # daemon 来自顶层，重复列会导致同一目标被并发复制（EBUSY）
   extraResources:
-    - from: resources/hawk-daemon
-      to: hawk-daemon
     - from: resources/hawk-update
       to: hawk-update
 # AppImage 运行时工具集：默认 0.0.0 是动态链接 libfuse.so.2 的老 runtime，Fedora 44 / Ubuntu 24.04+
