@@ -196,25 +196,27 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 
 | 阶段 | 内容 | 验收标准 |
 | ---- | ---- | -------- |
-| 1a   | ~~hawk-server P1 控制面~~（已完成）+ daemon remote/ 信令：`[remote]` 配置、设备身份（device_id + 自签证书）、注册/心跳/WSS 自动重连、状态 API | 设备配置后可注册上线、维持在线、接收并自动响应会话请求 |
-| 1b   | 可达性（UPnP/IPv6）+ QUIC 数据面（A 侧隧道端/B 侧会话代理）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
+| 1a   | ~~hawk-server P1 控制面 + daemon remote/ 信令~~（已完成）：`[remote]` 配置、设备身份、注册/心跳/WSS 自动重连、状态 API | 设备配置后可注册上线、维持在线、接收并自动响应会话请求 |
+| 1b   | ~~daemon 数据面~~（已完成：可达性 UPnP/IPv6、QUIC 双向指纹钉扎、A 侧隧道端进程内转发 TunneledViewer、B 侧会话代理、会话编排 API + SSE remote.session）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
 | 2    | 服务端中继 + 客户端中继逻辑 +「中继回退」开关与确认弹窗 | 直连失败经用户确认走中继；QUIC 端到端语义不变（服务端只见密文） |
 | 3    | QUIC 打洞（免端口映射 P2P，心跳已预留 `nat_type`） | 视阶段 1 直连成功率数据决定是否投入 |
 
-## remote/ 模块结构（规划）
+## remote/ 模块结构
 
 ```text
 hawk-daemon/src/remote/
 ├── mod.rs          # supervisor（reconcile：[remote] 配置变更 → 热重启信令）+ 状态快照
-├── settings.rs     # [remote] 配置段（enabled/url/key）
 ├── identity.rs     # .hawk/remote/identity.json（device_id、rcgen 自签证书与指纹）
-├── signal/         # REST 客户端（注册/心跳/设备/会话）+ WSS 通道 + 自动重连
-├── reachability/   # UPnP/NAT-PMP 映射维护、公网 v4/v6 探测（1b）
-├── session/        # 会话编排、候选依序尝试（单候选 5s）（1b）
-└── data/           # quinn 端点、A 侧隧道端（进程内转发 viewer 级）、B 侧会话代理（1b）
+├── signal.rs       # REST 客户端（注册/心跳/设备/会话）+ WSS 通道 + 自动重连
+├── tls.rs          # QUIC 双向指纹钉扎（rustls verifier：B 钉 A、A 放行已接受对端）
+├── reachability.rs # 全局 IPv6 探测（UDP connect 出接口）+ UPnP 映射维护（igd 阻塞任务）
+├── data.rs         # quinn 端点、A 侧隧道端（hyper-over-stream 进程内转发 TunneledViewer）、B 侧会话代理
+└── session.rs      # B 侧会话编排：发起 → 轮询 ready → 候选依序尝试 → 代理；SSE remote.session
 ```
 
-新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、rcgen + sha2（自签证书与指纹）；1b 增加 quinn、igd。
+新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、rcgen + sha2（自签证书与指纹）、quinn（QUIC）、igd-next（UPnP）、hyper + hyper-util（隧道内 HTTP/1.1 解析）。
+
+数据面传输模型：一条 QUIC 双向流即一条 HTTP/1.1 连接——B 侧会话代理逐请求开流原样转发，A 侧经 hyper 解析后进程内调 API 路由。SSE/缩略图等流式响应由 HTTP/1.1 语义原生承载，两端都不解析素材数据。
 
 ## 相关文档
 

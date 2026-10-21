@@ -172,15 +172,16 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
             enabled: true,
             url: base,
             key: KEY.to_string(),
+            quic_port: 0, // OS 分配，避免测试间端口冲突
         })
         .unwrap();
 
-    let supervisor = Supervisor::new();
-    let task = tokio::spawn(
-        supervisor
-            .clone()
-            .run(lib.paths.clone(), lib.config.clone()),
-    );
+    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let task = tokio::spawn(supervisor.clone().run(
+        lib.paths.clone(),
+        lib.config.clone(),
+        axum::Router::new(),
+    ));
 
     // 注册 + WSS 连接 → Online；首次心跳即刻发出
     wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
@@ -211,15 +212,16 @@ async fn signal_reports_fatal_on_invalid_key() {
             enabled: true,
             url: base,
             key: "wrong-key".to_string(),
+            quic_port: 0,
         })
         .unwrap();
 
-    let supervisor = Supervisor::new();
-    let task = tokio::spawn(
-        supervisor
-            .clone()
-            .run(lib.paths.clone(), lib.config.clone()),
-    );
+    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let task = tokio::spawn(supervisor.clone().run(
+        lib.paths.clone(),
+        lib.config.clone(),
+        axum::Router::new(),
+    ));
 
     // 401 = 致命：状态置 Error（不重试风暴，等配置变更）
     wait_state(&supervisor, RemoteState::Error, Duration::from_secs(10)).await;

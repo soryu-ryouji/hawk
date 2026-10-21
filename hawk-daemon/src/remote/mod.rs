@@ -2,10 +2,15 @@
 //! `[remote]` 配置启用才激活；supervisor reconcile 管理（同 LAN web 先例）——
 //! 配置变更热重启信令，连接失败只写状态不崩进程。设计见 docs/backend/remote-access.md。
 
+pub mod data;
 pub mod identity;
+pub mod reachability;
+pub mod session;
 pub mod signal;
+pub mod tls;
 
 use crate::core::config::{LibraryConfig, RemoteSettings};
+use crate::core::events::EventBus;
 use crate::core::paths::LibraryPaths;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -39,13 +44,16 @@ pub struct RemoteStatus {
 pub struct Supervisor {
     notify: tokio::sync::Notify,
     status: Mutex<RemoteStatus>,
+    /// B 侧会话编排（单活动会话；生命周期事件经 SSE 推送）
+    pub sessions: Arc<session::SessionManager>,
 }
 
 impl Supervisor {
-    pub fn new() -> Arc<Supervisor> {
+    pub fn new(bus: EventBus) -> Arc<Supervisor> {
         Arc::new(Supervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new(RemoteStatus::default()),
+            sessions: session::SessionManager::new(bus),
         })
     }
 
@@ -63,8 +71,13 @@ impl Supervisor {
         *self.status.lock().unwrap() = status;
     }
 
-    /// 常驻任务：唤醒 → 收敛 → 等待下一轮
-    pub async fn run(self: Arc<Self>, paths: LibraryPaths, config: Arc<LibraryConfig>) {
+    /// 常驻任务：唤醒 → 收敛 → 等待下一轮。router 为 daemon API 路由克隆（A 侧隧道端进程内转发目标）
+    pub async fn run(
+        self: Arc<Self>,
+        paths: LibraryPaths,
+        config: Arc<LibraryConfig>,
+        router: axum::Router,
+    ) {
         let mut current: Option<(RemoteSettings, tokio::task::JoinHandle<()>)> = None;
         loop {
             let cfg = config.current().remote;
@@ -86,6 +99,7 @@ impl Supervisor {
                         config.clone(),
                         cfg.clone(),
                         self.clone(),
+                        router.clone(),
                     ));
                     Some((cfg, handle))
                 } else {

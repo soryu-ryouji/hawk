@@ -23,6 +23,10 @@ pub mod codes {
     pub const INTERNAL: &str = "INTERNAL";
     pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
     pub const READ_ONLY: &str = "READ_ONLY";
+    /// 远程访问：hawk-server 不可达或被拒（502）
+    pub const REMOTE_UPSTREAM: &str = "REMOTE_UPSTREAM";
+    /// 远程访问：会话状态语义失败（对方拒绝/不可达/超时/直连失败，409）
+    pub const REMOTE_SESSION_FAILED: &str = "REMOTE_SESSION_FAILED";
 }
 
 /// 携带错误码与 HTTP 状态的业务错误，由 IntoResponse 统一转为错误信封

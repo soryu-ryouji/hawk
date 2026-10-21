@@ -219,7 +219,17 @@ async fn auth(
         return next.run(req).await;
     }
 
-    let access = resolve_access(&state, &req);
+    // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledViewer（HTTP 客户端无法伪造扩展，
+    // 隧道流量恒为 viewer 只读，无视其携带的任何 token 头）
+    let access = if req
+        .extensions()
+        .get::<crate::remote::data::TunneledViewer>()
+        .is_some()
+    {
+        Some(AccessLevel::Viewer { writable: false })
+    } else {
+        resolve_access(&state, &req)
+    };
     let Some(access) = access else {
         return (
             axum::http::StatusCode::UNAUTHORIZED,

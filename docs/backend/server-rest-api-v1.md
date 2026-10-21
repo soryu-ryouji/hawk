@@ -226,6 +226,10 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | ---- | ---- | ---- |
 | GET | `/api/v1/remote` | 读取远程访问接入配置（`[remote]` 段）与信令运行状态（admin 限定） |
 | PUT | `/api/v1/remote` | 写回 `[remote]` 配置并热重启信令（admin 限定） |
+| GET | `/api/v1/remote/devices` | 拉取服务端设备列表（admin 限定） |
+| GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
+| POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
+| DELETE | `/api/v1/remote/session` | 断开当前远程会话（admin 限定，幂等） |
 
 ### remote
 
@@ -266,6 +270,70 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 ```
 
 校验（`INVALID_PARAM`）：`enabled` 时 `url`/`key` 必填；`url` 须以 `http://` 或 `https://` 开头。响应同 GET。
+
+---
+
+`GET /api/v1/remote/devices`
+
+转发拉取 hawk-server 的设备列表（本机与对端同列），接入 key 不出本进程。未配置接入返回 400 `INVALID_PARAM`；服务端不可达/被拒返回 502 `REMOTE_UPSTREAM`。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": {
+    "devices": [
+      {
+        "device_id": "d_42",
+        "name": "家里台式机",
+        "platform": "windows",
+        "library_name": "我的素材库",
+        "online": true,
+        "allow_remote": true,
+        "last_seen_at_ms": 1750000000000
+      }
+    ]
+  }
+}
+```
+
+---
+
+`POST /api/v1/remote/session`
+
+建立远程会话：发起 → 轮询 ready → 候选依序连接（单候选 5s）→ 拉起会话代理（QUIC 指纹钉扎端到端）。单活动会话模型：新会话自动顶替旧会话。会话状态错误（对方拒绝/不可达/超时/直连失败）返回 409 `REMOTE_SESSION_FAILED`，服务端不可达返回 502 `REMOTE_UPSTREAM`。
+
+#### 请求与响应
+
+```json
+// 请求
+{ "target_device_id": "d_42" }
+// 响应：app 连接描述符的原料（api_base = http://127.0.0.1:<proxy_port>）
+{
+  "status": "success",
+  "data": {
+    "session_id": "s_9",
+    "target_device_id": "d_42",
+    "target_name": "家里台式机",
+    "target_library_name": "我的素材库",
+    "proxy_port": 51234,
+    "token": "<会话代理 token>"
+  }
+}
+```
+
+---
+
+`GET /api/v1/remote/session`
+
+读取当前活动会话（结构同 POST 响应的 data）；无活动会话时 data 为 null。
+
+---
+
+`DELETE /api/v1/remote/session`
+
+断开当前会话（幂等）：通知服务端取消、断开隧道、关闭会话代理。返回 `{"status":"success"}`。
 
 ## library
 
@@ -1019,6 +1087,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `library.updated` | LibraryInfo 对象 | 库显示名变更（`PATCH library/info`）；负载为完整库信息，客户端就地替换 |
 | `global_filter.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 全局列表隐藏集变更（标记/取消、级联跟随、外部同步重载）；负载为完整快照，客户端就地替换并重查列表 |
 | `locks.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 锁集变更（设锁/解除/改密、级联跟随、外部同步重载）；负载为名称快照，客户端重拉锁标记并重查列表。锁覆盖内的素材不发 `item.*` 事件（保守过滤，已解锁客户端可能漏收，靠解锁后的重查兕底） |
+| `remote.session` | `{ "session_id": "s_9", "target_device_id": "d_42", "state": "connected" }` | 远程会话生命周期（connected/disconnected）：隧道建立或断开时推送，app 据此切换连接描述符与断线自动回切本地库 |
 | `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(缩略图/调色板队列与索引管道;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
 
 事件名与负载即持久契约(Rust 重写必须逐字兼容);后端以常量集中定义(`ItemEvents`),客户端不许凭代码反推。

@@ -1,6 +1,41 @@
 {
   "components": {
     "schemas": {
+      "ActiveSessionDto": {
+        "properties": {
+          "proxy_port": {
+            "description": "会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "target_device_id": {
+            "type": "string"
+          },
+          "target_library_name": {
+            "type": "string"
+          },
+          "target_name": {
+            "type": "string"
+          },
+          "token": {
+            "description": "会话代理 token：web 查看器以 ?token= 携带",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "target_device_id",
+          "target_name",
+          "target_library_name",
+          "proxy_port",
+          "token"
+        ],
+        "type": "object"
+      },
       "AppInfo": {
         "properties": {
           "access": {
@@ -104,6 +139,64 @@
           "hidden",
           "ignored",
           "missing"
+        ],
+        "type": "object"
+      },
+      "CreateSessionBody": {
+        "properties": {
+          "target_device_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_device_id"
+        ],
+        "type": "object"
+      },
+      "Envelope_ActiveSessionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "proxy_port": {
+                "description": "会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "session_id": {
+                "type": "string"
+              },
+              "target_device_id": {
+                "type": "string"
+              },
+              "target_library_name": {
+                "type": "string"
+              },
+              "target_name": {
+                "type": "string"
+              },
+              "token": {
+                "description": "会话代理 token：web 查看器以 ?token= 携带",
+                "type": "string"
+              }
+            },
+            "required": [
+              "session_id",
+              "target_device_id",
+              "target_name",
+              "target_library_name",
+              "proxy_port",
+              "token"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
         ],
         "type": "object"
       },
@@ -753,6 +846,60 @@
         ],
         "type": "object"
       },
+      "Envelope_Option_ActiveSessionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "proxy_port": {
+                    "description": "会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>",
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "target_device_id": {
+                    "type": "string"
+                  },
+                  "target_library_name": {
+                    "type": "string"
+                  },
+                  "target_name": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "description": "会话代理 token：web 查看器以 ?token= 携带",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "target_device_id",
+                  "target_name",
+                  "target_library_name",
+                  "proxy_port",
+                  "token"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_RefreshCacheResponse": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -772,6 +919,32 @@
             "required": [
               "dispatched",
               "removed"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_RemoteDevicesDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "devices": {
+                "items": {
+                  "$ref": "#/components/schemas/RemoteDeviceDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "devices"
             ],
             "type": "object"
           },
@@ -2310,6 +2483,59 @@
         ],
         "type": "object"
       },
+      "RemoteDeviceDto": {
+        "properties": {
+          "allow_remote": {
+            "type": "boolean"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "last_seen_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "platform": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "name",
+          "platform",
+          "library_name",
+          "online",
+          "allow_remote"
+        ],
+        "type": "object"
+      },
+      "RemoteDevicesDto": {
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/RemoteDeviceDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "type": "object"
+      },
       "RemoteDto": {
         "properties": {
           "enabled": {
@@ -2331,6 +2557,26 @@
           "url",
           "key",
           "status"
+        ],
+        "type": "object"
+      },
+      "RemoteSessionPayload": {
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "description": "connected / disconnected",
+            "type": "string"
+          },
+          "target_device_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "target_device_id",
+          "state"
         ],
         "type": "object"
       },
@@ -2502,6 +2748,10 @@
             "$ref": "#/components/schemas/LocksSnapshot",
             "description": "锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照"
           },
+          "remote.session": {
+            "$ref": "#/components/schemas/RemoteSessionPayload",
+            "description": "远程会话生命周期（connected/disconnected），app 断线回切依赖"
+          },
           "task.progress": {
             "$ref": "#/components/schemas/TaskProgress"
           }
@@ -2518,7 +2768,8 @@
           "task.progress",
           "library.updated",
           "global_filter.changed",
-          "locks.changed"
+          "locks.changed",
+          "remote.session"
         ],
         "type": "object"
       },
@@ -4150,6 +4401,96 @@
           }
         },
         "summary": "写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。\n接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态",
+        "tags": [
+          "remote"
+        ]
+      }
+    },
+    "/api/v1/remote/devices": {
+      "get": {
+        "operationId": "list_devices",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RemoteDevicesDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "拉取服务端设备列表（admin 限定）。本机设备与对端设备同列，app 据 online/allow_remote 展示",
+        "tags": [
+          "remote"
+        ]
+      }
+    },
+    "/api/v1/remote/session": {
+      "delete": {
+        "operationId": "delete_session",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "断开当前远程会话（幂等）：通知服务端取消、断开隧道、关闭会话代理",
+        "tags": [
+          "remote"
+        ]
+      },
+      "get": {
+        "operationId": "get_session",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_Option_ActiveSessionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "读取当前活动远程会话（无活动会话时 data 为 null）",
+        "tags": [
+          "remote"
+        ]
+      },
+      "post": {
+        "operationId": "create_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ActiveSessionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "建立到目标设备的远程会话：发起 → 轮询 ready → 候选依序连接 → 拉起会话代理。\n单活动会话模型：新会话自动顶替旧会话。返回代理连接信息（api_base + token + 展示名）",
         "tags": [
           "remote"
         ]

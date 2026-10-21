@@ -38,6 +38,10 @@ filetime = "0.2.29"
 async-stream = "0.3.6"
 utoipa = { version = "5.5.0", features = ["axum_extras"] }
 utoipa-axum = "0.2.0"
+quinn = "0.11.12"
+igd-next = "0.18.0"
+hyper = { version = "1.12.0", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 
 [profile.release]
 lto = true

@@ -24,13 +24,26 @@ pub struct WebSettings {
 
 /// 远程访问接入设置（[remote] 段，随库同步）：单用户自托管 hawk-server 的接入信息。
 /// key 明文存放（与 [web] token 同级先例），随库同步意味着配一次全设备生效
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct RemoteSettings {
     pub enabled: bool,
     /// 服务端地址（http(s):// 开头；TLS 由前置反代终结）
     pub url: String,
     /// 服务端 access key
     pub key: String,
+    /// QUIC 隧道 UDP 端口（UPnP 映射目标；同机多库需错开）
+    pub quic_port: u16,
+}
+
+impl Default for RemoteSettings {
+    fn default() -> RemoteSettings {
+        RemoteSettings {
+            enabled: false,
+            url: String::new(),
+            key: String::new(),
+            quic_port: 27373,
+        }
+    }
 }
 
 /// 周期兜底扫描设置（库级，随库同步）：监听漏事件时的最终一致保证
@@ -227,6 +240,7 @@ impl LibraryConfig {
         doc["remote"]["enabled"] = toml_edit::value(remote.enabled);
         doc["remote"]["url"] = toml_edit::value(remote.url.trim());
         doc["remote"]["key"] = toml_edit::value(remote.key.trim());
+        doc["remote"]["quic_port"] = toml_edit::value(i64::from(remote.quic_port));
         let tmp = format!("{file}.tmp");
         std::fs::write(&tmp, doc.to_string()).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
         if let Err(e) = std::fs::rename(&tmp, file) {
@@ -310,6 +324,8 @@ write_token = ""
 enabled = false
 url = ""
 key = ""
+# QUIC 隧道 UDP 端口（UPnP 映射目标；同机多库需错开，一般不用改）
+quic_port = 27373
 "#;
 
 /// 读取并解析 config.toml；文件不存在视为新库（默认快照，非错误），
@@ -366,6 +382,11 @@ fn parse_remote_value(value: &toml::Value) -> RemoteSettings {
         }
         if let Some(key) = table.get("key").and_then(|v| v.as_str()) {
             remote.key = key.trim().to_string();
+        }
+        if let Some(port) = table.get("quic_port").and_then(|v| v.as_integer()) {
+            if (0..=65535).contains(&port) {
+                remote.quic_port = port as u16;
+            }
         }
     }
     remote

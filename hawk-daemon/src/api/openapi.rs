@@ -34,6 +34,10 @@ pub fn attach_extra_schemas(doc: &mut utoipa::openapi::OpenApi) {
             crate::core::events::TaskProgress::name(),
             crate::core::events::TaskProgress::schema(),
         ),
+        (
+            crate::api::events::RemoteSessionPayload::name(),
+            crate::api::events::RemoteSessionPayload::schema(),
+        ),
     ] {
         components.schemas.insert(name.into_owned(), schema);
     }

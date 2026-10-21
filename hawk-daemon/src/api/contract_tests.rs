@@ -53,6 +53,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ),
     ("GET", "/api/v1/lock/list", None),
     ("GET", "/api/v1/remote", None),
+    ("GET", "/api/v1/remote/session", None),
     (
         "PUT",
         "/api/v1/remote",
@@ -122,7 +123,13 @@ const WRITE_SCRIPT: &[(&str, &str)] = &[
 ];
 
 /// 只校验路由存在的端点：app/lan PUT 需运行中的 LAN supervisor 收敛，不在测试内成功调用
-const ROUTE_ONLY: &[(&str, &str)] = &[("PUT", "/api/v1/app/lan")];
+const ROUTE_ONLY: &[(&str, &str)] = &[
+    ("PUT", "/api/v1/app/lan"),
+    // 依赖存活的 hawk-server（转发调用），契约环境无服务端可连
+    ("GET", "/api/v1/remote/devices"),
+    ("POST", "/api/v1/remote/session"),
+    ("DELETE", "/api/v1/remote/session"),
+];
 
 /// SSE 长连接端点：不发 HTTP 请求（oneshot 会挂起），只做 schema 存在性与事件集合校验
 const SSE_ENDPOINTS: &[(&str, &str)] = &[("GET", "/api/v1/events")];
@@ -213,7 +220,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         folder_tree,
         startup,
         index,
-        bus,
+        bus: bus.clone(),
         pipeline,
         store,
         thumbs,
@@ -224,7 +231,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         locks,
         worker,
         lan: LanSupervisor::new(),
-        remote: crate::remote::Supervisor::new(),
+        remote: crate::remote::Supervisor::new(bus.clone()),
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
     });
     let router = build_router(state.clone());
@@ -985,6 +992,7 @@ async fn sse_events_match_schema() {
         LibraryEvents::UPDATED,
         crate::core::global_filter::GLOBAL_FILTER_CHANGED,
         crate::core::locks::LOCKS_CHANGED,
+        crate::remote::session::REMOTE_SESSION_EVENT,
     ]
     .map(str::to_string)
     .into_iter()

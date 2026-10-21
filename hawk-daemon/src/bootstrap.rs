@@ -37,6 +37,8 @@ pub async fn run(settings: Settings) {
         .expect("绑定本地端口失败");
 
     let app = api::build_router(state.clone());
+    // remote 数据面转发目标：同一套路由的克隆（A 侧隧道端进程内转发，标记 TunneledViewer）
+    let tunnel_router = api::build_router(state.clone());
 
     // 先监听端口：注水/缓存重建期间 startup 端点即可答 starting，客户端有进度反馈
     let local_addr = local_listener.local_addr().unwrap();
@@ -49,12 +51,11 @@ pub async fn run(settings: Settings) {
         }
     });
     let lan_task = tokio::spawn(state.lan.clone().run(state.clone()));
-    let remote_task = tokio::spawn(
-        state
-            .remote
-            .clone()
-            .run(state.paths.clone(), state.config.clone()),
-    );
+    let remote_task = tokio::spawn(state.remote.clone().run(
+        state.paths.clone(),
+        state.config.clone(),
+        tunnel_router,
+    ));
 
     // 文件夹树缓存失效：与 folder.changed 同线（事件即「目录结构可能变化」信号，含扫描兜底）
     state.folder_tree.spawn_invalidation(&state.bus);
@@ -155,7 +156,7 @@ fn build_state(settings: Settings) -> SharedState {
     let lan = api::lan::LanSupervisor::new();
 
     // ---- 远程访问 supervisor：[remote] 启用才激活信令（同 LAN 的 reconcile 模型） ----
-    let remote = crate::remote::Supervisor::new();
+    let remote = crate::remote::Supervisor::new(bus.clone());
 
     // 组件图落位：字段分组见 AppState 定义处注释
     Arc::new(api::AppState {

@@ -8,7 +8,7 @@
 实现 Android App
     2026-08-31 创建
 
-实现 daemon remote 模块数据面（QUIC 隧道/会话代理）与 app 远程接线
+实现 app 远程接线（远程 UI/连接描述符/断线回切）
     2026-10-21 创建
 
 # DONE

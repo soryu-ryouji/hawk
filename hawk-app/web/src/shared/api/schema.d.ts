@@ -816,6 +816,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/remote/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 拉取服务端设备列表（admin 限定）。本机设备与对端设备同列，app 据 online/allow_remote 展示 */
+        get: operations["list_devices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/remote/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取当前活动远程会话（无活动会话时 data 为 null） */
+        get: operations["get_session"];
+        put?: never;
+        /**
+         * 建立到目标设备的远程会话：发起 → 轮询 ready → 候选依序连接 → 拉起会话代理。
+         *     单活动会话模型：新会话自动顶替旧会话。返回代理连接信息（api_base + token + 展示名）
+         */
+        post: operations["create_session"];
+        /** 断开当前远程会话（幂等）：通知服务端取消、断开隧道、关闭会话代理 */
+        delete: operations["delete_session"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tag/create": {
         parameters: {
             query?: never;
@@ -957,6 +996,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ActiveSessionDto: {
+            /**
+             * Format: int32
+             * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
+             */
+            proxy_port: number;
+            session_id: string;
+            target_device_id: string;
+            target_library_name: string;
+            target_name: string;
+            /** @description 会话代理 token：web 查看器以 ?token= 携带 */
+            token: string;
+        };
         AppInfo: {
             access: string;
             exec_path: string;
@@ -990,6 +1042,26 @@ export interface components {
             missing: number;
             /** @description 清除的条目总数（= hidden + ignored + missing） */
             removed: number;
+        };
+        CreateSessionBody: {
+            target_device_id: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_ActiveSessionDto: {
+            data?: {
+                /**
+                 * Format: int32
+                 * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
+                 */
+                proxy_port: number;
+                session_id: string;
+                target_device_id: string;
+                target_library_name: string;
+                target_name: string;
+                /** @description 会话代理 token：web 查看器以 ?token= 携带 */
+                token: string;
+            };
+            status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_AppInfo: {
@@ -1182,12 +1254,36 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_Option_ActiveSessionDto: {
+            data?: null | {
+                /**
+                 * Format: int32
+                 * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
+                 */
+                proxy_port: number;
+                session_id: string;
+                target_device_id: string;
+                target_library_name: string;
+                target_name: string;
+                /** @description 会话代理 token：web 查看器以 ?token= 携带 */
+                token: string;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_RefreshCacheResponse: {
             data?: {
                 /** @description 实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计） */
                 dispatched: number;
                 /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
                 removed: number;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_RemoteDevicesDto: {
+            data?: {
+                devices: components["schemas"]["RemoteDeviceDto"][];
             };
             status: string;
         };
@@ -1609,12 +1705,31 @@ export interface components {
             /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
             removed: number;
         };
+        RemoteDeviceDto: {
+            allow_remote: boolean;
+            device_id: string;
+            /** Format: int64 */
+            last_seen_at_ms?: number | null;
+            library_name: string;
+            name: string;
+            online: boolean;
+            platform: string;
+        };
+        RemoteDevicesDto: {
+            devices: components["schemas"]["RemoteDeviceDto"][];
+        };
         RemoteDto: {
             enabled: boolean;
             key: string;
             /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
             status: components["schemas"]["RemoteStatus"];
             url: string;
+        };
+        RemoteSessionPayload: {
+            session_id: string;
+            /** @description connected / disconnected */
+            state: string;
+            target_device_id: string;
         };
         /** @enum {string} */
         RemoteState: "disabled" | "connecting" | "online" | "error";
@@ -1692,6 +1807,8 @@ export interface components {
             "library.updated": components["schemas"]["LibraryInfo"];
             /** @description 锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照 */
             "locks.changed": components["schemas"]["LocksSnapshot"];
+            /** @description 远程会话生命周期（connected/disconnected），app 断线回切依赖 */
+            "remote.session": components["schemas"]["RemoteSessionPayload"];
             "task.progress": components["schemas"]["TaskProgress"];
         };
         StartupInfo: {
@@ -2919,6 +3036,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_RemoteDto"];
+                };
+            };
+        };
+    };
+    list_devices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_RemoteDevicesDto"];
+                };
+            };
+        };
+    };
+    get_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_Option_ActiveSessionDto"];
+                };
+            };
+        };
+    };
+    create_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSessionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ActiveSessionDto"];
+                };
+            };
+        };
+    };
+    delete_session: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
                 };
             };
         };

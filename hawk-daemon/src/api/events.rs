@@ -94,6 +94,18 @@ pub struct SseEvents {
     /// 锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照
     #[serde(rename = "locks.changed")]
     locks_changed: crate::core::locks::LocksSnapshot,
+    /// 远程会话生命周期（connected/disconnected），app 断线回切依赖
+    #[serde(rename = "remote.session")]
+    remote_session: RemoteSessionPayload,
+}
+
+#[allow(dead_code)]
+#[derive(utoipa::ToSchema)]
+pub struct RemoteSessionPayload {
+    session_id: String,
+    target_device_id: String,
+    /// connected / disconnected
+    state: String,
 }
 
 #[allow(dead_code)]

@@ -5,11 +5,13 @@
 
 use crate::core::config::{LibraryConfig, RemoteSettings};
 use crate::core::paths::LibraryPaths;
+use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
+use crate::remote::reachability::{self, SharedUpnpReport, UpnpReport};
 use crate::remote::{RemoteState, RemoteStatus, Supervisor};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -27,14 +29,18 @@ enum SignalError {
 
 type Result<T> = std::result::Result<T, SignalError>;
 
-/// 信令主任务（由 supervisor 拉起；返回即终态：致命错误已写入状态）
+/// 信令主任务（由 supervisor 拉起；返回即终态：致命错误已写入状态）。
+/// router 为 daemon API 路由克隆：A 侧隧道端进程内转发的目标
 pub async fn run(
     paths: LibraryPaths,
     config: Arc<LibraryConfig>,
     cfg: RemoteSettings,
     supervisor: Arc<Supervisor>,
+    router: axum::Router,
 ) {
-    if let Err(SignalError::Fatal(msg)) = run_inner(&paths, &config, &cfg, &supervisor).await {
+    if let Err(SignalError::Fatal(msg)) =
+        run_inner(&paths, &config, &cfg, &supervisor, router).await
+    {
         tracing::error!("远程访问信令终止（等配置变更重启）: {msg}");
         supervisor.set_status(RemoteStatus {
             state: RemoteState::Error,
@@ -50,6 +56,7 @@ async fn run_inner(
     config: &Arc<LibraryConfig>,
     cfg: &RemoteSettings,
     supervisor: &Arc<Supervisor>,
+    router: axum::Router,
 ) -> Result<()> {
     let base = normalize_base(&cfg.url)?;
     let http = reqwest::Client::builder()
@@ -79,10 +86,28 @@ async fn run_inner(
     let device_id = identity.device_id.clone().unwrap();
     tracing::info!("远程访问设备已注册: {device_id}（{base}）");
 
+    // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护
+    let data_plane =
+        DataPlane::bind(&identity, cfg.quic_port, router).map_err(SignalError::Fatal)?;
+    let upnp_report: SharedUpnpReport = Arc::new(RwLock::new(UpnpReport::default()));
+    tokio::spawn(reachability::maintain_upnp(
+        cfg.quic_port,
+        upnp_report.clone(),
+    ));
+
     // 主循环：WSS 控制通道 + 周期心跳；断线退避重连
     let mut retry = RETRY_MIN;
     loop {
-        match channel_loop(&http, &base, &cfg.key, &device_id, supervisor).await {
+        let ctx = ChannelContext {
+            http: &http,
+            base: &base,
+            key: &cfg.key,
+            device_id: &device_id,
+            data_plane: &data_plane,
+            upnp_report: &upnp_report,
+            quic_port: cfg.quic_port,
+        };
+        match channel_loop(&ctx, supervisor).await {
             Ok(()) => retry = RETRY_MIN, // 对端正常关闭：立即重连
             Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
             Err(SignalError::Transient(msg)) => {
@@ -100,14 +125,20 @@ async fn run_inner(
     }
 }
 
+/// 控制通道上下文（收敛 handler 参数）
+struct ChannelContext<'a> {
+    http: &'a reqwest::Client,
+    base: &'a str,
+    key: &'a str,
+    device_id: &'a str,
+    data_plane: &'a Arc<DataPlane>,
+    upnp_report: &'a SharedUpnpReport,
+    quic_port: u16,
+}
+
 /// 一轮控制通道：WSS 连接 → hello/hello_ack → 心跳与推送处理，直到断开
-async fn channel_loop(
-    http: &reqwest::Client,
-    base: &str,
-    key: &str,
-    device_id: &str,
-    supervisor: &Arc<Supervisor>,
-) -> Result<()> {
+async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) -> Result<()> {
+    let (base, key, device_id) = (ctx.base, ctx.key, ctx.device_id);
     let url = ws_url(base, key, device_id)?;
     let (mut ws, _) = tokio_tungstenite::connect_async(&url)
         .await
@@ -138,17 +169,23 @@ async fn channel_loop(
     });
     tracing::info!("远程访问控制通道已连接: {device_id}");
 
+    // 通道（重）建立：上一轮会话的放行与连接全部失效（B 侧会感知断开自行收尾）
+    ctx.data_plane.reset_peers();
+    // 本会话周期内接受的对端：session_id → 对端指纹（cancelled 时收回放行）
+    let mut accepted_peers: std::collections::HashMap<String, [u8; 32]> =
+        std::collections::HashMap::new();
+
     // 连接建立即心跳一次（让自己在线），随后按周期间隔
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                send_heartbeat(http, base, key, device_id).await?;
+                send_heartbeat(ctx.http, ctx.base, ctx.key, ctx.device_id, ctx.upnp_report, ctx.quic_port).await?;
             }
             msg = ws.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        handle_message(&mut ws, http, base, key, device_id, &text).await?;
+                        handle_message(&mut ws, ctx, &mut accepted_peers, &text).await?;
                     }
                     Some(Ok(Message::Close(_))) => return Ok(()),
                     Some(Err(e)) => {
@@ -162,14 +199,12 @@ async fn channel_loop(
     }
 }
 
-/// 服务端推送处理：ping → pong；session.request → 自动接受（allow_remote 由服务端在登记时裁决）；
-/// 未知 type 忽略（协议版本策略）
+/// 服务端推送处理：ping → pong；session.request → 放行对端指纹并自动接受
+/// （allow_remote 由服务端在登记时裁决）；session.cancelled → 收回放行；未知 type 忽略
 async fn handle_message(
     ws: &mut (impl SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
-    http: &reqwest::Client,
-    base: &str,
-    key: &str,
-    device_id: &str,
+    ctx: &ChannelContext<'_>,
+    accepted_peers: &mut std::collections::HashMap<String, [u8; 32]>,
     text: &str,
 ) -> Result<()> {
     let Ok(value) = serde_json::from_str::<Value>(text) else {
@@ -183,7 +218,32 @@ async fn handle_message(
         }
         Some("session.request") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
-                accept_session(http, base, key, session_id, device_id).await?;
+                // 先放行对端指纹（B 在 ready 后可能立即连接），再回 accept
+                let peer = value["from"]["device_id"].as_str();
+                if let Some(peer_id) = peer {
+                    match fetch_fingerprint(ctx.http, ctx.base, ctx.key, peer_id).await {
+                        Ok(Some(fingerprint)) => {
+                            ctx.data_plane.allow_peer(fingerprint);
+                            accepted_peers.insert(session_id.to_string(), fingerprint);
+                        }
+                        Ok(None) => {
+                            tracing::warn!("会话对端 {peer_id} 不在设备列表中，仍接受但不可连接");
+                        }
+                        Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
+                        Err(SignalError::Transient(msg)) => {
+                            // 放行失败不阻断会话：接受后对端连不上会自行超时
+                            tracing::warn!("对端指纹获取失败（接受但不放行）: {msg}");
+                        }
+                    }
+                }
+                accept_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
+            }
+        }
+        Some("session.cancelled") => {
+            if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
+                if let Some(fingerprint) = accepted_peers.remove(session_id) {
+                    ctx.data_plane.disallow_peer(&fingerprint);
+                }
             }
         }
         _ => {}
@@ -191,21 +251,56 @@ async fn handle_message(
     Ok(())
 }
 
+/// 设备列表中查对端指纹（QUIC 客户端证书放行依据）
+async fn fetch_fingerprint(
+    http: &reqwest::Client,
+    base: &str,
+    key: &str,
+    device_id: &str,
+) -> Result<Option<[u8; 32]>> {
+    let resp = http
+        .get(format!("{base}/api/v1/devices"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| SignalError::Transient(format!("设备列表获取失败: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(response_error(resp, "设备列表获取").await);
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SignalError::Transient(format!("设备列表解析失败: {e}")))?;
+    let fingerprint = body["data"]["devices"]
+        .as_array()
+        .and_then(|devices| devices.iter().find(|d| d["device_id"] == device_id))
+        .and_then(|d| d["fingerprint"].as_str())
+        .and_then(crate::remote::tls::parse_fingerprint);
+    Ok(fingerprint)
+}
+
 async fn send_heartbeat(
     http: &reqwest::Client,
     base: &str,
     key: &str,
     device_id: &str,
+    upnp_report: &SharedUpnpReport,
+    quic_port: u16,
 ) -> Result<()> {
-    // 可达性上报为占位（none/null）：UPnP/IPv6 探测属阶段 1b，此前会话候选为空（unreachable）
+    // 可达性：UPnP 映射（维护任务异步更新）+ 全局 IPv6（每次心跳探测，零成本）。
+    // public_ip 不自报——以服务端 public_ip_seen 为准
+    let mapped_port = upnp_report.read().unwrap().mapped_port;
+    let (public_ipv6, ipv6_port) = reachability::probe_ipv6(base, quic_port)
+        .map(|(ip, port)| (Some(ip), Some(port)))
+        .unwrap_or((None, None));
     let body = json!({
         "device_id": device_id,
         "reachability": {
             "public_ip": null,
-            "mapped_port": null,
-            "mapping_type": "none",
-            "public_ipv6": null,
-            "ipv6_port": null,
+            "mapped_port": mapped_port,
+            "mapping_type": if mapped_port.is_some() { "upnp" } else { "none" },
+            "public_ipv6": public_ipv6,
+            "ipv6_port": ipv6_port,
             "nat_type": "unknown",
         }
     });
