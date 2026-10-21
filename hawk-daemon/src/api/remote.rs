@@ -169,8 +169,18 @@ struct RemoteDeviceDto {
     online: bool,
     allow_remote: bool,
     allow_write: bool,
+    /// 是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。
+    /// None = 无可达性数据（未心跳过）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reachable: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_seen_at_ms: Option<u64>,
+}
+
+/// 从服务端设备视图的 reachability 推导直连候选存在性（与服务端候选组装同规则）
+fn reachable_of(d: &Value) -> Option<bool> {
+    let r = d["reachability"].as_object()?;
+    Some(r["mapped_port"].is_u64() || r["public_ipv6"].as_str().is_some_and(|s| !s.is_empty()))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -217,6 +227,7 @@ async fn list_devices(
                     online: d["online"].as_bool().unwrap_or(false),
                     allow_remote: d["allow_remote"].as_bool().unwrap_or(false),
                     allow_write: d["allow_write"].as_bool().unwrap_or(false),
+                    reachable: reachable_of(d),
                     last_seen_at_ms: d["last_seen_at_ms"].as_u64(),
                 })
                 .collect()
@@ -396,6 +407,7 @@ async fn patch_device(
         online: d["online"].as_bool().unwrap_or(false),
         allow_remote: d["allow_remote"].as_bool().unwrap_or(false),
         allow_write: d["allow_write"].as_bool().unwrap_or(false),
+        reachable: reachable_of(d),
         last_seen_at_ms: d["last_seen_at_ms"].as_u64(),
     })))
 }

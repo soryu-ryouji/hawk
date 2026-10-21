@@ -148,6 +148,8 @@ export interface RemoteDevice {
   online: boolean;
   allow_remote: boolean;
   allow_write: boolean;
+  /** 是否有直连候选（UPnP 映射或全局 IPv6）；false = 直连必失败只能中继；缺省 = 无数据 */
+  reachable?: boolean;
   last_seen_at_ms?: number;
 }
 

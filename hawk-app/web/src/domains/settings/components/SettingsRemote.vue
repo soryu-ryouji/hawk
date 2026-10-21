@@ -340,7 +340,8 @@ async function rotate() {
           <div class="device-info">
             <div class="device-name">{{ device.name }}</div>
             <div class="hint">
-              {{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}{{ device.allow_write ? ' · 允许远程写入' : '' }}
+              {{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}{{ device.allow_write ? ' · 允许远程写入' : ''
+              }}{{ device.online ? (device.reachable === true ? ' · 可直连' : device.reachable === false ? ' · 仅中继' : '') : '' }}
             </div>
           </div>
           <button v-if="device.online && device.allow_remote" class="primary" :disabled="store.connectingId !== null" @click="connect(device.device_id)">

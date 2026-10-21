@@ -1112,6 +1112,13 @@
               },
               "platform": {
                 "type": "string"
+              },
+              "reachable": {
+                "description": "是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。\nNone = 无可达性数据（未心跳过）",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -2838,6 +2845,13 @@
           },
           "platform": {
             "type": "string"
+          },
+          "reachable": {
+            "description": "是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。\nNone = 无可达性数据（未心跳过）",
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [

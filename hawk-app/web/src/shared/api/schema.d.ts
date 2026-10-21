@@ -1409,6 +1409,11 @@ export interface components {
                 name: string;
                 online: boolean;
                 platform: string;
+                /**
+                 * @description 是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。
+                 *     None = 无可达性数据（未心跳过）
+                 */
+                reachable?: boolean | null;
             };
             status: string;
         };
@@ -1882,6 +1887,11 @@ export interface components {
             name: string;
             online: boolean;
             platform: string;
+            /**
+             * @description 是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。
+             *     None = 无可达性数据（未心跳过）
+             */
+            reachable?: boolean | null;
         };
         RemoteDevicesDto: {
             devices: components["schemas"]["RemoteDeviceDto"][];
