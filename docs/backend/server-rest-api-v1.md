@@ -232,6 +232,10 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
 | POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
 | DELETE | `/api/v1/remote/session` | 断开当前远程会话（admin 限定，幂等） |
+| GET | `/api/v1/remote/keys` | 列出本机签发的访问密钥（hawk-app key，admin 限定；不含明文） |
+| POST | `/api/v1/remote/keys` | 签发访问密钥（admin 限定；明文只在响应中出现一次） |
+| PATCH | `/api/v1/remote/keys/{key_id}` | 更新访问密钥标签/权限（admin 限定） |
+| DELETE | `/api/v1/remote/keys/{key_id}` | 吊销访问密钥（admin 限定） |
 
 ### remote
 
@@ -247,7 +251,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
   "data": {
     "enabled": true,
     "url": "https://hawk.example.com",
-    "key": "<access-key>",
+    "service_key": "hs_<service-key>",
     "writable": false,
     "status": {
       "state": "online",
@@ -258,7 +262,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 }
 ```
 
-`status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 key 无效，`error` 字段携带服务端返回的原因）。
+`status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 service-key 无效，`error` 字段携带服务端返回的原因）。
 
 `writable` 对应应用级远程配置的 `writable`：允许广域网写会话向当前库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
 
@@ -271,10 +275,10 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 #### 请求
 
 ```json
-{ "enabled": true, "url": "https://hawk.example.com", "key": "<access-key>", "writable": false }
+{ "enabled": true, "url": "https://hawk.example.com", "service_key": "hs_<service-key>", "writable": false }
 ```
 
-校验（`INVALID_PARAM`）：`enabled` 时 `url`/`key` 必填；`url` 须以 `http://` 或 `https://` 开头。`writable` 省略按 false。响应同 GET。
+校验（`INVALID_PARAM`）：`enabled` 时 `url`/`service_key` 必填；`url` 须以 `http://` 或 `https://` 开头。`writable` 省略按 false。响应同 GET。
 
 ---
 
@@ -352,6 +356,59 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 `POST /api/v1/remote/device/rotate`
 
 证书轮换：重新生成 QUIC 自签证书（device_id 不变），先同步服务端新指纹再落盘并热重启信令；旧证书的会话随即失效（TOFU 锚点更新）。响应 `{ "fingerprint": "<新指纹>" }`。
+
+---
+
+`GET /api/v1/remote/keys`
+
+列出本机签发的访问密钥（ hawk-app key，供网页版/插件等外部查看者使用）。**不含明文**：明文只在签发响应中出现一次，本地只存 sha256 验证子与前缀预览。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": {
+    "keys": [
+      {
+        "id": "k_8f3a…",
+        "label": "iPhone 插件",
+        "read": true,
+        "write": true,
+        "prefix": "hk_a1",
+        "created_at_ms": 1750000000000
+      }
+    ]
+  }
+}
+```
+
+---
+
+`POST /api/v1/remote/keys`
+
+签发访问密钥。`read`/`write` 至少一项；`custom` 省略时程序生成 `hk_` 前缀的 128 位随机串，自定义时纯读至少 4 字符、携带写权限至少 12 字符（`INVALID_PARAM`）。签发后向 server 全量推送本设备的 key 映射（`PUT /devices/{id}/keys`，best-effort）。
+
+#### 请求与响应
+
+```json
+// 请求
+{ "label": "iPhone 插件", "read": true, "write": true, "custom": null }
+// 响应：key 明文只在本次出现；synced=false 表示远程未接入/推送失败（下次接入自动重试）
+{ "status": "success", "data": { "id": "k_8f3a…", "key": "hk_a1b2…", "synced": true } }
+```
+
+---
+
+`PATCH /api/v1/remote/keys/{key_id}`
+
+更新标签/权限：`{ "label": "新名", "read": true, "write": false }`，至少保留一项权限。权限收窄对后续会话立即生效。响应 `{ "key": <条目>, "synced": true }`。
+
+---
+
+`DELETE /api/v1/remote/keys/{key_id}`
+
+吊销：本地删除并推送 server 移除映射，该 key 的后续会话请求被本机拒绝。响应 `{ "synced": true }`。
 
 ## library
 

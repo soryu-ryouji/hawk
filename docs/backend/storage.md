@@ -201,7 +201,7 @@ write_token = ""     # 拆分模式下的可写 token
 
 `[web]` 保存即热生效（文件监听 Reload → LAN 监听 supervisor 运行期重绑，见 server-code-structure.md 的 api/lan.rs；仅 token/writable 等权限字段变化不重绑连接——每请求经 current().web 判定）。token 能力分三档：`writable = false` 时一律只读（写端点 `403 READ_ONLY`，放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）；`writable = true` 且未拆分时 `token` 读写兼具；拆分时 `token` 只读、`write_token` 可写（仅在 `writable = true` 且拆分时才是合法 token）。web 端写能力由 `app/info` 的 `writable` 字段按当前 token 告知前端。
 
-远程访问接入配置不在库内：应用级 `~/.config/hawk/remote.toml`（daemon 读写，跨素材库共享），设备身份在 `~/.config/hawk/remote/identity.json`。`writable` 与 `[web]` 完全独立：它只对经 hawk-server 隧道进入的会话生效，且仅开放 `item/add`（base64）与 `folder/create` 两个写端点（删除/更新/管理仍 403）。会话建立时要求服务端持有写入密钥并开启写会话；`writable` 的变更每请求读取当前配置，关闭后立即失效，不重启信令。独立运行 daemon 时不传 `--remote-config`，回退到库内 `.hawk/remote.toml`。
+远程访问接入配置不在库内：应用级 `~/.config/hawk/remote.toml`（daemon 读写，跨素材库共享），设备身份在 `~/.config/hawk/remote/identity.json`，访问密钥（hawk-app key）验证子在同目录 `keys.json`（sha256 存储，0600，明文不落盘）。`writable` 与 `[web]` 完全独立：它只对经 hawk-server 隧道进入的会话生效，且仅开放 `item/add`（base64）与 `folder/create` 两个写端点（删除/更新/管理仍 403）。会话建立时要求查看者携带带写权限的访问密钥（daemon 按本地 key 映射执法）并开启写会话；`writable` 的变更每请求读取当前配置，关闭后立即失效，不重启信令。独立运行 daemon 时不传 `--remote-config`，回退到库内 `.hawk/remote.toml`。
 
 应用级配置文件位于 `~/.config/hawk/`：`config.toml` 存 Electron 壳偏好（最近库、更新通道、关窗行为等），`remote.toml` + `remote/` 存远程访问接入与设备身份。两者都不随素材库同步。
 
