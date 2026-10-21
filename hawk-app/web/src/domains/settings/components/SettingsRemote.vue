@@ -56,7 +56,8 @@ const statusText = computed(() => {
   }
   switch (s?.state) {
     case 'connecting':
-      return '接入中…';
+      // 断线重连时 error 携带原因（诊断用，设置面板直接可见）
+      return s?.error ? `接入中…（${s.error}）` : '接入中…';
     case 'online':
       return `已在线（${s.server_url ?? ''}）`;
     case 'error':

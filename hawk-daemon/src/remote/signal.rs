@@ -17,6 +17,8 @@ use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+/// 通道重连退避：首次 1s（快恢复优先），指数增长至 60s
+const CHANNEL_RETRY_MIN: Duration = Duration::from_secs(1);
 
 /// 心跳间隔：测试可经 HAWK_REMOTE_HEARTBEAT_MS 覆盖（协议约定 30s，此处仅为测试提速）
 fn heartbeat_interval() -> Duration {
@@ -93,6 +95,7 @@ async fn run_inner(
     )));
 
     let mut retry = RETRY_MIN;
+    let mut chan_retry = CHANNEL_RETRY_MIN;
     loop {
         // 注册（含服务端设备表丢失后的重注册）：瞬时失败退避重试，直到成功或致命
         while identity.device_id.is_none() {
@@ -143,7 +146,11 @@ async fn run_inner(
             keys: &supervisor.keys,
         };
         match channel_loop(&ctx, supervisor).await {
-            Ok(()) => retry = RETRY_MIN, // 对端正常关闭：立即重连
+            // 对端正常关闭：立即重连（无退避、不闪「接入中」）
+            Ok(()) => {
+                chan_retry = CHANNEL_RETRY_MIN;
+                continue;
+            }
             Err(SignalError::Unregistered) => {
                 // 服务端设备表丢失/被注销：清除 device_id，回到注册阶段
                 tracing::warn!("服务端已不再认识本设备（{device_id}），重新注册");
@@ -152,21 +159,23 @@ async fn run_inner(
                     .persist(remote.identity_dir())
                     .map_err(SignalError::Fatal)?;
                 retry = RETRY_MIN;
+                chan_retry = CHANNEL_RETRY_MIN;
                 continue;
             }
             Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
             Err(SignalError::Transient(msg)) => {
-                tracing::warn!("控制通道断开（{retry:?} 后重连）: {msg}");
+                tracing::warn!("控制通道断开（{chan_retry:?} 后重连）: {msg}");
+                // 「接入中」带上断开原因，设置面板可直接看到发生了什么
                 supervisor.set_status(RemoteStatus {
                     state: RemoteState::Connecting,
                     server_url: Some(cfg.url.clone()),
                     device_id: Some(device_id.clone()),
-                    error: None,
+                    error: Some(msg),
                 });
+                tokio::time::sleep(chan_retry).await;
+                chan_retry = (chan_retry * 2).min(RETRY_MAX);
             }
         }
-        tokio::time::sleep(retry).await;
-        retry = (retry * 2).min(RETRY_MAX);
     }
 }
 
@@ -510,6 +519,11 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
     } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
         // 设备不存在：服务端设备表丢失/被注销 → 触发重注册
         Err(SignalError::Unregistered)
+    } else if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        // 429 是良性竞态：重连后的即时心跳可能落在上一跳 10s 最小间隔内。
+        // 只记日志不拆通道——下一跳（30s 后）自然恢复，通道保持在线
+        tracing::debug!("心跳被服务端限速（10s 最小间隔），跳过本跳");
+        Ok(())
     } else {
         Err(response_error(resp, "心跳").await)
     }

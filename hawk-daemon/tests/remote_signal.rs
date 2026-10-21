@@ -38,7 +38,15 @@ struct MockHub {
     lost_devices: Arc<std::sync::atomic::AtomicBool>,
     /// 模拟服务端设备表丢失（控制通道面）：WS 握手 404 并踢掉已连接通道
     lost_ws_devices: Arc<std::sync::atomic::AtomicBool>,
+    /// 心跳限速（模拟服务端最小间隔）：上次心跳时间戳（毫秒）
+    throttle: Arc<std::sync::atomic::AtomicBool>,
+    last_heartbeat_ms: Arc<Mutex<u64>>,
+    /// 踢掉当前控制通道一次（正常 Close；重连后自动复位）
+    kick: Arc<std::sync::atomic::AtomicBool>,
 }
+
+/// mock 心跳限速窗口（比协议的 10s 小，测试节奏用）
+const MOCK_HEARTBEAT_MIN_MS: u64 = 1000;
 
 impl MockHub {
     fn heartbeat_count(&self) -> u64 {
@@ -122,6 +130,22 @@ async fn heartbeat(State(hub): State<MockHub>, headers: axum::http::HeaderMap) -
             Json(json!({"status":"error","error":{"message":"设备不存在"}})),
         )
             .into_response();
+    }
+    // 限速模拟：窗口内心跳 429（窗口内不收计数——与真实服务端一致）
+    if hub.throttle.load(Ordering::Relaxed) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let mut last = hub.last_heartbeat_ms.lock().unwrap();
+        if now.saturating_sub(*last) < MOCK_HEARTBEAT_MIN_MS {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({"status":"error","error":{"message":"心跳过于频繁"}})),
+            )
+                .into_response();
+        }
+        *last = now;
     }
     hub.heartbeats.fetch_add(1, Ordering::Relaxed);
     Json(json!({"status":"success","data":{"server_time_ms":0,"public_ip_seen":"127.0.0.1"}}))
@@ -210,11 +234,16 @@ async fn ws_channel(
             .send(Message::Text(request.to_string().into()))
             .await
             .unwrap();
-        // 持有连接直至对端关闭（或模拟服务端丢设备时主动踢下线）
+        // 持有连接直至对端关闭（或模拟服务端丢设备/踢下线时主动断开）
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(20)) => {
                     if hub.lost_ws_devices.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    // 踢下线一次：正常 Close（重连后标志已复位，不再踢）
+                    if hub.kick.swap(false, Ordering::Relaxed) {
+                        let _ = socket.send(Message::Close(None)).await;
                         break;
                     }
                 }
@@ -632,6 +661,72 @@ async fn write_session_rejected_without_credential() {
     }
     assert!(hub.accepted_sessions().is_empty(), "无凭证写会话不应被接受");
     task.abort();
+}
+
+/// 回归：踢线快速重连后的即时心跳落在服务端限速窗口内（429）——
+/// 429 必须只跳过本跳，不得拆通道（否则会多绕一轮「接入中」，
+/// 且重连-429-拆通道会形成自伤循环）
+#[tokio::test]
+async fn heartbeat_429_does_not_break_channel() {
+    let _guard = TEST_LOCK.lock().await;
+    // 心跳提速到 200ms：让重连后的即时心跳必然落在 mock 的 1s 限速窗口内
+    unsafe { std::env::set_var("HAWK_REMOTE_HEARTBEAT_MS", "200") };
+    let (base, hub) = spawn_mock_hub().await;
+    hub.throttle.store(true, Ordering::Relaxed);
+    let lib = test_library();
+    lib.remote
+        .update(&RemoteSettings {
+            enabled: true,
+            url: base,
+            service_key: KEY.to_string(),
+            quic_port: 0,
+            writable: false,
+        })
+        .unwrap();
+
+    let bus = hawk_daemon::core::events::EventBus::new();
+    let mut events = bus.subscribe();
+    let supervisor = Supervisor::new(bus, lib.remote.clone());
+    let task = tokio::spawn(supervisor.clone().run(
+        lib.paths.clone(),
+        lib.config.clone(),
+        axum::Router::new(),
+    ));
+    wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
+    let initial = hub.heartbeat_count();
+    // 排空启动阶段的 connecting/online 事件（只观察 kick 之后的状态流）
+    while events.try_recv().is_ok() {}
+
+    // 服务端正常关闭通道（kick 一次）→ 客户端应立即重连（不闪「接入中」），
+    // 重连后的即时心跳被限速 429 → 通道保持在线
+    hub.kick.store(true, Ordering::Relaxed);
+
+    // 收集 3s 内的信令状态事件：不应出现 connecting
+    let mut saw_connecting = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(Ok(event)) = tokio::time::timeout(Duration::from_millis(100), events.recv()).await
+        {
+            if event.payload["state"].as_str() == Some("connecting") {
+                saw_connecting = true;
+            }
+        }
+    }
+    assert!(
+        !saw_connecting,
+        "重连后不应出现「接入中」（心跳 429 拆了通道）"
+    );
+    assert_eq!(supervisor.snapshot().state, RemoteState::Online);
+    assert_eq!(hub.register_count(), 1, "不应触发重注册");
+
+    // 限速窗口过后心跳恢复
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while hub.heartbeat_count() <= initial {
+        assert!(tokio::time::Instant::now() < deadline, "心跳未恢复");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    task.abort();
+    unsafe { std::env::remove_var("HAWK_REMOTE_HEARTBEAT_MS") };
 }
 
 /// 查看者会话携带已吊销/未知 key 的验证子 → 拒绝（本地执法不认 server 单方面声称）
