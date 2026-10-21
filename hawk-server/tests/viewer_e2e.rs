@@ -35,7 +35,7 @@ async fn spawn_server(dir: &Path) -> String {
     tokio::spawn(async move {
         axum::serve(
             listener,
-            api::router(state, viewer, None).into_make_service_with_connect_info::<SocketAddr>(),
+            api::router(state, viewer).into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .unwrap();
@@ -43,18 +43,33 @@ async fn spawn_server(dir: &Path) -> String {
     format!("127.0.0.1:{port}")
 }
 
-/// A 侧素材路由：/hello 校验 TunneledViewer 标记（只读受托语义）
+/// A 侧素材路由：/api/v1/hello 校验 TunneledViewer 标记（只读受托语义）；
+/// /app 与 /assets/* 模拟 daemon 的 web_dist 静态托管（验证非 API 路径也经隧道转发）
 fn a_router() -> Router {
-    Router::new().route(
-        "/api/v1/hello",
-        get(|req: Request| async move {
-            if req.extensions().get::<TunneledViewer>().is_some() {
-                "hi from A"
-            } else {
-                "missing marker"
-            }
-        }),
-    )
+    Router::new()
+        .route(
+            "/api/v1/hello",
+            get(|req: Request| async move {
+                if req.extensions().get::<TunneledViewer>().is_some() {
+                    "hi from A"
+                } else {
+                    "missing marker"
+                }
+            }),
+        )
+        .route(
+            "/app",
+            get(|| async {
+                (
+                    [("content-type", "text/html")],
+                    "<title>hawk-spa-shell</title>",
+                )
+            }),
+        )
+        .route(
+            "/assets/app.js",
+            get(|| async { ([("content-type", "text/javascript")], "console.log('spa')") }),
+        )
 }
 
 /// 模拟 A 侧 daemon remote 模块：注册/心跳/WSS 待命 → session.request(relay) → 放行+接受+中继服务
@@ -266,6 +281,88 @@ async fn viewer_browses_library_through_domain() {
     let resp = client
         .get(format!("http://{base}/api/v1/hello"))
         .bearer_auth("hb_wrong")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // ---- 查看器静态资源同样经隧道由 A 侧 daemon 托管（服务端不再部署 web-dist） ----
+    let resp = client
+        .get(format!("http://{base}/app?token={bt}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.text().await.unwrap().contains("hawk-spa-shell"));
+
+    let resp = client
+        .get(format!("http://{base}/assets/app.js?token={bt}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "console.log('spa')");
+
+    // 页面 URL 带的 token 下发给静态子资源（<script>/<img> 无法带请求头），
+    // 后续 assets 请求仅靠 cookie 就能过隧道
+    let resp = client
+        .get(format!("http://{base}/app?token={bt}"))
+        .header("accept", "text/html")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let cookie = resp
+        .headers()
+        .get("set-cookie")
+        .expect("页面导航未下发 token cookie")
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    assert!(cookie.starts_with("hawk_bt=hb_"), "cookie 异常: {cookie}");
+
+    let resp = client
+        .get(format!("http://{base}/assets/app.js"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "console.log('spa')");
+
+    // cookie 不适用于 API 请求（不认自动携带的凭据，避免 CSRF 面）
+    let resp = client
+        .get(format!("http://{base}/api/v1/hello"))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // 地址栏直接打开 /app 而令牌失效 → 302 回选择器页（不是浏览器看不懂的裸 401）
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_redirect
+        .get(format!("http://{base}/app?token=hb_stale"))
+        .header("accept", "text/html,application/xhtml+xml")
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_redirection(),
+        "期望重定向，得到 {}",
+        resp.status()
+    );
+    assert_eq!(resp.headers().get("location").unwrap(), "/?token=hb_stale");
+
+    // 静态资源/XHR 拿到 401 而非重定向（重定向只会把 JS 请求变成一份 HTML）
+    let resp = no_redirect
+        .get(format!("http://{base}/assets/app.js"))
         .send()
         .await
         .unwrap();

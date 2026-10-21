@@ -22,11 +22,7 @@ cargo build --release     # 产物 target/release/hawk-server（单文件，不�
 cargo test                # 协议测试 + 网页版全链路互操作测试（测试依赖 hawk-daemon）
 ```
 
-网页版需要 web 查看器产物（与局域网 web 查看同一份前端）：
-
-```bash
-cd hawk-app && npm run build    # 产出 hawk-app/web/dist
-```
+网页版与局域网 web 查看共用同一份前端产物（`hawk-app/web/dist`），由**目标设备的 daemon** 托管：浏览器的 `/app`、`/assets/*` 请求经服务端隧道转发过去，服务端不再需要单独部署一份前端。
 
 部署时用 `tools/deploy-hawk-server.sh`：它执行同样的 `cargo build --release --locked` 并把二进制复制到指定路径（默认仓库根 `hawk-server.bin`，`--path` 可改）。脚本的 cargo 依赖默认走 rsproxy 国内镜像，`CARGO_MIRROR=` 回退官方源；本机手动 `cargo build` 使用你自己的 `~/.cargo/config.toml`。
 
@@ -45,9 +41,8 @@ hawk-server --access-key <密钥> --data-dir /var/lib/hawk-server
 cd hawk-server
 cargo run -- \
   --access-key dev-key-0123456789 \
-  --data-dir ./hawk-server-data \
-  --web-dist ../hawk-app/web/dist
-# 浏览器打开 http://127.0.0.1:27370 即可看到网页版登录页
+  --data-dir ./hawk-server-data
+# 浏览器打开 http://127.0.0.1:27370 即可看到网页版登录页（进入查看器需有在线且开启远程访问的桌面端）
 ```
 
 生产环境的编译输出、nginx 反代与 systemd 单元见 [远程访问部署](remote-deployment.md)。
@@ -59,7 +54,6 @@ cargo run -- \
 | `--port` | `HAWK_SERVER_PORT` | `27370` | 监听端口，绑定 `0.0.0.0`。本进程只说明文 HTTP，TLS 由前置反代终结 |
 | `--access-key` | `HAWK_SERVER_ACCESS_KEY` | 必填 | 全部端点的唯一凭据（控制面 + 网页登录）。少于 16 字符直接退出（退出码 2） |
 | `--data-dir` | `HAWK_SERVER_DATA_DIR` | `hawk-server-data` | 状态目录，相对路径按当前工作目录解析；不存在则自动创建 |
-| `--web-dist` | `HAWK_SERVER_WEB_DIST` | 无 | 网页版查看器前端产物目录。不配置时登录页仍可用，但 `/app` 返回 404 |
 
 - 日志走 stdout，级别由 `RUST_LOG` 控制（默认 `info`）；排障时 `RUST_LOG=debug`，启动成功会打印 `hawk-server listening`。
 - 密钥写在命令行会出现在 `ps` 和 systemd 单元里，生产环境建议走环境变量（systemd `Environment=`）。
@@ -72,9 +66,11 @@ cargo run -- \
 | 凭据 | 用途 | 携带方式 |
 | ---- | ---- | -------- |
 | 访问密钥 `access_key` | 控制面全部 REST、WSS 控制通道、中继 WS、网页登录 | REST 用 `Authorization: Bearer <key>`；WSS/中继用 `?key=`；登录放在请求体 |
-| 浏览器令牌 `bt` | 网页版查看面（登录后的浏览器） | `Authorization: Bearer <bt>` 或 `?token=`（SPA 的 img/SSE 场景） |
+| 浏览器令牌 `bt` | 网页版查看面（登录后的浏览器） | `Authorization: Bearer <bt>` 或 `?token=`（SPA 的 img/SSE 场景）；静态子资源（`/assets/*`、`/icon.png`）用 `hawk_bt` cookie |
 
 `bt` 由网页登录用 `access_key` 换发（形如 `hb_...`），服务端只存 sha256 哈希，可随时注销。**换 `access_key` 不会让已换发的 `bt` 失效**，需要一并清理见「运维」。
+
+`hawk_bt` cookie（`Path=/; HttpOnly; SameSite=Strict`，30 天）在页面 URL 带 `?token=` 时下发，供查看器的 `<script>`/`<img>` 等无法设请求头的子资源使用。`/api/*` 不认 cookie，只接受显式令牌，避免 cookie 自动携带带来的 CSRF 面；反代声明 `X-Forwarded-Proto: https` 时 cookie 才带 `Secure`。
 
 错误信封不带业务错误码，语义由 HTTP 状态码承载：
 
@@ -117,8 +113,8 @@ cargo run -- \
 | GET | `/api/v1/viewer/session` | 当前绑定的会话，无则 `data: null` |
 | DELETE | `/api/v1/viewer/session` | 断开当前会话（幂等） |
 | GET | `/` | 设备选择器页（免鉴权，登录 + 选设备） |
-| GET | `/app`、`/assets/*` | 查看器 SPA（需配置 `--web-dist`） |
 | 其他 | `/api/v1/*` | 经 `bt` 绑定的隧道代理，转发到目标设备 daemon（只读） |
+| GET | `/app`、`/assets/*` | 查看器 SPA，同样经隧道由目标设备 daemon 托管（需已建会话，否则重定向回 `/`） |
 
 ### 示例
 
@@ -152,11 +148,11 @@ curl -s -H "Authorization: Bearer <bt>" "$BASE/api/v1/viewer/devices"
 1. 浏览器打开 `https://hawk.example.com` → 设备选择器页
 2. 输入访问密钥 → 换发 `bt`（存 localStorage，下次免登录；`?token=` 可携带已有令牌）
 3. 选一台在线且开启远程访问的设备 →「浏览素材库」→ 跳转 `/app?token=<bt>`；服务端以「网页版 (hawk-server)」身份建 relay 会话，并终结 QUIC 隧道
-4. 进入只读查看器（与局域网 web 查看同一套界面）。页面注销即让服务端删除该 `bt` 哈希
+4. 进入只读查看器（与局域网 web 查看同一套界面，页面与静态资源经隧道来自该设备的 daemon）。页面注销即让服务端删除该 `bt` 哈希
 
 使用前提与代价：
 
-- 需要 `--web-dist`；不配置时登录页与设备列表照常，但进不了查看器
+- 目标设备必须是带前端产物的桌面端（查看器页面与 API 都来自它）
 - 目标设备必须在线且 `allow_remote` 开启，否则打开会话会失败
 - **网页版固定走中继**，素材明文经过服务器；浏览素材消耗的是服务器带宽
 
@@ -214,7 +210,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 | 查看面返回 401 `未登录` / `令牌无效或已注销` | `bt` 已注销或 `viewer_tokens.json` 被清空，重新登录 |
 | 设备列表里 `online: false` | daemon 未运行、未配置 `[remote]`、心跳已过期（90s），或 HTTPS 链路不通 |
 | 网页版登录成功但打开查看器失败 | 目标设备离线、`allow_remote` 关闭，或反代拦截了中继 WebSocket；服务端日志有会话建立记录 |
-| `/app` 返回 404 | 未配置 `--web-dist`，或该目录下没有 `index.html` |
+| `/app` 返回 302 回到登录页 | 未建查看会话（`bt` 未绑设备）或 `bt` 已失效：在选择器页重新登录并选设备 |
+| `/app` 返回 502 | 目标设备 daemon 已离线或隧道断开，回选择器页重新选设备 |
+| 查看器白屏、`/assets/*` 返回 401 | 浏览器丢了 `hawk_bt` cookie（清过站点数据/隐私模式拦截）：回 `/` 重新选设备 |
 | 网页版列表/图片不更新、大文件超时 | 反代缓冲了 SSE 或超时过短：`proxy_buffering off`、加大 `proxy_read_timeout` |
 | 心跳返回 429 | 心跳间隔小于 10s，检查客户端配置 |
 | 服务端日志看会话细节 | `RUST_LOG=debug` 重启；systemd 部署用 `journalctl -u hawk-server -f` |

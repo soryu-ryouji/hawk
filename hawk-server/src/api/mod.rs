@@ -13,7 +13,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -73,11 +72,7 @@ where
     }
 }
 
-pub fn router(
-    state: Arc<AppState>,
-    viewer: Arc<ViewerManager>,
-    web_dist: Option<PathBuf>,
-) -> Router {
+pub fn router(state: Arc<AppState>, viewer: Arc<ViewerManager>) -> Router {
     let control = Router::new()
         .route(
             "/api/v1/devices",
@@ -106,25 +101,15 @@ pub fn router(
         .route("/api/v1/relay", get(relay::relay_channel))
         .with_state(state);
 
-    let mut router = Router::new()
+    Router::new()
         .route("/", get(crate::viewer::page::picker))
         .merge(control)
-        .merge(crate::viewer::api::routes().with_state(viewer.clone()));
-
-    // 查看器 SPA（--web-dist 指定 hawk-app web 构建产物）
-    if let Some(dist) = web_dist {
-        router = router
-            .nest_service("/app", tower_http::services::ServeDir::new(dist.clone()))
-            .nest_service(
-                "/assets",
-                tower_http::services::ServeDir::new(dist.join("assets")),
-            );
-    }
-
-    // 回退：/api/v1/* 非控制面路径 → 浏览器令牌绑定的隧道代理；其余 404
-    router.merge(
-        Router::new()
-            .fallback(crate::viewer::proxy::api_fallback)
-            .with_state(viewer),
-    )
+        .merge(crate::viewer::api::routes().with_state(viewer.clone()))
+        // 回退：其余路径（查看面 API、/app 与 /assets 等查看器静态资源）全部经隧道转发给目标 daemon。
+        // 网页版前端产物由 daemon 侧托管（daemon 启动时带 --web-dist），服务端不再需要单独部署一份
+        .merge(
+            Router::new()
+                .fallback(crate::viewer::proxy::fallback)
+                .with_state(viewer),
+        )
 }

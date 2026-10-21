@@ -30,7 +30,7 @@ async fn spawn_server(dir: &Path) -> String {
     tokio::spawn(async move {
         axum::serve(
             listener,
-            api::router(state, viewer, None).into_make_service_with_connect_info::<SocketAddr>(),
+            api::router(state, viewer).into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .unwrap();

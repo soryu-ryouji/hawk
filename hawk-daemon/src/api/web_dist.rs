@@ -6,19 +6,22 @@ use crate::api::SharedState;
 use axum::extract::State;
 use axum::http::Uri;
 use axum::response::{IntoResponse, Response};
+use std::path::PathBuf;
 
 /// 静态资源 + SPA 回退服务（挂载为 fallback_service；/api 与 /health 由正常路由先行匹配）
 pub async fn serve(State(state): State<SharedState>, uri: Uri) -> Response {
     let Some(web_dist) = &state.settings.web_dist else {
         return axum::http::StatusCode::NOT_FOUND.into_response();
     };
-    let path = uri.path().trim_start_matches('/');
-    let candidate = join(web_dist, path);
-    let file = if !path.is_empty() && std::path::Path::new(&candidate).is_file() {
+    let request_path = uri.path().trim_start_matches('/');
+    let Some(candidate) = resolve(web_dist, request_path) else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let file = if !request_path.is_empty() && candidate.is_file() {
         candidate
     } else {
-        let index = join(web_dist, "index.html");
-        if std::path::Path::new(&index).is_file() {
+        let index = PathBuf::from(web_dist).join("index.html");
+        if index.is_file() {
             index
         } else {
             return axum::http::StatusCode::NOT_FOUND.into_response();
@@ -45,10 +48,40 @@ pub async fn serve(State(state): State<SharedState>, uri: Uri) -> Response {
         .unwrap()
 }
 
-fn join(base: &str, child: &str) -> String {
-    if base.ends_with('/') {
-        format!("{base}{child}")
-    } else {
-        format!("{base}/{child}")
+/// 请求路径 → 产物内的文件路径。`.`/`..` 与反斜杠一律拒绝，防越出 web_dist
+/// （网页版经服务端隧道暴露，静态托管面对公网，必须挡住 `..` 穿越）
+fn resolve(web_dist: &str, request_path: &str) -> Option<PathBuf> {
+    let mut file = PathBuf::from(web_dist);
+    for segment in request_path.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." || segment.contains('\\') {
+            return None;
+        }
+        file.push(segment);
+    }
+    Some(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve;
+
+    #[test]
+    fn resolve_joins_normal_paths() {
+        assert_eq!(
+            resolve("/dist", "assets/index-abc.js"),
+            Some("/dist/assets/index-abc.js".into())
+        );
+        assert_eq!(resolve("/dist", ""), Some("/dist".into()));
+        assert_eq!(resolve("/dist", "a//b"), Some("/dist/a/b".into()));
+    }
+
+    #[test]
+    fn resolve_rejects_traversal() {
+        assert_eq!(resolve("/dist", "../../etc/passwd"), None);
+        assert_eq!(resolve("/dist", "assets/../../secret"), None);
+        assert_eq!(resolve("/dist", "..\\..\\secret"), None);
     }
 }

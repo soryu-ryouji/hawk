@@ -9,7 +9,8 @@
 | hawk-server 二进制 | 仓库 `hawk-server/` 编译（`tools/deploy-hawk-server.sh`），单文件 |
 | 数据目录 | 设备注册表、网页版身份、浏览器令牌（JSON 文件，备份即迁移，见[数据目录](hawk-server.md#数据目录)） |
 | 域名 + TLS 反代 | Caddy（自动签发续期，推荐）或 nginx；控制面 WSS 与网页版都要求 HTTPS/WSS |
-| web 查看器产物（网页版需要） | `hawk-app/web/dist`（`cd hawk-app && npm run build` 产出），整目录上传到服务器 |
+
+网页版查看器的前端产物不落在服务器上：`/app`、`/assets/*` 等静态请求由服务端经隧道转发给正在浏览的那台设备的 daemon，由它托管自带的 `web/dist`（桌面端启动时传入）。因此服务端部署只有二进制 + 数据目录，前端版本永远与 daemon 一致。
 
 ## 编译
 
@@ -22,7 +23,6 @@ tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server   # 指定输出�
 - 仓库根已有同名目录 `hawk-server/`，默认文件名用 `hawk-server.bin`；`--path` 传目录（已存在或以 `/` 结尾）时写入该目录下的 `hawk-server`
 - 脚本按本机平台构建：给 Linux 服务器部署时在服务器上执行，或自行交叉编译
 - cargo 依赖默认走 rsproxy 国内镜像；`CARGO_MIRROR=` 回退官方 crates.io，也可换成其他 sparse 索引（地址以 `/` 结尾）
-- 网页版另需前端产物：`cd hawk-app && npm run build`，把 `hawk-app/web/dist` 整目录上传（`--web-dist` 指向它）
 
 ## 运行
 
@@ -31,8 +31,7 @@ openssl rand -hex 32                  # 生成访问密钥（客户端与网页�
 
 ./hawk-server.bin \
   --access-key <上一步的密钥> \
-  --data-dir /var/lib/hawk-server \
-  --web-dist /opt/hawk-web-dist       # 可选：网页版查看器产物目录
+  --data-dir /var/lib/hawk-server
 ```
 
 参数与环境变量对照表见[配置](hawk-server.md#配置)。systemd 单元示例：
@@ -45,7 +44,7 @@ After=network.target
 [Service]
 # 密钥走环境变量，不落命令行（ps 可见）
 Environment=HAWK_SERVER_ACCESS_KEY=<密钥>
-ExecStart=/usr/local/bin/hawk-server --data-dir /var/lib/hawk-server --web-dist /opt/hawk-web-dist
+ExecStart=/usr/local/bin/hawk-server --data-dir /var/lib/hawk-server
 Restart=on-failure
 
 [Install]
@@ -88,12 +87,12 @@ server {
 }
 ```
 
-防火墙只放行 443/80；**27370 不要对公网开放**（明文 HTTP，密钥虽兜底但 TLS 是底线，且 X-Real-IP 头可信的前提是流量必经反代）。用 Caddy 则只需 `reverse_proxy 127.0.0.1:27370`（WSS 透传无需额外配置，同样建议补 `X-Real-IP` 头）。
+防火墙只放行 443/80；**27370 不要对公网开放**（明文 HTTP，密钥虽兜底但 TLS 是底线，且 X-Real-IP 头可信的前提是流量必经反代）。`X-Forwarded-Proto` 别删：查看器的 `hawk_bt` cookie 据此判断要不要加 `Secure`。用 Caddy 则只需 `reverse_proxy 127.0.0.1:27370`（WSS 透传与 `X-Forwarded-Proto` 都无需额外配置，同样建议补 `X-Real-IP` 头）。
 
 ## 部署后验证
 
 1. `curl -s -H "Authorization: Bearer <密钥>" https://hawk.example.com/api/v1/devices` 返回 `{"status":"success",...}`
 2. 桌面端 hawk → 设置 → 远程填服务端地址与密钥，设备出现在列表中
-3. 浏览器打开 `https://hawk.example.com`，登录后能选到在线设备并进入查看器
+3. 浏览器打开 `https://hawk.example.com`，登录后能选到在线设备并进入查看器（查看器页面由目标设备的 daemon 经隧道提供，该设备需是带前端产物的桌面端）
 
 客户端接入步骤、网页版操作、数据备份与常见故障见 [hawk-server 使用指南](hawk-server.md)。

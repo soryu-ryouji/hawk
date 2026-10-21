@@ -36,8 +36,7 @@ pub async fn run(settings: Settings) -> std::io::Result<()> {
     tracing::info!(port = settings.port, "hawk-server listening");
     axum::serve(
         listener,
-        api::router(state, viewer, settings.web_dist)
-            .into_make_service_with_connect_info::<SocketAddr>(),
+        api::router(state, viewer).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
 }
