@@ -19,6 +19,18 @@ use tokio_tungstenite::tungstenite::Message;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 /// 通道重连退避：首次 1s（快恢复优先），指数增长至 60s
 const CHANNEL_RETRY_MIN: Duration = Duration::from_secs(1);
+/// 通道活性看门狗：服务端保活 ping 周期 30s（协议约定），超过该时长收不到任何服务端帧
+/// 即判定连接半开（反代切换/NAT 会话老化可致下行静默死亡、上行 REST 心跳照常），主动断开重连
+const CHANNEL_SILENCE_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// 看门狗时长：测试可经 HAWK_REMOTE_CHANNEL_SILENCE_MS 覆盖（同 heartbeat_interval 的提速约定）
+fn channel_silence_timeout() -> Duration {
+    std::env::var("HAWK_REMOTE_CHANNEL_SILENCE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(CHANNEL_SILENCE_TIMEOUT)
+}
 
 /// 心跳间隔：测试可经 HAWK_REMOTE_HEARTBEAT_MS 覆盖（协议约定 30s，此处仅为测试提速）
 fn heartbeat_interval() -> Duration {
@@ -297,6 +309,11 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
 
     // 连接建立即心跳一次（让自己在线），随后按周期间隔
     let mut heartbeat = tokio::time::interval(heartbeat_interval());
+    // 活性看门狗：任何服务端帧（含保活 ping）都刷新活性；静默超时即半开，主动重连。
+    // 没有它，半开连接会让设备永远「假在线」：REST 心跳照常，推送（session.request 等）全丢
+    let silence = channel_silence_timeout();
+    let mut watchdog = tokio::time::interval((silence / 4).max(Duration::from_millis(100)));
+    let mut last_recv = std::time::Instant::now();
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
@@ -304,15 +321,27 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
             }
             msg = ws.next() => {
                 match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        handle_message(&mut ws, ctx, &mut accepted_peers, &text).await?;
+                    Some(Ok(frame)) => {
+                        last_recv = std::time::Instant::now();
+                        match frame {
+                            Message::Text(text) => {
+                                handle_message(&mut ws, ctx, &mut accepted_peers, &text).await?;
+                            }
+                            Message::Close(_) => return Ok(()),
+                            _ => {}
+                        }
                     }
-                    Some(Ok(Message::Close(_))) => return Ok(()),
                     Some(Err(e)) => {
                         return Err(SignalError::Transient(format!("控制通道读取失败: {e}")));
                     }
                     None => return Err(SignalError::Transient("控制通道已关闭".to_string())),
-                    _ => {}
+                }
+            }
+            _ = watchdog.tick() => {
+                if last_recv.elapsed() > silence {
+                    return Err(SignalError::Transient(format!(
+                        "控制通道超过 {silence:?} 未收到服务端帧（连接疑似半开）"
+                    )));
                 }
             }
         }

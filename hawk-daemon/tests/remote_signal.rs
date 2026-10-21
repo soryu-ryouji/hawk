@@ -43,6 +43,8 @@ struct MockHub {
     last_heartbeat_ms: Arc<Mutex<u64>>,
     /// 踢掉当前控制通道一次（正常 Close；重连后自动复位）
     kick: Arc<std::sync::atomic::AtomicBool>,
+    /// 控制通道连接计数（静默看门狗重连回归用）
+    ws_connects: Arc<AtomicU64>,
 }
 
 /// mock 心跳限速窗口（比协议的 10s 小，测试节奏用）
@@ -67,6 +69,10 @@ impl MockHub {
 
     fn register_count(&self) -> u64 {
         self.register_count.load(Ordering::Relaxed)
+    }
+
+    fn ws_connect_count(&self) -> u64 {
+        self.ws_connects.load(Ordering::Relaxed)
     }
 }
 
@@ -214,6 +220,7 @@ async fn ws_channel(
             .into_response();
     }
     let device_id = query.get("device_id").cloned().unwrap_or_default();
+    hub.ws_connects.fetch_add(1, Ordering::Relaxed);
     ws.on_upgrade(move |mut socket| async move {
         let hello = json!({"type":"hello","device_id":device_id,"server_time_ms":0});
         socket
@@ -812,4 +819,52 @@ async fn write_session_accepted_when_writable_on() {
     }
     assert!(hub.rejected_sessions().is_empty(), "写会话不应被拒绝");
     task.abort();
+}
+
+/// 半开连接回归：反代切换/NAT 会话老化可致通道下行静默死亡（上行 REST 心跳照常），
+/// 服务端的保活 ping 与推送全都到不了客户端。daemon 必须以「收不到服务端帧」为判据
+/// 主动拆通道重连——否则设备永远假在线，session.request 全丢（会话永远 pending）。
+/// mock 从不在通道上发 ping，通道必然被看门狗判定静默。
+#[tokio::test]
+async fn silent_channel_triggers_reconnect() {
+    let _guard = TEST_LOCK.lock().await;
+    // 看门狗提速：90s 协议值压缩到 400ms（仅本测试进程）
+    unsafe { std::env::set_var("HAWK_REMOTE_CHANNEL_SILENCE_MS", "400") };
+    let (base, hub) = spawn_mock_hub().await;
+    let lib = test_library();
+    lib.remote
+        .update(&RemoteSettings {
+            enabled: true,
+            url: base,
+            service_key: KEY.to_string(),
+            quic_port: 0,
+            writable: false,
+        })
+        .unwrap();
+
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
+    let task = tokio::spawn(supervisor.clone().run(
+        lib.paths.clone(),
+        lib.config.clone(),
+        axum::Router::new(),
+    ));
+    wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
+    let first = hub.ws_connect_count();
+    assert!(first >= 1, "控制通道未建立");
+
+    // 通道静默 → 看门狗触发 → 主动断开并重连（连接计数增长）
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while hub.ws_connect_count() <= first {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "静默通道未触发重连（ws_connect_count={}）",
+            hub.ws_connect_count()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    task.abort();
+    unsafe { std::env::remove_var("HAWK_REMOTE_CHANNEL_SILENCE_MS") };
 }
