@@ -1,9 +1,0 @@
-# 构建上下文瘦身：构建产物与版本控制不进镜像（web dist 在镜像内重新构建）
-.git
-**/target
-**/node_modules
-hawk-app/web/dist
-hawk-app/electron/out
-hawk-app/dist
-/tools/.tmp
-plan.md

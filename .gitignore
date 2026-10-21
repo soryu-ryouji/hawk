@@ -11,6 +11,8 @@
 hawk-daemon/target/
 hawk-server/target/
 hawk-update/target/
+# deploy 脚本默认输出（仓库根同名目录已被 hawk-server/ 占用）
+/hawk-server.bin
 /tools/.tmp/
 
 # Electron 主进程/preload 的 esbuild 产物（electron/src 的 TS 源码构建生成）

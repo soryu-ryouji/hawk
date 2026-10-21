@@ -1,6 +1,6 @@
 # hawk-server 使用指南
 
-> hawk 远程访问服务端的单用户自托管部署（仓库 `hawk-server/`）。本文讲怎么跑、怎么配、对外提供哪些接口、日常怎么运维。架构与安全模型见 [远程访问设计](remote-access.md)，字段级契约见 [远程访问协议](remote-protocol.md)，Docker/反代/TLS 部署见 [远程访问部署](remote-deployment.md)。
+> hawk 远程访问服务端的单用户自托管部署（仓库 `hawk-server/`）。本文讲怎么跑、怎么配、对外提供哪些接口、日常怎么运维。架构与安全模型见 [远程访问设计](remote-access.md)，字段级契约见 [远程访问协议](remote-protocol.md)，编译输出与反代部署见 [远程访问部署](remote-deployment.md)。
 
 ## 职责与边界
 
@@ -28,6 +28,8 @@ cargo test                # 协议测试 + 网页版全链路互操作测试（�
 cd hawk-app && npm run build    # 产出 hawk-app/web/dist
 ```
 
+部署时用 `tools/deploy-hawk-server.sh`：它执行同样的 `cargo build --release --locked` 并把二进制复制到指定路径（默认仓库根 `hawk-server.bin`，`--path` 可改）。脚本的 cargo 依赖默认走 rsproxy 国内镜像，`CARGO_MIRROR=` 回退官方源；本机手动 `cargo build` 使用你自己的 `~/.cargo/config.toml`。
+
 ## 启动
 
 最小启动（密钥至少 16 个字符，启动时校验）：
@@ -48,7 +50,7 @@ cargo run -- \
 # 浏览器打开 http://127.0.0.1:27370 即可看到网页版登录页
 ```
 
-生产环境的 Docker 一键部署、nginx 反代与 systemd 单元见 [远程访问部署](remote-deployment.md)。
+生产环境的编译输出、nginx 反代与 systemd 单元见 [远程访问部署](remote-deployment.md)。
 
 ## 配置
 
@@ -60,7 +62,7 @@ cargo run -- \
 | `--web-dist` | `HAWK_SERVER_WEB_DIST` | 无 | 网页版查看器前端产物目录。不配置时登录页仍可用，但 `/app` 返回 404 |
 
 - 日志走 stdout，级别由 `RUST_LOG` 控制（默认 `info`）；排障时 `RUST_LOG=debug`，启动成功会打印 `hawk-server listening`。
-- 密钥写在命令行会出现在 `ps` 和 systemd 单元里，生产环境建议走环境变量（`Environment=` / compose `environment`）。
+- 密钥写在命令行会出现在 `ps` 和 systemd 单元里，生产环境建议走环境变量（systemd `Environment=`）。
 - 服务端无数据库：监听成功即服务可用，没有额外的依赖探活。
 
 ## 凭据与鉴权
@@ -199,7 +201,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 
 ### 升级
 
-- 二进制：替换后重启；Docker：`tools/deploy-hawk-server.sh` 或 `docker compose up -d --build`
+- 用 `tools/deploy-hawk-server.sh` 重新构建并覆盖旧二进制，然后重启服务
 - 状态只有三个 JSON，无迁移步骤；升级前备份数据目录
 - 协议路径为 `/api/v1`，不兼容变更升 v2（见协议文档「版本策略」）
 
@@ -215,11 +217,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 | `/app` 返回 404 | 未配置 `--web-dist`，或该目录下没有 `index.html` |
 | 网页版列表/图片不更新、大文件超时 | 反代缓冲了 SSE 或超时过短：`proxy_buffering off`、加大 `proxy_read_timeout` |
 | 心跳返回 429 | 心跳间隔小于 10s，检查客户端配置 |
-| 服务端日志看会话细节 | `RUST_LOG=debug` 重启；容器内 `docker compose logs -f hawk-server` |
+| 服务端日志看会话细节 | `RUST_LOG=debug` 重启；systemd 部署用 `journalctl -u hawk-server -f` |
 
 ## 相关文档
 
 - [远程访问设计](remote-access.md)：架构、连接模型、安全模型
 - [远程访问协议](remote-protocol.md)：接口契约与状态机
-- [远程访问部署](remote-deployment.md)：Docker、nginx 反代、TLS、systemd
+- [远程访问部署](remote-deployment.md)：编译输出、nginx 反代、TLS、systemd
 - [技术栈](../tech-stack.md)：hawk-server 的依赖选型

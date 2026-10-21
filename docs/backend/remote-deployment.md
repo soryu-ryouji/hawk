@@ -1,45 +1,36 @@
 # 远程访问部署（hawk-server）
 
-> 单用户自托管部署：一台有公网的服务器 + 一个域名（可选但推荐），即可让各设备的 hawk 互联，并通过浏览器经网页版只读访问素材库。启动参数、接口、网页版操作与运维排查见 [hawk-server 使用指南](hawk-server.md)；架构见 [远程访问设计](remote-access.md)，协议见 [remote-protocol](remote-protocol.md)。
+> 单用户自托管部署：一台有公网的服务器 + 一个域名（可选但推荐），即可让各设备的 hawk 互联，并通过浏览器经网页版只读访问素材库。本文讲编译产物与反代部署；启动参数、接口、网页版操作与运维排查见 [hawk-server 使用指南](hawk-server.md)，架构见 [远程访问设计](remote-access.md)，协议见 [remote-protocol](remote-protocol.md)。
 
 ## 组成
 
 | 部件 | 说明 |
 | ---- | ---- |
-| hawk-server 二进制 | 仓库 `hawk-server/` 构建（`cargo build --release`），单文件无依赖 |
+| hawk-server 二进制 | 仓库 `hawk-server/` 编译（`tools/deploy-hawk-server.sh`），单文件 |
 | 数据目录 | 设备注册表、网页版身份、浏览器令牌（JSON 文件，备份即迁移，见[数据目录](hawk-server.md#数据目录)） |
 | 域名 + TLS 反代 | Caddy（自动签发续期，推荐）或 nginx；控制面 WSS 与网页版都要求 HTTPS/WSS |
 | web 查看器产物（网页版需要） | `hawk-app/web/dist`（`cd hawk-app && npm run build` 产出），整目录上传到服务器 |
 
-## Docker（推荐）
-
-仓库根目录提供一体化 `Dockerfile`（镜像内同时构建 hawk-server 与 web 查看器产物）与 `docker-compose.yml`。最省事的方式是一键脚本（自动生成/注入密钥、构建启动、打印接入信息，幂等重跑即升级）：
+## 编译
 
 ```bash
-tools/deploy-hawk-server.sh
+tools/deploy-hawk-server.sh                              # 默认输出仓库根 hawk-server.bin
+tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server   # 指定输出文件
 ```
 
-或手动：编辑 compose 文件中的 `HAWK_SERVER_ACCESS_KEY`（`openssl rand -hex 32` 生成）后 `docker compose up -d --build`。
+- 脚本只做 `cargo build --release --locked` 并把二进制复制到输出路径，不安装、不启动
+- 仓库根已有同名目录 `hawk-server/`，默认文件名用 `hawk-server.bin`；`--path` 传目录（已存在或以 `/` 结尾）时写入该目录下的 `hawk-server`
+- 脚本按本机平台构建：给 Linux 服务器部署时在服务器上执行，或自行交叉编译
+- cargo 依赖默认走 rsproxy 国内镜像；`CARGO_MIRROR=` 回退官方 crates.io，也可换成其他 sparse 索引（地址以 `/` 结尾）
+- 网页版另需前端产物：`cd hawk-app && npm run build`，把 `hawk-app/web/dist` 整目录上传（`--web-dist` 指向它）
 
-数据在命名卷 `hawk-server-data`（即容器内 `/data`）；明文端口只绑环回（127.0.0.1:27370），公网入口交给宿主机 nginx。不使用 compose 时等价命令：
-
-```bash
-docker build -t hawk-server .
-docker run -d --name hawk-server --restart unless-stopped \
-  -e HAWK_SERVER_ACCESS_KEY=<密钥> \
-  -v hawk-server-data:/data \
-  -p 127.0.0.1:27370:27370 \
-  hawk-server
-```
-
-## 手动运行（二进制）
+## 运行
 
 ```bash
 openssl rand -hex 32                  # 生成访问密钥（客户端与网页登录都用它）
 
-hawk-server \
+./hawk-server.bin \
   --access-key <上一步的密钥> \
-  --port 27370 \
   --data-dir /var/lib/hawk-server \
   --web-dist /opt/hawk-web-dist       # 可选：网页版查看器产物目录
 ```
@@ -52,13 +43,16 @@ Description=hawk-server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/hawk-server --access-key <密钥> --data-dir /var/lib/hawk-server --web-dist /opt/hawk-web-dist
+# 密钥走环境变量，不落命令行（ps 可见）
+Environment=HAWK_SERVER_ACCESS_KEY=<密钥>
+ExecStart=/usr/local/bin/hawk-server --data-dir /var/lib/hawk-server --web-dist /opt/hawk-web-dist
 Restart=on-failure
-# 密钥不落命令行（ps 可见）的替代：Environment=HAWK_SERVER_ACCESS_KEY=<密钥>
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+二进制的更新方式：重新运行 `tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server` 覆盖，再重启服务。
 
 ## 域名与 TLS（nginx 反代）
 
