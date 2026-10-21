@@ -77,19 +77,25 @@ export function useStartup() {
     });
     // server 重启会换新地址/token（轮询端口即变）：先重配连接再计就绪。
     // 事件与拉取双通道去重：onServerStarted 只发一次，页面（重）加载晚于就绪时会丢，
-    // 故挂载时同时经 getServerConn 拉取——同连接只 boot 一次
+    // 故挂载时同时经 remoteGetConnection 拉取——同连接只 boot 一次。
+    // 远程切换（connection-changed）与断线回切走同一条重配路径：连接描述符即「一个 api base + 一个 token」
     let bootedKey: string | null = null;
-    const onConn = (conn: { address: string; token: string }) => {
-      const key = `${conn.address}|${conn.token}`;
+    const onConn = (conn: { address?: string; api_base?: string; token: string }) => {
+      const api = conn.api_base ?? conn.address;
+      if (!api) {
+        return;
+      }
+      const key = `${api}|${conn.token}`;
       if (bootedKey === key) {
         return;
       }
       bootedKey = key;
-      configureApi({ api: conn.address, token: conn.token });
+      configureApi({ api, token: conn.token });
       readyCount.value++;
     };
     shell.onServerStarted(onConn);
-    void shell.getServerConn().then((conn) => {
+    shell.onConnectionChanged(onConn);
+    void shell.remoteGetConnection().then((conn) => {
       if (conn) {
         onConn(conn);
       }

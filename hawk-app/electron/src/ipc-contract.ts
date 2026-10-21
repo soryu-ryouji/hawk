@@ -30,6 +30,14 @@ export const IPC = {
   winMinimize: 'hawk:win-minimize',
   winMaximizeToggle: 'hawk:win-maximize-toggle',
   winClose: 'hawk:win-close',
+  remoteGetConnection: 'hawk:remote-get-connection',
+  remoteStatus: 'hawk:remote-status',
+  remotePutConfig: 'hawk:remote-put-config',
+  remoteDevices: 'hawk:remote-devices',
+  remotePatchDevice: 'hawk:remote-patch-device',
+  remoteRotate: 'hawk:remote-rotate',
+  remoteConnect: 'hawk:remote-connect',
+  remoteDisconnect: 'hawk:remote-disconnect',
   // ---- 主进程 → 渲染进程（webContents.send / ipcRenderer.on） ----
   winMaximized: 'hawk:win-maximized',
   serverProgress: 'hawk:server-progress',
@@ -38,6 +46,7 @@ export const IPC = {
   serverConn: 'hawk:server-conn',
   serverError: 'hawk:server-error',
   updateProgress: 'hawk:update-progress',
+  connectionChanged: 'hawk:connection-changed',
 } as const;
 
 /** 素材库历史条目（主进程记录，最近使用在前） */
@@ -86,6 +95,56 @@ export type UpdateProgress = { phase: 'downloading'; received: number; total: nu
 /** server 就绪事件负载（冷启动/换库/应用设置重启都会到达，restart 会换端口） */
 export interface ServerConn {
   address: string;
+  token: string;
+}
+
+/** 连接描述符：前端唯一面对的连接语义（api_base + token + 展示名），本地库/远程库同构 */
+export interface ConnectionDescriptor {
+  api_base: string;
+  token: string;
+  /** 「我的库」| 远端设备名 */
+  label: string;
+  remote: boolean;
+}
+
+/** [remote] 配置（读写 daemon /remote 的载荷） */
+export interface RemoteConfig {
+  enabled: boolean;
+  url: string;
+  key: string;
+}
+
+/** 信令运行状态（daemon /remote 的 status 子对象） */
+export interface RemoteStatus {
+  state: 'disabled' | 'connecting' | 'online' | 'error';
+  server_url?: string;
+  device_id?: string;
+  error?: string;
+}
+
+/** daemon /remote 的完整响应（配置 + 运行状态） */
+export interface RemoteDto extends RemoteConfig {
+  status: RemoteStatus;
+}
+
+/** 服务端设备（daemon /remote/devices 单条） */
+export interface RemoteDevice {
+  device_id: string;
+  name: string;
+  platform: string;
+  library_name: string;
+  online: boolean;
+  allow_remote: boolean;
+  last_seen_at_ms?: number;
+}
+
+/** 远程会话建立结果（daemon /remote/session 响应） */
+export interface RemoteSessionDto {
+  session_id: string;
+  target_device_id: string;
+  target_name: string;
+  target_library_name: string;
+  proxy_port: number;
   token: string;
 }
 
@@ -166,4 +225,23 @@ export interface HawkShell {
   onServerProgress(cb: (progress: ServerProgress) => void): () => void;
   /** 订阅最大化状态变化（含 Aero Snap 等系统途径），返回退订函数 */
   onWindowMaximized(cb: (maximized: boolean) => void): () => void;
+  /** 当前活动连接描述符（本地库或远程会话代理）；server 未就绪返回 null */
+  remoteGetConnection(): Promise<ConnectionDescriptor | null>;
+  /** 远程接入配置与信令运行状态（daemon /remote） */
+  remoteStatus(): Promise<RemoteDto>;
+  /** 写回 [remote] 配置并热重启信令 */
+  remotePutConfig(config: RemoteConfig): Promise<RemoteDto>;
+  /** 服务端设备列表 */
+  remoteDevices(): Promise<{ devices: RemoteDevice[] }>;
+  /** 更新本机设备信息（显示名/allow_remote/库名） */
+  remotePatchDevice(patch: { name?: string; allow_remote?: boolean; library_name?: string }): Promise<RemoteDevice>;
+  /** 证书轮换（旧证书会话失效） */
+  remoteRotate(): Promise<{ fingerprint: string }>;
+  /** 建立远程会话并切换连接（返回新连接描述符）；失败抛错（message 直接展示） */
+  remoteConnect(targetDeviceId: string): Promise<ConnectionDescriptor>;
+  /** 断开远程会话并回切本地库（幂等） */
+  remoteDisconnect(): Promise<ConnectionDescriptor | null>;
+  /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。
+   *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 remoteGetConnection 拉取兜底 */
+  onConnectionChanged(cb: (conn: ConnectionDescriptor) => void): () => void;
 }

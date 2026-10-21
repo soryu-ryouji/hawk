@@ -11,6 +11,7 @@ import { useDragImport } from '@/domains/import';
 import { useLayout } from '@/shared/composables/useLayout';
 import { useBoot } from './boot';
 import { usePanelResize } from './panelResize';
+import { initConnectionLabel } from '@/domains/remote';
 import { startupAutoCheck } from '@/domains/settings';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { Sidebar } from '@/domains/taxonomy';
@@ -31,6 +32,7 @@ const preview = usePreviewStore();
 const { narrow, touch } = useLayout();
 const { phase, bootError, progress, runBoot } = useBoot();
 const { sidebarWidth, inspectorWidth, dragSide, startResize } = usePanelResize();
+initConnectionLabel();
 // 窄屏下侧栏为抽屉式：进入窄屏默认收起（抽屉关闭），回宽屏恢复双栏
 watch(
   narrow,

@@ -18,14 +18,15 @@ import Icon from '@/shared/ui/Icon.vue';
 import SettingsAppearance from './SettingsAppearance.vue';
 import SettingsHiding from './SettingsHiding.vue';
 import SettingsLan from './SettingsLan.vue';
+import SettingsRemote from './SettingsRemote.vue';
 import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
 import SettingsConnection from './SettingsConnection.vue';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
-/** 当前分区：外观 / 隐藏项 / 局域网（Electron）/ 存储（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
-const section = ref<'appearance' | 'hiding' | 'lan' | 'storage' | 'update' | 'connection'>('appearance');
+/** 当前分区：外观 / 隐藏项 / 局域网（Electron）/ 远程（Electron）/ 存储（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
+const section = ref<'appearance' | 'hiding' | 'lan' | 'remote' | 'storage' | 'update' | 'connection'>('appearance');
 /** 错误条（各分区经 v-model:error 写入；LAN 分区的读取/校验/保存错误） */
 const error = ref<string | null>(null);
 
@@ -102,6 +103,7 @@ async function save() {
             <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">外观</button>
             <button class="nav-item" :class="{ active: section === 'hiding' }" @click="section = 'hiding'">隐藏项</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'lan' }" @click="section = 'lan'">局域网</button>
+            <button v-if="hasShell" class="nav-item" :class="{ active: section === 'remote' }" @click="section = 'remote'">远程</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'storage' }" @click="section = 'storage'">存储</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'update' }" @click="section = 'update'">更新</button>
             <button v-else class="nav-item" :class="{ active: section === 'connection' }" @click="section = 'connection'">连接</button>
@@ -111,6 +113,7 @@ async function save() {
           <SettingsAppearance v-show="section === 'appearance'" />
           <SettingsHiding v-show="section === 'hiding'" />
           <SettingsLan v-if="hasShell" v-show="section === 'lan'" ref="lanPane" v-model:error="error" />
+          <SettingsRemote v-if="hasShell" v-show="section === 'remote'" v-model:error="error" />
           <SettingsStorage v-if="hasShell" v-show="section === 'storage'" />
           <SettingsUpdate v-if="hasShell" v-show="section === 'update'" />
           <SettingsConnection v-if="!hasShell" v-show="section === 'connection'" @logout="emit('logout')" />

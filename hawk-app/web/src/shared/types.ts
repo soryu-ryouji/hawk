@@ -1,8 +1,22 @@
 import type { components } from '@/shared/api/schema';
-import type { HawkShell, LibraryHistoryItem, UpdateChannel, CloseAction, UpdateInfo, UpdateProgress } from '../../../electron/src/ipc-contract';
+import type {
+  HawkShell,
+  LibraryHistoryItem,
+  UpdateChannel,
+  CloseAction,
+  UpdateInfo,
+  UpdateProgress,
+  ConnectionDescriptor,
+  RemoteConfig,
+  RemoteStatus,
+  RemoteDto,
+  RemoteDevice,
+  RemoteSessionDto,
+} from '../../../electron/src/ipc-contract';
 
 // IPC 契约类型从 electron/src/ipc-contract.ts 单一定义处 re-export（三处对齐改一处）
 export type { LibraryHistoryItem, UpdateChannel, CloseAction, UpdateInfo, UpdateProgress };
+export type { ConnectionDescriptor, RemoteConfig, RemoteStatus, RemoteDto, RemoteDevice, RemoteSessionDto };
 export { UPDATE_CANCELLED } from '../../../electron/src/ipc-contract';
 
 // 契约类型一律从生成的 schema 取，不另写

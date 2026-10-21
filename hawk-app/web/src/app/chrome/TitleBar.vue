@@ -11,10 +11,12 @@ import { useLayout } from '@/shared/composables/useLayout';
 import Icon from '@/shared/ui/Icon.vue';
 import { hasShell, isMac, shell } from '@/shared/lib/platform';
 import { useImporterStore } from '@/domains/import';
+import { useConnectionLabel } from '@/domains/remote';
 import type { MenuItem, QueryState } from '@/shared/types';
 
 const store = useLibraryStore();
 const importer = useImporterStore();
+const connection = useConnectionLabel();
 const { open: openMenu } = useContextMenu();
 const { narrow } = useLayout();
 
@@ -176,6 +178,13 @@ function onDblClick(e: MouseEvent) {
       <span v-else class="location title">{{ locationTitle }}</span>
 
       <span v-if="store.selection.length" class="selected-count">已选 {{ store.selection.length }} 项</span>
+
+      <!-- 远程浏览标识：安全与认知底线（不可省略的来源区分）；点击断开回切本地库 -->
+      <button v-if="connection.isRemote.value" class="remote-chip" :title="`断开并回到我的库`" @click="connection.disconnect()">
+        <Icon name="globe" :size="12" />
+        <span>当前浏览：{{ connection.label.value }}</span>
+        <Icon name="close" :size="12" />
+      </button>
     </div>
 
     <div class="spacer" />
@@ -395,5 +404,24 @@ function onDblClick(e: MouseEvent) {
   color: var(--fg-1);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.remote-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--accent, #4a9eff);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent, #4a9eff);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.remote-chip:hover {
+  background: color-mix(in srgb, var(--accent, #4a9eff) 12%, transparent);
 }
 </style>

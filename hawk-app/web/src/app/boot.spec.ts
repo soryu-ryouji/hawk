@@ -54,6 +54,8 @@ vi.mock('@/shared/lib/platform', () => ({
     onServerError: () => () => {},
     onServerStarted: () => () => {},
     getServerConn: () => Promise.resolve(null),
+    remoteGetConnection: () => Promise.resolve(null),
+    onConnectionChanged: () => () => {},
     quitApp: () => {},
   },
 }));

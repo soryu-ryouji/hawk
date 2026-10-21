@@ -46,6 +46,15 @@ const shell: HawkShell = {
   onServerRestarting: (cb) => subscribe(IPC.serverRestarting, cb),
   onServerProgress: (cb) => subscribe(IPC.serverProgress, cb),
   onWindowMaximized: (cb) => subscribe(IPC.winMaximized, cb),
+  remoteGetConnection: () => ipcRenderer.invoke(IPC.remoteGetConnection),
+  remoteStatus: () => ipcRenderer.invoke(IPC.remoteStatus),
+  remotePutConfig: (config) => ipcRenderer.invoke(IPC.remotePutConfig, config),
+  remoteDevices: () => ipcRenderer.invoke(IPC.remoteDevices),
+  remotePatchDevice: (patch) => ipcRenderer.invoke(IPC.remotePatchDevice, patch),
+  remoteRotate: () => ipcRenderer.invoke(IPC.remoteRotate),
+  remoteConnect: (targetDeviceId) => ipcRenderer.invoke(IPC.remoteConnect, targetDeviceId),
+  remoteDisconnect: () => ipcRenderer.invoke(IPC.remoteDisconnect),
+  onConnectionChanged: (cb) => subscribe(IPC.connectionChanged, cb),
 };
 
 contextBridge.exposeInMainWorld('hawkShell', shell);

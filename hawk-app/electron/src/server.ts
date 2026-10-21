@@ -10,6 +10,7 @@ import { APP_DIR } from './paths';
 import { getMainWindow } from './window';
 import { readConfig, setLibraryRoot, writeConfig } from './app-config';
 import { IPC } from './ipc-contract';
+import { onServerReady, onServerStopped } from './remote';
 
 const isDev = !app.isPackaged;
 
@@ -174,6 +175,8 @@ function startServer(libPath: string, address: string, token: string): ServerHan
       if (state.status === 'ready') {
         startedConn = { address, token };
         getMainWindow()?.webContents.send(IPC.serverStarted, { address, token });
+        // remote SSE 订阅重建（remote.session 断线回切依赖；见 remote.ts）
+        onServerReady();
       } else {
         fail(state.message || 'hawk-daemon 初始索引构建失败');
       }
@@ -194,6 +197,7 @@ function startServer(libPath: string, address: string, token: string): ServerHan
 
 export function stopServer(): void {
   startedConn = null;
+  onServerStopped();
   if (server) {
     server.markStopped();
     if (!server.child.killed) {

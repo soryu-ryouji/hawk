@@ -56,6 +56,15 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   onServerRestarting: () => () => {},
   onServerProgress: () => () => {},
   onWindowMaximized: () => () => {},
+  remoteGetConnection: async () => null,
+  remoteStatus: async () => ({ enabled: false, url: '', key: '', status: { state: 'disabled' } }),
+  remotePutConfig: async () => ({ enabled: false, url: '', key: '', status: { state: 'disabled' } }),
+  remoteDevices: async () => ({ devices: [] }),
+  remotePatchDevice: async () => ({ device_id: '', name: '', platform: '', library_name: '', online: false, allow_remote: false }),
+  remoteRotate: async () => ({ fingerprint: '' }),
+  remoteConnect: async () => ({ api_base: '', token: '', label: '', remote: false }),
+  remoteDisconnect: async () => null,
+  onConnectionChanged: () => () => {},
 };
 
 /** 类型化 shell 通道：Electron 走 preload 注入，浏览器走 no-op 壳 */

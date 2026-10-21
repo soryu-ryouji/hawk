@@ -6,6 +6,8 @@ import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction } from './app-config';
 import { openLibraryAt, pickLibrary, getStartedConn } from './server';
+import { currentDescriptor, remoteConnect, remoteDevices, remoteDisconnect, remotePatchDevice, remotePutConfig, remoteRotate, remoteStatus } from './remote';
+import type { RemoteConfig } from './ipc-contract';
 import { changeCacheParent, currentCacheParent } from './cache';
 import { lanAddresses } from './lan';
 import { IPC } from './ipc-contract';
@@ -145,6 +147,16 @@ export function registerIpc(): void {
       await clipboard.writeText(abs);
     }
   });
+
+  // ---- 远程访问：连接描述符与管理面（daemon REST 经主进程转发，见 remote.ts） ----
+  ipcMain.handle(IPC.remoteGetConnection, () => currentDescriptor());
+  ipcMain.handle(IPC.remoteStatus, () => remoteStatus());
+  ipcMain.handle(IPC.remotePutConfig, (_event, config: RemoteConfig) => remotePutConfig(config));
+  ipcMain.handle(IPC.remoteDevices, () => remoteDevices());
+  ipcMain.handle(IPC.remotePatchDevice, (_event, patch: { name?: string; allow_remote?: boolean; library_name?: string }) => remotePatchDevice(patch));
+  ipcMain.handle(IPC.remoteRotate, () => remoteRotate());
+  ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string) => remoteConnect(targetDeviceId));
+  ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
 }
 
 /** 库内相对路径 → 绝对路径（含越界守卫），非法路径返回 null */
