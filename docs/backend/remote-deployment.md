@@ -13,11 +13,13 @@
 
 ## Docker（推荐）
 
-仓库根目录提供一体化 `Dockerfile`（镜像内同时构建 hawk-server 与 web 查看器产物）与 `docker-compose.yml`。编辑 compose 文件中的 `HAWK_SERVER_ACCESS_KEY`（`openssl rand -hex 32` 生成）后一键部署：
+仓库根目录提供一体化 `Dockerfile`（镜像内同时构建 hawk-server 与 web 查看器产物）与 `docker-compose.yml`。最省事的方式是一键脚本（自动生成/注入密钥、构建启动、打印接入信息，幂等重跑即升级）：
 
 ```bash
-docker compose up -d --build
+tools/deploy-hawk-server.sh
 ```
+
+或手动：编辑 compose 文件中的 `HAWK_SERVER_ACCESS_KEY`（`openssl rand -hex 32` 生成）后 `docker compose up -d --build`。
 
 数据在命名卷 `hawk-server-data`（即容器内 `/data`）；明文端口只绑环回（127.0.0.1:27370），公网入口交给宿主机 nginx。不使用 compose 时等价命令：
 
