@@ -489,7 +489,7 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
     // 可达性：UPnP 映射（维护任务异步更新）+ 全局 IPv6（每次心跳探测，零成本）。
     // public_ip 不自报——以服务端 public_ip_seen 为准
     let mapped_port = ctx.upnp_report.read().unwrap().mapped_port;
-    let (public_ipv6, ipv6_port) = reachability::probe_ipv6(ctx.base, ctx.quic_port)
+    let (public_ipv6, ipv6_port) = reachability::probe_ipv6(ctx.quic_port)
         .map(|(ip, port)| (Some(ip), Some(port)))
         .unwrap_or((None, None));
     let body = json!({

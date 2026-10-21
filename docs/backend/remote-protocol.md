@@ -102,7 +102,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
   "library_name": "我的素材库",      // 当前打开的库名；服务端据此收敛设备表（可省略）
   "reachability": {
     "public_ip": "1.2.3.4",          // 设备自报公网 IPv4；服务端与连接源地址比对，以服务端为准（自报值可不填）
-    "mapped_port": 27373,             // UPnP/NAT-PMP 映射成功的 QUIC UDP 端口；无映射为 null
+    "mapped_port": 27373,             // UPnP/NAT-PMP 映射的外部端口（期望端口被占时为网关实际分配的任意端口）；无映射为 null
     "mapping_type": "upnp",           // none / upnp / pmp
     "public_ipv6": "240e:xxxx::1",    // 全局 IPv6（通往服务端出接口的当前地址，临时地址轮换由心跳周期自然刷新）；无则 null
     "ipv6_port": 27373,               // QUIC 监听端口；IPv6 无 NAT 映射，防火墙放行即可入站，服务端无法验证可达性——B 的连接尝试即最终校验
