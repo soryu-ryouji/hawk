@@ -1,56 +1,47 @@
 # 远程访问协议 V1（remote-protocol）
 
-> hawk 客户端（hawk-remote 进程，见 [remote-access.md](remote-access.md)）与云端服务之间的接口契约。本协议是唯一共享物：云端服务（hawk-server，闭源）照此实现；hawk 仓库内不包含任何云端实现代码。
-> 总体架构见 [remote-access.md](remote-access.md)。客户端不理解服务端的准入规则：协议无任何会员/计费字段，访问被拒以 HTTP 401 表达（message 说明原因）。
-> 标注 `[P1]` 的为阶段 1 范围，`[P2]` 阶段 2，`[P3]` 阶段 3 占位。
+> hawk 客户端（hawk-remote 进程，见 [remote-access.md](remote-access.md)）与远程访问服务端（hawk-server，本仓库 `hawk-server/`）之间的接口契约。协议是两侧的唯一共享物，实现零代码共享。
+> 单用户方案：服务端启动时配置一把固定 access key，协议无账号/会员/计费概念。访问被拒只有一种语义——key 无效（401）。
+> 总体架构见 [remote-access.md](remote-access.md)。标注 `[P1]` 为已实现范围（hawk-server 已交付）；`[P2]` 中继为后续阶段，协议未定。
 
 ## 通用约定
 
-- 控制面前缀 `/api/v1`，官方端点地址由官方构建注入（文档以 `<base>` 占位）；自托管构建由 `--remote <base>` 指定
+- 控制面前缀 `/api/v1`；服务端地址 `<base>` 由部署者决定（客户端配置 = 服务端 URL + KEY）
 - 请求与响应字段 snake_case，时间戳 Unix 毫秒
 - 响应信封沿用 hawk 本体约定，错误信封不带业务错误码——语义由 HTTP 状态码承载，`message` 供客户端直接展示：
 
 ```json
 { "status": "success", "data": {} }
-{ "status": "error", "error": { "message": "访问被拒" } }
+{ "status": "error", "error": { "message": "访问密钥无效" } }
 ```
 
 ### HTTP 状态码（即全部错误语义）
 
-| 状态码       | 含义                                                                                |
-| ------------ | ----------------------------------------------------------------------------------- |
-| 401          | 访问被拒（服务端自行定义拒绝规则，message 说明原因）                                |
-| 其他 4xx/5xx | 按 HTTP 惯例（400 参数、403 设备上限、404 不存在/不在线、429 限速、500 服务端错误） |
+| 状态码       | 含义                                                                              |
+| ------------ | --------------------------------------------------------------------------------- |
+| 401          | 访问密钥无效                                                                       |
+| 其他 4xx/5xx | 按 HTTP 惯例（400 参数、403 无权操作、404 不存在/不在线、409 会话已结束、429 限速、500 服务端错误） |
 
-- 鉴权头：`Authorization: Bearer <access_key>`。**唯一凭据 access_key**：由账户服务签发/撤销（签发方式不在协议范围内），代表账号身份，所有端点统一使用。客户端配置 = 一个 URL（信令地址）+ 一个 KEY（访问密钥），无登录流程、无会话令牌
+- 鉴权头：`Authorization: Bearer <access_key>`。**唯一凭据 access_key**：部署者启动服务端时经 `--access-key` / `HAWK_SERVER_ACCESS_KEY` 配置（建议 256-bit 随机值，服务端恒定时间比较），所有端点统一使用。客户端配置 = 一个 URL（服务端地址）+ 一个 KEY（访问密钥），无登录流程、无会话令牌
 - **device_id**：设备注册时由服务端分配，客户端持久化，随请求携带（用于心跳、会话响应、WSS 等需要标识设备身份的场合）
-- access_key 为 256-bit 随机值，服务端只存哈希
-- 控制面全量 TLS
-- 限速：心跳最小间隔 10s；其余端点按 access_key 限速由服务端自定
+- 控制面全量 TLS：由前置反代（Caddy 等）终结，hawk-server 进程监听明文 HTTP
+- 限速：心跳最小间隔 10s（违反返回 429）
 
 ## 接入配置（协议视角）
 
 **客户端的最小知识 = 一个 URL + 一个 KEY。** 协议中没有登录端点：
 
-- access_key 由账户服务签发/撤销（自托管者自定）；官方构建内置服务端点地址，用户只需粘贴 KEY；自托管构建由 `--remote` 指定 URL 与 KEY
-- 自托管者自行决定 KEY 的判定逻辑：固定密钥、自建密钥表、或任意放行
+- 部署者自行生成 KEY 并配置到服务端与全部客户端；需要隔离时可分设备部署多实例
 - 客户端接入流程：`POST /devices` 注册设备（拿 device_id）→ 持久化 → 心跳保活 → `GET /devices` 拉设备列表 → 发起会话
-- KEY 撤销后所有请求返回 401；需要多设备隔离时可为每台设备签发独立 KEY
-
-## 访问控制（协议视角）
-
-**客户端不理解服务端的准入规则。** 协议只定义一件事：服务端可在任何端点以 401 拒绝访问（message 说明原因），客户端与其他错误一致，直接展示 message。需要引导用户操作时由服务端在 message 中附带指引或 URL，客户端不内置任何服务方的指引地址。
-
-- 拒绝原因（密钥无效/已撤销、准入资格、额度等）是服务端内部规则，协议不枚举，客户端不区分
-- 自托管者自行决定准入逻辑：固定密钥、自建密钥表、或任意放行
+- KEY 更换后所有请求返回 401，客户端重新配置即可
 
 ## 设备管理
 
-设备数上限由服务端实现（注册时统计已注册设备数，超限返回 403 + message），**不进协议、客户端不需要知道上限数值**。超限不硬拒绝：客户端展示 message，用户可在设备列表中自行注销一台（`DELETE /devices/{id}`）后重试。上限调整只需改服务端代码，客户端无感。
+设备注册表持久化于服务端数据目录（`devices.json`），会话与在线状态为内存状态，服务端重启后设备需重新心跳上线。
 
 ### `[P1] POST /api/v1/devices`
 
-注册设备，返回 device_id。服务端可在此拒绝访问（401）。
+注册设备，返回 device_id。
 
 ```json
 // 请求
@@ -65,7 +56,7 @@
 { "status": "success", "data": { "device_id": "d_42" } }
 ```
 
-`allow_remote`：设备级开关，关闭时该设备的会话请求被自动拒绝（UI 里可改）。
+`allow_remote`：设备级开关，关闭时该设备的会话请求被直接置 `rejected`（UI 里可改）。
 
 ### `[P1] POST /api/v1/devices/heartbeat`
 
@@ -76,12 +67,12 @@
 {
   "device_id": "d_42",
   "reachability": {
-    "public_ip": "1.2.3.4",          // 设备自报公网 IPv4；服务端与连接源地址比对，不一致时以服务端为准
+    "public_ip": "1.2.3.4",          // 设备自报公网 IPv4；服务端与连接源地址比对，以服务端为准（自报值可不填）
     "mapped_port": 27373,             // UPnP/NAT-PMP 映射成功的 QUIC UDP 端口；无映射为 null
     "mapping_type": "upnp",           // none / upnp / pmp
-    "public_ipv6": "240e:xxxx::1",    // [P1] 全局 IPv6（通往信令服务出接口的当前地址，临时地址轮换由心跳周期自然刷新）；无则 null
-    "ipv6_port": 27373,               // [P1] QUIC 监听端口；IPv6 无 NAT 映射，防火墙放行即可入站，服务端无法验证可达性——B 的连接尝试即最终校验
-    "nat_type": "cone"                // [P3] 打洞用；阶段 1 恒 unknown
+    "public_ipv6": "240e:xxxx::1",    // 全局 IPv6（通往服务端出接口的当前地址，临时地址轮换由心跳周期自然刷新）；无则 null
+    "ipv6_port": 27373,               // QUIC 监听端口；IPv6 无 NAT 映射，防火墙放行即可入站，服务端无法验证可达性——B 的连接尝试即最终校验
+    "nat_type": "cone"                // [P3 预留] 打洞用；服务端当前忽略
   }
 }
 // 响应
@@ -93,7 +84,7 @@
 
 ### `[P1] GET /api/v1/devices`
 
-账号下设备列表（access_key 鉴权）：
+设备列表（access_key 鉴权）。`online` 以心跳为准（90s 内心跳为在线）；`reachability` 为最近一次心跳的上报（`public_ip` 为服务端权威值），未心跳过为 null：
 
 ```json
 {
@@ -103,6 +94,7 @@
       {
         "device_id": "d_42",
         "name": "家里台式机",
+        "platform": "windows",
         "library_name": "我的素材库",
         "online": true,
         "last_seen_at_ms": 1750000000000,
@@ -140,29 +132,27 @@
 
 ### `[P1] DELETE /api/v1/devices/{device_id}`
 
-注销设备（access_key 鉴权）。
+注销设备（access_key 鉴权）。其进行中的会话一并取消，对端经 WSS 收到 `session.cancelled`。
 
 ## 控制通道（WSS）
 
-设备建立 WebSocket 长连接接收服务端推送（会话请求、票据下发、打洞协调）。连接鉴权走查询参数：
+设备建立 WebSocket 长连接接收服务端推送（会话请求、状态变更）。连接鉴权走查询参数：
 
 ```text
 wss://<base>/api/v1/ws?key=<access_key>&device_id=<device_id>
 ```
 
-消息统一信封：`{ "type": "...", ... }`。
+消息统一信封：`{ "type": "...", ... }`。同一设备的新连接顶替旧连接（旧连接收到 Close）。
 
 ### 服务端 → 设备
 
-| type                   | 内容                                                                                                                 | 阶段 |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------- | ---- |
-| `hello`                | `{ "device_id", "server_time_ms" }`                                                                                  | P1   |
-| `ping`                 | `{}`（保活，30s 间隔，两次未回 pong 断开）                                                                           | P1   |
-| `session.request`      | `{ "session_id", "from": { "device_id", "name", "library_name" }, "mode": "direct" }`                                | P1   |
-| `session.update`       | `{ "session_id", "state", ... }`（状态变更推送双方；轮询为兜底）                                                     | P1   |
-| `session.cancelled`    | `{ "session_id" }`                                                                                                   | P1   |
-| `session.relay_ticket` | `{ "session_id", "ticket": "<base64>", "relay": { "host", "port", "transport": "udp" }, "peer_fingerprint": "..." }` | P2   |
-| `punch.plan`           | `{ "session_id", "peer": { "public_ip", "port" }, "local_port", "deadline_ms" }`                                     | P3   |
+| type                | 内容                                                                                   | 阶段 |
+| ------------------- | -------------------------------------------------------------------------------------- | ---- |
+| `hello`             | `{ "device_id", "server_time_ms" }`                                                    | P1   |
+| `ping`              | `{}`（保活，30s 间隔，两次未回 pong 断开）                                              | P1   |
+| `session.request`   | `{ "session_id", "from": { "device_id", "name", "library_name" }, "mode": "direct" }`  | P1   |
+| `session.update`    | `{ "session_id", "state", ... }`（状态变更推送双方；轮询为兜底）                         | P1   |
+| `session.cancelled` | `{ "session_id" }`                                                                     | P1   |
 
 ### 设备 → 服务端
 
@@ -177,7 +167,7 @@ wss://<base>/api/v1/ws?key=<access_key>&device_id=<device_id>
 
 ### `[P1] POST /api/v1/sessions`
 
-发起会话（access_key 鉴权）。服务端可在此拒绝访问（401）。
+发起会话（access_key 鉴权）。本期仅支持直连模式。
 
 ```json
 // 请求
@@ -188,9 +178,9 @@ wss://<base>/api/v1/ws?key=<access_key>&device_id=<device_id>
 
 服务端流程：
 
-1. 校验目标设备在线且访问资格有效（服务端规则）；`allow_remote=false` 直接置会话状态 `rejected`
+1. 校验来源/目标设备存在、目标设备在线（不在线返回 404）；`allow_remote=false` 直接置会话状态 `rejected`
 2. 经 WSS 向目标推送 `session.request`
-3. 目标校验来源后回 `POST /api/v1/sessions/{id}/accept`（access_key 鉴权），响应 `{ "status": "success" }`；拒绝则回 reject，会话状态变 `rejected`
+3. 目标回 `POST /api/v1/sessions/{id}/accept`（access_key 鉴权），响应 `{ "status": "success" }`；拒绝则回 reject，会话状态变 `rejected`
 4. 服务端取目标最近心跳的可达性组装候选列表（IPv4 映射优先、IPv6 次之；无任何候选则置 unreachable），经 WSS `session.update` 推送双方
 
 发起方以 WSS 推送为准（轮询 1s 间隔、上限 30s 为兜底；超时状态变 `expired`）：
@@ -202,7 +192,7 @@ wss://<base>/api/v1/ws?key=<access_key>&device_id=<device_id>
 ```json
 // pending
 { "status": "success", "data": { "session_id": "s_9", "state": "pending" } }
-// ready（直连模式）
+// ready
 { "status": "success", "data": {
     "session_id": "s_9", "state": "ready",
     "connect": {
@@ -225,95 +215,44 @@ wss://<base>/api/v1/ws?key=<access_key>&device_id=<device_id>
 | `rejected`    | 目标设备拒绝（或 `allow_remote=false`）       | 展示"对方拒绝"                                             |
 | `unreachable` | 目标无任何直连候选（无 v4 映射且无全局 IPv6） | 中继开关开启时询问用户是否走中继；未开启则提示到设置中开启 |
 | `expired`     | 建立超时（30s）                               | 提供重试                                                   |
-| `cancelled`   | 任一方取消                                    | 结束                                                       |
+| `cancelled`   | 任一方取消（或设备注销）                      | 结束                                                       |
 
 查看方本地代理（端口、会话随机 token）由发起方客户端自行生成，不进协议——隧道建立后由客户端拼装 web 查看器 URL（见数据面一节）。
 
 ### `[P1] POST /api/v1/sessions/{session_id}/accept`
 
-目标设备接受会话（access_key 鉴权），请求体携带 `{ "device_id": "d_42" }` 标识本机，响应 `{ "status": "success" }`。
+目标设备接受会话（access_key 鉴权），请求体携带 `{ "device_id": "d_42" }` 标识本机，响应 `{ "status": "success" }`。仅 pending 状态可响应（重复响应或响应终态会话返回 409）；仅目标设备可响应（来源设备响应返回 403）。
 
 ### `[P1] POST /api/v1/sessions/{session_id}/reject`
 
 目标设备拒绝会话（access_key 鉴权），请求体携带 `{ "device_id": "d_42" }` 标识本机；会话状态变 `rejected`。
 
-### `[P2] POST /api/v1/sessions`（mode=relay）
-
-```json
-// 请求
-{ "source_device_id": "d_77", "target_device_id": "d_42", "mode": "relay" }
-// 响应
-{ "status": "success", "data": { "session_id": "s_9", "state": "pending" } }
-```
-
-服务端校验中继剩余额度（服务端规则，不足 → HTTP 401），按直连流程推送 `session.request`（mode=relay）给目标设备；目标接受后签发两张票据，经双方 WSS 下发 `session.relay_ticket`（见下节），会话进入 `ready`。
-
 ### `[P1] POST /api/v1/sessions/{session_id}/cancel`
 
-任一方取消会话。
+任一方取消会话（无请求体）。pending/ready → `cancelled`，双方经 WSS 收到 `session.cancelled`；已 cancelled 幂等成功；其余终态返回 409。
 
-## 中继协议 `[P2]`
+## 中继（P2，协议未定）
 
-### 票据
-
-账户服务签发给会话双方，HMAC-SHA256 签名（密钥为账户服务与中继节点间的共享密钥）：
-
-```json
-// ticket（base64 编码后下发）
-{
-  "v": 1,
-  "session_id": "s_9",
-  "role": "a", // 会话双方各一张：a / b
-  "issued_at_ms": 1750000000000,
-  "expires_at_ms": 1750000600000, // 建立窗口 10 分钟；建立后按会话上限（24h）续期
-  "quota_bytes": 10737418240, // 本次会话字节配额（服务端分配，用于资源保护）
-  "relay_host": "r1.example",
-  "relay_port": 4433,
-  "transport": "udp", // udp / tcp（TCP 帧模式，见下）
-  "sig": "<hex>"
-}
-```
-
-### 建立与转发
-
-1. 双方以各自票据连接中继节点（UDP 数据报；transport=tcp 时为 TCP 帧模式）
-2. 首个数据报为 hello：`{ "ticket": "<base64>" }`，中继验签后将会话绑定到来源地址
-3. 两张票据（role=a/b）均已到达 → 配对完成，此后中继在双方源地址间**逐包原样转发**，不解析内容
-4. 此后双方之间的 QUIC 握手与全部数据流都经此通道端到端建立——中继只搬运加密数据报
-
-### TCP 帧模式
-
-UDP 被网络封锁时使用。双方以 TCP 连接中继，数据以 2 字节大端长度前缀 + QUIC 数据报分帧传输，中继在两条 TCP 连接间转接帧内容。同样只转发不解析。
-
-### 计量与断流
-
-配额用于防止单会话过度消耗服务端带宽资源；额度数值与发放策略是服务端内部规则，协议不定义。
-
-- 中继按会话累计转发字节数，周期（60s）与结束时经内网 POST `/internal/usage` 上报账户服务（共享密钥鉴权），账户服务按服务端规则记录用量
-- 剩余额度不足 → 会话建立返回 401；已建立会话由中继断流，客户端下次建立时收到 401，直接展示 message
-- 票据超期 → 断开；会话主动结束时双方关闭隧道，中继上报最终用量后回收会话
+单用户方案下中继无需票据/配额/用量上报体系，预计为服务端内的加密字节流转发（密钥与准入即控制面同一把 access key）。待二期设计时补充本节。
 
 ## 数据面（QUIC 隧道）
 
 - 双方 QUIC 连接（quinn），自签名证书，对端身份 = 信令交换的指纹钉扎（TOFU）。证书轮换走 `PATCH /devices/{id}` 更新指纹：新指纹立即生效，旧证书会话失效
 - A 侧隧道端：将隧道内收到的 HTTP 请求转发到 `127.0.0.1:27371`，注入 `Authorization: Bearer <受托只读 token>`（hawk-daemon 启动时经 env `HAWK_DELEGATE_TOKEN` 注入的只读 token，权限与 LAN viewer 同级）
 - **隧道端必须拒绝转发 `GET /api/v1/app/token`（直接返回 404）**，并将全部转发请求的 Host 头改写为固定非环回值（如 `hawk-remote.tunnel`）。该端点免鉴权返回主 token（完全读写权限），仅服务于本机浏览器插件的零配置发现（插件直连环回，不经隧道）；远程查看方不需要它——B 侧已持有代理会话 token。若经隧道转发，Host 恰为环回（B 侧代理地址），端点的环回检查与无 CORS 防护均失效，等于把主 token 交给远端。Host 改写使端点自带的环回检查天然挡住隧道流量，作为 denylist 之外的纵深防御
-- B 侧本地代理：监听 `127.0.0.1:27374`，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口由 Electron 预选后经参数下发（见 remote-access.md 进程接线），会话 token 由 B 侧 hawk-remote 生成，web 查看器 URL 由客户端拼装，不经过信令服务
+- B 侧本地代理：监听 `127.0.0.1:27374`，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口由 Electron 预选后经参数下发（见 remote-access.md 进程接线），会话 token 由 B 侧 hawk-remote 生成，web 查看器 URL 由客户端拼装，不经过服务端
 - 隧道默认端口：A 侧 QUIC UDP 27373（UPnP 映射目标；双栈监听，IPv4/IPv6 同端口）；均可配置
 
 ## 默认值与时限
 
-| 项                  | 值                                                                    |
-| ------------------- | --------------------------------------------------------------------- |
-| 心跳间隔 / 离线判定 | 30s / 90s                                                             |
-| WSS 保活            | ping 30s 间隔，两次未回 pong 断开                                     |
-| 会话建立超时        | 30s                                                                   |
-| 直连单候选超时      | 5s（客户端实现，全部候选失败即直连失败）                              |
-| 中继票据建立窗口    | 10 分钟                                                               |
-| 中继会话时长上限    | 24 小时                                                               |
-| 设备数上限          | 服务端逻辑，不进协议                                                  |
-| 中继用量上报周期    | 60s                                                                   |
-| 端口默认值          | hawk API 27371 / LAN web 27372 / 远程 QUIC UDP 27373 / 本地代理 27374 / remote 状态 API 27375（本地端口均由 Electron 预选后经参数下发） |
+| 项                  | 值                                                                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| 心跳间隔 / 离线判定 | 30s / 90s                                                                                       |
+| 心跳最小间隔        | 10s（429）                                                                                      |
+| WSS 保活            | ping 30s 间隔，两次未回 pong 断开                                                               |
+| 会话建立超时        | 30s                                                                                             |
+| 直连单候选超时      | 5s（客户端实现，全部候选失败即直连失败）                                                        |
+| 端口默认值          | hawk-server 27370 / hawk API 27371 / LAN web 27372 / 远程 QUIC UDP 27373 / 本地代理 27374 / remote 状态 API 27375（本地端口均由 Electron 预选后经参数下发） |
 
 ## 版本策略
 

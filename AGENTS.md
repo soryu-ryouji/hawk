@@ -20,7 +20,7 @@
 
 生成或修改代码后，提交前必须先在本地跑完改动范围对应的检查、全绿再提交。命令与 `.github/workflows/ci.yml` 的质量门禁逐条对应，本地漏跑任何一条，CI 检查 job 即失败，整条构建/发布链被跳过：
 
-- 改动 `hawk-daemon`（Rust）：
+- 改动 `hawk-daemon` / `hawk-server`（Rust，在对应 crate 目录执行）：
   1. `cargo fmt`（写入式格式化，直接执行，不要留给 CI 的 `--check` 报错）
   2. `cargo clippy --all-targets -- -D warnings`
   3. `cargo test`
