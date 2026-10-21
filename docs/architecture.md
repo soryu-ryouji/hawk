@@ -94,9 +94,9 @@ Electron 退出
 
 这三处差异在架构上已预留位置：core 的索引读写收在窄接口后面、API 预留认证头位置。但**当前只实现桌面版**，不提前实现服务器版的任何功能。
 
-### 远程访问（规划中）
+### 远程访问（服务端已实现 P1，客户端信令进行中）
 
-远程访问不走服务器版路线，由三个进程协作：hawk-daemon 本体保持桌面版定位不变，唯一的调用点是鉴权中间件多认一种 env 注入的受托只读 token（无 remote 语义、无需门控）；广域网连接能力全部收在独立进程 **hawk-remote**（仓库内独立项目，随 AGPL 开源），负责信令、心跳、UPnP、QUIC 隧道与本地代理；hawk-app 主进程是接线枢纽（拉起/传参/回收、连接描述符）。远程查看时数据面为端到端 QUIC 隧道，素材数据始终由素材库所在机的 daemon 产出，复用现有 API 与只读鉴权。云端服务（hawk-server：hub + relay，闭源独立仓库）与 hawk 仓库只共享协议契约、零代码共享。产物裁剪在打包层：社区构建不编译、不携带 hawk-remote，前端不定义 HAWK_REMOTE。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)。
+远程访问不走服务器版路线：每台设备只有 hawk-app 与 hawk-daemon 两个进程，广域网连接能力（信令、心跳、UPnP、QUIC 隧道、会话代理）全部收在 daemon 的 **`remote/` 模块**——可选子系统，`[remote]` 配置启用才激活，supervisor reconcile 管理（同 LAN web 先例）；隧道内请求在进程内转发并标记 viewer 级权限，无需受托 token 机制。hawk-app 主进程只做连接描述符与断线回切（订阅 daemon SSE 的 remote 事件）。远程查看时数据面为端到端 QUIC 直连，素材数据始终由素材库所在机的 daemon 产出，复用现有 API 与只读鉴权。远程访问服务端 **hawk-server**（本仓库 `hawk-server/`，独立 crate）为单用户自托管方案：无账号/会员体系，准入即一把固定 access key；与客户端零代码共享，协议契约是唯一共享物。数据面直连优先（服务器只做撮合、不承素材带宽），中继为二期兜底。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)。
 
 ## 仓库结构
 
@@ -106,7 +106,7 @@ hawk/
 ├── hawk-update/             ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
 ├── hawk-app/                ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 ├── hawk-browser-extension/  ← 浏览器插件（Chrome/Firefox，WXT）
-├── hawk-remote/             ← Rust 远程访问客户端（可选进程，见 docs/backend/remote-access.md，规划中）
+├── hawk-server/             ← Rust 远程访问服务端（单用户，见 docs/backend/remote-access.md，P1 已实现）
 ├── tools/                   ← 仓库级脚本（构建/安装/冒烟/性能压测/文档链接检查）
 └── docs/                    ← 设计文档
 ```

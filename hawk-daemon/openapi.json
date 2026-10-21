@@ -784,6 +784,42 @@
         ],
         "type": "object"
       },
+      "Envelope_RemoteDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "key": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/RemoteStatus",
+                "description": "运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "url",
+              "key",
+              "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_StartupInfo": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -2217,6 +2253,25 @@
         ],
         "type": "object"
       },
+      "PutRemoteBody": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "url",
+          "key"
+        ],
+        "type": "object"
+      },
       "RefreshCacheRequest": {
         "properties": {
           "type": {
@@ -2252,6 +2307,68 @@
         "required": [
           "dispatched",
           "removed"
+        ],
+        "type": "object"
+      },
+      "RemoteDto": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RemoteStatus",
+            "description": "运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "url",
+          "key",
+          "status"
+        ],
+        "type": "object"
+      },
+      "RemoteState": {
+        "enum": [
+          "disabled",
+          "connecting",
+          "online",
+          "error"
+        ],
+        "type": "string"
+      },
+      "RemoteStatus": {
+        "properties": {
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "server_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/RemoteState"
+          }
+        },
+        "required": [
+          "state"
         ],
         "type": "object"
       },
@@ -3985,6 +4102,56 @@
         "summary": "解锁（任何有效 token，含只读 viewer）：校验密码发放票据，票据由各客户端独立持有",
         "tags": [
           "lock"
+        ]
+      }
+    },
+    "/api/v1/remote": {
+      "get": {
+        "operationId": "get_remote",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RemoteDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "读取远程访问接入配置与运行状态（admin 限定；viewer 403，防止只读 token 看到接入信息）",
+        "tags": [
+          "remote"
+        ]
+      },
+      "put": {
+        "operationId": "put_remote",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutRemoteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RemoteDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。\n接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态",
+        "tags": [
+          "remote"
         ]
       }
     },

@@ -795,6 +795,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/remote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取远程访问接入配置与运行状态（admin 限定；viewer 403，防止只读 token 看到接入信息） */
+        get: operations["get_remote"];
+        /**
+         * 写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。
+         *     接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态
+         */
+        put: operations["put_remote"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tag/create": {
         parameters: {
             query?: never;
@@ -1167,6 +1188,17 @@ export interface components {
                 dispatched: number;
                 /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
                 removed: number;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_RemoteDto: {
+            data?: {
+                enabled: boolean;
+                key: string;
+                /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
+                status: components["schemas"]["RemoteStatus"];
+                url: string;
             };
             status: string;
         };
@@ -1560,6 +1592,11 @@ export interface components {
             writable: boolean;
             write_token?: string | null;
         };
+        PutRemoteBody: {
+            enabled: boolean;
+            key: string;
+            url: string;
+        };
         RefreshCacheRequest: {
             /** @description folder | category | tag | library */
             type: string;
@@ -1571,6 +1608,21 @@ export interface components {
             dispatched: number;
             /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
             removed: number;
+        };
+        RemoteDto: {
+            enabled: boolean;
+            key: string;
+            /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
+            status: components["schemas"]["RemoteStatus"];
+            url: string;
+        };
+        /** @enum {string} */
+        RemoteState: "disabled" | "connecting" | "online" | "error";
+        RemoteStatus: {
+            device_id?: string | null;
+            error?: string | null;
+            server_url?: string | null;
+            state: components["schemas"]["RemoteState"];
         };
         RescanRequest: {
             /** @description 只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库） */
@@ -2824,6 +2876,50 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_remote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_RemoteDto"];
+                };
+            };
+        };
+    };
+    put_remote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRemoteBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_RemoteDto"];
+                };
             };
         };
     };

@@ -27,6 +27,7 @@ pub mod lan;
 pub mod library;
 pub mod locks;
 pub mod openapi;
+pub mod remote;
 pub mod taxonomy;
 pub mod trash;
 pub mod view;
@@ -80,6 +81,19 @@ pub enum AccessLevel {
     Viewer { writable: bool },
 }
 
+/// admin 限定端点的统一门禁：viewer（含可写）403，防止只读 token 经管理端点提权
+pub(crate) fn require_admin(access: &AccessLevel) -> Result<(), envelope::ApiError> {
+    if matches!(access, AccessLevel::Admin) {
+        Ok(())
+    } else {
+        Err(envelope::ApiError::new(
+            envelope::codes::READ_ONLY,
+            axum::http::StatusCode::FORBIDDEN,
+            "viewer token cannot access admin settings",
+        ))
+    }
+}
+
 pub struct AppState {
     pub settings: Settings,
     // ---- 存储底座：路径布局 / 库配置 / 启动进度 ----
@@ -109,6 +123,8 @@ pub struct AppState {
     pub sse_lagged: std::sync::atomic::AtomicU64,
     /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
     pub lan: Arc<lan::LanSupervisor>,
+    /// 远程访问 supervisor（[remote] 配置启用才激活；状态快照供 api/remote）
+    pub remote: Arc<crate::remote::Supervisor>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -128,6 +144,7 @@ pub fn api_router() -> (axum::Router<SharedState>, utoipa::openapi::OpenApi) {
         .merge(view::routes())
         .merge(trash::routes())
         .merge(events::routes())
+        .merge(remote::routes())
         .split_for_parts()
 }
 

@@ -52,6 +52,12 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
         Some(r#"{"kind":"category","name":"契约隐藏","hidden":true}"#),
     ),
     ("GET", "/api/v1/lock/list", None),
+    ("GET", "/api/v1/remote", None),
+    (
+        "PUT",
+        "/api/v1/remote",
+        Some(r#"{"enabled":false,"url":"","key":""}"#),
+    ),
     ("GET", "/api/v1/item/count", None),
     ("GET", "/api/v1/library/info", None),
     (
@@ -218,6 +224,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         locks,
         worker,
         lan: LanSupervisor::new(),
+        remote: crate::remote::Supervisor::new(),
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
     });
     let router = build_router(state.clone());

@@ -10,7 +10,7 @@
 //! 状态即快照（LanStatus）：active / port / error，app/info 序列化给前端。
 
 use super::envelope::{codes, ApiError, Envelope};
-use super::{AccessLevel, SharedState};
+use super::{require_admin, AccessLevel, SharedState};
 use crate::core::config::WebSettings;
 use axum::extract::{Extension, State};
 use axum::Json;
@@ -179,19 +179,6 @@ fn lan_dto(state: &SharedState) -> LanSettingsDto {
         write_token: web.write_token.unwrap_or_default(),
         active: status.active,
         error: status.error,
-    }
-}
-
-/// 仅 admin 可读写 LAN 配置：viewer（含可写）不应看到 token 字段，否则只读 token 可提权为可写
-fn require_admin(access: &AccessLevel) -> Result<(), ApiError> {
-    if matches!(access, AccessLevel::Admin) {
-        Ok(())
-    } else {
-        Err(ApiError::new(
-            codes::READ_ONLY,
-            axum::http::StatusCode::FORBIDDEN,
-            "viewer token cannot access lan settings",
-        ))
     }
 }
 

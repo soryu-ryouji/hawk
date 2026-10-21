@@ -7,7 +7,7 @@ description = "hawk 素材管理后端"
 license = "AGPL-3.0-only"
 
 [dependencies]
-axum = { version = "0.8", features = ["multipart"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "catch-panic"] }
@@ -24,6 +24,11 @@ fast_image_resize = { version = "5", features = ["image"] }
 mime_guess = "2"
 base64 = "0.22"
 getrandom = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+rcgen = "0.13"
+gethostname = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
@@ -41,3 +46,4 @@ strip = true
 
 [dev-dependencies]
 jsonschema = { version = "0.53.0", default-features = false }
+tempfile = "3"

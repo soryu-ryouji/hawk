@@ -14,9 +14,13 @@
 Rust，见 [hawk-daemon](backend/server-rust.md)（`hawk-daemon/`，axum、notify、blake3、image + fast_image_resize、rusqlite）。
 已实现全部 API/存储/事件契约，为 app 唯一后端。
 
-## 远程访问客户端：hawk-remote/（规划中）
+## 远程访问服务端：hawk-server/
 
-独立 Rust 进程，承载全部广域网连接能力（信令/心跳/WSS/UPnP/QUIC 隧道/本地代理），见 [远程访问设计](backend/remote-access.md)。技术栈：tokio、axum、quinn、rcgen、igd、tokio-tungstenite。
+独立 Rust crate（与 daemon 零代码共享），单用户方案：设备注册/心跳/WSS 控制通道/会话撮合（P1 已实现，中继二期），见 [远程访问设计](backend/remote-access.md) 与 [协议契约](backend/remote-protocol.md)。技术栈：tokio、axum（含 ws）、serde_json（设备表 JSON 持久化）；无数据库、无账号体系，准入即一把固定 access key。
+
+## 远程访问客户端：hawk-daemon 的 remote/ 模块（信令进行中）
+
+广域网连接能力（信令/心跳/WSS/UPnP/QUIC 隧道/会话代理）收编为 daemon 内模块，`[remote]` 配置启用才激活（supervisor reconcile，同 LAN web 先例），见 [远程访问设计](backend/remote-access.md)。新增依赖：tokio-tungstenite、reqwest（rustls）、rcgen、sha2；数据面阶段增加 quinn、igd。
 
 ## 前端与桌面壳：hawk-app/
 

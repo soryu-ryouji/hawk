@@ -6,4 +6,5 @@
 pub mod api;
 pub mod bootstrap;
 pub mod core;
+pub mod remote;
 pub mod settings;

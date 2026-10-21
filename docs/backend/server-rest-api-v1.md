@@ -218,6 +218,55 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 校验（`INVALID_PARAM`）：`enabled` 时 `token` 必填；`writable` 且 `separate_write_token` 时 `write_token` 必填；端口 1–65535。响应同 GET（收敛后的最新状态）。
 
+## remote
+
+远程访问（接入自托管 hawk-server，见 docs/backend/remote-access.md）。**仅 admin 可用**：viewer（含可写）返回 403 `READ_ONLY`——响应含接入密钥与设备身份信息。
+
+| 方法 | 端点 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/api/v1/remote` | 读取远程访问接入配置（`[remote]` 段）与信令运行状态（admin 限定） |
+| PUT | `/api/v1/remote` | 写回 `[remote]` 配置并热重启信令（admin 限定） |
+
+### remote
+
+`GET /api/v1/remote`
+
+读取 `.hawk/config.toml` 的 `[remote]` 段配置与 remote supervisor 的运行快照。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": {
+    "enabled": true,
+    "url": "https://hawk.example.com",
+    "key": "<access-key>",
+    "status": {
+      "state": "online",
+      "server_url": "https://hawk.example.com",
+      "device_id": "d_42"
+    }
+  }
+}
+```
+
+`status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 key 无效，`error` 字段携带服务端返回的原因）。
+
+---
+
+`PUT /api/v1/remote`
+
+写回 `[remote]` 配置并热重启信令：daemon 权威写配置（同 `app/lan` 模型）→ 唤醒 remote supervisor 重启信令即返回。接入是异步过程（注册/心跳/WSS 重连由 supervisor 驱动），进展经 GET 轮询。
+
+#### 请求
+
+```json
+{ "enabled": true, "url": "https://hawk.example.com", "key": "<access-key>" }
+```
+
+校验（`INVALID_PARAM`）：`enabled` 时 `url`/`key` 必填；`url` 须以 `http://` 或 `https://` 开头。响应同 GET。
+
 ## library
 
 hawk-daemon 单实例对应单个素材库。
