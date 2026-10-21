@@ -218,7 +218,14 @@ async fn open_session(
     let view = manager
         .open_session(&auth.token, &body.target_device_id, access)
         .await
-        .map_err(|message| ApiError::new(StatusCode::BAD_GATEWAY, message))?;
+        .map_err(|message| {
+            // 失败原因目前只随 502 信封返回给调用方，服务端无日志可查——补上
+            tracing::warn!(
+                "查看会话建立失败（目标 {}）: {message}",
+                body.target_device_id
+            );
+            ApiError::new(StatusCode::BAD_GATEWAY, message)
+        })?;
     Ok(ok(view))
 }
 

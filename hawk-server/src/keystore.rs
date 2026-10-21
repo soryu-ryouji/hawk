@@ -175,7 +175,11 @@ impl KeyStore {
         }
         let _guard = self.write_lock.lock().unwrap();
         let mut all: Vec<AppKeyRecord> = load_list(&self.dir.join("keys.json"))?;
+        // 覆盖本设备集合；同时按哈希全局去重——设备重注册换新 device_id 后，
+        // 同一 key 的孤儿映射（挂在旧设备记录下）会被最新同步顶掉，
+        // 否则 resolve 可能命中设备已不存在的旧映射
         all.retain(|k| !(k.tenant_id == tenant_id && k.device_id == device_id));
+        all.retain(|k| !records.iter().any(|r| r.h == k.h));
         all.extend(records);
         save_list(&self.dir.join("keys.json"), &all)
     }
@@ -378,6 +382,43 @@ mod tests {
         // 再次同步（空集合）= 清空该设备
         store.sync_device_keys(&tenant, "d_1", &[]).unwrap();
         assert!(store.resolve_app_key("my-custom-key").is_none());
+    }
+
+    #[test]
+    fn sync_dedupes_orphaned_mappings_by_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KeyStore::open(dir.path()).unwrap();
+        let (tenant, _) = store.tenant_add("home").unwrap();
+        let s = sha256_hex("shared-key");
+        // 设备重注册前的旧映射
+        store
+            .sync_device_keys(
+                &tenant,
+                "d_old",
+                &[AppKeySync {
+                    s: s.clone(),
+                    read: true,
+                    write: false,
+                }],
+            )
+            .unwrap();
+        // 设备换新 id 后重推同一批 key：旧映射被顶掉
+        store
+            .sync_device_keys(
+                &tenant,
+                "d_new",
+                &[AppKeySync {
+                    s: s.clone(),
+                    read: true,
+                    write: false,
+                }],
+            )
+            .unwrap();
+        let found = store.resolve_app_key("shared-key").unwrap();
+        assert_eq!(found.device_id, "d_new");
+        // 全局只有一条
+        let raw: Vec<AppKeyRecord> = load_list(&dir.path().join("keys.json")).unwrap();
+        assert_eq!(raw.iter().filter(|k| k.s == s).count(), 1);
     }
 
     #[test]
