@@ -12,6 +12,7 @@ use hawk_daemon::remote::session::SessionManager;
 use hawk_daemon::remote::tls;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 fn new_identity(dir: &tempfile::TempDir, device_id: Option<&str>) -> Identity {
     let remote_dir = dir.path().join("remote");
@@ -114,6 +115,35 @@ async fn tunnel_carries_http_with_viewer_marker() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn await_first_conn_times_out_and_succeeds() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = new_identity(&dir_b, Some("d_b"));
+    let fp_a = tls::parse_fingerprint(&identity_a.fingerprint).unwrap();
+    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
+
+    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
+    let port_a = plane_a.local_addr().unwrap().port();
+
+    // 放行但无连接：超时返回 false（接受会话后的清理路径）
+    plane_a.allow_peer(fp_b);
+    assert!(
+        !plane_a
+            .await_first_conn(fp_b, Duration::from_millis(100))
+            .await
+    );
+
+    // 对端随后连接：notify permit 机制下等待立即返回 true
+    plane_a.allow_peer(fp_b);
+    let (_endpoint, conn) = DataPlane::connect(&identity_b, "127.0.0.1", port_a, fp_a)
+        .await
+        .expect("隧道连接");
+    assert!(plane_a.await_first_conn(fp_b, Duration::from_secs(2)).await);
+    drop(conn);
 }
 
 #[tokio::test]

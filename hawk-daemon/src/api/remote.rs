@@ -18,6 +18,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(get_remote, put_remote))
         .routes(routes!(list_devices))
         .routes(routes!(get_session, create_session, delete_session))
+        .routes(routes!(patch_device, rotate_device))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -285,6 +286,162 @@ async fn delete_session(
     let (http, base, key) = signal_client(&state)?;
     state.remote.sessions.disconnect(&http, &base, &key).await;
     Ok(super::envelope::success())
+}
+
+// ---------- 设备管理（admin 限定；转发服务端 PATCH /devices/{self}） ----------
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct PatchDeviceBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    allow_remote: Option<bool>,
+    #[serde(default)]
+    library_name: Option<String>,
+}
+
+/// 更新本机设备在服务端的信息：显示名 / 远程访问开关 / 库名（至少一项）
+#[utoipa::path(
+    patch,
+    path = "/api/v1/remote/device",
+    tags = ["remote"],
+    request_body = PatchDeviceBody,
+    responses((status = 200, description = "OK", body = Envelope<RemoteDeviceDto>))
+)]
+async fn patch_device(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+    Json(body): Json<PatchDeviceBody>,
+) -> Result<Json<Envelope<RemoteDeviceDto>>, ApiError> {
+    require_admin(&access)?;
+    if body.name.is_none() && body.allow_remote.is_none() && body.library_name.is_none() {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "至少提供一项待更新字段",
+        ));
+    }
+    let (http, base, key) = signal_client(&state)?;
+    let device_id = registered_device_id(&state)?;
+    let mut payload = serde_json::Map::new();
+    if let Some(name) = body.name {
+        payload.insert("name".to_string(), Value::from(name));
+    }
+    if let Some(allow_remote) = body.allow_remote {
+        payload.insert("allow_remote".to_string(), Value::from(allow_remote));
+    }
+    if let Some(library_name) = body.library_name {
+        payload.insert("library_name".to_string(), Value::from(library_name));
+    }
+    let resp = http
+        .patch(format!("{base}/api/v1/devices/{device_id}"))
+        .bearer_auth(&key)
+        .json(&Value::Object(payload))
+        .send()
+        .await
+        .map_err(|e| bad_gateway(format!("服务端不可达: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(bad_gateway(server_message(resp).await));
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| bad_gateway(format!("服务端响应解析失败: {e}")))?;
+    let d = &body["data"];
+    Ok(Json(Envelope::ok(RemoteDeviceDto {
+        device_id: d["device_id"].as_str().unwrap_or_default().to_string(),
+        name: d["name"].as_str().unwrap_or_default().to_string(),
+        platform: d["platform"].as_str().unwrap_or_default().to_string(),
+        library_name: d["library_name"].as_str().unwrap_or_default().to_string(),
+        online: d["online"].as_bool().unwrap_or(false),
+        allow_remote: d["allow_remote"].as_bool().unwrap_or(false),
+        last_seen_at_ms: d["last_seen_at_ms"].as_u64(),
+    })))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct RotateDeviceDto {
+    /// 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）
+    fingerprint: String,
+}
+
+/// 证书轮换：重新生成自签证书，同步服务端指纹并落盘，信令热重启（旧证书会话失效）
+#[utoipa::path(
+    post,
+    path = "/api/v1/remote/device/rotate",
+    tags = ["remote"],
+    responses((status = 200, description = "OK", body = Envelope<RotateDeviceDto>))
+)]
+async fn rotate_device(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+) -> Result<Json<Envelope<RotateDeviceDto>>, ApiError> {
+    require_admin(&access)?;
+    let (http, base, key) = signal_client(&state)?;
+    let mut identity = crate::remote::identity::Identity::load_or_create(&state.paths.remote_dir)
+        .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    if identity.device_id.is_none() {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "设备未注册（先启用远程接入并完成注册）",
+        ));
+    }
+    identity.rotate_cert().map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    // 先同步服务端（新指纹生效），再落盘重启信令
+    let device_id = identity.device_id.clone().unwrap();
+    let resp = http
+        .patch(format!("{base}/api/v1/devices/{device_id}"))
+        .bearer_auth(&key)
+        .json(&serde_json::json!({ "fingerprint": identity.fingerprint }))
+        .send()
+        .await
+        .map_err(|e| bad_gateway(format!("服务端不可达: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(bad_gateway(server_message(resp).await));
+    }
+    identity.persist(&state.paths.remote_dir).map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    state.remote.wake();
+    Ok(Json(Envelope::ok(RotateDeviceDto {
+        fingerprint: identity.fingerprint,
+    })))
+}
+
+/// 本机已注册的 device_id（未注册 → 400）
+fn registered_device_id(state: &SharedState) -> Result<String, ApiError> {
+    let identity = crate::remote::identity::Identity::load_or_create(&state.paths.remote_dir)
+        .map_err(|e| {
+            ApiError::new(
+                codes::INTERNAL,
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                e,
+            )
+        })?;
+    identity.device_id.ok_or_else(|| {
+        ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "设备未注册（先启用远程接入并完成注册）",
+        )
+    })
 }
 
 /// 服务端错误信封的 message（协议：message 直接展示）

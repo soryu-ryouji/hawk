@@ -931,6 +931,57 @@
         ],
         "type": "object"
       },
+      "Envelope_RemoteDeviceDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "allow_remote": {
+                "type": "boolean"
+              },
+              "device_id": {
+                "type": "string"
+              },
+              "last_seen_at_ms": {
+                "format": "int64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "library_name": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "platform": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "device_id",
+              "name",
+              "platform",
+              "library_name",
+              "online",
+              "allow_remote"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_RemoteDevicesDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -981,6 +1032,30 @@
               "url",
               "key",
               "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_RotateDeviceDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "fingerprint": {
+                "description": "轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）",
+                "type": "string"
+              }
+            },
+            "required": [
+              "fingerprint"
             ],
             "type": "object"
           },
@@ -2390,6 +2465,29 @@
         ],
         "type": "object"
       },
+      "PatchDeviceBody": {
+        "properties": {
+          "allow_remote": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "PutLanBody": {
         "properties": {
           "enabled": {
@@ -2630,6 +2728,18 @@
         },
         "type": "object"
       },
+      "RotateDeviceDto": {
+        "properties": {
+          "fingerprint": {
+            "description": "轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint"
+        ],
+        "type": "object"
+      },
       "ScanInfo": {
         "properties": {
           "interval": {
@@ -2752,6 +2862,10 @@
             "$ref": "#/components/schemas/RemoteSessionPayload",
             "description": "远程会话生命周期（connected/disconnected），app 断线回切依赖"
           },
+          "remote.status": {
+            "$ref": "#/components/schemas/RemoteStatus",
+            "description": "信令状态变化（connecting/online/error），app 远程设置面板免轮询"
+          },
           "task.progress": {
             "$ref": "#/components/schemas/TaskProgress"
           }
@@ -2769,7 +2883,8 @@
           "library.updated",
           "global_filter.changed",
           "locks.changed",
-          "remote.session"
+          "remote.session",
+          "remote.status"
         ],
         "type": "object"
       },
@@ -4401,6 +4516,58 @@
           }
         },
         "summary": "写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。\n接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态",
+        "tags": [
+          "remote"
+        ]
+      }
+    },
+    "/api/v1/remote/device": {
+      "patch": {
+        "operationId": "patch_device",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchDeviceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RemoteDeviceDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "更新本机设备在服务端的信息：显示名 / 远程访问开关 / 库名（至少一项）",
+        "tags": [
+          "remote"
+        ]
+      }
+    },
+    "/api/v1/remote/device/rotate": {
+      "post": {
+        "operationId": "rotate_device",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RotateDeviceDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "证书轮换：重新生成自签证书，同步服务端指纹并落盘，信令热重启（旧证书会话失效）",
         "tags": [
           "remote"
         ]

@@ -96,6 +96,51 @@ fn upnp_round(quic_port: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// Windows 防火墙入站规则（首次启用 QUIC 监听时添加，幂等）：无规则时入站 UDP 会被静默丢弃，
+/// UPnP 映射成功也连不进来。规则名带端口（多库错开端口时各有一条）
+#[cfg(windows)]
+pub async fn ensure_firewall_rule_windows(quic_port: u16) {
+    let rule_name = format!("hawk-remote QUIC {quic_port}");
+    let outcome = tokio::task::spawn_blocking(move || {
+        let exists = std::process::Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "show",
+                "rule",
+                &format!("name={rule_name}"),
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if exists {
+            return true;
+        }
+        std::process::Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                &format!("name={rule_name}"),
+                "dir=in",
+                "action=allow",
+                "protocol=UDP",
+                &format!("localport={quic_port}"),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+    .await;
+    match outcome {
+        Ok(true) => tracing::info!("Windows 防火墙入站规则就绪: {rule_name}"),
+        _ => tracing::warn!(
+            "Windows 防火墙入站规则添加失败（QUIC 入站可能被拦截，可手动放行 UDP {quic_port}）"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

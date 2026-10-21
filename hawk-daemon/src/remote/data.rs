@@ -27,6 +27,8 @@ pub struct DataPlane {
     allowlist: Arc<PeerAllowlist>,
     /// A 侧活跃连接按对端指纹归档：会话取消/断开时按指纹断开对应连接
     a_conns: Arc<Mutex<HashMap<[u8; 32], Vec<quinn::Connection>>>>,
+    /// 对端首连通知（接受会话后的超时清理：超时未连收回放行）
+    conn_notify: Arc<Mutex<HashMap<[u8; 32], Arc<tokio::sync::Notify>>>>,
 }
 
 impl DataPlane {
@@ -46,7 +48,12 @@ impl DataPlane {
             endpoint,
             allowlist,
             a_conns: Arc::new(Mutex::new(HashMap::new())),
+            conn_notify: Arc::new(Mutex::new(HashMap::new())),
         });
+        #[cfg(windows)]
+        tokio::spawn(crate::remote::reachability::ensure_firewall_rule_windows(
+            quic_port,
+        ));
         tokio::spawn(plane.clone().accept_loop(router));
         Ok(plane)
     }
@@ -59,11 +66,31 @@ impl DataPlane {
     /// 放行对端指纹（session.request 接受时调用）
     pub fn allow_peer(&self, fingerprint: [u8; 32]) {
         self.allowlist.add(fingerprint);
+        self.conn_notify
+            .lock()
+            .unwrap()
+            .entry(fingerprint)
+            .or_default();
+    }
+
+    /// 等待对端首连（接受会话后的超时清理用）：true = 已连接；false = 超时未连
+    pub async fn await_first_conn(&self, fingerprint: [u8; 32], timeout: Duration) -> bool {
+        let notify = self
+            .conn_notify
+            .lock()
+            .unwrap()
+            .entry(fingerprint)
+            .or_default()
+            .clone();
+        tokio::time::timeout(timeout, notify.notified())
+            .await
+            .is_ok()
     }
 
     /// 收回放行并断开其连接（session.cancelled / 会话结束）
     pub fn disallow_peer(&self, fingerprint: &[u8; 32]) {
         self.allowlist.remove(fingerprint);
+        self.conn_notify.lock().unwrap().remove(fingerprint);
         if let Some(conns) = self.a_conns.lock().unwrap().remove(fingerprint) {
             for conn in conns {
                 conn.close(0u32.into(), b"session ended");
@@ -74,6 +101,7 @@ impl DataPlane {
     /// 通道重连时重置：旧会话的放行与连接全部失效（B 侧会感知断开并自行收尾）
     pub fn reset_peers(&self) {
         self.allowlist.clear();
+        self.conn_notify.lock().unwrap().clear();
         let conns = std::mem::take(&mut *self.a_conns.lock().unwrap());
         for (_, list) in conns {
             for conn in list {
@@ -103,6 +131,10 @@ impl DataPlane {
                         .entry(fp)
                         .or_default()
                         .push(conn.clone());
+                    // 首连通知（permit 机制：通知先于等待也有效）
+                    if let Some(notify) = plane.conn_notify.lock().unwrap().get(&fp) {
+                        notify.notify_one();
+                    }
                 }
                 while let Ok((send, recv)) = conn.accept_bi().await {
                     tokio::spawn(serve_http(router.clone(), recv, send));

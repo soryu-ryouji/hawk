@@ -227,6 +227,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | GET | `/api/v1/remote` | 读取远程访问接入配置（`[remote]` 段）与信令运行状态（admin 限定） |
 | PUT | `/api/v1/remote` | 写回 `[remote]` 配置并热重启信令（admin 限定） |
 | GET | `/api/v1/remote/devices` | 拉取服务端设备列表（admin 限定） |
+| PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定） |
+| POST | `/api/v1/remote/device/rotate` | 证书轮换（重新生成自签证书并同步服务端，admin 限定） |
 | GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
 | POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
 | DELETE | `/api/v1/remote/session` | 断开当前远程会话（admin 限定，幂等） |
@@ -334,6 +336,18 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 `DELETE /api/v1/remote/session`
 
 断开当前会话（幂等）：通知服务端取消、断开隧道、关闭会话代理。返回 `{"status":"success"}`。
+
+---
+
+`PATCH /api/v1/remote/device`
+
+更新本机设备在服务端的信息（转发服务端 `PATCH /devices/{self}`）：`{ "name": "新名字", "allow_remote": false, "library_name": "工作库" }`，至少提供一项。响应为更新后的设备对象（同 `remote/devices` 单条结构）。
+
+---
+
+`POST /api/v1/remote/device/rotate`
+
+证书轮换：重新生成 QUIC 自签证书（device_id 不变），先同步服务端新指纹再落盘并热重启信令；旧证书的会话随即失效（TOFU 锚点更新）。响应 `{ "fingerprint": "<新指纹>" }`。
 
 ## library
 
@@ -1088,6 +1102,7 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `global_filter.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 全局列表隐藏集变更（标记/取消、级联跟随、外部同步重载）；负载为完整快照，客户端就地替换并重查列表 |
 | `locks.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 锁集变更（设锁/解除/改密、级联跟随、外部同步重载）；负载为名称快照，客户端重拉锁标记并重查列表。锁覆盖内的素材不发 `item.*` 事件（保守过滤，已解锁客户端可能漏收，靠解锁后的重查兕底） |
 | `remote.session` | `{ "session_id": "s_9", "target_device_id": "d_42", "state": "connected" }` | 远程会话生命周期（connected/disconnected）：隧道建立或断开时推送，app 据此切换连接描述符与断线自动回切本地库 |
+| `remote.status` | `{ "state": "online", "server_url": "...", "device_id": "d_42" }` | 信令状态变化（disabled/connecting/online/error），远程设置面板免轮询；error 时负载带 `error` 原因 |
 | `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(缩略图/调色板队列与索引管道;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
 
 事件名与负载即持久契约(Rust 重写必须逐字兼容);后端以常量集中定义(`ItemEvents`),客户端不许凭代码反推。

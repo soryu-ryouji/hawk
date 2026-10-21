@@ -129,6 +129,8 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     ("GET", "/api/v1/remote/devices"),
     ("POST", "/api/v1/remote/session"),
     ("DELETE", "/api/v1/remote/session"),
+    ("PATCH", "/api/v1/remote/device"),
+    ("POST", "/api/v1/remote/device/rotate"),
 ];
 
 /// SSE 长连接端点：不发 HTTP 请求（oneshot 会挂起），只做 schema 存在性与事件集合校验
@@ -993,6 +995,7 @@ async fn sse_events_match_schema() {
         crate::core::global_filter::GLOBAL_FILTER_CHANGED,
         crate::core::locks::LOCKS_CHANGED,
         crate::remote::session::REMOTE_SESSION_EVENT,
+        crate::remote::REMOTE_STATUS_EVENT,
     ]
     .map(str::to_string)
     .into_iter()

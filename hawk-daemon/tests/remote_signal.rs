@@ -23,6 +23,9 @@ const KEY: &str = "test-access-key";
 struct MockHub {
     heartbeats: Arc<AtomicU64>,
     accepted: Arc<Mutex<Vec<String>>>,
+    register_count: Arc<AtomicU64>,
+    /// 模拟服务端设备表丢失：心跳一律 404
+    lost_devices: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MockHub {
@@ -32,6 +35,10 @@ impl MockHub {
 
     fn accepted_sessions(&self) -> Vec<String> {
         self.accepted.lock().unwrap().clone()
+    }
+
+    fn register_count(&self) -> u64 {
+        self.register_count.load(Ordering::Relaxed)
     }
 }
 
@@ -58,7 +65,11 @@ fn authorized(headers: &axum::http::HeaderMap) -> bool {
         == Some(&format!("Bearer {KEY}")[..])
 }
 
-async fn register(headers: axum::http::HeaderMap, Json(body): Json<Value>) -> Response {
+async fn register(
+    State(hub): State<MockHub>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
     if !authorized(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -68,7 +79,8 @@ async fn register(headers: axum::http::HeaderMap, Json(body): Json<Value>) -> Re
     }
     assert_eq!(body["status"], Value::Null); // 请求体不带信封
     assert!(body["fingerprint"].as_str().unwrap().len() == 64);
-    Json(json!({"status":"success","data":{"device_id":"d_mock"}})).into_response()
+    let n = hub.register_count.fetch_add(1, Ordering::Relaxed) + 1;
+    Json(json!({"status":"success","data":{"device_id":format!("d_{n}")}})).into_response()
 }
 
 async fn heartbeat(State(hub): State<MockHub>, headers: axum::http::HeaderMap) -> Response {
@@ -76,6 +88,13 @@ async fn heartbeat(State(hub): State<MockHub>, headers: axum::http::HeaderMap) -
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"status":"error","error":{"message":"访问密钥无效"}})),
+        )
+            .into_response();
+    }
+    if hub.lost_devices.load(Ordering::Relaxed) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"status":"error","error":{"message":"设备不存在"}})),
         )
             .into_response();
     }
@@ -185,13 +204,13 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
 
     // 注册 + WSS 连接 → Online；首次心跳即刻发出
     wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
-    assert_eq!(supervisor.snapshot().device_id.as_deref(), Some("d_mock"));
+    assert_eq!(supervisor.snapshot().device_id.as_deref(), Some("d_1"));
     assert!(hub.heartbeat_count() >= 1);
 
     // 设备身份落盘（含服务端分配的 device_id）
     let identity =
         hawk_daemon::remote::identity::Identity::load_or_create(&lib.paths.remote_dir).unwrap();
-    assert_eq!(identity.device_id.as_deref(), Some("d_mock"));
+    assert_eq!(identity.device_id.as_deref(), Some("d_1"));
 
     // mock 推送 session.request → 客户端自动 accept
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -232,4 +251,56 @@ async fn signal_reports_fatal_on_invalid_key() {
         .unwrap_or_default()
         .contains("访问密钥无效"));
     task.abort();
+}
+
+#[tokio::test]
+async fn signal_re_registers_when_server_forgets_device() {
+    // 心跳提速：30s 协议间隔压缩到 200ms（仅本测试进程）
+    unsafe { std::env::set_var("HAWK_REMOTE_HEARTBEAT_MS", "200") };
+    let (base, hub) = spawn_mock_hub().await;
+    let lib = test_library();
+    lib.config
+        .update_remote(&RemoteSettings {
+            enabled: true,
+            url: base,
+            key: KEY.to_string(),
+            quic_port: 0,
+        })
+        .unwrap();
+
+    let supervisor = Supervisor::new(hawk_daemon::core::events::EventBus::new());
+    let task = tokio::spawn(supervisor.clone().run(
+        lib.paths.clone(),
+        lib.config.clone(),
+        axum::Router::new(),
+    ));
+
+    wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
+    assert_eq!(supervisor.snapshot().device_id.as_deref(), Some("d_1"));
+
+    // 服务端设备表丢失 → 心跳 404 → 自动清除 device_id 重注册
+    hub.lost_devices.store(true, Ordering::Relaxed);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while hub.register_count() < 2 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "重注册超时（register_count={}）",
+            hub.register_count()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // 重注册后恢复在线，device_id 更新为新值（状态可能一直是 Online，须轮询 id 变化）
+    hub.lost_devices.store(false, Ordering::Relaxed);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while supervisor.snapshot().device_id.as_deref() != Some("d_2") {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "等待重注册后的 device_id 超时（当前 {:?}）",
+            supervisor.snapshot()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    task.abort();
+    unsafe { std::env::remove_var("HAWK_REMOTE_HEARTBEAT_MS") };
 }

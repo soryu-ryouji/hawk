@@ -97,6 +97,9 @@ pub struct SseEvents {
     /// 远程会话生命周期（connected/disconnected），app 断线回切依赖
     #[serde(rename = "remote.session")]
     remote_session: RemoteSessionPayload,
+    /// 信令状态变化（connecting/online/error），app 远程设置面板免轮询
+    #[serde(rename = "remote.status")]
+    remote_status: crate::remote::RemoteStatus,
 }
 
 #[allow(dead_code)]

@@ -15,6 +15,9 @@ use crate::core::paths::LibraryPaths;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
+/// SSE 事件名（信令状态变化推送，负载即 RemoteStatus）
+pub const REMOTE_STATUS_EVENT: &str = "remote.status";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteState {
@@ -29,7 +32,7 @@ pub enum RemoteState {
     Error,
 }
 
-#[derive(Clone, Default, Serialize, utoipa::ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, utoipa::ToSchema)]
 pub struct RemoteStatus {
     pub state: RemoteState,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +47,7 @@ pub struct RemoteStatus {
 pub struct Supervisor {
     notify: tokio::sync::Notify,
     status: Mutex<RemoteStatus>,
+    bus: EventBus,
     /// B 侧会话编排（单活动会话；生命周期事件经 SSE 推送）
     pub sessions: Arc<session::SessionManager>,
 }
@@ -53,7 +57,8 @@ impl Supervisor {
         Arc::new(Supervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new(RemoteStatus::default()),
-            sessions: session::SessionManager::new(bus),
+            sessions: session::SessionManager::new(bus.clone()),
+            bus,
         })
     }
 
@@ -68,7 +73,10 @@ impl Supervisor {
     }
 
     pub(crate) fn set_status(&self, status: RemoteStatus) {
-        *self.status.lock().unwrap() = status;
+        *self.status.lock().unwrap() = status.clone();
+        // 信令状态变化经 SSE 推送（app 免轮询）
+        self.bus
+            .publish(REMOTE_STATUS_EVENT, serde_json::json!(status));
     }
 
     /// 常驻任务：唤醒 → 收敛 → 等待下一轮。router 为 daemon API 路由克隆（A 侧隧道端进程内转发目标）
@@ -124,4 +132,29 @@ impl Supervisor {
 
 fn activatable(cfg: &RemoteSettings) -> bool {
     cfg.enabled && !cfg.url.is_empty() && !cfg.key.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn status_change_publishes_sse_event() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let supervisor = Supervisor::new(bus);
+        supervisor.set_status(RemoteStatus {
+            state: RemoteState::Online,
+            server_url: Some("https://example.com".to_string()),
+            device_id: Some("d_1".to_string()),
+            error: None,
+        });
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("事件超时")
+            .expect("事件接收");
+        assert_eq!(event.kind, REMOTE_STATUS_EVENT);
+        assert_eq!(event.payload["state"], "online");
+        assert_eq!(event.payload["device_id"], "d_1");
+    }
 }

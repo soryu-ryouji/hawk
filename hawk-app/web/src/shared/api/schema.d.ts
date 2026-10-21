@@ -816,6 +816,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/remote/device": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 更新本机设备在服务端的信息：显示名 / 远程访问开关 / 库名（至少一项） */
+        patch: operations["patch_device"];
+        trace?: never;
+    };
+    "/api/v1/remote/device/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 证书轮换：重新生成自签证书，同步服务端指纹并落盘，信令热重启（旧证书会话失效） */
+        post: operations["rotate_device"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/remote/devices": {
         parameters: {
             query?: never;
@@ -1281,6 +1315,20 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_RemoteDeviceDto: {
+            data?: {
+                allow_remote: boolean;
+                device_id: string;
+                /** Format: int64 */
+                last_seen_at_ms?: number | null;
+                library_name: string;
+                name: string;
+                online: boolean;
+                platform: string;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_RemoteDevicesDto: {
             data?: {
                 devices: components["schemas"]["RemoteDeviceDto"][];
@@ -1295,6 +1343,14 @@ export interface components {
                 /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
                 status: components["schemas"]["RemoteStatus"];
                 url: string;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_RotateDeviceDto: {
+            data?: {
+                /** @description 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效） */
+                fingerprint: string;
             };
             status: string;
         };
@@ -1679,6 +1735,11 @@ export interface components {
              */
             percentage: number;
         };
+        PatchDeviceBody: {
+            allow_remote?: boolean | null;
+            library_name?: string | null;
+            name?: string | null;
+        };
         PutLanBody: {
             enabled: boolean;
             /** Format: int32 */
@@ -1742,6 +1803,10 @@ export interface components {
         RescanRequest: {
             /** @description 只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库） */
             path?: string | null;
+        };
+        RotateDeviceDto: {
+            /** @description 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效） */
+            fingerprint: string;
         };
         ScanInfo: {
             /**
@@ -1809,6 +1874,8 @@ export interface components {
             "locks.changed": components["schemas"]["LocksSnapshot"];
             /** @description 远程会话生命周期（connected/disconnected），app 断线回切依赖 */
             "remote.session": components["schemas"]["RemoteSessionPayload"];
+            /** @description 信令状态变化（connecting/online/error），app 远程设置面板免轮询 */
+            "remote.status": components["schemas"]["RemoteStatus"];
             "task.progress": components["schemas"]["TaskProgress"];
         };
         StartupInfo: {
@@ -3036,6 +3103,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_RemoteDto"];
+                };
+            };
+        };
+    };
+    patch_device: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchDeviceBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_RemoteDeviceDto"];
+                };
+            };
+        };
+    };
+    rotate_device: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_RotateDeviceDto"];
                 };
             };
         };

@@ -16,15 +16,28 @@ use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+
+/// 心跳间隔：测试可经 HAWK_REMOTE_HEARTBEAT_MS 覆盖（协议约定 30s，此处仅为测试提速）
+fn heartbeat_interval() -> Duration {
+    std::env::var("HAWK_REMOTE_HEARTBEAT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(HEARTBEAT_INTERVAL)
+}
 const RETRY_MIN: Duration = Duration::from_secs(5);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// 接受会话后等待对端连接的上限：超时未连收回放行（防放行残留）
+const ACCEPT_PEER_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 信令错误：致命 = 重试无意义（等配置变更重启）；瞬时 = 退避重连
 #[derive(Debug)]
 enum SignalError {
     Fatal(String),
     Transient(String),
+    /// 服务端已不再认识本设备（设备表丢失/被注销）→ 清除 device_id 重注册
+    Unregistered,
 }
 
 type Result<T> = std::result::Result<T, SignalError>;
@@ -65,28 +78,7 @@ async fn run_inner(
         .map_err(|e| SignalError::Fatal(format!("HTTP 客户端构建失败: {e}")))?;
     let mut identity = Identity::load_or_create(&paths.remote_dir).map_err(SignalError::Fatal)?;
 
-    // 注册：无 device_id 时（瞬时失败退避重试，直到成功或致命）
-    let mut retry = RETRY_MIN;
-    while identity.device_id.is_none() {
-        match register(&http, &base, &cfg.key, paths, config, &identity).await {
-            Ok(device_id) => {
-                identity.device_id = Some(device_id);
-                identity
-                    .persist(&paths.remote_dir)
-                    .map_err(SignalError::Fatal)?;
-            }
-            Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
-            Err(SignalError::Transient(msg)) => {
-                tracing::warn!("设备注册失败（{retry:?} 后重试）: {msg}");
-                tokio::time::sleep(retry).await;
-                retry = (retry * 2).min(RETRY_MAX);
-            }
-        }
-    }
-    let device_id = identity.device_id.clone().unwrap();
-    tracing::info!("远程访问设备已注册: {device_id}（{base}）");
-
-    // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护
+    // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护（重注册循环复用，不重复绑定）
     let data_plane =
         DataPlane::bind(&identity, cfg.quic_port, router).map_err(SignalError::Fatal)?;
     let upnp_report: SharedUpnpReport = Arc::new(RwLock::new(UpnpReport::default()));
@@ -95,9 +87,31 @@ async fn run_inner(
         upnp_report.clone(),
     ));
 
-    // 主循环：WSS 控制通道 + 周期心跳；断线退避重连
     let mut retry = RETRY_MIN;
     loop {
+        // 注册（含服务端设备表丢失后的重注册）：瞬时失败退避重试，直到成功或致命
+        while identity.device_id.is_none() {
+            match register(&http, &base, &cfg.key, paths, config, &identity).await {
+                Ok(device_id) => {
+                    tracing::info!("远程访问设备已注册: {device_id}（{base}）");
+                    identity.device_id = Some(device_id);
+                    identity
+                        .persist(&paths.remote_dir)
+                        .map_err(SignalError::Fatal)?;
+                }
+                Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
+                Err(SignalError::Transient(msg)) => {
+                    tracing::warn!("设备注册失败（{retry:?} 后重试）: {msg}");
+                    tokio::time::sleep(retry).await;
+                    retry = (retry * 2).min(RETRY_MAX);
+                }
+                Err(SignalError::Unregistered) => {
+                    unreachable!("注册阶段不产生 Unregistered")
+                }
+            }
+        }
+        let device_id = identity.device_id.clone().unwrap();
+
         let ctx = ChannelContext {
             http: &http,
             base: &base,
@@ -109,6 +123,16 @@ async fn run_inner(
         };
         match channel_loop(&ctx, supervisor).await {
             Ok(()) => retry = RETRY_MIN, // 对端正常关闭：立即重连
+            Err(SignalError::Unregistered) => {
+                // 服务端设备表丢失/被注销：清除 device_id，回到注册阶段
+                tracing::warn!("服务端已不再认识本设备（{device_id}），重新注册");
+                identity.device_id = None;
+                identity
+                    .persist(&paths.remote_dir)
+                    .map_err(SignalError::Fatal)?;
+                retry = RETRY_MIN;
+                continue;
+            }
             Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
             Err(SignalError::Transient(msg)) => {
                 tracing::warn!("控制通道断开（{retry:?} 后重连）: {msg}");
@@ -176,7 +200,7 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
         std::collections::HashMap::new();
 
     // 连接建立即心跳一次（让自己在线），随后按周期间隔
-    let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
+    let mut heartbeat = tokio::time::interval(heartbeat_interval());
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
@@ -225,6 +249,17 @@ async fn handle_message(
                         Ok(Some(fingerprint)) => {
                             ctx.data_plane.allow_peer(fingerprint);
                             accepted_peers.insert(session_id.to_string(), fingerprint);
+                            // 接受后超时清理：60s 内对端未连接 → 收回放行（幂等，
+                            // cancelled/重连时的重复收回无害）
+                            let plane = ctx.data_plane.clone();
+                            tokio::spawn(async move {
+                                if !plane
+                                    .await_first_conn(fingerprint, ACCEPT_PEER_TIMEOUT)
+                                    .await
+                                {
+                                    plane.disallow_peer(&fingerprint);
+                                }
+                            });
                         }
                         Ok(None) => {
                             tracing::warn!("会话对端 {peer_id} 不在设备列表中，仍接受但不可连接");
@@ -234,6 +269,7 @@ async fn handle_message(
                             // 放行失败不阻断会话：接受后对端连不上会自行超时
                             tracing::warn!("对端指纹获取失败（接受但不放行）: {msg}");
                         }
+                        Err(SignalError::Unregistered) => return Err(SignalError::Unregistered),
                     }
                 }
                 accept_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
@@ -313,6 +349,9 @@ async fn send_heartbeat(
         .map_err(|e| SignalError::Transient(format!("心跳发送失败: {e}")))?;
     if resp.status().is_success() {
         Ok(())
+    } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        // 设备不存在：服务端设备表丢失/被注销 → 触发重注册
+        Err(SignalError::Unregistered)
     } else {
         Err(response_error(resp, "心跳").await)
     }

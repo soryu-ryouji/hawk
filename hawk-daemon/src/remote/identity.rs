@@ -57,19 +57,38 @@ impl Identity {
             .map_err(|e| format!("设备身份替换失败 {}: {e}", file.display()))
     }
 
+    /// 证书轮换：重新生成自签证书与指纹，device_id 保持不变（调用方负责同步服务端并落盘）
+    pub fn rotate_cert(&mut self) -> Result<(), String> {
+        let (cert_der_b64, key_der_b64, fingerprint) = generate_cert()?;
+        self.cert_der_b64 = cert_der_b64;
+        self.key_der_b64 = key_der_b64;
+        self.fingerprint = fingerprint;
+        Ok(())
+    }
+
     fn generate() -> Result<Identity, String> {
-        let rcgen::CertifiedKey { cert, key_pair } =
-            rcgen::generate_simple_self_signed(vec!["hawk-remote".to_string()])
-                .map_err(|e| format!("设备证书生成失败: {e}"))?;
-        let cert_der = cert.der();
-        let fingerprint = hex(sha2::Sha256::digest(cert_der));
+        let (cert_der_b64, key_der_b64, fingerprint) = generate_cert()?;
         Ok(Identity {
             device_id: None,
-            cert_der_b64: base64::engine::general_purpose::STANDARD.encode(cert_der),
-            key_der_b64: base64::engine::general_purpose::STANDARD.encode(key_pair.serialize_der()),
+            cert_der_b64,
+            key_der_b64,
             fingerprint,
         })
     }
+}
+
+/// 生成自签证书材料：(证书 DER b64, 私钥 DER b64, 指纹 hex)
+fn generate_cert() -> Result<(String, String, String), String> {
+    let rcgen::CertifiedKey { cert, key_pair } =
+        rcgen::generate_simple_self_signed(vec!["hawk-remote".to_string()])
+            .map_err(|e| format!("设备证书生成失败: {e}"))?;
+    let cert_der = cert.der();
+    let fingerprint = hex(sha2::Sha256::digest(cert_der));
+    Ok((
+        base64::engine::general_purpose::STANDARD.encode(cert_der),
+        base64::engine::general_purpose::STANDARD.encode(key_pair.serialize_der()),
+        fingerprint,
+    ))
 }
 
 fn identity_file(remote_dir: &str) -> PathBuf {
@@ -103,5 +122,21 @@ mod tests {
         assert_eq!(loaded.device_id.as_deref(), Some("d_test"));
         assert_eq!(loaded.fingerprint, first.fingerprint);
         assert_eq!(loaded.cert_der_b64, first.cert_der_b64);
+    }
+
+    #[test]
+    fn rotate_cert_changes_fingerprint_keeps_device_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote_dir = dir.path().join("remote");
+        let mut identity = Identity::load_or_create(remote_dir.to_str().unwrap()).unwrap();
+        identity.device_id = Some("d_keep".to_string());
+        let old_fingerprint = identity.fingerprint.clone();
+        let old_cert = identity.cert_der_b64.clone();
+
+        identity.rotate_cert().unwrap();
+        assert_eq!(identity.device_id.as_deref(), Some("d_keep"));
+        assert_ne!(identity.fingerprint, old_fingerprint);
+        assert_ne!(identity.cert_der_b64, old_cert);
+        assert_eq!(identity.fingerprint.len(), 64);
     }
 }
