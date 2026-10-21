@@ -6,6 +6,9 @@
 #   HAWK_SERVER_ACCESS_KEY=xxx tools/deploy-hawk-server.sh   # 自带密钥首次部署
 #
 # 幂等：密钥只注入一次（替换 compose 占位符；已有密钥则保留），重跑不重新生成。
+
+# 被 sh/dash 误调时转交 bash 重跑（脚本使用 bash 专有语法）
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
