@@ -2,7 +2,7 @@
 
 > hawk 客户端（hawk-remote 进程，见 [remote-access.md](remote-access.md)）与远程访问服务端（hawk-server，本仓库 `hawk-server/`）之间的接口契约。协议是两侧的唯一共享物，实现零代码共享。
 > 单用户方案：服务端启动时配置一把固定 access key，协议无账号/会员/计费概念。访问被拒只有一种语义——key 无效（401）。
-> 总体架构见 [remote-access.md](remote-access.md)。标注 `[P1]` 为已实现范围（hawk-server 已交付）；`[P2]` 中继为后续阶段，协议未定。
+> 总体架构见 [remote-access.md](remote-access.md)。标注 `[P1]` 为直连控制面（已实现）；`[P2]` 为中继（已实现，见「中继」一节）。
 
 ## 通用约定
 
@@ -167,7 +167,7 @@ wss://<base>/api/v1/ws?key=<access_key>&device_id=<device_id>
 
 ### `[P1] POST /api/v1/sessions`
 
-发起会话（access_key 鉴权）。本期仅支持直连模式。
+发起会话（access_key 鉴权）。`mode` 为 `direct`（本节）或 `relay`（见「中继」一节）。
 
 ```json
 // 请求
@@ -231,9 +231,40 @@ wss://<base>/api/v1/ws?key=<access_key>&device_id=<device_id>
 
 任一方取消会话（无请求体）。pending/ready → `cancelled`，双方经 WSS 收到 `session.cancelled`；已 cancelled 幂等成功；其余终态返回 409。
 
-## 中继（P2，协议未定）
+## 中继（P2）
 
-单用户方案下中继无需票据/配额/用量上报体系，预计为服务端内的加密字节流转发（密钥与准入即控制面同一把 access key）。待二期设计时补充本节。
+直连失败时的兜底：会话数据面经服务端 WebSocket 字节转发。QUIC 仍在 A↔B 之间端到端建立（中继只搬运加密数据报，看不到素材内容）；单用户方案无票据/配额/用量上报，准入即控制面同一把 access key。
+
+### `[P2] POST /api/v1/sessions`（mode=relay）
+
+```json
+// 请求
+{ "source_device_id": "d_77", "target_device_id": "d_42", "mode": "relay" }
+// 响应
+{ "status": "success", "data": { "session_id": "s_9", "state": "pending" } }
+```
+
+流程同直连：推送 `session.request`（`mode` 为 `relay`）→ 目标 accept → 会话 ready。relay 模式的 `connect` 不携带候选（无需可达性上报）：
+
+```json
+{ "status": "success", "data": {
+    "session_id": "s_9", "state": "ready",
+    "connect": { "mode": "relay", "fingerprint": "<sha256-hex，TOFU 钉扎目标 QUIC 证书>" }
+} }
+```
+
+### `[P2] GET /api/v1/relay`（WS 数据通道）
+
+双方各自建立一条中继 WebSocket，服务端配对后逐帧转发：
+
+```text
+wss://<base>/api/v1/relay?key=<access_key>&device_id=<device_id>&session_id=<session_id>&role=a|b
+```
+
+- `role=a` 为目标设备（素材库所在机），`role=b` 为发起方；服务端校验：会话存在且 `state=ready`、`mode=relay`、device_id 与该会话对应角色一致（不符 403/404）
+- 双方到齐后逐条转发二进制帧（**一帧 = 一个 QUIC 数据报**），不解析内容；文本帧忽略
+- 任一方断开 → 双方连接关闭，会话置 `cancelled`（双方控制通道收到 `session.cancelled`）
+- 客户端行为约定：直连失败（候选全部超时或无候选/unreachable）且「中继回退」开启时，经用户确认后以 `mode=relay` 另建会话；任何环节都不自动回落
 
 ## 数据面（QUIC 隧道）
 

@@ -3,6 +3,7 @@
 // 本 store 只管面板数据与动作，不持连接语义。
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
+import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 
 export { initConnectionLabel, useConnectionLabel } from './connection';
 import { shell } from '@/shared/lib/platform';
@@ -22,8 +23,15 @@ export const useRemoteStore = defineStore('remote', () => {
   /** 正在建立会话的设备 id（列表行内 spinner） */
   const connectingId = ref<string | null>(null);
   const error = ref<string | null>(null);
+  /** 「中继回退」开关（localStorage 持久化，默认关闭：中继消耗自己的服务器带宽，须用户主动开启） */
+  const relayFallback = ref(loadText(STORAGE_KEYS.relayFallback) === '1');
 
   let pollTimer = 0;
+
+  function setRelayFallback(on: boolean): void {
+    relayFallback.value = on;
+    saveText(STORAGE_KEYS.relayFallback, on ? '1' : '0');
+  }
 
   async function refresh(): Promise<void> {
     try {
@@ -61,14 +69,26 @@ export const useRemoteStore = defineStore('remote', () => {
     }
   }
 
-  /** 建立到目标设备的远程会话（成功后主进程推 connection-changed，前端无感切换） */
+  /** 建立到目标设备的远程会话（成功后主进程推 connection-changed，前端无感切换）。
+   *  直连失败且「中继回退」已开启时，弹窗询问用户是否经服务端中继继续（不自动回落） */
   async function connect(deviceId: string): Promise<void> {
     connectingId.value = deviceId;
     error.value = null;
     try {
-      await shell.remoteConnect(deviceId);
+      await shell.remoteConnect(deviceId, 'direct');
     } catch (e) {
-      error.value = ipcMessage(e);
+      const directError = ipcMessage(e);
+      if (relayFallback.value && window.confirm(`直连失败：${directError}\n\n是否经服务端中继继续？（素材流量将经过你的服务器带宽，内容仍为端到端加密）`)) {
+        try {
+          await shell.remoteConnect(deviceId, 'relay');
+        } catch (e2) {
+          error.value = ipcMessage(e2);
+        }
+      } else if (!relayFallback.value) {
+        error.value = `${directError}（可在远程设置中开启「中继回退」）`;
+      } else {
+        error.value = directError;
+      }
     } finally {
       connectingId.value = null;
     }
@@ -123,6 +143,8 @@ export const useRemoteStore = defineStore('remote', () => {
     saving,
     connectingId,
     error,
+    relayFallback,
+    setRelayFallback,
     refresh,
     refreshDevices,
     saveConfig,

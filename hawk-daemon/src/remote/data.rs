@@ -24,11 +24,11 @@ pub const CANDIDATE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct DataPlane {
     endpoint: quinn::Endpoint,
-    allowlist: Arc<PeerAllowlist>,
+    pub(crate) allowlist: Arc<PeerAllowlist>,
     /// A 侧活跃连接按对端指纹归档：会话取消/断开时按指纹断开对应连接
-    a_conns: Arc<Mutex<HashMap<[u8; 32], Vec<quinn::Connection>>>>,
+    pub(crate) a_conns: Arc<Mutex<HashMap<[u8; 32], Vec<quinn::Connection>>>>,
     /// 对端首连通知（接受会话后的超时清理：超时未连收回放行）
-    conn_notify: Arc<Mutex<HashMap<[u8; 32], Arc<tokio::sync::Notify>>>>,
+    pub(crate) conn_notify: Arc<Mutex<HashMap<[u8; 32], Arc<tokio::sync::Notify>>>>,
 }
 
 impl DataPlane {
@@ -110,43 +110,15 @@ impl DataPlane {
         }
     }
 
-    /// A 侧 accept 循环：每条连接归档对端指纹，每条双向流按 HTTP/1.1 连接服务
+    /// A 侧 accept 循环（直连 UDP 与中继 WS 共用同一逻辑）
     async fn accept_loop(self: Arc<Self>, router: axum::Router) {
-        while let Some(incoming) = self.endpoint.accept().await {
-            let Ok(connecting) = incoming.accept() else {
-                continue;
-            };
-            let plane = self.clone();
-            let router = router.clone();
-            tokio::spawn(async move {
-                let Ok(conn) = connecting.await else {
-                    return;
-                };
-                let peer = peer_fingerprint(&conn);
-                if let Some(fp) = peer {
-                    plane
-                        .a_conns
-                        .lock()
-                        .unwrap()
-                        .entry(fp)
-                        .or_default()
-                        .push(conn.clone());
-                    // 首连通知（permit 机制：通知先于等待也有效）
-                    if let Some(notify) = plane.conn_notify.lock().unwrap().get(&fp) {
-                        notify.notify_one();
-                    }
-                }
-                while let Ok((send, recv)) = conn.accept_bi().await {
-                    tokio::spawn(serve_http(router.clone(), recv, send));
-                }
-                // 连接关闭：从归档中移除
-                if let Some(fp) = peer {
-                    if let Some(list) = plane.a_conns.lock().unwrap().get_mut(&fp) {
-                        list.retain(|c| c.stable_id() != conn.stable_id());
-                    }
-                }
-            });
-        }
+        accept_connections(
+            self.endpoint.clone(),
+            router,
+            self.a_conns.clone(),
+            self.conn_notify.clone(),
+        )
+        .await;
     }
 
     /// B 侧：依候选地址连接 A 侧（钉扎指纹）。返回的 endpoint 须随连接一同持有保活
@@ -177,6 +149,50 @@ fn bind_endpoint<T>(f: impl Fn(SocketAddr) -> std::io::Result<T>, port: u16) -> 
     f(v6)
         .or_else(|_| f(SocketAddr::from(([0, 0, 0, 0], port))))
         .map_err(|e| format!("QUIC 端口 {port} 绑定失败: {e}"))
+}
+
+/// A 侧 accept 循环：每条连接归档对端指纹并通知首连等待者，每条双向流按 HTTP/1.1 连接服务
+pub(crate) async fn accept_connections(
+    endpoint: quinn::Endpoint,
+    router: axum::Router,
+    a_conns: Arc<Mutex<HashMap<[u8; 32], Vec<quinn::Connection>>>>,
+    conn_notify: Arc<Mutex<HashMap<[u8; 32], Arc<tokio::sync::Notify>>>>,
+) {
+    while let Some(incoming) = endpoint.accept().await {
+        let Ok(connecting) = incoming.accept() else {
+            continue;
+        };
+        let router = router.clone();
+        let a_conns = a_conns.clone();
+        let conn_notify = conn_notify.clone();
+        tokio::spawn(async move {
+            let Ok(conn) = connecting.await else {
+                return;
+            };
+            let peer = peer_fingerprint(&conn);
+            if let Some(fp) = peer {
+                a_conns
+                    .lock()
+                    .unwrap()
+                    .entry(fp)
+                    .or_default()
+                    .push(conn.clone());
+                // 首连通知（permit 机制：通知先于等待也有效）
+                if let Some(notify) = conn_notify.lock().unwrap().get(&fp) {
+                    notify.notify_one();
+                }
+            }
+            while let Ok((send, recv)) = conn.accept_bi().await {
+                tokio::spawn(serve_http(router.clone(), recv, send));
+            }
+            // 连接关闭：从归档中移除
+            if let Some(fp) = peer {
+                if let Some(list) = a_conns.lock().unwrap().get_mut(&fp) {
+                    list.retain(|c| c.stable_id() != conn.stable_id());
+                }
+            }
+        });
+    }
 }
 
 fn peer_fingerprint(conn: &quinn::Connection) -> Option<[u8; 32]> {

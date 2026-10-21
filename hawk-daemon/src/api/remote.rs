@@ -226,6 +226,13 @@ async fn get_session(
 #[derive(Deserialize, utoipa::ToSchema)]
 struct CreateSessionBody {
     target_device_id: String,
+    /// direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用）
+    #[serde(default = "default_session_mode")]
+    mode: String,
+}
+
+fn default_session_mode() -> String {
+    "direct".to_string()
 }
 
 /// 建立到目标设备的远程会话：发起 → 轮询 ready → 候选依序连接 → 拉起会话代理。
@@ -243,6 +250,13 @@ async fn create_session(
     Json(body): Json<CreateSessionBody>,
 ) -> Result<Json<Envelope<ActiveSessionDto>>, ApiError> {
     require_admin(&access)?;
+    if body.mode != "direct" && body.mode != "relay" {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "mode 须为 direct 或 relay",
+        ));
+    }
     let (http, base, key) = signal_client(&state)?;
     let identity = crate::remote::identity::Identity::load_or_create(&state.paths.remote_dir)
         .map_err(|e| {
@@ -255,7 +269,14 @@ async fn create_session(
     let dto = state
         .remote
         .sessions
-        .connect(&http, &base, &key, &identity, &body.target_device_id)
+        .connect(
+            &http,
+            &base,
+            &key,
+            &identity,
+            &body.target_device_id,
+            &body.mode,
+        )
         .await
         .map_err(|e| {
             if e.is_server {

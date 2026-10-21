@@ -93,10 +93,47 @@ pub struct Session {
     pub session_id: String,
     pub source_device_id: String,
     pub target_device_id: String,
+    /// direct（直连撮合）/ relay（服务端中继转发）
+    pub mode: String,
     pub state: SessionState,
     pub created_at_ms: u64,
-    /// ready 时组装的连接信息（候选列表 + 目标证书指纹）
+    /// ready 时组装的连接信息（direct: 候选列表 + 指纹；relay: 仅指纹）
     pub connect: Option<Value>,
+}
+
+/// 中继配对：会话双方各自的中继 WS 发送端（role=a 目标设备 / role=b 发起方）
+#[derive(Default)]
+pub struct RelayPair {
+    pub a: Option<mpsc::UnboundedSender<Message>>,
+    pub b: Option<mpsc::UnboundedSender<Message>>,
+}
+
+impl RelayPair {
+    pub fn register(&mut self, role: &str, sender: mpsc::UnboundedSender<Message>) {
+        match role {
+            "a" => self.a = Some(sender),
+            _ => self.b = Some(sender),
+        }
+    }
+
+    pub fn unregister(&mut self, role: &str) {
+        match role {
+            "a" => self.a = None,
+            _ => self.b = None,
+        }
+    }
+
+    /// 对端发送端（转发目标）
+    pub fn peer(&self, role: &str) -> Option<&mpsc::UnboundedSender<Message>> {
+        match role {
+            "a" => self.b.as_ref(),
+            _ => self.a.as_ref(),
+        }
+    }
+
+    pub fn paired(&self) -> bool {
+        self.a.is_some() && self.b.is_some()
+    }
 }
 
 impl Session {
@@ -117,6 +154,8 @@ pub struct AppState {
     pub store: Mutex<Store>,
     pub presence: RwLock<HashMap<String, Presence>>,
     pub sessions: RwLock<HashMap<String, Session>>,
+    /// 中继会话的 WS 配对（session_id → 双方发送端）
+    pub relay_pairs: RwLock<HashMap<String, RelayPair>>,
     conn_seq: AtomicU64,
 }
 
@@ -127,6 +166,7 @@ impl AppState {
             store: Mutex::new(store),
             presence: RwLock::new(HashMap::new()),
             sessions: RwLock::new(HashMap::new()),
+            relay_pairs: RwLock::new(HashMap::new()),
             conn_seq: AtomicU64::new(1),
         }
     }
@@ -148,6 +188,15 @@ impl AppState {
 
     pub fn next_conn_id(&self) -> u64 {
         self.conn_seq.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// 关闭中继配对（会话取消/一方断开）：双方中继 WS 收到 Close 并移除配对
+    pub fn close_relay(&self, session_id: &str) {
+        if let Some(pair) = self.relay_pairs.write().unwrap().remove(session_id) {
+            for sender in [pair.a, pair.b].into_iter().flatten() {
+                let _ = sender.send(Message::Close(None));
+            }
+        }
     }
 
     /// 经 WSS 控制通道向设备推送消息；设备未连接时静默丢弃（推送是增强，轮询为兜底）

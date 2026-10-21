@@ -155,7 +155,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.remoteDevices, () => remoteDevices());
   ipcMain.handle(IPC.remotePatchDevice, (_event, patch: { name?: string; allow_remote?: boolean; library_name?: string }) => remotePatchDevice(patch));
   ipcMain.handle(IPC.remoteRotate, () => remoteRotate());
-  ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string) => remoteConnect(targetDeviceId));
+  ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string, mode?: 'direct' | 'relay') => remoteConnect(targetDeviceId, mode));
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
 }
 

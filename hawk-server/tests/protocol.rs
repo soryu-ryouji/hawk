@@ -422,6 +422,100 @@ async fn session_cancel_notifies_peer() {
 }
 
 #[tokio::test]
+async fn relay_session_ready_and_splice() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = spawn_server(dir.path()).await;
+    let target = register(&base, "台式机", true).await;
+    let source = register(&base, "笔记本", true).await;
+    // relay 模式不需要可达性候选
+    assert_eq!(
+        heartbeat(&base, &target, empty_reachability())
+            .await
+            .status(),
+        200
+    );
+
+    // mode=relay 发起 → 接受 → ready（connect 只带指纹、无候选）
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions"))
+        .bearer_auth(KEY)
+        .json(&json!({
+            "source_device_id": source,
+            "target_device_id": target,
+            "mode": "relay",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let session_id = body["data"]["session_id"].as_str().unwrap().to_string();
+
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(KEY)
+        .json(&json!({ "device_id": target }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let state = session_state(&base, &session_id).await;
+    assert_eq!(state["state"], "ready");
+    assert_eq!(state["connect"]["mode"], "relay");
+    assert_eq!(state["connect"]["fingerprint"], "fp-台式机");
+    assert!(state["connect"]["candidates"].is_null());
+
+    // 双方建立中继 WS（role=a 目标 / role=b 发起），二进制帧逐条转发
+    let mut ws_a = connect_ws_relay(&base, &target, &session_id, "a").await;
+    let mut ws_b = connect_ws_relay(&base, &source, &session_id, "b").await;
+
+    use futures_util::{SinkExt, StreamExt};
+    ws_b.send(tokio_tungstenite::tungstenite::Message::Binary(
+        vec![1, 2, 3].into(),
+    ))
+    .await
+    .unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(2), ws_a.next())
+        .await
+        .expect("中继帧超时")
+        .unwrap()
+        .unwrap();
+    assert_eq!(frame.into_data().as_ref(), &[1, 2, 3]);
+
+    ws_a.send(tokio_tungstenite::tungstenite::Message::Binary(
+        vec![4, 5].into(),
+    ))
+    .await
+    .unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(2), ws_b.next())
+        .await
+        .expect("中继帧超时")
+        .unwrap()
+        .unwrap();
+    assert_eq!(frame.into_data().as_ref(), &[4, 5]);
+
+    // 一方断开 → 会话置 cancelled
+    drop(ws_a);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while session_state(&base, &session_id).await["state"] != "cancelled" {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "会话未及时置 cancelled"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn connect_ws_relay(base: &str, device_id: &str, session_id: &str, role: &str) -> Ws {
+    let url = format!(
+        "ws://{base}/api/v1/relay?key={KEY}&device_id={device_id}&session_id={session_id}&role={role}"
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    ws
+}
+
+#[tokio::test]
 async fn device_table_persists_across_restart() {
     let dir = tempfile::tempdir().unwrap();
     let base = spawn_server(dir.path()).await;

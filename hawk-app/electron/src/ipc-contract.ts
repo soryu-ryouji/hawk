@@ -237,8 +237,9 @@ export interface HawkShell {
   remotePatchDevice(patch: { name?: string; allow_remote?: boolean; library_name?: string }): Promise<RemoteDevice>;
   /** 证书轮换（旧证书会话失效） */
   remoteRotate(): Promise<{ fingerprint: string }>;
-  /** 建立远程会话并切换连接（返回新连接描述符）；失败抛错（message 直接展示） */
-  remoteConnect(targetDeviceId: string): Promise<ConnectionDescriptor>;
+  /** 建立远程会话并切换连接（返回新连接描述符）；失败抛错（message 直接展示）。
+   *  mode = direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用） */
+  remoteConnect(targetDeviceId: string, mode?: 'direct' | 'relay'): Promise<ConnectionDescriptor>;
   /** 断开远程会话并回切本地库（幂等） */
   remoteDisconnect(): Promise<ConnectionDescriptor | null>;
   /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。

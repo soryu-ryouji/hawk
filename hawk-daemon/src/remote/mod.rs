@@ -5,6 +5,7 @@
 pub mod data;
 pub mod identity;
 pub mod reachability;
+pub mod relay;
 pub mod session;
 pub mod signal;
 pub mod tls;

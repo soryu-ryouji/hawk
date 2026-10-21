@@ -1078,6 +1078,8 @@ export interface components {
             removed: number;
         };
         CreateSessionBody: {
+            /** @description direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用） */
+            mode?: string;
             target_device_id: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */

@@ -290,10 +290,15 @@ async fn signal_re_registers_when_server_forgets_device() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // 重注册后恢复在线，device_id 更新为新值（状态可能一直是 Online，须轮询 id 变化）
+    // 重注册后恢复在线，device_id 更新为新值（注册-404-再注册竞态下可能连续翻号，
+    // 不能断言具体是 d_2——只需确认不再是 d_1）
     hub.lost_devices.store(false, Ordering::Relaxed);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while supervisor.snapshot().device_id.as_deref() != Some("d_2") {
+    loop {
+        let id = supervisor.snapshot().device_id;
+        if id.is_some() && id.as_deref() != Some("d_1") {
+            break;
+        }
         assert!(
             tokio::time::Instant::now() < deadline,
             "等待重注册后的 device_id 超时（当前 {:?}）",

@@ -309,8 +309,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 #### 请求与响应
 
 ```json
-// 请求
-{ "target_device_id": "d_42" }
+// 请求（mode 缺省 direct；直连失败且用户确认后以 relay 另建，经服务端中继、带宽自担）
+{ "target_device_id": "d_42", "mode": "direct" }
 // 响应：app 连接描述符的原料（api_base = http://127.0.0.1:<proxy_port>）
 {
   "status": "success",

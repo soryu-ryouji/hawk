@@ -32,10 +32,10 @@ pub async fn create(
     _: AccessKey,
     JsonBody(req): JsonBody<CreateRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if req.mode != "direct" {
+    if req.mode != "direct" && req.mode != "relay" {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
-            "不支持的会话模式，本期仅支持 direct",
+            "不支持的会话模式（direct / relay）",
         ));
     }
     if req.source_device_id == req.target_device_id {
@@ -61,6 +61,7 @@ pub async fn create(
         session_id: new_session_id(),
         source_device_id: req.source_device_id.clone(),
         target_device_id: req.target_device_id.clone(),
+        mode: req.mode.clone(),
         state: initial,
         created_at_ms: now_ms(),
         connect: None,
@@ -84,7 +85,7 @@ pub async fn create(
                     "name": source.as_ref().map(|s| s.name.as_str()).unwrap_or_default(),
                     "library_name": source.as_ref().map(|s| s.library_name.as_str()).unwrap_or_default(),
                 },
-                "mode": "direct",
+                "mode": req.mode,
             }),
         );
     }
@@ -150,6 +151,17 @@ fn respond(
 
     if !accepted {
         session.state = SessionState::Rejected;
+    } else if session.mode == "relay" {
+        // 中继：无需可达性候选，connect 只携带目标指纹（QUIC 端到端钉扎语义不变）
+        let fingerprint = state
+            .device(&session.target_device_id)
+            .map(|d| d.fingerprint)
+            .unwrap_or_default();
+        session.connect = Some(json!({
+            "mode": "relay",
+            "fingerprint": fingerprint,
+        }));
+        session.state = SessionState::Ready;
     } else {
         // 取目标最近心跳的可达性组装候选；无任何候选置 unreachable（协议约定）
         let candidates = state
@@ -203,6 +215,7 @@ pub async fn cancel(
             let source = session.source_device_id.clone();
             let target = session.target_device_id.clone();
             drop(sessions);
+            state.close_relay(&session_id);
             let cancelled = json!({ "type": "session.cancelled", "session_id": session_id });
             state.push_ws(&source, &cancelled);
             state.push_ws(&target, &cancelled);

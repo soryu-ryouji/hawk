@@ -60,6 +60,8 @@ struct ActiveSession {
     _endpoint: quinn::Endpoint,
     conn: quinn::Connection,
     proxy_shutdown: tokio::sync::oneshot::Sender<()>,
+    /// 中继会话的 WS 驱动（中止即关闭中继通道；直连为 None）
+    relay_driver: Option<tokio::task::JoinHandle<()>>,
 }
 
 pub struct SessionManager {
@@ -79,7 +81,8 @@ impl SessionManager {
         self.active.lock().unwrap().as_ref().map(|s| s.dto.clone())
     }
 
-    /// 建立到目标设备的远程会话：成功返回代理连接信息（app 据此切换连接描述符）
+    /// 建立到目标设备的远程会话：成功返回代理连接信息（app 据此切换连接描述符）。
+    /// mode = direct（直连候选）/ relay（服务端中继，见协议「中继」一节）
     pub async fn connect(
         self: &Arc<SessionManager>,
         http: &reqwest::Client,
@@ -87,6 +90,7 @@ impl SessionManager {
         key: &str,
         identity: &Identity,
         target_device_id: &str,
+        mode: &str,
     ) -> ConnectResult<ActiveSessionDto> {
         let self_device_id = identity
             .device_id
@@ -94,40 +98,57 @@ impl SessionManager {
             .ok_or_else(|| ConnectError::session("设备未注册（先启用远程接入并完成注册）"))?;
 
         // ---- 发起会话 ----
-        let session_id = create_session(http, base, key, &self_device_id, target_device_id).await?;
+        let session_id =
+            create_session(http, base, key, &self_device_id, target_device_id, mode).await?;
 
         // ---- 轮询 ready（WSS 推送为增强，轮询为协议兜底线） ----
         let connect_info = poll_ready(http, base, key, &session_id).await?;
-
-        // ---- 候选依序连接（单候选超时由 data::connect 内置 5s 裁决） ----
         let expected = parse_connect_fingerprint(&connect_info)?;
-        let candidates = connect_info["candidates"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        let mut last_err = "无可用候选".to_string();
-        let mut connected = None;
-        for candidate in &candidates {
-            let (Some(host), Some(port)) = (
-                candidate["host"].as_str(),
-                candidate["port"].as_u64().map(|p| p as u16),
-            ) else {
-                continue;
-            };
-            match crate::remote::data::DataPlane::connect(identity, host, port, expected).await {
-                Ok((endpoint, conn)) => {
-                    connected = Some((endpoint, conn));
-                    break;
-                }
-                Err(e) => {
-                    tracing::debug!("候选连接失败: {e}");
-                    last_err = e;
+
+        // ---- 建立数据面：relay 经服务端中继 WS；direct 依序尝试候选 ----
+        let (endpoint, conn, relay_driver) = if mode == "relay" {
+            let ws_url =
+                crate::remote::relay::relay_ws_url(base, key, &self_device_id, &session_id, "b")
+                    .map_err(ConnectError::server)?;
+            let (ws, _) = tokio_tungstenite::connect_async(&ws_url)
+                .await
+                .map_err(|e| ConnectError::server(format!("中继通道连接失败: {e}")))?;
+            let (endpoint, conn, driver) =
+                crate::remote::relay::connect_over_ws(identity, ws, expected)
+                    .await
+                    .map_err(ConnectError::session)?;
+            (endpoint, conn, Some(driver))
+        } else {
+            let candidates = connect_info["candidates"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let mut last_err = "无可用候选".to_string();
+            let mut connected = None;
+            for candidate in &candidates {
+                let (Some(host), Some(port)) = (
+                    candidate["host"].as_str(),
+                    candidate["port"].as_u64().map(|p| p as u16),
+                ) else {
+                    continue;
+                };
+                match crate::remote::data::DataPlane::connect(identity, host, port, expected).await
+                {
+                    Ok((endpoint, conn)) => {
+                        connected = Some((endpoint, conn));
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::debug!("候选连接失败: {e}");
+                        last_err = e;
+                    }
                 }
             }
-        }
-        let Some((endpoint, conn)) = connected else {
-            let _ = cancel_session(http, base, key, &session_id).await;
-            return Err(ConnectError::session(format!("直连失败：{last_err}")));
+            let Some((endpoint, conn)) = connected else {
+                let _ = cancel_session(http, base, key, &session_id).await;
+                return Err(ConnectError::session(format!("直连失败：{last_err}")));
+            };
+            (endpoint, conn, None)
         };
 
         // ---- 目标信息（label 展示用，尽力而为） ----
@@ -170,6 +191,7 @@ impl SessionManager {
             _endpoint: endpoint,
             conn: conn.clone(),
             proxy_shutdown: shutdown_tx,
+            relay_driver,
         });
         if let Some(old) = old {
             let old_session_id = old.dto.session_id.clone();
@@ -235,15 +257,21 @@ impl SessionManager {
 }
 
 impl ActiveSession {
-    /// 主动收尾：断隧道 + 停代理
+    /// 主动收尾：断隧道 + 停代理 + 关中继通道
     fn teardown(self) {
         let _ = self.proxy_shutdown.send(());
         self.conn.close(0u32.into(), b"session closed");
+        if let Some(driver) = self.relay_driver {
+            driver.abort();
+        }
     }
 
-    /// 断线监控收尾：连接已死，只停代理
+    /// 断线监控收尾：连接已死，只停代理与中继通道
     fn teardown_silent(self) {
         let _ = self.proxy_shutdown.send(());
+        if let Some(driver) = self.relay_driver {
+            driver.abort();
+        }
     }
 }
 
@@ -253,6 +281,7 @@ async fn create_session(
     key: &str,
     self_device_id: &str,
     target_device_id: &str,
+    mode: &str,
 ) -> ConnectResult<String> {
     let resp = http
         .post(format!("{base}/api/v1/sessions"))
@@ -260,7 +289,7 @@ async fn create_session(
         .json(&json!({
             "source_device_id": self_device_id,
             "target_device_id": target_device_id,
-            "mode": "direct",
+            "mode": mode,
         }))
         .send()
         .await

@@ -11,6 +11,7 @@ use hawk_daemon::remote::identity::Identity;
 use hawk_daemon::remote::session::SessionManager;
 use hawk_daemon::remote::tls;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -234,6 +235,167 @@ async fn spawn_hub(port_a: u16, fp_a_hex: String) -> (String, Arc<HubState>) {
 }
 
 #[tokio::test]
+async fn relay_session_end_to_end() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = new_identity(&dir_b, Some("d_b"));
+    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
+
+    // A 侧：放行 B 的指纹（真实流程由 signal 的 session.request 驱动）
+    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
+    plane_a.allow_peer(fp_b);
+
+    // mock hub：relay 会话即 ready + WS 配对转发
+    let (base, _pairs) = spawn_relay_hub(fingerprint_hex(&identity_a)).await;
+
+    // A 侧连中继 WS（role=a）并在其上接受 QUIC
+    let ws_url_a =
+        hawk_daemon::remote::relay::relay_ws_url(&base, "key", "d_a", "s_r", "a").unwrap();
+    let (ws_a, _) = tokio_tungstenite::connect_async(&ws_url_a).await.unwrap();
+    let serve = {
+        let identity_a = identity_a.clone();
+        let plane_a = plane_a.clone();
+        tokio::spawn(async move {
+            let _ = hawk_daemon::remote::relay::serve_over_ws(
+                &identity_a,
+                &plane_a,
+                ws_a,
+                test_router(),
+            )
+            .await;
+        })
+    };
+
+    // B 侧：经 SessionManager 以 relay 模式建立会话
+    let http = reqwest::Client::new();
+    let manager = SessionManager::new(EventBus::new());
+    let dto = manager
+        .connect(&http, &base, "key", &identity_b, "d_a", "relay")
+        .await
+        .expect("中继会话建立");
+
+    // 经会话代理访问 A 的素材服务（QUIC 全程跑在中继字节流上）
+    let resp = http
+        .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
+        .bearer_auth(&dto.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "hi from A");
+
+    manager.disconnect(&http, &base, "key").await;
+    serve.abort();
+}
+
+// ---------- 中继 mock hub（relay 会话 + WS 配对转发） ----------
+
+type RelayPairs = Arc<
+    Mutex<
+        HashMap<(String, String), tokio::sync::mpsc::UnboundedSender<axum::extract::ws::Message>>,
+    >,
+>;
+
+async fn spawn_relay_hub(fp_a_hex: String) -> (String, RelayPairs) {
+    use axum::extract::ws::Message;
+    use axum::extract::{Query, WebSocketUpgrade};
+    use futures_util::{SinkExt, StreamExt};
+
+    let pairs: RelayPairs = Arc::new(Mutex::new(HashMap::new()));
+    let pairs_ws = pairs.clone();
+    let fp_devices = fp_a_hex.clone();
+    let fp_ready = fp_a_hex.clone();
+    let app = Router::new()
+        .route(
+            "/api/v1/devices",
+            axum::routing::get(move || {
+                let fp = fp_devices.clone();
+                async move {
+                    Json(json!({"status":"success","data":{"devices":[
+                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
+                         "online":true,"allow_remote":true,"fingerprint":fp}
+                    ]}}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions",
+            axum::routing::post(|Json(_body): Json<Value>| async move {
+                Json(json!({"status":"success","data":{"session_id":"s_r","state":"pending"}}))
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_r",
+            axum::routing::get(move || {
+                let fp = fp_ready.clone();
+                async move {
+                    Json(json!({"status":"success","data":{
+                        "session_id":"s_r","state":"ready",
+                        "connect":{ "mode":"relay", "fingerprint": fp }
+                    }}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_r/cancel",
+            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
+        )
+        .route(
+            "/api/v1/relay",
+            axum::routing::get(
+                move |Query(q): Query<std::collections::HashMap<String, String>>,
+                      ws: WebSocketUpgrade| {
+                    let pairs = pairs_ws.clone();
+                    let session = q.get("session_id").cloned().unwrap_or_default();
+                    let role = q.get("role").cloned().unwrap_or_default();
+                    async move {
+                    ws.on_upgrade(move |socket| async move {
+                        let (tx, mut rx) =
+                            tokio::sync::mpsc::unbounded_channel::<Message>();
+                        pairs
+                            .lock()
+                            .unwrap()
+                            .insert((session.clone(), role.clone()), tx);
+                        let peer_role = if role == "a" { "b" } else { "a" }.to_string();
+                        let (mut sink, mut stream) = socket.split();
+                        loop {
+                            tokio::select! {
+                                msg = rx.recv() => {
+                                    let Some(msg) = msg else { break };
+                                    if sink.send(msg).await.is_err() { break; }
+                                }
+                                incoming = stream.next() => {
+                                    match incoming {
+                                        Some(Ok(Message::Binary(data))) => {
+                                            let peer = pairs
+                                                .lock()
+                                                .unwrap()
+                                                .get(&(session.clone(), peer_role.clone()))
+                                                .cloned();
+                                            if let Some(peer) = peer {
+                                                let _ = peer.send(Message::Binary(data));
+                                            }
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                            }
+                        }
+                        })
+                    }
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{addr}"), pairs)
+}
+
+#[tokio::test]
 async fn session_orchestration_end_to_end() {
     let dir_a = tempfile::tempdir().unwrap();
     let dir_b = tempfile::tempdir().unwrap();
@@ -251,7 +413,7 @@ async fn session_orchestration_end_to_end() {
     let manager = SessionManager::new(EventBus::new());
 
     let dto = manager
-        .connect(&http, &base, "key", &identity_b, "d_a")
+        .connect(&http, &base, "key", &identity_b, "d_a", "direct")
         .await
         .expect("会话建立");
 

@@ -80,7 +80,7 @@ async fn run_inner(
 
     // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护（重注册循环复用，不重复绑定）
     let data_plane =
-        DataPlane::bind(&identity, cfg.quic_port, router).map_err(SignalError::Fatal)?;
+        DataPlane::bind(&identity, cfg.quic_port, router.clone()).map_err(SignalError::Fatal)?;
     let upnp_report: SharedUpnpReport = Arc::new(RwLock::new(UpnpReport::default()));
     tokio::spawn(reachability::maintain_upnp(
         cfg.quic_port,
@@ -117,9 +117,11 @@ async fn run_inner(
             base: &base,
             key: &cfg.key,
             device_id: &device_id,
+            identity: &identity,
             data_plane: &data_plane,
             upnp_report: &upnp_report,
             quic_port: cfg.quic_port,
+            router: &router,
         };
         match channel_loop(&ctx, supervisor).await {
             Ok(()) => retry = RETRY_MIN, // 对端正常关闭：立即重连
@@ -155,9 +157,11 @@ struct ChannelContext<'a> {
     base: &'a str,
     key: &'a str,
     device_id: &'a str,
+    identity: &'a Identity,
     data_plane: &'a Arc<DataPlane>,
     upnp_report: &'a SharedUpnpReport,
     quic_port: u16,
+    router: &'a axum::Router,
 }
 
 /// 一轮控制通道：WSS 连接 → hello/hello_ack → 心跳与推送处理，直到断开
@@ -273,6 +277,46 @@ async fn handle_message(
                     }
                 }
                 accept_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
+
+                // 中继模式：accept 后经服务端中继 WS 建立 QUIC（role=a 目标设备）
+                if value.get("mode").and_then(|m| m.as_str()) == Some("relay") {
+                    match crate::remote::relay::relay_ws_url(
+                        ctx.base,
+                        ctx.key,
+                        ctx.device_id,
+                        session_id,
+                        "a",
+                    ) {
+                        Ok(url) => {
+                            let identity = ctx.identity.clone();
+                            let plane = ctx.data_plane.clone();
+                            let router = ctx.router.clone();
+                            let session_id = session_id.to_string();
+                            tokio::spawn(async move {
+                                match tokio_tungstenite::connect_async(&url).await {
+                                    Ok((ws, _)) => {
+                                        tracing::info!("中继会话 {session_id}：A 侧通道已连接");
+                                        if let Err(e) = crate::remote::relay::serve_over_ws(
+                                            &identity, &plane, ws, router,
+                                        )
+                                        .await
+                                        {
+                                            tracing::warn!(
+                                                "中继会话 {session_id} 服务端点失败: {e}"
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("中继会话 {session_id} 通道连接失败: {e}");
+                                    }
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!("中继地址构建失败: {e}");
+                        }
+                    }
+                }
             }
         }
         Some("session.cancelled") => {

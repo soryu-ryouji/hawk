@@ -16,6 +16,8 @@ export const STORAGE_KEYS = {
   hidePreviewClose: 'hawk:hidePreviewClose',
   /** 已 toast 提示过的更新标识 `${channel}@${version}`（纯字符串）；同一版本只提示一次 */
   lastUpdateNotice: 'hawk:lastUpdateNotice',
+  /** 远程访问「中继回退」开关（'1' | '0' 纯字符串，远程设置分区开关）；缺失回退 '0'（关闭） */
+  relayFallback: 'hawk:relayFallback',
 } as const;
 
 /** 读取 JSON：缺失/损坏回退 fallback（不抛出） */

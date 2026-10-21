@@ -167,6 +167,17 @@ async function rotate() {
           <span class="hint">当前浏览：{{ connection.label.value }}</span>
           <button @click="disconnect">断开并回到我的库</button>
         </div>
+        <div class="switch-row">
+          <div>
+            <div class="switch-label">中继回退</div>
+            <p class="hint">直连失败时询问是否经服务端中继继续（素材流量经过你的服务器带宽，内容端到端加密）。</p>
+          </div>
+          <label class="switch" title="直连失败时经服务端中继回退">
+            <input :checked="store.relayFallback" type="checkbox" @change="store.setRelayFallback(($event.target as HTMLInputElement).checked)" />
+            <span class="track" />
+          </label>
+        </div>
+
         <div v-if="peerDevices.length === 0" class="hint">暂无其他设备。在另一台设备上运行 hawk 并接入同一服务端即可出现。</div>
         <div v-for="device in peerDevices" :key="device.device_id" class="device-row">
           <span class="dot" :class="{ online: device.online }" />

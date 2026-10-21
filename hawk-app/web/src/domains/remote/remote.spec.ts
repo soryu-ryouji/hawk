@@ -25,8 +25,10 @@ const shellMock = vi.hoisted(() => ({
       ],
     }),
   ),
-  remoteConnect: vi.fn((id: string) =>
-    env.connectError ? Promise.reject(new Error(env.connectError)) : Promise.resolve({ api_base: 'http://127.0.0.1:1', token: 's', label: id, remote: true }),
+  remoteConnect: vi.fn((_id: string, mode: string) =>
+    env.connectError && mode === 'direct'
+      ? Promise.reject(new Error(env.connectError))
+      : Promise.resolve({ api_base: 'http://127.0.0.1:1', token: 's', label: _id, remote: true }),
   ),
   remoteDisconnect: vi.fn(() => Promise.resolve(null)),
   remotePatchDevice: vi.fn(() => Promise.resolve({})),
@@ -83,8 +85,31 @@ describe('useRemoteStore', () => {
     const store = useRemoteStore();
     env.connectError = "Error invoking remote method 'hawk:remote-connect': Error: 目标网络不可达：无直连候选";
     await store.connect('d_x');
-    expect(store.error).toBe('目标网络不可达：无直连候选');
+    expect(store.error).toBe('目标网络不可达：无直连候选（可在远程设置中开启「中继回退」）');
     expect(store.connectingId).toBeNull();
+  });
+
+  it('中继回退：开启后直连失败经确认走 relay 重试', async () => {
+    const store = useRemoteStore();
+    env.connectError = "Error invoking remote method 'hawk:remote-connect': Error: 直连失败：超时";
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
+
+    // 默认关闭：不确认、不重试，error 带开启提示
+    await store.connect('d_x');
+    expect(shellMock.remoteConnect).toHaveBeenCalledTimes(1);
+    expect(shellMock.remoteConnect).toHaveBeenLastCalledWith('d_x', 'direct');
+    expect(store.error).toContain('中继回退');
+
+    // 开启后：确认弹窗 → relay 重试成功，无 error
+    store.setRelayFallback(true);
+    await store.connect('d_x');
+    expect(shellMock.remoteConnect).toHaveBeenLastCalledWith('d_x', 'relay');
+    expect(store.error).toBeNull();
+    expect(localStorage.getItem('hawk:relayFallback')).toBe('1');
+    vi.unstubAllGlobals();
   });
 
   it('refreshDevices 离线排序与状态过滤（信令未 online 时不拉取）', async () => {

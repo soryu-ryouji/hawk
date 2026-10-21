@@ -104,9 +104,10 @@ export async function remoteRotate(): Promise<{ fingerprint: string }> {
 }
 
 /** 建立远程会话并切换连接描述符；失败抛错（message 直接展示） */
-export async function remoteConnect(targetDeviceId: string): Promise<ConnectionDescriptor> {
+export async function remoteConnect(targetDeviceId: string, mode: 'direct' | 'relay' = 'direct'): Promise<ConnectionDescriptor> {
   const session = await daemonCall<RemoteSessionDto>('POST', '/api/v1/remote/session', {
     target_device_id: targetDeviceId,
+    mode,
   });
   remoteConn = {
     api_base: `http://127.0.0.1:${session.proxy_port}`,

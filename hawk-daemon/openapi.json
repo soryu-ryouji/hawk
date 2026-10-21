@@ -144,6 +144,10 @@
       },
       "CreateSessionBody": {
         "properties": {
+          "mode": {
+            "description": "direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用）",
+            "type": "string"
+          },
           "target_device_id": {
             "type": "string"
           }

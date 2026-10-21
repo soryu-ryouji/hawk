@@ -2,6 +2,7 @@
 //! message 供客户端直接展示（见 docs/backend/remote-protocol.md）。
 
 pub mod devices;
+pub mod relay;
 pub mod sessions;
 pub mod ws;
 
@@ -96,5 +97,6 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(sessions::cancel),
         )
         .route("/api/v1/ws", get(ws::control_channel))
+        .route("/api/v1/relay", get(relay::relay_channel))
         .with_state(state)
 }
