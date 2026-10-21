@@ -8,7 +8,7 @@ use quinn::rustls::{self, SignatureScheme};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
 use rustls::server::danger::ClientCertVerified;
 use sha2::Digest;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -98,18 +98,27 @@ pub fn client_config(
 
 // ---------- 放行集合（A 侧：已接受会话的对端指纹） ----------
 
+/// A 侧放行集合：同一设备指纹可能同时承载多个查看会话（hawk-server 的网页版与插件
+/// 共用服务端身份），按会话计数，最后一个会话结束时才真正撤销指纹放行。
 #[derive(Debug, Default)]
 pub struct PeerAllowlist {
-    inner: RwLock<HashSet<[u8; 32]>>,
+    inner: RwLock<HashMap<[u8; 32], usize>>,
 }
 
 impl PeerAllowlist {
     pub fn add(&self, fingerprint: [u8; 32]) {
-        self.inner.write().unwrap().insert(fingerprint);
+        *self.inner.write().unwrap().entry(fingerprint).or_insert(0) += 1;
     }
 
     pub fn remove(&self, fingerprint: &[u8; 32]) {
-        self.inner.write().unwrap().remove(fingerprint);
+        let mut inner = self.inner.write().unwrap();
+        let Some(count) = inner.get_mut(fingerprint) else {
+            return;
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            inner.remove(fingerprint);
+        }
     }
 
     pub fn clear(&self) {
@@ -117,7 +126,7 @@ impl PeerAllowlist {
     }
 
     fn contains(&self, fingerprint: &[u8; 32]) -> bool {
-        self.inner.read().unwrap().contains(fingerprint)
+        self.inner.read().unwrap().contains_key(fingerprint)
     }
 }
 

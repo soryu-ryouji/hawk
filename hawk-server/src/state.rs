@@ -2,6 +2,7 @@
 
 use crate::store::{DeviceRecord, Store};
 use axum::extract::ws::Message;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,6 +18,23 @@ pub const HEARTBEAT_MIN_INTERVAL_MS: u64 = 10_000;
 pub const SESSION_TIMEOUT_MS: u64 = 30_000;
 /// QUIC 默认端口：目标心跳未上报 ipv6_port 时的回退值
 pub const DEFAULT_QUIC_PORT: u16 = 27373;
+
+/// 查看面令牌/会话的访问级别：read 只读浏览；write 仅限插件导入（目标 daemon 仍做端点白名单）
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Access {
+    Read,
+    Write,
+}
+
+impl Access {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Access::Read => "read",
+            Access::Write => "write",
+        }
+    }
+}
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -95,6 +113,8 @@ pub struct Session {
     pub target_device_id: String,
     /// direct（直连撮合）/ relay（服务端中继转发）
     pub mode: String,
+    /// read（只读查看）/ write（广域网受限写）
+    pub access: Access,
     pub state: SessionState,
     pub created_at_ms: u64,
     /// ready 时组装的连接信息（direct: 候选列表 + 指纹；relay: 仅指纹）
@@ -151,6 +171,8 @@ impl Session {
 
 pub struct AppState {
     pub access_key: String,
+    /// 广域网写入密钥（可选）；只用于查看面登录换发写令牌，不参与控制面鉴权
+    pub write_key: Option<String>,
     pub store: Mutex<Store>,
     pub presence: RwLock<HashMap<String, Presence>>,
     pub sessions: RwLock<HashMap<String, Session>>,
@@ -162,9 +184,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(access_key: String, store: Store) -> AppState {
+    pub fn new(access_key: String, write_key: Option<String>, store: Store) -> AppState {
         AppState {
             access_key,
+            write_key,
             store: Mutex::new(store),
             presence: RwLock::new(HashMap::new()),
             sessions: RwLock::new(HashMap::new()),

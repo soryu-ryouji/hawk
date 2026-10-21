@@ -186,7 +186,7 @@ struct AppInfo {
     exec_path: String,
     access: &'static str,
     /// 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
-    /// （前端 viewerMode 依据，开启后 web 端展示全部写入口）
+    /// （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
     writable: bool,
     lan: LanInfo,
 }
@@ -206,6 +206,7 @@ async fn info(
     let (access, writable) = match access {
         AccessLevel::Admin => ("admin", true),
         AccessLevel::Viewer { writable } => ("viewer", writable),
+        AccessLevel::RemoteWriter => ("remote_writer", true),
     };
     let platform = if cfg!(target_os = "windows") {
         "windows"
@@ -236,7 +237,7 @@ async fn info(
 /// 安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；
 /// Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
 /// 注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
-/// remote 模块的隧道端必须拒绝转发本端点并改写 Host（见 docs/backend/remote-protocol.md 数据面）
+/// remote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）
 #[utoipa::path(
     get,
     path = "/api/v1/app/token",

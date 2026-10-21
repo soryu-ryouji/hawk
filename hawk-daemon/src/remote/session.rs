@@ -168,6 +168,7 @@ impl SessionManager {
         let ctx = Arc::new(ProxyContext {
             conn: conn.clone(),
             token: token.clone(),
+            session_id: session_id.clone(),
         });
         tokio::spawn(async move {
             tokio::select! {

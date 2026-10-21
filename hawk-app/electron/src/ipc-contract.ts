@@ -112,6 +112,8 @@ export interface RemoteConfig {
   enabled: boolean;
   url: string;
   key: string;
+  /** 允许广域网会话导入素材/新建文件夹（与 [web] 局域网写权限独立） */
+  writable: boolean;
 }
 
 /** 信令运行状态（daemon /remote 的 status 子对象） */
@@ -135,6 +137,7 @@ export interface RemoteDevice {
   library_name: string;
   online: boolean;
   allow_remote: boolean;
+  allow_write: boolean;
   last_seen_at_ms?: number;
 }
 

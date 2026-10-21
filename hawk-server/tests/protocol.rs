@@ -16,7 +16,7 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 async fn spawn_server(dir: &Path) -> String {
     let store = Store::load(dir).unwrap();
-    let state = Arc::new(AppState::new(KEY.to_string(), store));
+    let state = Arc::new(AppState::new(KEY.to_string(), None, store));
     let identity = hawk_server::identity::Identity::load_or_create(dir).unwrap();
     let device_id = hawk_server::viewer::ensure_viewer_device(&state, &identity).unwrap();
     let mut identity = identity;
@@ -52,6 +52,7 @@ async fn register(base: &str, name: &str, allow_remote: bool) -> String {
             "fingerprint": format!("fp-{name}"),
             "library_name": "我的素材库",
             "allow_remote": allow_remote,
+            "allow_write": false,
         }))
         .send()
         .await

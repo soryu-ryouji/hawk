@@ -138,7 +138,7 @@ function showPanel(x: number, y: number) {
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
       </svg>
       <span class="hawk-drop-zone-title">保存到 hawk</span>
-      <small>根目录</small>
+      <small class="hawk-drop-target">根目录</small>
     </div>
     <div class="hawk-drop-lists">
       <div class="hawk-drop-rows">
@@ -173,15 +173,23 @@ async function loadFolders() {
   if (!panel || !rows) {
     return;
   }
-  let data: { folders: TreeNode };
+  let data: { folders: TreeNode; targetLabel?: string };
   try {
-    data = (await browser.runtime.sendMessage({ type: GET_FOLDERS_MESSAGE })) as { folders: TreeNode };
-  } catch {
-    rows.innerHTML = '<div class="hawk-drop-hint">加载失败</div>';
+    data = (await browser.runtime.sendMessage({ type: GET_FOLDERS_MESSAGE })) as {
+      folders: TreeNode;
+      targetLabel?: string;
+    };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    rows.innerHTML = `<div class="hawk-drop-hint">${escapeHtml(reason || '加载失败')}</div>`;
     return;
   }
   if (!panel) {
     return; // 等待响应期间面板可能已被关闭
+  }
+  const target = panel.querySelector<HTMLElement>('.hawk-drop-target');
+  if (target) {
+    target.textContent = data.targetLabel ? `${data.targetLabel} · 根目录` : '根目录';
   }
   const tree = data && Array.isArray(data.folders?.children) ? data.folders : { path: '', name: '', children: [] };
   renderFolders(tree);
@@ -387,6 +395,10 @@ function injectStyles() {
   color: #d6d9de;
 }
 .hawk-drop-zone small {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
 }
 /* 右：文件夹树 + 新建区块 */

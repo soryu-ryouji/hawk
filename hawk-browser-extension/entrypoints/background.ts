@@ -3,6 +3,7 @@
 import { browser } from 'wxt/browser';
 import { addItemByBase64, createFolder, fetchFolderList, HttpError, type FolderNode } from '../lib/api';
 import { notify } from '../lib/notify';
+import { getSettings, targetLabel, type HawkSettings } from '../lib/settings';
 
 const MENU_ID = 'hawk-save-image';
 const SAVE_MESSAGE = 'hawk:save-image';
@@ -14,19 +15,29 @@ const NOTIFY_MESSAGE = 'hawk:notify';
 type FolderUsage = Record<string, number>;
 const USAGE_KEY = 'folderLastUse';
 
-let foldersCache: { folders: FolderNode; at: number } | null = null;
+let foldersCache: { key: string; folders: FolderNode; at: number } | null = null;
 const FOLDERS_CACHE_TTL = 30_000;
 
-async function getUsage(): Promise<FolderUsage> {
-  const stored = await browser.storage.local.get(USAGE_KEY);
-  return (stored[USAGE_KEY] as FolderUsage | undefined) ?? {};
+/** 最近使用统计按素材库隔离：不同库的同名文件夹不应互相影响排序 */
+function libraryKey(settings: HawkSettings): string {
+  return settings.mode === 'remote'
+    ? `remote:${settings.remoteUrl}:${settings.targetDeviceId}`
+    : `local:${settings.localUrl}`;
+}
+
+async function getUsage(settings: HawkSettings): Promise<FolderUsage> {
+  const key = `${USAGE_KEY}:${libraryKey(settings)}`;
+  const stored = await browser.storage.local.get(key);
+  return (stored[key] as FolderUsage | undefined) ?? {};
 }
 
 /** 保存成功后记录时间戳，并作废缓存让下次面板拿到新排序 */
 async function recordUsage(path: string) {
-  const usage = await getUsage();
+  const settings = await getSettings();
+  const key = `${USAGE_KEY}:${libraryKey(settings)}`;
+  const usage = await getUsage(settings);
   usage[path] = Date.now();
-  await browser.storage.local.set({ [USAGE_KEY]: usage });
+  await browser.storage.local.set({ [key]: usage });
   foldersCache = null;
 }
 
@@ -38,14 +49,16 @@ function sortByLastUse(nodes: FolderNode[], usage: FolderUsage): FolderNode[] {
 }
 
 /** 按最近使用排序后的文件夹树（拖拽保存面板展示用） */
-async function getFolders(force = false): Promise<{ folders: FolderNode }> {
-  if (!force && foldersCache && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
-    return { folders: foldersCache.folders };
+async function getFolders(force = false): Promise<{ folders: FolderNode; targetLabel: string }> {
+  const settings = await getSettings();
+  const key = libraryKey(settings);
+  if (!force && foldersCache && foldersCache.key === key && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
+    return { folders: foldersCache.folders, targetLabel: targetLabel(settings) };
   }
   const root = await fetchFolderList();
-  const folders = { ...root, children: sortByLastUse(root.children, await getUsage()) };
-  foldersCache = { folders, at: Date.now() };
-  return { folders };
+  const folders = { ...root, children: sortByLastUse(root.children, await getUsage(settings)) };
+  foldersCache = { key, folders, at: Date.now() };
+  return { folders, targetLabel: targetLabel(settings) };
 }
 
 export default defineBackground(() => {
@@ -133,7 +146,9 @@ async function saveImage(srcUrl: string, pageUrl?: string, folderPath?: string) 
     if (folderPath) {
       void recordUsage(folderPath).catch(() => {}); // 计入常用统计，失败不影响保存结果
     }
-    await notify('已保存到 hawk');
+    const settings = await getSettings();
+    const label = targetLabel(settings);
+    await notify(label ? `已保存到 ${label}` : '已保存到 hawk');
   } catch (e) {
     await notify(`保存失败：${e instanceof Error ? e.message : String(e)}`);
   }

@@ -17,7 +17,11 @@ use std::sync::Arc;
 /// 启动 HTTP 服务。本进程监听明文 HTTP，TLS/WSS 由前置反代（Caddy 等）终结。
 pub async fn run(settings: Settings) -> std::io::Result<()> {
     let store = store::Store::load(&settings.data_dir)?;
-    let state = Arc::new(state::AppState::new(settings.access_key, store));
+    let state = Arc::new(state::AppState::new(
+        settings.access_key,
+        settings.write_key,
+        store,
+    ));
 
     // 网页版宿主：服务端设备身份 + 「网页版」设备行 upsert + 查看会话管理
     let mut identity =

@@ -9,14 +9,42 @@
     <main>
       <h1>hawk</h1>
       <p id="status" class="status">…</p>
+
       <label>
-        服务器地址
-        <input id="server-url" type="text" placeholder="http://127.0.0.1:27371" />
+        连接方式
+        <select id="mode">
+          <option value="local">本地 hawk</option>
+          <option value="remote">远程 hawk-server</option>
+        </select>
       </label>
-      <label>
-        Token（可选）
-        <input id="token" type="text" placeholder="留空自动获取（推荐）" />
-      </label>
+
+      <div id="local-fields">
+        <label>
+          本地服务器地址
+          <input id="local-url" type="text" placeholder="http://127.0.0.1:27371" />
+        </label>
+        <label>
+          本地 Token（可选）
+          <input id="local-token" type="text" placeholder="留空自动获取（推荐）" />
+        </label>
+      </div>
+
+      <div id="remote-fields" hidden>
+        <label>
+          hawk-server 域名
+          <input id="remote-url" type="text" placeholder="https://hawk.example.com" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>
+          写入密钥
+          <input id="remote-key" type="password" placeholder="服务端 --write-key" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>
+          保存到素材库
+          <select id="target"></select>
+        </label>
+        <button id="refresh-targets" class="secondary" type="button">刷新素材库列表</button>
+      </div>
+
       <div class="actions">
         <button id="save" type="button">保存设置</button>
         <button id="check" type="button">测试连接</button>

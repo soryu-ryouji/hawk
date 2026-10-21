@@ -1,6 +1,7 @@
-//! 网页版宿主：hawk-server 作为 B 侧（协议中的查看方），任意浏览器经域名只读浏览素材库。
+//! 网页版宿主：hawk-server 作为 B 侧（协议中的查看方），任意浏览器经域名查看素材库；
+//! 写作用域令牌可供插件通过查看面代理导入素材（目标设备仍需开启广域网写入）。
 //! 隧道在服务器终结（素材明文过服务器，自托管单用户信任前提）；浏览器令牌（bt）与
-//! access_key 分离：登录换发、仅查看权限、服务端存哈希。
+//! access_key / write_key 分离：登录换发 read/write 作用域令牌，服务端只存哈希与作用域。
 
 pub mod api;
 pub mod page;
@@ -10,10 +11,10 @@ mod tokens;
 use crate::api::sessions::create_session_internal;
 use crate::identity::Identity;
 use crate::relay_socket::RelaySocket;
-use crate::state::{AppState, SessionState};
+use crate::state::{Access, AppState, SessionState};
 use crate::store::DeviceRecord;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -26,6 +27,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ViewerSession {
     pub session_token: String,
     pub hawk_session_id: String,
+    pub access: Access,
     pub target_device_id: String,
     pub target_name: String,
     pub target_library_name: String,
@@ -34,8 +36,8 @@ pub struct ViewerSession {
 }
 
 struct ViewerInner {
-    /// 有效浏览器令牌哈希（sha256 hex）
-    token_hashes: HashSet<String>,
+    /// 有效浏览器令牌哈希（sha256 hex）→ 访问级别
+    token_hashes: HashMap<String, Access>,
     /// session_token → 会话
     sessions: HashMap<String, Arc<ViewerSession>>,
     /// bt 哈希 → session_token（当前绑定）
@@ -74,11 +76,18 @@ impl ViewerManager {
 
     // ---------- 浏览器令牌 ----------
 
-    /// 登录：access_key 正确则换发浏览器令牌（bt），服务端存哈希
-    pub fn login(&self, access_key: &str) -> Option<String> {
-        if !crate::auth::constant_time_eq(access_key.as_bytes(), self.state.access_key.as_bytes()) {
-            return None;
-        }
+    /// 登录：access_key 换发只读令牌，write_key 换发写令牌（bt），服务端只存哈希与级别
+    pub fn login(&self, key: &str) -> Option<(String, Access)> {
+        let access =
+            if crate::auth::constant_time_eq(key.as_bytes(), self.state.access_key.as_bytes()) {
+                Access::Read
+            } else if self.state.write_key.as_deref().is_some_and(|write_key| {
+                crate::auth::constant_time_eq(key.as_bytes(), write_key.as_bytes())
+            }) {
+                Access::Write
+            } else {
+                return None;
+            };
         let token = format!(
             "hb_{:016x}{:016x}",
             rand::random::<u64>(),
@@ -86,9 +95,9 @@ impl ViewerManager {
         );
         let hash = tokens::hash(&token);
         let mut inner = self.inner.lock().unwrap();
-        inner.token_hashes.insert(hash);
+        inner.token_hashes.insert(hash, access);
         tokens::save(&self.tokens_file, &inner.token_hashes).ok()?;
-        Some(token)
+        Some((token, access))
     }
 
     pub fn logout(&self, token: &str) {
@@ -99,15 +108,10 @@ impl ViewerManager {
         let _ = tokens::save(&self.tokens_file, &inner.token_hashes);
     }
 
-    /// 校验浏览器令牌：有效返回其哈希
-    pub fn validate(&self, token: &str) -> Option<String> {
+    /// 校验浏览器令牌：有效返回访问级别
+    pub fn validate(&self, token: &str) -> Option<Access> {
         let hash = tokens::hash(token);
-        self.inner
-            .lock()
-            .unwrap()
-            .token_hashes
-            .contains(&hash)
-            .then_some(hash)
+        self.inner.lock().unwrap().token_hashes.get(&hash).copied()
     }
 
     // ---------- 会话 ----------
@@ -130,13 +134,19 @@ impl ViewerManager {
         self: &Arc<Self>,
         token: &str,
         target_device_id: &str,
+        access: Access,
     ) -> Result<Value, String> {
-        let Some(bt_hash) = self.validate(token) else {
+        let Some(token_access) = self.validate(token) else {
             return Err("未登录或令牌无效".to_string());
         };
-        // 复用存活绑定
+        if access == Access::Write && token_access != Access::Write {
+            return Err("当前令牌没有写入权限".to_string());
+        }
+        let bt_hash = tokens::hash(token);
+        // 复用存活绑定（访问级别也必须一致）
         if let Some(existing) = self.session_for(token) {
             if existing.target_device_id == target_device_id
+                && existing.access == access
                 && existing.conn.close_reason().is_none()
             {
                 return Ok(session_view(&existing));
@@ -149,16 +159,32 @@ impl ViewerManager {
             .clone()
             .ok_or_else(|| "服务端设备身份未初始化".to_string())?;
         let (hawk_session_id, initial) =
-            create_session_internal(&self.state, &source, target_device_id, "relay")
+            create_session_internal(&self.state, &source, target_device_id, "relay", access)
                 .map_err(|e| e.message)?;
         if initial == SessionState::Rejected {
             return Err("对方设备已关闭远程访问".to_string());
         }
 
         // 轮询 ready（A 侧经 WSS 异步 accept）
-        let fingerprint = poll_ready(&self.state, &hawk_session_id)
-            .await
-            .ok_or("会话建立超时或失败".to_string())?;
+        let fingerprint = match poll_ready(&self.state, &hawk_session_id).await {
+            Some(fingerprint) => fingerprint,
+            None => {
+                let state = self
+                    .state
+                    .sessions
+                    .read()
+                    .unwrap()
+                    .get(&hawk_session_id)
+                    .map(|session| session.state.as_str().to_string());
+                return Err(match state.as_deref() {
+                    Some("rejected") => "对方设备拒绝会话（可能未开启广域网写入）".to_string(),
+                    Some("unreachable") => "目标设备不可达".to_string(),
+                    Some("expired") => "会话建立超时".to_string(),
+                    Some("cancelled") => "会话已取消".to_string(),
+                    _ => "会话建立超时或失败".to_string(),
+                });
+            }
+        };
 
         // 进程内中继 + QUIC 钉扎连接
         let socket = RelaySocket::register(self.state.clone(), &hawk_session_id);
@@ -191,6 +217,7 @@ impl ViewerManager {
                 rand::random::<u64>()
             ),
             hawk_session_id: hawk_session_id.clone(),
+            access,
             target_device_id: target_device_id.to_string(),
             target_name,
             target_library_name,
@@ -277,6 +304,7 @@ impl ViewerManager {
 fn session_view(session: &Arc<ViewerSession>) -> Value {
     json!({
         "session_token": session.session_token,
+        "access": session.access.as_str(),
         "target_device_id": session.target_device_id,
         "target_name": session.target_name,
         "target_library_name": session.target_library_name,
@@ -300,6 +328,7 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
                 rec.library_name = "网页查看器".to_string();
                 rec.fingerprint = identity.fingerprint.clone();
                 rec.allow_remote = false;
+                rec.allow_write = false;
             })
             .map_err(|e| format!("设备注册表写入失败: {e}"))?;
     } else {
@@ -311,6 +340,7 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
                 fingerprint: identity.fingerprint.clone(),
                 library_name: "网页查看器".to_string(),
                 allow_remote: false,
+                allow_write: false,
                 registered_at_ms: crate::state::now_ms(),
             })
             .map_err(|e| format!("设备注册表写入失败: {e}"))?;

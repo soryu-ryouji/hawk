@@ -2,7 +2,7 @@
 
 use super::{ok, success, ApiError, JsonBody};
 use crate::auth::AccessKey;
-use crate::state::{now_ms, AppState, Session, SessionState};
+use crate::state::{now_ms, Access, AppState, Session, SessionState};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -43,6 +43,7 @@ pub async fn create(
         &req.source_device_id,
         &req.target_device_id,
         &req.mode,
+        Access::Read,
     )?;
     Ok(ok(
         json!({ "session_id": session_id, "state": initial.as_str() }),
@@ -55,6 +56,7 @@ pub fn create_session_internal(
     source_device_id: &str,
     target_device_id: &str,
     mode: &str,
+    access: Access,
 ) -> Result<(String, SessionState), ApiError> {
     if source_device_id == target_device_id {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "不能与自身建立会话"));
@@ -68,6 +70,12 @@ pub fn create_session_internal(
     if !state.online(target_device_id) {
         return Err(ApiError::not_found("目标设备不在线"));
     }
+    if access == Access::Write && !target.allow_write {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "目标设备未开启广域网写入",
+        ));
+    }
 
     // allow_remote=false 直接置 rejected（协议约定，不打扰目标设备）
     let initial = if target.allow_remote {
@@ -80,6 +88,7 @@ pub fn create_session_internal(
         source_device_id: source_device_id.to_string(),
         target_device_id: target_device_id.to_string(),
         mode: mode.to_string(),
+        access,
         state: initial,
         created_at_ms: now_ms(),
         connect: None,
@@ -104,6 +113,7 @@ pub fn create_session_internal(
                     "library_name": source.as_ref().map(|s| s.library_name.as_str()).unwrap_or_default(),
                 },
                 "mode": mode,
+                "access": access.as_str(),
             }),
         );
     }

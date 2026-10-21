@@ -74,14 +74,15 @@ fn strip_schema_defaults(value: &mut serde_json::Value) {
 
 /// 请求级扩展：当前 token 的访问级别，app/info 据此报告。
 /// Viewer 携带该 token 的写能力（[web] 的 writable/separate/write_token 共同决定，
-/// 每请求解析，配置热生效）
+/// 每请求解析，配置热生效）；RemoteWriter 为广域网隧道的受限写（仅导入/建文件夹）。
 #[derive(Clone, Copy)]
 pub enum AccessLevel {
     Admin,
     Viewer { writable: bool },
+    RemoteWriter,
 }
 
-/// admin 限定端点的统一门禁：viewer（含可写）403，防止只读 token 经管理端点提权
+/// admin 限定端点的统一门禁：viewer（含可写）与远程写 403，防止只读 token 经管理端点提权
 pub(crate) fn require_admin(access: &AccessLevel) -> Result<(), envelope::ApiError> {
     if matches!(access, AccessLevel::Admin) {
         Ok(())
@@ -219,14 +220,14 @@ async fn auth(
         return next.run(req).await;
     }
 
-    // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledViewer（HTTP 客户端无法伪造扩展，
-    // 隧道流量恒为 viewer 只读，无视其携带的任何 token 头）
-    let access = if req
-        .extensions()
-        .get::<crate::remote::data::TunneledViewer>()
-        .is_some()
-    {
-        Some(AccessLevel::Viewer { writable: false })
+    // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledPeer（HTTP 客户端无法伪造扩展，
+    // 忽略其携带的任何 token 头）。写会话是否生效还要看当前 [remote].writable（热生效）。
+    let access = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
+        if tunnel.writable && state.config.current().remote.writable {
+            Some(AccessLevel::RemoteWriter)
+        } else {
+            Some(AccessLevel::Viewer { writable: false })
+        }
     } else {
         resolve_access(&state, &req)
     };
@@ -245,6 +246,15 @@ async fn auth(
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(
                 serde_json::json!({ "status": "error", "error": { "code": envelope::codes::READ_ONLY, "message": "viewer token is read-only" } }),
+            ),
+        )
+            .into_response();
+    }
+    if matches!(access, AccessLevel::RemoteWriter) && !is_remote_writer_allowed(&req) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            axum::Json(
+                serde_json::json!({ "status": "error", "error": { "code": envelope::codes::READ_ONLY, "message": "remote writer is limited to import and folder create" } }),
             ),
         )
             .into_response();
@@ -369,6 +379,22 @@ fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
     matches!(
         req.uri().path(),
         "/api/v1/item/list" | "/api/v1/item/skeleton" | "/api/v1/item/aggregate"
+    )
+}
+
+/// 广域网受限写：只开放导入素材与新建文件夹；其余写端点仍按只读处理。
+/// item/add 的 path 导入由 handler 再拦（防止远端读本机文件入库）。
+fn is_remote_writer_allowed(req: &axum::extract::Request) -> bool {
+    if req.method() == axum::http::Method::GET {
+        return true;
+    }
+    matches!(
+        req.uri().path(),
+        "/api/v1/item/list"
+            | "/api/v1/item/skeleton"
+            | "/api/v1/item/aggregate"
+            | "/api/v1/item/add"
+            | "/api/v1/folder/create"
     )
 }
 

@@ -22,11 +22,17 @@ pub struct RegisterRequest {
     fingerprint: String,
     library_name: String,
     allow_remote: bool,
+    /// 允许广域网写会话（目标设备 [remote].writable）；旧客户端缺省 false
+    #[serde(default)]
+    allow_write: bool,
 }
 
 #[derive(Deserialize)]
 pub struct HeartbeatRequest {
     device_id: String,
+    /// 目标设备当前是否允许广域网写入；变化时更新设备表，供查看面筛选
+    #[serde(default)]
+    allow_write: Option<bool>,
     reachability: HeartbeatReachability,
 }
 
@@ -85,6 +91,7 @@ pub async fn register(
         fingerprint: req.fingerprint,
         library_name: req.library_name,
         allow_remote: req.allow_remote,
+        allow_write: req.allow_write,
         registered_at_ms: now_ms(),
     };
     let device_id = record.device_id.clone();
@@ -105,8 +112,23 @@ pub async fn heartbeat(
     headers: axum::http::HeaderMap,
     JsonBody(req): JsonBody<HeartbeatRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if state.device(&req.device_id).is_none() {
+    let Some(device) = state.device(&req.device_id) else {
         return Err(ApiError::not_found("设备不存在"));
+    };
+    if let Some(allow_write) = req.allow_write {
+        if allow_write != device.allow_write {
+            state
+                .store
+                .lock()
+                .unwrap()
+                .update(&req.device_id, |record| record.allow_write = allow_write)
+                .map_err(|e| {
+                    ApiError::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("设备注册表写入失败: {e}"),
+                    )
+                })?;
+        }
     }
     let now = now_ms();
     let public_ip_seen = client_ip(&headers, peer);
@@ -291,6 +313,7 @@ fn device_view(record: &DeviceRecord, presence: Option<&Presence>, now: u64) -> 
         "last_seen_at_ms": last_seen,
         "fingerprint": record.fingerprint,
         "allow_remote": record.allow_remote,
+        "allow_write": record.allow_write,
         "reachability": reachability,
     })
 }

@@ -1,16 +1,36 @@
-// 插件设置（browser.storage.local 持久化）：服务端地址 + Token
+// 插件设置（browser.storage.local 持久化）：本地 daemon / hawk-server 远程两种连接方式。
 import { browser } from 'wxt/browser';
 
+export type ConnectionMode = 'local' | 'remote';
+
 export interface HawkSettings {
-  /** hawk-daemon 地址，默认本机 27371 端口（见 docs/architecture.md） */
-  serverUrl: string;
-  /** 手动覆盖 Token（可选）；留空则自动发现（见 lib/api.ts 头部说明） */
-  token: string;
+  mode: ConnectionMode;
+  /** 本地 hawk-daemon 地址（默认本机 27371 端口） */
+  localUrl: string;
+  /** 手动覆盖本地 Token（可选）；留空则自动发现（仅环回地址） */
+  localToken: string;
+  /** hawk-server 域名（http(s):// 开头） */
+  remoteUrl: string;
+  /** hawk-server 写入密钥：换取写作用域令牌，仅能用于查看面会话 */
+  remoteKey: string;
+  /** 写作用域令牌缓存（服务端重启/注销后 401 会自动重登） */
+  remoteToken: string;
+  /** 目标素材库 = hawk-server 上的一台在线设备 */
+  targetDeviceId: string;
+  targetName: string;
+  targetLibraryName: string;
 }
 
 const DEFAULTS: HawkSettings = {
-  serverUrl: 'http://127.0.0.1:27371',
-  token: '',
+  mode: 'local',
+  localUrl: 'http://127.0.0.1:27371',
+  localToken: '',
+  remoteUrl: '',
+  remoteKey: '',
+  remoteToken: '',
+  targetDeviceId: '',
+  targetName: '',
+  targetLibraryName: '',
 };
 
 export async function getSettings(): Promise<HawkSettings> {
@@ -18,9 +38,42 @@ export async function getSettings(): Promise<HawkSettings> {
   return { ...DEFAULTS, ...((stored.settings ?? {}) as Partial<HawkSettings>) };
 }
 
+function normalizeUrl(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
 export async function saveSettings(patch: Partial<HawkSettings>): Promise<HawkSettings> {
-  const normalized = patch.serverUrl !== undefined ? { ...patch, serverUrl: patch.serverUrl.trim().replace(/\/+$/, '') } : patch;
-  const next = { ...(await getSettings()), ...normalized };
+  const normalized = { ...patch };
+  if (patch.localUrl !== undefined) {
+    normalized.localUrl = normalizeUrl(patch.localUrl);
+  }
+  if (patch.remoteUrl !== undefined) {
+    normalized.remoteUrl = normalizeUrl(patch.remoteUrl);
+  }
+  if (patch.remoteKey !== undefined) {
+    normalized.remoteKey = patch.remoteKey.trim();
+  }
+  if (patch.localToken !== undefined) {
+    normalized.localToken = patch.localToken.trim();
+  }
+  const current = await getSettings();
+  const next = { ...current, ...normalized };
+  // 密钥/域名变化后旧令牌不再可信，清掉缓存（下次请求自动重登）
+  const connectionChanged =
+    (patch.remoteKey !== undefined && next.remoteKey !== current.remoteKey) ||
+    (patch.remoteUrl !== undefined && next.remoteUrl !== current.remoteUrl);
+  if (connectionChanged) {
+    next.remoteToken = '';
+  }
   await browser.storage.local.set({ settings: next });
   return next;
+}
+
+/** 当前目标素材库展示名 */
+export function targetLabel(settings: HawkSettings): string {
+  if (!settings.targetDeviceId) {
+    return '';
+  }
+  const name = settings.targetName || settings.targetDeviceId;
+  return settings.targetLibraryName ? `${name} · ${settings.targetLibraryName}` : name;
 }

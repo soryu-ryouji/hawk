@@ -1,6 +1,6 @@
 # 远程访问部署（hawk-server）
 
-> 单用户自托管部署：一台有公网的服务器 + 一个域名（可选但推荐），即可让各设备的 hawk 互联，并通过浏览器经网页版只读访问素材库。本文讲编译产物与反代部署；启动参数、接口、网页版操作与运维排查见 [hawk-server 使用指南](hawk-server.md)，架构见 [远程访问设计](remote-access.md)，协议见 [remote-protocol](remote-protocol.md)。
+> 单用户自托管部署：一台有公网的服务器 + 一个域名（可选但推荐），即可让各设备的 hawk 互联，并通过浏览器经网页版只读访问素材库；持有写入密钥的插件可向目标设备导入素材。本文讲编译产物与反代部署；启动参数、接口、网页版操作与运维排查见 [hawk-server 使用指南](hawk-server.md)，架构见 [远程访问设计](remote-access.md)，协议见 [remote-protocol](remote-protocol.md)。
 
 ## 组成
 
@@ -27,10 +27,12 @@ tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server   # 指定输出�
 ## 运行
 
 ```bash
-openssl rand -hex 32                  # 生成访问密钥（客户端与网页登录都用它）
+openssl rand -hex 32                  # 生成访问密钥（客户端与网页只读登录都用它）
+openssl rand -hex 32                  # 生成写入密钥（可选，插件广域网保存用）
 
 ./hawk-server.bin \
-  --access-key <上一步的密钥> \
+  --access-key <访问密钥> \
+  --write-key <写入密钥> \
   --data-dir /var/lib/hawk-server
 ```
 
@@ -43,7 +45,9 @@ After=network.target
 
 [Service]
 # 密钥走环境变量，不落命令行（ps 可见）
-Environment=HAWK_SERVER_ACCESS_KEY=<密钥>
+Environment=HAWK_SERVER_ACCESS_KEY=<访问密钥>
+# 可选：插件广域网保存；不配置则只读
+Environment=HAWK_SERVER_WRITE_KEY=<写入密钥>
 ExecStart=/usr/local/bin/hawk-server --data-dir /var/lib/hawk-server
 Restart=on-failure
 
@@ -83,6 +87,10 @@ server {
         # 素材大文件流式响应
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+
+        # 插件经域名保存图片（base64 请求体）；nginx 默认 1MB，会 413
+        client_max_body_size 256m;
+        proxy_request_buffering off;
     }
 }
 ```
@@ -94,5 +102,6 @@ server {
 1. `curl -s -H "Authorization: Bearer <密钥>" https://hawk.example.com/api/v1/devices` 返回 `{"status":"success",...}`
 2. 桌面端 hawk → 设置 → 远程填服务端地址与密钥，设备出现在列表中
 3. 浏览器打开 `https://hawk.example.com`，登录后能选到在线设备并进入查看器（查看器页面由目标设备的 daemon 经隧道提供，该设备需是带前端产物的桌面端）
+4. 插件设置选「远程」→ 填域名与写入密钥 → 刷新素材库列表 → 选中目标设备并保存。目标设备需在设置 → 远程中开启「允许广域网保存素材」
 
 客户端接入步骤、网页版操作、数据备份与常见故障见 [hawk-server 使用指南](hawk-server.md)。

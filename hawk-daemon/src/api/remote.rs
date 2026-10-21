@@ -26,6 +26,8 @@ struct RemoteDto {
     enabled: bool,
     url: String,
     key: String,
+    /// 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）
+    writable: bool,
     /// 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因
     status: RemoteStatus,
 }
@@ -36,6 +38,7 @@ fn remote_dto(state: &SharedState) -> RemoteDto {
         enabled: cfg.enabled,
         url: cfg.url,
         key: cfg.key,
+        writable: cfg.writable,
         status: state.remote.snapshot(),
     }
 }
@@ -60,6 +63,9 @@ struct PutRemoteBody {
     enabled: bool,
     url: String,
     key: String,
+    /// 允许广域网会话导入素材/新建文件夹；省略时按关闭处理
+    #[serde(default)]
+    writable: bool,
 }
 
 /// 写回 .hawk/config.toml 的 [remote] 段并热重启信令（admin 限定）。
@@ -83,6 +89,7 @@ async fn put_remote(
         url: body.url.trim().trim_end_matches('/').to_string(),
         key: body.key.trim().to_string(),
         quic_port: state.config.current().remote.quic_port,
+        writable: body.writable,
     };
     if new_remote.enabled {
         if new_remote.url.is_empty() || new_remote.key.is_empty() {
@@ -153,6 +160,7 @@ struct RemoteDeviceDto {
     library_name: String,
     online: bool,
     allow_remote: bool,
+    allow_write: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_seen_at_ms: Option<u64>,
 }
@@ -200,6 +208,7 @@ async fn list_devices(
                     library_name: d["library_name"].as_str().unwrap_or_default().to_string(),
                     online: d["online"].as_bool().unwrap_or(false),
                     allow_remote: d["allow_remote"].as_bool().unwrap_or(false),
+                    allow_write: d["allow_write"].as_bool().unwrap_or(false),
                     last_seen_at_ms: d["last_seen_at_ms"].as_u64(),
                 })
                 .collect()
@@ -376,6 +385,7 @@ async fn patch_device(
         library_name: d["library_name"].as_str().unwrap_or_default().to_string(),
         online: d["online"].as_bool().unwrap_or(false),
         allow_remote: d["allow_remote"].as_bool().unwrap_or(false),
+        allow_write: d["allow_write"].as_bool().unwrap_or(false),
         last_seen_at_ms: d["last_seen_at_ms"].as_u64(),
     })))
 }

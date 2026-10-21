@@ -13,6 +13,7 @@ const connection = useConnectionLabel();
 const enabled = ref(false);
 const url = ref('');
 const key = ref('');
+const writable = ref(false);
 const saving = ref(false);
 
 // ---- 本机设备管理（改名 / 远程开关 / 证书轮换） ----
@@ -28,6 +29,7 @@ onMounted(() => {
       enabled.value = store.dto.enabled;
       url.value = store.dto.url;
       key.value = store.dto.key;
+      writable.value = store.dto.writable;
     }
   });
 });
@@ -61,7 +63,12 @@ const peerDevices = computed(() =>
 async function save() {
   error.value = null;
   saving.value = true;
-  const ok = await store.saveConfig({ enabled: enabled.value, url: url.value.trim(), key: key.value.trim() });
+  const ok = await store.saveConfig({
+    enabled: enabled.value,
+    url: url.value.trim(),
+    key: key.value.trim(),
+    writable: writable.value,
+  });
   saving.value = false;
   if (!ok) {
     error.value = store.error;
@@ -127,6 +134,17 @@ async function rotate() {
         <span class="field-label">访问密钥</span>
         <input v-model="key" type="password" placeholder="服务端 access key" autocomplete="off" spellcheck="false" />
       </div>
+      <div class="switch-row">
+        <div>
+          <div class="switch-label">允许广域网保存素材</div>
+          <p class="hint">允许持有服务端写入密钥的浏览器插件向本库导入图片、新建文件夹。与局域网写权限独立；不开放删除、改标签等操作。</p>
+        </div>
+        <label class="switch" title="允许广域网会话导入素材">
+          <input v-model="writable" type="checkbox" />
+          <span class="track" />
+        </label>
+      </div>
+
       <div class="actions-left">
         <button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存并接入' }}</button>
         <span v-if="statusText" class="hint">{{ statusText }}</span>
@@ -183,7 +201,9 @@ async function rotate() {
           <span class="dot" :class="{ online: device.online }" />
           <div class="device-info">
             <div class="device-name">{{ device.name }}</div>
-            <div class="hint">{{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}</div>
+            <div class="hint">
+              {{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}{{ device.allow_write ? ' · 允许远程写入' : '' }}
+            </div>
           </div>
           <button v-if="device.online && device.allow_remote" class="primary" :disabled="store.connectingId !== null" @click="connect(device.device_id)">
             {{ store.connectingId === device.device_id ? '连接中…' : '浏览素材库' }}

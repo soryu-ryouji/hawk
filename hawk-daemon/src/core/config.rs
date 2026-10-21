@@ -33,6 +33,8 @@ pub struct RemoteSettings {
     pub key: String,
     /// QUIC 隧道 UDP 端口（UPnP 映射目标；同机多库需错开）
     pub quic_port: u16,
+    /// 允许广域网会话导入素材/新建文件夹（受限写，与 [web] 的局域网写权限独立）
+    pub writable: bool,
 }
 
 impl Default for RemoteSettings {
@@ -42,6 +44,7 @@ impl Default for RemoteSettings {
             url: String::new(),
             key: String::new(),
             quic_port: 27373,
+            writable: false,
         }
     }
 }
@@ -241,6 +244,7 @@ impl LibraryConfig {
         doc["remote"]["url"] = toml_edit::value(remote.url.trim());
         doc["remote"]["key"] = toml_edit::value(remote.key.trim());
         doc["remote"]["quic_port"] = toml_edit::value(i64::from(remote.quic_port));
+        doc["remote"]["writable"] = toml_edit::value(remote.writable);
         let tmp = format!("{file}.tmp");
         std::fs::write(&tmp, doc.to_string()).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
         if let Err(e) = std::fs::rename(&tmp, file) {
@@ -326,6 +330,8 @@ url = ""
 key = ""
 # QUIC 隧道 UDP 端口（UPnP 映射目标；同机多库需错开，一般不用改）
 quic_port = 27373
+# 允许广域网会话导入素材/新建文件夹（仅插件保存场景，与 [web] 的局域网写权限独立）
+writable = false
 "#;
 
 /// 读取并解析 config.toml；文件不存在视为新库（默认快照，非错误），
@@ -388,6 +394,10 @@ fn parse_remote_value(value: &toml::Value) -> RemoteSettings {
                 remote.quic_port = port as u16;
             }
         }
+        remote.writable = table
+            .get("writable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
     }
     remote
 }

@@ -2,6 +2,7 @@
 
 use super::ViewerManager;
 use crate::api::{ok, ApiError, JsonBody};
+use crate::state::Access;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::http::StatusCode;
@@ -23,7 +24,10 @@ pub fn routes() -> Router<Arc<ViewerManager>> {
 }
 
 /// 浏览器令牌鉴权提取器：Bearer 头或 ?token= 查询参数（SPA 的 img/SSE 场景）
-pub struct BrowserAuth(pub String);
+pub struct BrowserAuth {
+    pub token: String,
+    pub access: Access,
+}
 
 impl FromRequestParts<Arc<ViewerManager>> for BrowserAuth {
     type Rejection = ApiError;
@@ -47,32 +51,35 @@ impl FromRequestParts<Arc<ViewerManager>> for BrowserAuth {
         let Some(token) = token else {
             return Err(ApiError::new(StatusCode::UNAUTHORIZED, "未登录"));
         };
-        if manager.validate(&token).is_none() {
+        let Some(access) = manager.validate(&token) else {
             return Err(ApiError::new(StatusCode::UNAUTHORIZED, "令牌无效或已注销"));
-        }
-        Ok(BrowserAuth(token))
+        };
+        Ok(BrowserAuth { token, access })
     }
 }
 
 #[derive(Deserialize)]
 struct LoginBody {
-    access_key: String,
+    /// access_key（只读）或 write_key（写作用域）
+    key: String,
 }
 
-/// `POST /api/v1/viewer/login`：access_key 换发浏览器令牌
+/// `POST /api/v1/viewer/login`：访问密钥/写入密钥换发浏览器令牌
 async fn login(
     State(manager): State<Arc<ViewerManager>>,
     JsonBody(body): JsonBody<LoginBody>,
 ) -> Result<Json<Value>, ApiError> {
-    let Some(token) = manager.login(&body.access_key) else {
-        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "访问密钥无效"));
+    let Some((token, access)) = manager.login(&body.key) else {
+        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "密钥无效"));
     };
-    Ok(ok(serde_json::json!({ "token": token })))
+    Ok(ok(
+        serde_json::json!({ "token": token, "access": access.as_str() }),
+    ))
 }
 
 /// `POST /api/v1/viewer/logout`：注销当前令牌
 async fn logout(State(manager): State<Arc<ViewerManager>>, auth: BrowserAuth) -> Json<Value> {
-    manager.logout(&auth.0);
+    manager.logout(&auth.token);
     crate::api::success()
 }
 
@@ -95,6 +102,13 @@ async fn devices(
 #[derive(Deserialize)]
 struct OpenSessionBody {
     target_device_id: String,
+    /// read（默认）/ write（需要写令牌 + 目标设备 allow_write）
+    #[serde(default = "default_access")]
+    access: String,
+}
+
+fn default_access() -> String {
+    "read".to_string()
 }
 
 /// `POST /api/v1/viewer/session`：打开（或复用）到目标设备的查看会话
@@ -103,8 +117,32 @@ async fn open_session(
     auth: BrowserAuth,
     JsonBody(body): JsonBody<OpenSessionBody>,
 ) -> Result<Json<Value>, ApiError> {
+    let access = match body.access.as_str() {
+        "read" => Access::Read,
+        "write" => Access::Write,
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "access 须为 read 或 write",
+            ))
+        }
+    };
+    if access == Access::Write {
+        if auth.access != Access::Write {
+            return Err(ApiError::new(StatusCode::FORBIDDEN, "当前令牌没有写入权限"));
+        }
+        let Some(target) = manager.app_state().device(&body.target_device_id) else {
+            return Err(ApiError::not_found("目标设备不存在"));
+        };
+        if !target.allow_write {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "目标设备未开启广域网写入",
+            ));
+        }
+    }
     let view = manager
-        .open_session(&auth.0, &body.target_device_id)
+        .open_session(&auth.token, &body.target_device_id, access)
         .await
         .map_err(|message| ApiError::new(StatusCode::BAD_GATEWAY, message))?;
     Ok(ok(view))
@@ -115,11 +153,11 @@ async fn current_session(
     State(manager): State<Arc<ViewerManager>>,
     auth: BrowserAuth,
 ) -> Json<Value> {
-    crate::api::ok(manager.current(&auth.0))
+    crate::api::ok(manager.current(&auth.token))
 }
 
 /// `DELETE /api/v1/viewer/session`：断开当前查看会话（幂等）
 async fn disconnect(State(manager): State<Arc<ViewerManager>>, auth: BrowserAuth) -> Json<Value> {
-    manager.disconnect(&auth.0).await;
+    manager.disconnect(&auth.token).await;
     crate::api::success()
 }

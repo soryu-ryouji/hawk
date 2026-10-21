@@ -6,7 +6,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { ConnectionDescriptor, RemoteDto } from '@/shared/types';
 
 const env = vi.hoisted(() => ({
-  status: { enabled: true, url: 'https://hub', key: 'k', status: { state: 'online', device_id: 'd_self' } } as RemoteDto,
+  status: { enabled: true, url: 'https://hub', key: 'k', writable: false, status: { state: 'online', device_id: 'd_self' } } as RemoteDto,
   putOk: true,
   connectError: null as string | null,
   connection: null as ConnectionDescriptor | null,
@@ -19,9 +19,9 @@ const shellMock = vi.hoisted(() => ({
   remoteDevices: vi.fn(() =>
     Promise.resolve({
       devices: [
-        { device_id: 'd_self', name: '本机', platform: 'macos', library_name: '库', online: true, allow_remote: true },
-        { device_id: 'd_off', name: '离线机', platform: 'windows', library_name: '库2', online: false, allow_remote: true },
-        { device_id: 'd_on', name: '台式机', platform: 'windows', library_name: '库3', online: true, allow_remote: true },
+        { device_id: 'd_self', name: '本机', platform: 'macos', library_name: '库', online: true, allow_remote: true, allow_write: false },
+        { device_id: 'd_off', name: '离线机', platform: 'windows', library_name: '库2', online: false, allow_remote: true, allow_write: false },
+        { device_id: 'd_on', name: '台式机', platform: 'windows', library_name: '库3', online: true, allow_remote: true, allow_write: false },
       ],
     }),
   ),
@@ -73,11 +73,11 @@ describe('useRemoteStore', () => {
 
   it('saveConfig 成功回写 dto；失败写入 error 并返回 false', async () => {
     const store = useRemoteStore();
-    expect(await store.saveConfig({ enabled: true, url: 'https://hub', key: 'k' })).toBe(true);
+    expect(await store.saveConfig({ enabled: true, url: 'https://hub', key: 'k', writable: false })).toBe(true);
     expect(store.dto?.url).toBe('https://hub');
 
     env.putOk = false;
-    expect(await store.saveConfig({ enabled: true, url: '', key: '' })).toBe(false);
+    expect(await store.saveConfig({ enabled: true, url: '', key: '', writable: false })).toBe(false);
     expect(store.error).toBe('校验失败');
   });
 

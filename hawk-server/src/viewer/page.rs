@@ -88,7 +88,7 @@ async function doLogin() {
     const res = await fetch('/api/v1/viewer/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ access_key: key }),
+      body: JSON.stringify({ key }),
     });
     const env = await res.json().catch(() => null);
     if (!res.ok || !env || env.status === 'error') throw new Error(env?.error?.message || '登录失败');

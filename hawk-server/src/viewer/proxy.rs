@@ -1,7 +1,7 @@
 //! 隧道代理：非控制面路径经浏览器令牌绑定，逐请求开 QUIC 流转发给 A 侧 daemon。
 //! 查看面 API（`/api/v1/*`）与查看器静态资源（`/app`、`/assets/*` 等）都走这里——
-//! 前端产物由 daemon 侧托管，服务端不再单独部署一份。A 侧隧道端按 TunneledViewer
-//! 标记只读处理（查看面天然只读）。
+//! 前端产物由 daemon 侧托管，服务端不再单独部署一份。A 侧隧道端按 TunneledPeer
+//! 的会话权限处理（网页版只读，插件写会话受目标设备开关限制）。
 //!
 //! 凭据来源：`Authorization: Bearer` > `?token=` > `hawk_bt` cookie。cookie 只为静态子资源
 //! 存在（`<script src>`、`<img>` 无法带请求头），页面 URL 带 `?token=` 时下发；`/api/*`
@@ -16,6 +16,8 @@ use std::sync::Arc;
 
 /// 静态子资源凭据 cookie 名
 const TOKEN_COOKIE: &str = "hawk_bt";
+/// 隧道内会话标识头（与 hawk-daemon remote::data::SESSION_HEADER 一致）
+const SESSION_HEADER: &str = "x-hawk-session";
 /// cookie 有效期（与选择器页 localStorage 记 token 的寿命对齐）
 const TOKEN_COOKIE_MAX_AGE: u32 = 60 * 60 * 24 * 30;
 
@@ -57,6 +59,15 @@ async fn forward(
     req: axum::extract::Request,
 ) -> Result<Response, StatusCode> {
     let session = manager.session_for(token).ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // 客户端自带的会话头一律丢弃，改用服务端绑定的会话标识（A 侧据此判定读写权限）
+    let (mut parts, body) = req.into_parts();
+    parts.headers.remove(SESSION_HEADER);
+    parts.headers.insert(
+        SESSION_HEADER,
+        HeaderValue::from_str(&session.hawk_session_id).map_err(|_| StatusCode::BAD_GATEWAY)?,
+    );
+    let req = axum::extract::Request::from_parts(parts, body);
 
     let (send, recv) = session.conn.open_bi().await.map_err(|e| {
         tracing::debug!("隧道流打开失败: {e}");

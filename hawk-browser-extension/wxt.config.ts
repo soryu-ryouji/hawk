@@ -21,7 +21,7 @@ export default defineConfig({
           ? (['declarativeNetRequest'] as const)
           : (['declarativeNetRequestWithHostAccess'] as const)),
     ],
-    // 本机 daemon 直连；http(s) 任意源用于图片下载——内容一律经浏览器网络栈
+    // 本机 daemon 或 hawk-server 域名；http(s) 任意源用于图片下载——内容一律经浏览器网络栈
     // （真实 Chrome TLS 指纹 + 用户代理与会话，服务端无代理无会话拿不到），
     // 下载后转 base64 提交，服务端不再自行下载
     host_permissions: ['http://127.0.0.1:27371/*', 'http://localhost:27371/*', 'http://*/*', 'https://*/*'],

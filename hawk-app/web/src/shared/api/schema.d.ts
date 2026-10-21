@@ -88,7 +88,7 @@ export interface paths {
          *     安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；
          *     Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
          *     注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
-         *     remote 模块的隧道端必须拒绝转发本端点并改写 Host（见 docs/backend/remote-protocol.md 数据面）
+         *     remote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）
          */
         get: operations["token"];
         put?: never;
@@ -1051,7 +1051,7 @@ export interface components {
             version: string;
             /**
              * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
-             *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）
+             *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
              */
             writable: boolean;
         };
@@ -1109,7 +1109,7 @@ export interface components {
                 version: string;
                 /**
                  * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
-                 *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）
+                 *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
                  */
                 writable: boolean;
             };
@@ -1320,6 +1320,7 @@ export interface components {
         Envelope_RemoteDeviceDto: {
             data?: {
                 allow_remote: boolean;
+                allow_write: boolean;
                 device_id: string;
                 /** Format: int64 */
                 last_seen_at_ms?: number | null;
@@ -1345,6 +1346,8 @@ export interface components {
                 /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
                 status: components["schemas"]["RemoteStatus"];
                 url: string;
+                /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
+                writable: boolean;
             };
             status: string;
         };
@@ -1755,6 +1758,8 @@ export interface components {
             enabled: boolean;
             key: string;
             url: string;
+            /** @description 允许广域网会话导入素材/新建文件夹；省略时按关闭处理 */
+            writable?: boolean;
         };
         RefreshCacheRequest: {
             /** @description folder | category | tag | library */
@@ -1770,6 +1775,7 @@ export interface components {
         };
         RemoteDeviceDto: {
             allow_remote: boolean;
+            allow_write: boolean;
             device_id: string;
             /** Format: int64 */
             last_seen_at_ms?: number | null;
@@ -1787,6 +1793,8 @@ export interface components {
             /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
             status: components["schemas"]["RemoteStatus"];
             url: string;
+            /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
+            writable: boolean;
         };
         RemoteSessionPayload: {
             session_id: string;

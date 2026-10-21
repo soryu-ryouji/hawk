@@ -103,13 +103,7 @@ pub async fn serve_over_ws(
         runtime()?,
     )
     .map_err(|e| format!("中继端点创建失败: {e}"))?;
-    crate::remote::data::accept_connections(
-        endpoint,
-        router,
-        plane.a_conns.clone(),
-        plane.conn_notify.clone(),
-    )
-    .await;
+    plane.accept_over(endpoint, router).await;
     Ok(())
 }
 

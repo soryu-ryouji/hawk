@@ -1,24 +1,41 @@
 # hawk-browser-extension
 
-hawk 浏览器图片收集插件：右键保存网页图片到 hawk 素材库。Chrome / Firefox / Safari 同一套代码，由 [WXT](https://wxt.dev) 做跨浏览器构建。
+hawk 浏览器图片收集插件：右键或拖拽网页图片，保存到 hawk 素材库。Chrome / Firefox / Safari 同一套代码，由 [WXT](https://wxt.dev) 做跨浏览器构建。
 
 ## 功能
 
-- **右键保存**：右键网页图片 →「保存图片到 hawk」，服务端按 URL 下载入库；`data:` 图片自动转 base64 提交
-- **拖拽保存（Eagle 式）**：按住图片拖过阈值后面板在指针处展开，左侧大投放区正好压在指针下——出现即可松手保存到根目录；面板包含——**文件夹树**（按最近使用排序，常用的自然浮到顶部；默认全折叠，拖拽悬停片刻自动展开，也可点击箭头手动展开/收起；投到某行存入该文件夹）与**「＋ 新建文件夹」投放区**（把图片拖到上面 → 命名 → 创建文件夹并把图片存入；平时点击也可只建文件夹）；Esc 取消
-- 工具栏弹窗：连接状态展示 + 服务器地址 / Token 设置
+- **右键保存**：右键网页图片 →「保存图片到 hawk」
+- **拖拽保存（Eagle 式）**：按住图片拖过阈值后，面板在指针处展开；左侧大投放区松手即存根目录，右侧可投到文件夹或「＋ 新建文件夹」
+- **两种连接方式**：
+  - 本地：直连本机 hawk-daemon（默认 `http://127.0.0.1:27371`）
+  - 远程：连接自托管 hawk-server 域名，登录后选择一个在线素材库，经服务器代理保存到目标设备
+- **目标素材库选择**：远程模式下只列出在线、开启远程访问且开启广域网写入的设备；选择持久化，拖拽面板显示当前目标
 
 ## 工作原理
 
-- 直连本机 hawk-daemon（默认 `http://127.0.0.1:27371`），`Authorization: Bearer <token>` 鉴权，接口见 [server-rest-api-v1.md](../docs/backend/server-rest-api-v1.md)
-- 请求一律从 background 发起（`host_permissions` 覆盖本机地址，不受页面 CORS 限制）
-- 来源网页随保存请求经 `website` 传入，入库为素材的 `url` 字段（与 Eagle 的 `website` 参数同义；`url` 参数只是下载来源）
+### 本地模式
 
-## 鉴权与零配置
+- 直连本机 hawk-daemon，`Authorization: Bearer <token>` 鉴权，接口见 [server-rest-api-v1.md](../docs/backend/server-rest-api-v1.md)
+- 本机 daemon 的 token 每次启动随机生成；插件通过 `GET /api/v1/app/token` 自动发现（该端点仅环回地址可读），设置里的 Token 仅作手动覆盖
+- 请求一律从 background 发起（`host_permissions` 覆盖本机地址与任意 http(s) 图片源，不受页面 CORS 限制）
 
-hawk-daemon 的 token 每次启动随机生成，防护对象是浏览器里的恶意网页（CSRF 直写素材库）。同时提供免鉴权的发现端点 `GET /api/v1/app/token`：响应不携带 CORS 头（跨源网页 JS 读不到），且 Host 限定环回地址（防 DNS rebinding）——只有持 host_permissions 的扩展能读取。
+### 远程模式
 
-**因此插件无需填写 Token**：hawk 桌面应用启动后插件即可直接使用（Token 缓存 60 秒，服务重启后自动重新发现，401 自动重试一次）。设置里的 Token 输入框仅作手动覆盖（如连接非本机服务），日常留空即可。
+1. 设置里填 hawk-server 域名与服务端 `--write-key` 对应的写入密钥
+2. 插件用写入密钥调用 `POST /api/v1/viewer/login`，换取写作用域令牌（服务端只存哈希与作用域）
+3. 拉取 `/api/v1/viewer/devices`，选择目标素材库；保存前用 `POST /api/v1/viewer/session` 打开 `access=write` 会话
+4. 之后的库信息、文件夹树、保存请求经 hawk-server 查看面代理转发到目标 daemon
+5. 目标设备必须同时开启「允许广域网保存素材」（`.hawk/config.toml` 的 `[remote].writable`）；广域网写只开放导入素材与新建文件夹，不开放删除、改标签等操作
+
+来源网页随保存请求经 `website` 传入，入库为素材的 `url` 字段（与 Eagle 的 `website` 参数同义）。
+
+## 设置
+
+- 连接方式：本地 hawk / 远程 hawk-server
+- 本地：服务器地址、Token（可选，留空自动发现）
+- 远程：hawk-server 域名（建议 HTTPS）、写入密钥、目标素材库（刷新列表后选择）
+
+远程写入密钥与本地 daemon token 都以明文存于 `browser.storage.local`；请只在可信浏览器配置文件中使用。
 
 ## 开发
 
@@ -64,19 +81,22 @@ npm run zip:safari
 
 ```text
 entrypoints/
-  background.ts    # 后台：右键菜单 + 拖拽保存消息入口，与 hawk-daemon 通信，通知反馈
-  content.ts       # 拖拽保存：阈值触发 + 锚定指针的保存面板（可折叠目录树 + 新建文件夹投放区，iframe 内图片同样支持）
-  popup/           # 工具栏弹窗（设置界面）
+  background.ts    # 后台：右键菜单 + 拖拽保存消息入口，保存/文件夹/通知，按素材库隔离最近使用
+  content.ts       # 拖拽保存：阈值触发 + 锚定指针的保存面板（文件夹树 + 新建文件夹）
+  popup/           # 工具栏弹窗（本地/远程设置、素材库选择、连接状态）
 lib/
-  api.ts           # hawk-daemon REST 客户端（Envelope 解包 + Bearer 鉴权）
+  api.ts           # 本地 daemon / hawk-server 远程客户端（Envelope 解包、令牌、会话）
   settings.ts      # 插件设置（browser.storage.local）
   notify.ts        # 系统通知
-public/icons/      # 扩展图标（由 hawk-app/build/icon.png 生成，PowerShell 一次性产出）
+public/icons/      # 扩展图标（由 hawk-app/build/icon.png 生成）
 wxt.config.ts      # 跨浏览器清单（WXT 自动处理 Firefox/Safari 差异）
 ```
 
 ## 已知限制 / 后续规划
 
 - `blob:` 图片需 content script 协助抓取，暂未支持
-- 批量收集、Alt 点选、整页/区域截图等（参考 eagle.crx 的 batch-saver / element-inspector / screen-capturer）后续按需添加
-- 拖拽保存暂只处理 `<img>` 元素；CSS 背景图、<picture> 多候选等场景后续按需扩展
+- 远程模式一次只绑定一个目标素材库；切换目标后文件夹树与保存都作用于新目标
+- 目标设备切换「允许广域网保存素材」后，经下一次心跳（≤30s）同步到服务端；刷新列表若未出现，稍后再试
+- 广域网保存是浏览器下载后 base64 上传，大图会占用上行带宽；反代需放开请求体上限（见 [远程访问部署](../docs/backend/remote-deployment.md)）
+- 批量收集、Alt 点选、整页/区域截图等后续按需添加
+- 拖拽保存暂只处理 `<img>` 元素；CSS 背景图、`<picture>` 多候选等场景后续按需扩展

@@ -1,15 +1,15 @@
 # 远程访问设计
 
-> 远程访问是可选能力：每台设备两个进程——hawk-app（Electron 壳）与 hawk-daemon（素材库服务），广域网连接能力全部收在 daemon 的 **`remote/` 模块**（可选子系统，supervisor 管理）。远程访问服务端 **hawk-server** 位于本仓库 `hawk-server/`，单用户方案，已实现 P1 控制面。接口契约见 [remote-protocol.md](remote-protocol.md)。
+> 远程访问是可选能力：每台设备两个进程——hawk-app（Electron 壳）与 hawk-daemon（素材库服务），广域网连接能力全部收在 daemon 的 **`remote/` 模块**（可选子系统，supervisor 管理）。远程访问服务端 **hawk-server** 位于本仓库 `hawk-server/`，单用户方案，已实现控制面、中继、网页版与受限广域网写。接口契约见 [remote-protocol.md](remote-protocol.md)。
 
 ## 目标与非目标
 
-**目标**：在客户端配置接入信息（服务端地址 + 访问密钥）后，查看自己其他在线设备，远程浏览对方设备上的素材库（只读）。
+**目标**：在客户端配置接入信息（服务端地址 + 访问密钥）后，查看自己其他在线设备，远程浏览对方设备上的素材库；持有 hawk-server 写入密钥的浏览器插件可向开启了广域网写入的设备导入素材。
 
 **非目标**（v1 不做）：
 
-- 远程写入素材库（修改标签、导入素材等）——远程一律只读，写入仍在本机完成
-- 多用户 / 会员体系——服务端为单用户自托管方案，准入即一把固定 access key
+- 广域网完整库管理（删除、改标签/评分、管理设置等）——v1 只开放插件保存所需的 `item/add` 与 `folder/create`
+- 多用户 / 会员体系——服务端为单用户自托管方案，准入即固定密钥
 - 共享库给他人——设备只属于同一套接入凭据
 - 移动端查看器——后续迭代，协议不为此预留特殊设计
 
@@ -53,11 +53,11 @@
 - 信令客户端：设备注册、周期心跳（30s）、WSS 控制通道（自动重连）、设备列表、会话发起与响应
 - 可达性：UPnP/NAT-PMP 端口映射（igd）、公网 IPv4 / 全局 IPv6 探测上报（阶段 1b）
 - 数据面（阶段 1b）：QUIC 隧道端与 B 侧会话代理
-  - A 侧隧道端：隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级权限标记（见安全模型）
+  - A 侧隧道端：隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级或受限远程写权限标记（见安全模型）
   - B 侧会话代理：环回监听器（supervisor 管理，同 LAN web 模型），每次会话随机 token，web 查看器以 `?token=` 携带，响应不带 CORS 头
 - 状态与事件：经 daemon 现有 REST（`/api/v1/remote/*`）与 SSE 事件暴露给 app 前端与主进程
 
-**可选子系统约束**：`[remote]` 配置段 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——配置变更热重启信令；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。
+**可选子系统约束**：`[remote]` 配置段 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——接入参数变化热重启信令，`writable` 变更热生效不重启；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。热重启时旧数据面（QUIC 端点 + A 侧 accept 循环）随任务一起关停，supervisor 等其结束再拉起新任务，并对端口绑定做短暂重试——避免新一轮绑定自己刚占用的端口；停用后端口立即释放。
 
 ### hawk-app（Electron 壳，接线枢纽）
 
@@ -72,10 +72,10 @@
 
 远程访问服务端，与 hawk-daemon **零代码共享**（独立 crate，协议契约是唯一共享物）：
 
-- 单用户准入：启动时经 `--access-key` / `HAWK_SERVER_ACCESS_KEY` 配置一把固定访问密钥；无账号、会员、计费、额度概念
+- 单用户准入：启动时经 `--access-key` / `HAWK_SERVER_ACCESS_KEY` 配置固定访问密钥；广域网写另配可选的 `--write-key`；无账号、会员、计费、额度概念
 - 控制面（已实现）：设备注册/心跳/列表/更新/注销、WSS 控制通道、会话编排（直连候选组装、状态机）
 - 中继（已实现）：`GET /api/v1/relay` WS 配对转发，QUIC 端到端语义不变（只见密文）
-- **网页版宿主（已实现）**：服务端作为 B 侧（以「网页版」设备身份走既有协议发起 relay 会话、经进程内中继 socket 建立 QUIC 并终结隧道），任意浏览器经域名只读浏览素材库。浏览器令牌（bt）由登录端点以 access_key 换发（服务端存哈希、仅查看权限），查看面 API（`/api/v1/viewer/*`）+ 隧道代理 + 设备选择器页；查看器前端产物不落服务端，`/app` 与 `/assets/*` 同样经隧道由目标设备 daemon 托管。部署见 [远程访问部署](remote-deployment.md)
+- **网页版宿主（已实现）**：服务端作为 B 侧（以「网页版」设备身份走既有协议发起 relay 会话、经进程内中继 socket 建立 QUIC 并终结隧道），任意浏览器经域名只读浏览素材库。浏览器令牌（bt）由登录端点换发（access_key → read，write_key → write；服务端只存哈希与作用域），查看面 API（`/api/v1/viewer/*`）+ 隧道代理 + 设备选择器页；查看器前端产物不落服务端，`/app` 与 `/assets/*` 同样经隧道由目标设备 daemon 托管。部署见 [远程访问部署](remote-deployment.md)
 - 持久化：设备注册表/网页版身份/令牌 JSON 文件；部署：监听明文 HTTP（默认 27370），TLS/WSS 由前置反代终结
 
 ## 数据流：daemon 为何不需要理解「远程」语义
@@ -87,7 +87,7 @@ B 浏览器 / B app 查看窗口
   │ ① 普通 HTTP 请求
   ▼
 B 侧会话代理（remote 模块）──② 原样塞进 QUIC 隧道──►
-A 侧隧道端（remote 模块）──③ 进程内转发，标记 viewer 级权限──►
+A 侧隧道端（remote 模块）──③ 进程内转发，按会话标记 viewer 级/受限写权限──►
 A 的 API 路由 ──④ 与局域网请求无区别地处理──► 响应原路返回
 ```
 
@@ -111,7 +111,7 @@ Connection {
 - 本地库：`api_base` 指向 daemon API 端口；远程库：指向 B 侧会话代理端口
 - 前端收到 `connection-changed` 后执行**统一的切换重置**：abort 进行中的请求与 SSE → 清空内存 store → `GET /app/info` → 按返回重新注水。该流程是启动注水的泛化，只写一次
 - **断线自动回切**：隧道断开、对端离线时，主进程经 daemon SSE 的 remote 事件获知，自动把当前连接切回本地库再通知前端。用户看到的是无声回到自己的库，而非远程白屏报错
-- **无感的边界**：只读降级与来源标识保留。远程库经 `app/info` 的 `access`（viewer 级）自然触发现有只读降级，前端无专门分支；窗口保留「当前浏览：家里台式机」轻标识——这是安全与认知底线，不是可省略的区分逻辑
+- **无感的边界**：只读降级与来源标识保留。桌面端远程浏览仍按 `app/info` 的 `access`（viewer 级）做只读降级，前端无专门分支；浏览器插件的广域网保存使用独立的写会话，不改变桌面端远程浏览的只读语义；窗口保留「当前浏览：家里台式机」轻标识——这是安全与认知底线，不是可省略的区分逻辑
 
 ## 关键设计决策
 
@@ -133,11 +133,21 @@ QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P
 
 **5. 客户端最小知识：URL + KEY，无登录**
 
-客户端配置只有服务端地址 URL 与访问密钥 KEY（`[remote]` 配置段）。协议无登录端点、无会话令牌；key 无效即 401，客户端直接展示服务端返回的 message。
+桌面端配置只有服务端地址 URL 与访问密钥 KEY（`[remote]` 配置段）。协议无登录端点、无会话令牌；key 无效即 401，客户端直接展示服务端返回的 message。浏览器插件的广域网保存额外使用服务端可选的写入密钥（`--write-key`），换取写作用域令牌；该密钥不参与控制面鉴权。
 
 **6. 会话认证在 QUIC 层，隧道内 HTTP 进程内授权**
 
-设备自签名证书指纹在服务端登记（TOFU），会话建立时经控制面交换指纹，QUIC 对端以指纹钉扎验证。隧道内 HTTP 由 A 侧隧道端在进程内标记 viewer 级权限（与 LAN viewer 同级只读）——查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到。
+设备自签名证书指纹在服务端登记（TOFU），会话建立时经控制面交换指纹，QUIC 对端以指纹钉扎验证。隧道内 HTTP 由 A 侧隧道端在进程内标记权限：只读会话为 viewer 级；写会话需服务端写令牌 + 目标设备 `[remote].writable=true`，且仅开放导入素材/新建文件夹。查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到 daemon admin token。
+
+### 广域网写权限分层
+
+| 层 | 控制项 | 作用 |
+| -- | ------ | ---- |
+| hawk-server | `--write-key` / `HAWK_SERVER_WRITE_KEY` | 只有该密钥能换发写作用域浏览器令牌；不配置则广域网写整体关闭 |
+| 目标设备 | `[remote].writable` | 允许广域网写会话导入素材/新建文件夹；默认关闭，每请求校验，关闭立即失效 |
+| 目标 daemon | `AccessLevel::RemoteWriter` 端点白名单 | 只放行 GET、查询类 POST、`item/add`（禁止 `path`）与 `folder/create`；其余写端点 403 |
+
+局域网写权限 `[web]` 与以上链路完全独立：开启局域网写不会放开广域网写，反之亦然。
 
 **7. 中继需用户主动开启**
 
@@ -171,10 +181,11 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 | -------- | ---- |
 | 控制面   | HTTPS/WSS（TLS 由前置反代终结）；access_key 由部署者生成配置（建议 256-bit 随机值），服务端恒定时间比较 |
 | 数据面   | QUIC TLS 1.3 端到端加密，证书指纹经控制面交换 + 钉扎；服务端接触不到素材内容（直连不过服务端，中继只搬运密文） |
-| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级权限（只读，与 LAN viewer 同级），且不经环回监听端口——`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）对隧道流量天然不可达，无需 denylist 特判 |
+| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与 QUIC 对端指纹匹配的会话标识，且目标 `[remote].writable=true`。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
 | 本地防护 | B 侧会话代理：每次会话随机 token、响应无 CORS、环回监听 |
-| 凭据存储 | 接入配置（`[remote]` 的 url + key）存 `config.toml`——与 `[web]` token 同级先例，明文但随库同步（配一次全设备生效，单用户场景是特性）；设备身份（device_id、自签证书私钥）存 `.hawk/remote/`（库级，本地专用目录，不参与同步） |
-| 网页版   | **隧道在服务器终结**：素材明文过服务器（自托管单用户信任前提，与「中继只见密文」刻意不同的取舍）。浏览器令牌 bt 随机换发、服务端存 sha256 哈希、可随时注销；查看面经 A 侧 TunneledViewer 恒只读；access_key 不离开服务器（浏览器只接触 bt） |
+| 凭据存储 | 接入配置（`[remote]` 的 url + key）存 `config.toml`——与 `[web]` token 同级先例，明文但随库同步（配一次全设备生效，单用户场景是特性）；设备身份（device_id、自签证书私钥）存 `.hawk/remote/`（库级，本地专用目录，不参与同步）。浏览器插件的写入密钥存 `browser.storage.local`，与本地 daemon token 同级 |
+| 网页版   | **隧道在服务器终结**：素材明文过服务器（自托管单用户信任前提，与「中继只见密文」刻意不同的取舍）。浏览器令牌 bt 随机换发、服务端存 sha256 哈希与 read/write 作用域、可随时注销；access_key 只换发只读令牌，写入密钥换发写令牌；access_key 不离开服务器（浏览器只接触 bt） |
+| 广域网写 | 服务端写入密钥 + 目标设备开关双重准入；远程写只覆盖导入与建文件夹，禁止 `path` 导入（防读本机文件）；目标关闭开关后现有会话的下一个写请求即 403 |
 
 ## 分发形态
 
@@ -188,8 +199,8 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 | -------------------------- | ---- |
 | `hawk-server/`             | 远程访问服务端（已实现 P1 控制面：设备/心跳/WSS/会话撮合；P2 中继二期） |
 | `hawk-daemon/src/remote/`  | 新模块：信令客户端 / 可达性 / QUIC 隧道端 / B 侧会话代理，supervisor reconcile 管理 |
-| `hawk-daemon` config       | `[remote]` 配置段（enabled/url/key），保存即热生效（同 `[web]`） |
-| `hawk-daemon` 鉴权中间件   | 进程内 viewer 级权限标记（供隧道转发请求使用），无 remote 语义、无门控 |
+| `hawk-daemon` config       | `[remote]` 配置段（enabled/url/key/writable），保存即热生效（同 `[web]`；写开关不重启信令） |
+| `hawk-daemon` 鉴权中间件   | 进程内 viewer / remote_writer 权限标记（供隧道转发请求使用），无 remote 语义、无门控 |
 | `hawk-daemon` API          | `/api/v1/remote/*` 状态端点 + SSE remote 会话生命周期事件 |
 | `hawk-app`（主进程 + 前端） | 远程 UI（接入配置/设备列表/会话流程）；连接描述符与 `connection-changed`；订阅 daemon SSE remote 事件驱动断线回切 |
 | `.hawk/remote/`            | 本地专用设备身份目录（device_id、自签证书私钥），不参与同步 |
@@ -199,7 +210,7 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 | 阶段 | 内容 | 验收标准 |
 | ---- | ---- | -------- |
 | 1a   | ~~hawk-server P1 控制面 + daemon remote/ 信令~~（已完成）：`[remote]` 配置、设备身份、注册/心跳/WSS 自动重连、状态 API | 设备配置后可注册上线、维持在线、接收并自动响应会话请求 |
-| 1b   | ~~daemon 数据面~~（已完成：可达性 UPnP/IPv6、QUIC 双向指纹钉扎、A 侧隧道端进程内转发 TunneledViewer、B 侧会话代理、会话编排 API + SSE remote.session）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
+| 1b   | ~~daemon 数据面~~（已完成：可达性 UPnP/IPv6、QUIC 双向指纹钉扎、A 侧隧道端进程内转发 TunneledPeer、B 侧会话代理、会话编排 API + SSE remote.session）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
 | 2    | ~~服务端中继 + 客户端中继逻辑 +「中继回退」开关与确认弹窗~~（已完成：relay WS 配对转发 + AsyncUdpSocket over WS + 回退确认） | 直连失败经用户确认走中继；QUIC 端到端语义不变（服务端只见密文） |
 | 3    | QUIC 打洞（免端口映射 P2P，心跳已预留 `nat_type`） | 视阶段 1 直连成功率数据决定是否投入 |
 
@@ -212,7 +223,7 @@ hawk-daemon/src/remote/
 ├── signal.rs       # REST 客户端（注册/心跳/设备/会话）+ WSS 通道 + 自动重连
 ├── tls.rs          # QUIC 双向指纹钉扎（rustls verifier：B 钉 A、A 放行已接受对端）
 ├── reachability.rs # 全局 IPv6 探测（UDP connect 出接口）+ UPnP 映射维护（igd 阻塞任务）
-├── data.rs         # quinn 端点、A 侧隧道端（hyper-over-stream 进程内转发 TunneledViewer）、B 侧会话代理
+├── data.rs         # quinn 端点、A 侧隧道端（hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理
 └── session.rs      # B 侧会话编排：发起 → 轮询 ready → 候选依序尝试 → 代理；SSE remote.session
 ```
 

@@ -21,7 +21,7 @@
 }
 ```
 
-错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer token 访问写端点，403；见 storage.md 的 `[web]` 写权限/token 拆分配置）、`UNAUTHORIZED`（token 缺失或无效，401）、`NOT_READY`（初始索引构建中，503；唯一放行端点为 `app/startup`）
+错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer/远程写令牌访问未授权写端点，403；见 storage.md 的 `[web]`/`[remote]` 写权限配置）、`UNAUTHORIZED`（token 缺失或无效，401）、`NOT_READY`（初始索引构建中，503；唯一放行端点为 `app/startup`）
 
 ### ID 规范
 
@@ -143,8 +143,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | version   | string | 后端版本号                    |
 | platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
-| access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看器 token，见 storage.md 的 `[web]` 配置） |
-| writable  | boolean | 当前 token 是否可执行写操作：admin 恒 true；viewer 取决于 `[web]` 的写权限配置（未开启写一律 false；开启且未拆分时 token 读写兼具；拆分时仅 write_token 为 true），保存即热生效 |
+| access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看器或远程只读会话）/ `remote_writer`（广域网受限写会话） |
+| writable  | boolean | 当前 token 是否可执行写操作：admin 恒 true；viewer 取决于 `[web]` 的写权限配置；remote_writer 仅限导入/建文件夹 |
 | lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。配置读写走 `app/lan`（PUT 内置收敛等待），此字段供状态展示 |
 
 ### health
@@ -227,7 +227,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | GET | `/api/v1/remote` | 读取远程访问接入配置（`[remote]` 段）与信令运行状态（admin 限定） |
 | PUT | `/api/v1/remote` | 写回 `[remote]` 配置并热重启信令（admin 限定） |
 | GET | `/api/v1/remote/devices` | 拉取服务端设备列表（admin 限定） |
-| PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定） |
+| PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定；allow_write 由目标设备配置上报，不经此端点修改） |
 | POST | `/api/v1/remote/device/rotate` | 证书轮换（重新生成自签证书并同步服务端，admin 限定） |
 | GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
 | POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
@@ -248,6 +248,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "enabled": true,
     "url": "https://hawk.example.com",
     "key": "<access-key>",
+    "writable": false,
     "status": {
       "state": "online",
       "server_url": "https://hawk.example.com",
@@ -259,6 +260,8 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 key 无效，`error` 字段携带服务端返回的原因）。
 
+`writable` 对应 `[remote].writable`：允许广域网写会话向本库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
+
 ---
 
 `PUT /api/v1/remote`
@@ -268,10 +271,10 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 #### 请求
 
 ```json
-{ "enabled": true, "url": "https://hawk.example.com", "key": "<access-key>" }
+{ "enabled": true, "url": "https://hawk.example.com", "key": "<access-key>", "writable": false }
 ```
 
-校验（`INVALID_PARAM`）：`enabled` 时 `url`/`key` 必填；`url` 须以 `http://` 或 `https://` 开头。响应同 GET。
+校验（`INVALID_PARAM`）：`enabled` 时 `url`/`key` 必填；`url` 须以 `http://` 或 `https://` 开头。`writable` 省略按 false。响应同 GET。
 
 ---
 
@@ -293,6 +296,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
         "library_name": "我的素材库",
         "online": true,
         "allow_remote": true,
+        "allow_write": false,
         "last_seen_at_ms": 1750000000000
       }
     ]
@@ -755,7 +759,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 
 `POST /api/v1/item/add`
 
-向素材库添加新文件。`path`、`img_base64` 二者必须提供其一，作为文件内容来源；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
+向素材库添加新文件。`path`、`img_base64` 二者必须提供其一，作为文件内容来源；广域网受限写会话只接受 `img_base64`，携带 `path` 返回 403 `READ_ONLY`（防止远端读取服务器本机文件入库）；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
 
 **入库策略前置校验**（写盘前拒绝，避免落盘后又被入库判定剔除）：目标路径命中 `ignore` 规则返回 `INVALID_PARAM`；扩展名不在可见白名单（`.hawk/config.toml` 的 `extensions`）返回 `UNSUPPORTED_FORMAT`。`item/upload` 与 `item/update` 的改名/移动目标同样受此约束。
 

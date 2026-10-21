@@ -90,10 +90,18 @@ impl Supervisor {
         let mut current: Option<(RemoteSettings, tokio::task::JoinHandle<()>)> = None;
         loop {
             let cfg = config.current().remote;
-            let active = current.as_ref().map(|(c, _)| c);
-            if active != Some(&cfg) {
+            // 写权限是请求级热配置（auth 每请求读 current），不触发信令/数据面重启；
+            // 只有接入参数变化才需要重建连接。
+            let need_restart = match current.as_ref() {
+                Some((active, _)) => !same_connection(active, &cfg),
+                None => activatable(&cfg),
+            };
+            if need_restart {
                 if let Some((_, handle)) = current.take() {
                     handle.abort();
+                    // 等旧任务真正结束：数据面的 Drop 守卫在此时才关停 QUIC 端点，
+                    // 不等就会出现「新任务绑定自己刚占用的端口」→ EADDRINUSE
+                    let _ = handle.await;
                 }
                 current = if activatable(&cfg) {
                     tracing::info!("远程访问信令启动: {}", cfg.url);
@@ -125,6 +133,9 @@ impl Supervisor {
                     }
                     None
                 };
+            } else if let Some((active, _)) = current.as_mut() {
+                // 仅 writable 等非连接字段变化：保留运行中的信令/数据面
+                *active = cfg;
             }
             self.notify.notified().await;
         }
@@ -133,6 +144,11 @@ impl Supervisor {
 
 fn activatable(cfg: &RemoteSettings) -> bool {
     cfg.enabled && !cfg.url.is_empty() && !cfg.key.is_empty()
+}
+
+/// 是否需要重建信令/数据面：写权限等运行期配置不算连接参数
+fn same_connection(a: &RemoteSettings, b: &RemoteSettings) -> bool {
+    a.enabled == b.enabled && a.url == b.url && a.key == b.key && a.quic_port == b.quic_port
 }
 
 #[cfg(test)]

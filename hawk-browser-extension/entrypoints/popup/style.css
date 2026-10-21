@@ -44,7 +44,8 @@ label {
   color: #8a8f98;
 }
 
-input {
+input,
+select {
   display: block;
   box-sizing: border-box;
   width: 100%;
@@ -57,9 +58,19 @@ input {
   font-size: 13px;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: #4a7dff;
+}
+
+#remote-fields #refresh-targets {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.secondary {
+  background: #23272f;
 }
 
 .actions {

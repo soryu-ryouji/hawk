@@ -23,6 +23,7 @@ use crate::core::taxonomy::{CategoryRegistry, ItemEvents, TagRegistry, TaxonomyM
 use crate::core::thumbnail::ThumbnailService;
 use crate::core::thumbnail_worker::ThumbnailWorker;
 use crate::core::view_prefs::ViewPreferences;
+use crate::remote::data::TunneledPeer;
 use crate::settings::Settings;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -1576,4 +1577,82 @@ async fn aggregate_and_batch_remove() {
     .await;
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["data"]["tags"], json!(["仅A"]));
+}
+
+/// 广域网受限写：只放行 item/add（禁 path）与 folder/create，其余写端点 403；
+/// 只读隧道流量保持 viewer 只读。
+#[tokio::test]
+async fn remote_writer_is_limited_to_import_and_folder_create() {
+    let app = test_app("remote-writer");
+    let mut remote = app.state.config.current().remote;
+    remote.writable = true;
+    app.state.config.update_remote(&remote).unwrap();
+
+    fn tunnel_req(method: &str, uri: &str, body: Value, writable: bool) -> Request<Body> {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("host", "hawk-remote.tunnel")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        req.extensions_mut().insert(TunneledPeer { writable });
+        req
+    }
+
+    // path 导入被 handler 拒绝（防止远端读取本机文件）
+    let resp = app
+        .router
+        .clone()
+        .oneshot(tunnel_req(
+            "POST",
+            "/api/v1/item/add",
+            json!({ "path": "/etc/passwd" }),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 删除等库写操作仍被限制
+    let resp = app
+        .router
+        .clone()
+        .oneshot(tunnel_req(
+            "POST",
+            "/api/v1/item/delete",
+            json!({ "id": "x" }),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 新建文件夹放行
+    let resp = app
+        .router
+        .clone()
+        .oneshot(tunnel_req(
+            "POST",
+            "/api/v1/folder/create",
+            json!({ "name": "远程新建", "parent_path": null }),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 只读隧道流量不能写
+    let resp = app
+        .router
+        .clone()
+        .oneshot(tunnel_req(
+            "POST",
+            "/api/v1/folder/create",
+            json!({ "name": "只读不能建", "parent_path": null }),
+            false,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

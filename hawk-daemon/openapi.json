@@ -54,7 +54,7 @@
             "type": "string"
           },
           "writable": {
-            "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）",
+            "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹",
             "type": "boolean"
           }
         },
@@ -225,7 +225,7 @@
                 "type": "string"
               },
               "writable": {
-                "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）",
+                "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹",
                 "type": "boolean"
               }
             },
@@ -943,6 +943,9 @@
               "allow_remote": {
                 "type": "boolean"
               },
+              "allow_write": {
+                "type": "boolean"
+              },
               "device_id": {
                 "type": "string"
               },
@@ -973,7 +976,8 @@
               "platform",
               "library_name",
               "online",
-              "allow_remote"
+              "allow_remote",
+              "allow_write"
             ],
             "type": "object"
           },
@@ -1029,12 +1033,17 @@
               },
               "url": {
                 "type": "string"
+              },
+              "writable": {
+                "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
+                "type": "boolean"
               }
             },
             "required": [
               "enabled",
               "url",
               "key",
+              "writable",
               "status"
             ],
             "type": "object"
@@ -2538,6 +2547,10 @@
           },
           "url": {
             "type": "string"
+          },
+          "writable": {
+            "description": "允许广域网会话导入素材/新建文件夹；省略时按关闭处理",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2590,6 +2603,9 @@
           "allow_remote": {
             "type": "boolean"
           },
+          "allow_write": {
+            "type": "boolean"
+          },
           "device_id": {
             "type": "string"
           },
@@ -2620,7 +2636,8 @@
           "platform",
           "library_name",
           "online",
-          "allow_remote"
+          "allow_remote",
+          "allow_write"
         ],
         "type": "object"
       },
@@ -2652,12 +2669,17 @@
           },
           "url": {
             "type": "string"
+          },
+          "writable": {
+            "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
+            "type": "boolean"
           }
         },
         "required": [
           "enabled",
           "url",
           "key",
+          "writable",
           "status"
         ],
         "type": "object"
@@ -3280,7 +3302,7 @@
             "description": "OK"
           }
         },
-        "summary": "Token 发现：浏览器插件零配置接入。\n安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；\nHost 限定环回地址（防 DNS rebinding 伪装同源读取）。\n注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——\nremote 模块的隧道端必须拒绝转发本端点并改写 Host（见 docs/backend/remote-protocol.md 数据面）",
+        "summary": "Token 发现：浏览器插件零配置接入。\n安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；\nHost 限定环回地址（防 DNS rebinding 伪装同源读取）。\n注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——\nremote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）",
         "tags": [
           "app"
         ]

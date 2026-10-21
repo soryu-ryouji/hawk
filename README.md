@@ -30,7 +30,7 @@
   - [x] 实现 web 资源查看器：局域网内通过浏览器访问素材库
   - [x] 实现 Chrome 浏览器插件
 - 2.0 版本
-  - [x] 实现 hawk remote 协议，支持广域网素材库查看（自托管 hawk-server + QUIC 直连/中继 + 网页版）
+  - [x] 实现 hawk remote 协议，支持广域网素材库查看（自托管 hawk-server + QUIC 直连/中继 + 网页版）与插件远程保存（受限写）
 - 2.1 版本
   - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
 - 3.0 版本
@@ -117,8 +117,8 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 
 **远程访问（hawk-server/）**
 
-- [hawk-server 使用指南](docs/backend/hawk-server.md)：启动配置、接口与凭据、网页版使用、运维与排查
-- [远程访问设计](docs/backend/remote-access.md)：控制面/中继/网页版宿主、连接模型与安全模型
+- [hawk-server 使用指南](docs/backend/hawk-server.md)：启动配置、接口与凭据、网页版/插件接入、运维与排查
+- [远程访问设计](docs/backend/remote-access.md)：控制面/中继/网页版宿主、受限广域网写、连接模型与安全模型
 - [远程访问部署](docs/backend/remote-deployment.md)：编译输出、nginx 反代与 TLS
 - [远程访问协议](docs/backend/remote-protocol.md)：设备/心跳/会话/中继的接口契约
 

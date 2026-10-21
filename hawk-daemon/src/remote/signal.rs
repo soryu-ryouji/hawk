@@ -78,14 +78,15 @@ async fn run_inner(
         .map_err(|e| SignalError::Fatal(format!("HTTP 客户端构建失败: {e}")))?;
     let mut identity = Identity::load_or_create(&paths.remote_dir).map_err(SignalError::Fatal)?;
 
-    // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护（重注册循环复用，不重复绑定）
-    let data_plane =
-        DataPlane::bind(&identity, cfg.quic_port, router.clone()).map_err(SignalError::Fatal)?;
+    // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护（重注册循环复用，不重复绑定）。
+    // 两者都装在守卫里：热重启（supervisor abort）或停用时必须随任务一起收尾，
+    // 否则 UDP 端口被本进程泄漏，下次激活直接绑定失败
+    let data_plane = PlaneGuard(bind_data_plane(&identity, cfg, router.clone()).await?);
     let upnp_report: SharedUpnpReport = Arc::new(RwLock::new(UpnpReport::default()));
-    tokio::spawn(reachability::maintain_upnp(
+    let _upnp = TaskGuard(tokio::spawn(reachability::maintain_upnp(
         cfg.quic_port,
         upnp_report.clone(),
-    ));
+    )));
 
     let mut retry = RETRY_MIN;
     loop {
@@ -118,10 +119,11 @@ async fn run_inner(
             key: &cfg.key,
             device_id: &device_id,
             identity: &identity,
-            data_plane: &data_plane,
+            data_plane: &data_plane.0,
             upnp_report: &upnp_report,
             quic_port: cfg.quic_port,
             router: &router,
+            config,
         };
         match channel_loop(&ctx, supervisor).await {
             Ok(()) => retry = RETRY_MIN, // 对端正常关闭：立即重连
@@ -151,6 +153,47 @@ async fn run_inner(
     }
 }
 
+/// QUIC 端口绑定：重试次数 × 间隔（上一轮热重启的 socket 可能仍在关闭中）
+const BIND_ATTEMPTS: u32 = 100;
+const BIND_RETRY: Duration = Duration::from_millis(20);
+
+/// 数据面守卫：无论正常返回还是被 abort（配置变更热重启），都关停 QUIC 端点释放端口
+struct PlaneGuard(Arc<DataPlane>);
+
+impl Drop for PlaneGuard {
+    fn drop(&mut self) {
+        self.0.shutdown();
+    }
+}
+
+/// 附属任务守卫：随信令任务一起收尾（UPnP 维护循环是无限循环，不主动中止会随热重启累积）
+struct TaskGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for TaskGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// 绑定 QUIC 端口（带短暂重试）：端口可能刚由上一轮任务释放，立即重绑会瞬时 EADDRINUSE
+async fn bind_data_plane(
+    identity: &Identity,
+    cfg: &RemoteSettings,
+    router: axum::Router,
+) -> Result<Arc<DataPlane>> {
+    let mut last = String::new();
+    for attempt in 0..BIND_ATTEMPTS {
+        match DataPlane::bind(identity, cfg.quic_port, router.clone()) {
+            Ok(plane) => return Ok(plane),
+            Err(e) => last = e,
+        }
+        if attempt + 1 < BIND_ATTEMPTS {
+            tokio::time::sleep(BIND_RETRY).await;
+        }
+    }
+    Err(SignalError::Fatal(last))
+}
+
 /// 控制通道上下文（收敛 handler 参数）
 struct ChannelContext<'a> {
     http: &'a reqwest::Client,
@@ -162,6 +205,7 @@ struct ChannelContext<'a> {
     upnp_report: &'a SharedUpnpReport,
     quic_port: u16,
     router: &'a axum::Router,
+    config: &'a Arc<LibraryConfig>,
 }
 
 /// 一轮控制通道：WSS 连接 → hello/hello_ack → 心跳与推送处理，直到断开
@@ -170,7 +214,7 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
     let url = ws_url(base, key, device_id)?;
     let (mut ws, _) = tokio_tungstenite::connect_async(&url)
         .await
-        .map_err(|e| SignalError::Transient(format!("控制通道连接失败: {e}")))?;
+        .map_err(ws_connect_error)?;
 
     // 协议握手：服务端先 hello，客户端回 hello_ack
     let hello = tokio::time::timeout(REQUEST_TIMEOUT, ws.next())
@@ -208,7 +252,16 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                send_heartbeat(ctx.http, ctx.base, ctx.key, ctx.device_id, ctx.upnp_report, ctx.quic_port).await?;
+                send_heartbeat(
+                    ctx.http,
+                    ctx.base,
+                    ctx.key,
+                    ctx.device_id,
+                    ctx.upnp_report,
+                    ctx.quic_port,
+                    ctx.config.current().remote.writable,
+                )
+                .await?;
             }
             msg = ws.next() => {
                 match msg {
@@ -246,37 +299,77 @@ async fn handle_message(
         }
         Some("session.request") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
+                let writable = value.get("access").and_then(|a| a.as_str()) == Some("write");
+                if writable && !ctx.config.current().remote.writable {
+                    tracing::info!("拒绝广域网写会话 {session_id}：本机未开启 [remote].writable");
+                    reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
+                    return Ok(());
+                }
+
                 // 先放行对端指纹（B 在 ready 后可能立即连接），再回 accept
                 let peer = value["from"]["device_id"].as_str();
                 if let Some(peer_id) = peer {
                     match fetch_fingerprint(ctx.http, ctx.base, ctx.key, peer_id).await {
                         Ok(Some(fingerprint)) => {
-                            ctx.data_plane.allow_peer(fingerprint);
+                            ctx.data_plane
+                                .allow_session(session_id, fingerprint, writable);
                             accepted_peers.insert(session_id.to_string(), fingerprint);
                             // 接受后超时清理：60s 内对端未连接 → 收回放行（幂等，
                             // cancelled/重连时的重复收回无害）
                             let plane = ctx.data_plane.clone();
+                            let session_id = session_id.to_string();
                             tokio::spawn(async move {
                                 if !plane
-                                    .await_first_conn(fingerprint, ACCEPT_PEER_TIMEOUT)
+                                    .await_first_conn(&session_id, ACCEPT_PEER_TIMEOUT)
                                     .await
                                 {
-                                    plane.disallow_peer(&fingerprint);
+                                    plane.disallow_session(&session_id);
                                 }
                             });
                         }
                         Ok(None) => {
+                            if writable {
+                                reject_session(
+                                    ctx.http,
+                                    ctx.base,
+                                    ctx.key,
+                                    session_id,
+                                    ctx.device_id,
+                                )
+                                .await?;
+                                return Ok(());
+                            }
                             tracing::warn!("会话对端 {peer_id} 不在设备列表中，仍接受但不可连接");
                         }
                         Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
                         Err(SignalError::Transient(msg)) => {
-                            // 放行失败不阻断会话：接受后对端连不上会自行超时
+                            if writable {
+                                reject_session(
+                                    ctx.http,
+                                    ctx.base,
+                                    ctx.key,
+                                    session_id,
+                                    ctx.device_id,
+                                )
+                                .await?;
+                                return Ok(());
+                            }
+                            // 只读会话放行失败不阻断：接受后对端连不上会自行超时
                             tracing::warn!("对端指纹获取失败（接受但不放行）: {msg}");
                         }
                         Err(SignalError::Unregistered) => return Err(SignalError::Unregistered),
                     }
+                } else if writable {
+                    reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
+                    return Ok(());
                 }
-                accept_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await?;
+                if let Err(e) =
+                    accept_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id).await
+                {
+                    ctx.data_plane.disallow_session(session_id);
+                    accepted_peers.remove(session_id);
+                    return Err(e);
+                }
 
                 // 中继模式：accept 后经服务端中继 WS 建立 QUIC（role=a 目标设备）
                 if value.get("mode").and_then(|m| m.as_str()) == Some("relay") {
@@ -321,9 +414,8 @@ async fn handle_message(
         }
         Some("session.cancelled") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
-                if let Some(fingerprint) = accepted_peers.remove(session_id) {
-                    ctx.data_plane.disallow_peer(&fingerprint);
-                }
+                accepted_peers.remove(session_id);
+                ctx.data_plane.disallow_session(session_id);
             }
         }
         _ => {}
@@ -366,6 +458,7 @@ async fn send_heartbeat(
     device_id: &str,
     upnp_report: &SharedUpnpReport,
     quic_port: u16,
+    allow_write: bool,
 ) -> Result<()> {
     // 可达性：UPnP 映射（维护任务异步更新）+ 全局 IPv6（每次心跳探测，零成本）。
     // public_ip 不自报——以服务端 public_ip_seen 为准
@@ -375,6 +468,7 @@ async fn send_heartbeat(
         .unwrap_or((None, None));
     let body = json!({
         "device_id": device_id,
+        "allow_write": allow_write,
         "reachability": {
             "public_ip": null,
             "mapped_port": mapped_port,
@@ -427,6 +521,31 @@ async fn accept_session(
     }
 }
 
+async fn reject_session(
+    http: &reqwest::Client,
+    base: &str,
+    key: &str,
+    session_id: &str,
+    device_id: &str,
+) -> Result<()> {
+    let resp = http
+        .post(format!("{base}/api/v1/sessions/{session_id}/reject"))
+        .bearer_auth(key)
+        .json(&json!({ "device_id": device_id }))
+        .send()
+        .await
+        .map_err(|e| SignalError::Transient(format!("会话拒绝失败: {e}")))?;
+    if resp.status() == reqwest::StatusCode::CONFLICT {
+        tracing::debug!("会话 {session_id} 拒绝时已结束");
+        return Ok(());
+    }
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(response_error(resp, "会话拒绝").await)
+    }
+}
+
 async fn register(
     http: &reqwest::Client,
     base: &str,
@@ -454,6 +573,7 @@ async fn register(
         "fingerprint": identity.fingerprint,
         "library_name": library_name,
         "allow_remote": true,
+        "allow_write": config.current().remote.writable,
     });
     let resp = http
         .post(format!("{base}/api/v1/devices"))
@@ -473,6 +593,21 @@ async fn register(
         .as_str()
         .map(String::from)
         .ok_or_else(|| SignalError::Transient("注册响应缺少 device_id".to_string()))
+}
+
+/// 控制通道握手失败归一：404 = 服务端不认识本设备（设备表丢失/服务端换了数据目录）→ 重注册；
+/// 401/403 = key 失效 → 致命；其余瞬时重连。
+/// 若不区分，404 会被当成网络抖动无限重连，状态永远停在「接入中」（心跳在通道内部发，
+/// 没通道就不会发现 404，只能靠这里触发重注册）
+fn ws_connect_error(e: tokio_tungstenite::tungstenite::Error) -> SignalError {
+    if let tokio_tungstenite::tungstenite::Error::Http(resp) = &e {
+        match resp.status().as_u16() {
+            404 => return SignalError::Unregistered,
+            401 | 403 => return SignalError::Fatal(format!("控制通道鉴权失败: {e}")),
+            _ => {}
+        }
+    }
+    SignalError::Transient(format!("控制通道连接失败: {e}"))
 }
 
 /// 非成功响应归一为信令错误：401 致命（key 无效）；其余瞬时（message 直接展示，协议约定）

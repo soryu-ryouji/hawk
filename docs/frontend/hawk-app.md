@@ -41,7 +41,7 @@ Eagle 主窗口的关键特征：
 
 严格遵循 architecture.md 的 sidecar 模式：前端不依赖 Electron IPC 做业务通信，主进程只管窗口、拉起/回收后端、注入 token。
 
-远程访问扩展此模型（**规划中**，hawk-remote 尚未落地）：产物携带 hawk-remote 二进制且用户配置过接入时，主进程额外拉起/回收 hawk-remote 进程并维护连接描述符（切换本地/远端库），见 [远程访问设计](../backend/remote-access.md)。本节其余内容不变。
+远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。
 
 ```text
 Electron 主进程启动
@@ -438,9 +438,10 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | `Icon.vue` | `name: IconName`、`size?: number`（默认 15） | — | 描边小图标（feather 风格 inline SVG），侧栏行首/按钮图标统一入口；name 为内置图标名联合类型 |
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示，经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server），返回 true 发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面；spawn 失败主进程弹系统框并留本页 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/隐藏项/局域网/存储/更新；局域网 web 端：外观/隐藏项/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（LAN 字段编辑与更新下载进度切分区不丢），web 端不挂载局域网/存储/更新分区；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（保存按钮委托 `SettingsLan` 的 save，校验失败自动切到局域网分区） |
+| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/隐藏项/局域网/远程/存储/更新；局域网 web 端：外观/隐藏项/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（LAN 字段编辑与更新下载进度切分区不丢），web 端不挂载局域网/远程/存储/更新分区；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（保存按钮委托 `SettingsLan` 的 save，校验失败自动切到局域网分区） |
 | `SettingsAppearance.vue` | — | — | 外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，均经 store.setUserThumbSize——web 端由此记住偏好并停止跟随动态默认）+ 预览关闭按钮开关（preview.setHidePreviewClose 即时生效并 localStorage 记忆，全端持久）；无保存语义 |
 | `SettingsHiding.vue` | — | — | 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签，数据源为 taxonomy.globalFilter，SSE 实时对齐），逐条取消隐藏；回收站中的隐藏文件夹剥前缀加注；viewer 只读时只展示不操作 |
+| `SettingsRemote.vue` | — | — | 远程分区（仅 Electron）：启用远程访问 + hawk-server 地址/访问密钥 + 「允许广域网保存素材」（`[remote].writable`，与局域网写权限独立）+ 本机设备改名/allow_remote/证书轮换 + 设备列表与会话入口/中继回退；配置读写经主进程 IPC 转发本地 daemon `/api/v1/remote*`，写开关随配置保存热生效 |
 | `SettingsLan.vue` | — | — | 局域网分区（仅 Electron）：开关 + 「允许修改素材库」+ token 拆分开关（separate_write_token + write_token，开启且为空时自动签发）+ 端口（纯文本输入，实时校验红框 + 提示，未启用时收起字段）+ token（monospace + 复制/重新生成）+ 本机地址列表（链接 + 逐行复制）；状态自管（打开时 `api.appLan()` 加载），读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启、SSE 不断），PUT 内置收敛等待，绑定失败自动回滚并报错；本机地址经 `shell.lanAddresses()`；经 `defineExpose({ save, busy })` 供壳的 footer 委托 |
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：**周期兜底重扫开关**（库级 `[scan]` 设置，写 `.hawk/config.toml` 保存即热生效；文案说明实时监听仍是主路径、关闭后仅漏事件需手动重扫）+ 元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
