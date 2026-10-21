@@ -250,6 +250,20 @@ jobs:
           # 正式版（release 提交）mx=9 最小体积；nightly/手动 mx=5 快速出包（高频构建在意时间不在意 +10-20MB）
           ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ startsWith(github.event.head_commit.message, 'release') && '9' || '5' }}
 
+      # 回归守卫：win.extraResources 覆盖顶层 extraResources，Windows 段漏列 daemon 时
+      # 产物只有 hawk-update —— 旧 daemon 会被沿用到运行时，表现为新 app 传 --remote-config 报错
+      - name: Verify packaged daemon
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/hawk-windows-x64.zip').Path)
+          try {
+            $hasDaemon = $zip.Entries.FullName -contains 'resources/hawk-daemon/hawk-daemon.exe'
+          } finally {
+            $zip.Dispose()
+          }
+          if (-not $hasDaemon) { throw 'Windows 产物缺少 resources/hawk-daemon/hawk-daemon.exe（检查 electron-builder.yml 的 win.extraResources）' }
+
       # 自动更新校验：产物 sha256 边车（<artifact>.sha256，内容为十六进制哈希），随 Release 上传
       - name: Generate checksum
         shell: pwsh

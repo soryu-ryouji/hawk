@@ -160,10 +160,17 @@ function startServer(libPath: string, address: string, token: string): ServerHan
       process.stderr.write(chunk);
     }
   });
-  child.on('error', (error) => fail(`hawk-daemon 启动失败: ${error.message}`));
+  child.on('error', (error) => {
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+    fail(`hawk-daemon 启动失败: ${error.message}${missing ? '（安装包缺少 hawk-daemon，请重新安装完整版本）' : ''}`);
+  });
   child.on('exit', (code) => {
     if (!intentionalExit) {
-      fail(`hawk-daemon 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}`);
+      // 旧 daemon 不认识新参数：提示版本不匹配，而不是只甩 clap 用法
+      const stale = stderrTail.includes("unexpected argument '--remote-config'")
+        ? '\n\nhawk-daemon 版本过旧或安装包不完整：请完全退出 hawk 后重新安装，或重新构建 hawk-daemon。'
+        : '';
+      fail(`hawk-daemon 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}${stale}`);
     }
   });
 

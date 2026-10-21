@@ -50,6 +50,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 **发布后验证**：
 
 - Release 资产齐全：上述 8 个文件（4 产物 + 4 边车；缺边车则存量客户端无法自动更新到该版本，只能手动下载）
+- Windows zip 内含 `resources/hawk-daemon/hawk-daemon.exe`（Windows 段的 `extraResources` 覆盖顶层，CI 的 `Verify packaged daemon` 会拦住漏列）
 - stable 通道：任一客户端 → 设置 → 更新 → 检查更新，应发现新版本并完成下载/安装
 - nightly 客户端：切 stable 通道检查，应能拿到本次发布
 
