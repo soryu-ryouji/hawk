@@ -36,6 +36,7 @@ export const IPC = {
   remotePutConfig: 'hawk:remote-put-config',
   remoteDevices: 'hawk:remote-devices',
   remotePatchDevice: 'hawk:remote-patch-device',
+  remoteDeleteDevice: 'hawk:remote-delete-device',
   remoteRotate: 'hawk:remote-rotate',
   remoteConnect: 'hawk:remote-connect',
   remoteDisconnect: 'hawk:remote-disconnect',
@@ -101,8 +102,6 @@ export type UpdateProgress = { phase: 'downloading'; received: number; total: nu
 export interface ServerConn {
   address: string;
   token: string;
-  /** 远程查看专用宿主库（serve 就绪后自动打开远程设置） */
-  remoteHost?: boolean;
 }
 
 /** 连接描述符：前端唯一面对的连接语义（api_base + token + 展示名），本地库/远程库同构 */
@@ -112,8 +111,8 @@ export interface ConnectionDescriptor {
   /** 「我的库」| 远端设备名 */
   label: string;
   remote: boolean;
-  /** 本地库是否为远程查看宿主库（远端连接恒为 false） */
-  remoteHost?: boolean;
+  /** 当前浏览的远端设备 id（remote=true 时存在；换库下拉打勾依据） */
+  device_id?: string;
 }
 
 /** 远程访问接入配置（读写 daemon /remote 的载荷；应用级，跨素材库共享） */
@@ -194,7 +193,7 @@ export interface HawkShell {
   platform: string;
   /** 更换素材库：弹目录选择框并拉起新 server；就绪经 onServerStarted 通知 */
   selectLibrary(): Promise<boolean>;
-  /** 没有本地素材库时进入远程查看模式：自动创建宿主库并拉起 server（不弹目录选择框） */
+  /** 没有本地素材库时进入远程查看模式：拉起无库 daemon（不创建本地目录，不弹目录选择框） */
   openRemoteViewer(): Promise<boolean>;
   /** 本机打开过的素材库历史与当前库路径 */
   listLibraries(): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
@@ -271,6 +270,8 @@ export interface HawkShell {
   remoteDevices(): Promise<{ devices: RemoteDevice[] }>;
   /** 更新本机设备信息（显示名/allow_remote/库名） */
   remotePatchDevice(patch: { name?: string; allow_remote?: boolean; library_name?: string }): Promise<RemoteDevice>;
+  /** 注销服务端设备记录（本机当前设备由 daemon 侧拒绝）；其会话与 key 映射一并清理 */
+  remoteDeleteDevice(deviceId: string): Promise<void>;
   /** 证书轮换（旧证书会话失效） */
   remoteRotate(): Promise<{ fingerprint: string }>;
   /** 建立远程会话并切换连接（返回新连接描述符）；失败抛错（message 直接展示）。

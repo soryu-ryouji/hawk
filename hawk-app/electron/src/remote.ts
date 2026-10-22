@@ -22,7 +22,7 @@ let sseAbort: AbortController | null = null;
 /** 本地库描述符（label 恒为「我的库」） */
 function localDescriptor(): ConnectionDescriptor | null {
   const conn = getStartedConn();
-  return conn ? { api_base: conn.address, token: conn.token, label: '我的库', remote: false, remoteHost: conn.remoteHost } : null;
+  return conn ? { api_base: conn.address, token: conn.token, label: '我的库', remote: false } : null;
 }
 
 /** 当前活动连接描述符：远程会话代理优先，其次本地库 */
@@ -108,6 +108,11 @@ export async function remotePatchDevice(patch: { name?: string; allow_remote?: b
   return daemonCall<RemoteDevice>('PATCH', '/api/v1/remote/device', patch);
 }
 
+/** 注销服务端设备记录（本机当前设备由 daemon 侧拒绝）；其进行中会话与 key 映射一并清理 */
+export async function remoteDeleteDevice(deviceId: string): Promise<void> {
+  await daemonCall('DELETE', `/api/v1/remote/devices/${encodeURIComponent(deviceId)}`);
+}
+
 export async function remoteRotate(): Promise<{ fingerprint: string }> {
   return daemonCall<{ fingerprint: string }>('POST', '/api/v1/remote/device/rotate');
 }
@@ -144,6 +149,7 @@ export async function remoteConnect(targetDeviceId: string, mode: 'direct' | 're
     token: session.token,
     label: session.target_name,
     remote: true,
+    device_id: session.target_device_id,
   };
   emitConnection(remoteConn);
   return remoteConn;

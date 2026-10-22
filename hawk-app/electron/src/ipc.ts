@@ -5,11 +5,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction } from './app-config';
-import { openLibraryAt, openRemoteViewer, pickLibrary, getStartedConn } from './server';
+import { openLibraryAt, startRemoteViewer, pickLibrary, getStartedConn } from './server';
 import {
   currentDescriptor,
   remoteConnect,
   remoteCreateKey,
+  remoteDeleteDevice,
   remoteDeleteKey,
   remoteDevices,
   remoteDisconnect,
@@ -75,8 +76,8 @@ export function registerIpc(): void {
 
   ipcMain.handle(IPC.openRemoteViewer, async (): Promise<boolean> => {
     try {
-      // 远程查看模式：自动创建宿主库，不弹目录选择框；就绪经 hawk:server-started 通知
-      await openRemoteViewer();
+      // 远程查看模式：拉起无库 daemon（不创建任何本地目录）；就绪经 hawk:server-started 通知
+      await startRemoteViewer();
       return true;
     } catch (error) {
       dialog.showErrorBox('hawk-daemon 启动失败', String(error instanceof Error ? error.message : error));
@@ -178,6 +179,12 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.remotePutConfig, (_event, config: RemoteConfig) => remotePutConfig(config));
   ipcMain.handle(IPC.remoteDevices, () => remoteDevices());
   ipcMain.handle(IPC.remotePatchDevice, (_event, patch: { name?: string; allow_remote?: boolean; library_name?: string }) => remotePatchDevice(patch));
+  ipcMain.handle(IPC.remoteDeleteDevice, (_event, deviceId: unknown) => {
+    if (typeof deviceId !== 'string' || !deviceId) {
+      throw new Error('非法设备 id');
+    }
+    return remoteDeleteDevice(deviceId);
+  });
   ipcMain.handle(IPC.remoteRotate, () => remoteRotate());
   ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string, mode?: 'direct' | 'relay') => remoteConnect(targetDeviceId, mode));
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());

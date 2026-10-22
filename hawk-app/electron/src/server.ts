@@ -6,7 +6,7 @@ import net from 'node:net';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { APP_DIR, CONFIG_DIR, REMOTE_CONFIG_FILE } from './paths';
+import { APP_DIR, REMOTE_CONFIG_FILE } from './paths';
 import { getMainWindow } from './window';
 import { readConfig, setLibraryRoot, writeConfig } from './app-config';
 import { IPC, type ServerConn } from './ipc-contract';
@@ -18,8 +18,6 @@ export interface ServerHandle {
   child: ChildProcess;
   address: string;
   token: string;
-  /** 远程查看专用宿主库：启动后自动打开远程设置 */
-  remoteHost: boolean;
   markStopped(): void;
 }
 
@@ -30,17 +28,6 @@ let startedConn: ServerConn | null = null;
 
 export function getStartedConn(): ServerConn | null {
   return startedConn;
-}
-
-/** 远程查看专用宿主库：daemon 必须带库运行（远程配置与设备身份已在应用级），
- *  这个库不含用户素材，只作为远程查看模式的运行载体；与 remote.toml/remote/ 同目录，
- *  应用级远程状态集中在一处 */
-export function remoteHostDir(): string {
-  return path.join(CONFIG_DIR, 'remote-library');
-}
-
-function isRemoteHost(libPath: string): boolean {
-  return path.resolve(libPath) === path.resolve(remoteHostDir());
 }
 
 function resolveServerCommand(): { command: string; args: string[] } {
@@ -110,19 +97,19 @@ function webDistDir(): string {
 
 /**
  * 拉起 hawk-daemon：监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
+ * libPath 为 null 即远程查看模式（daemon 无库形态：仅远程管理面与会话代理可用）。
  * 页面已先行加载并显示应用内启动屏，此处不再等待就绪——进度/就绪/错误经 IPC 事件推送：
  *   hawk:server-progress（starting 阶段进度）→ hawk:server-started（就绪，含地址与 token）→ hawk:server-error（失败原因）。
  * spawn 失败、异常退出（stopServer 除外）、停滞 120s 超时就 hawk:server-error。
  */
-function startServer(libPath: string, address: string, token: string): ServerHandle {
-  const remoteHost = isRemoteHost(libPath);
+function startServer(libPath: string | null, address: string, token: string): ServerHandle {
   const { command, args } = resolveServerCommand();
   // 全局缓存父目录（设置面板「存储」配置；未配置用系统默认）
   const cacheParent = readConfig().cacheParent;
   const spawnArgs = [
     ...args,
-    '--library',
-    libPath,
+    // 无库（远程查看模式）不传 --library：远程配置与设备身份在应用级 remote.toml
+    ...(libPath ? ['--library', libPath] : []),
     '--port',
     String(new URL(address).port),
     '--web-dist',
@@ -197,7 +184,7 @@ function startServer(libPath: string, address: string, token: string): ServerHan
       clearInterval(poll);
       clearInterval(watchdog);
       if (state.status === 'ready') {
-        startedConn = { address, token, remoteHost };
+        startedConn = { address, token };
         getMainWindow()?.webContents.send(IPC.serverStarted, startedConn);
         // remote SSE 订阅重建（remote.session 断线回切依赖；见 remote.ts）
         onServerReady();
@@ -216,7 +203,7 @@ function startServer(libPath: string, address: string, token: string): ServerHan
     }
   }, 1000);
 
-  return { child, address, token, remoteHost, markStopped: () => (intentionalExit = true) };
+  return { child, address, token, markStopped: () => (intentionalExit = true) };
 }
 
 export function stopServer(): void {
@@ -253,7 +240,7 @@ async function switchLibrary(libPath: string, address: string, token: string): P
   stopServer();
   // 记住当前库并维护历史（最近使用在前、去重、上限 10）：换库下拉经 hawk:list-libraries 直达
   const history = [libPath, ...(readConfig().libraryHistory ?? []).filter((p) => p !== libPath)].slice(0, 10);
-  writeConfig({ libraryPath: libPath, libraryHistory: history });
+  writeConfig({ libraryPath: libPath, libraryHistory: history, remoteViewer: false });
   setLibraryRoot(libPath);
   return startServer(libPath, address, token);
 }
@@ -266,14 +253,16 @@ export async function openLibraryAt(libPath: string): Promise<ServerHandle> {
   return server;
 }
 
-/** 没有本地素材库时进入远程查看模式：创建/复用宿主库并拉起 server，不弹目录选择框 */
-export async function openRemoteViewer(): Promise<ServerHandle> {
-  const dir = remoteHostDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const configFile = path.join(dir, '.hawk', 'config.toml');
-  if (!fs.existsSync(configFile)) {
-    fs.mkdirSync(path.dirname(configFile), { recursive: true });
-    fs.writeFileSync(configFile, '# 远程查看专用宿主库（不含素材，仅承载 daemon 运行）\nname = "远程查看"\n');
-  }
-  return openLibraryAt(dir);
+/** 远程查看模式：拉起无库 daemon（仅远程管理面与会话代理），不创建任何本地目录。
+ *  就绪后前端进远程查看屏（配置服务端/选设备）；冷启动模式记忆为 remoteViewer */
+export async function startRemoteViewer(): Promise<ServerHandle> {
+  const token = crypto.randomBytes(32).toString('hex');
+  const port = await probeFreePort();
+  getMainWindow()?.webContents.send(IPC.serverRestarting);
+  startedConn = null;
+  stopServer();
+  writeConfig({ remoteViewer: true });
+  setLibraryRoot(null);
+  server = startServer(null, `http://127.0.0.1:${port}`, token);
+  return server;
 }

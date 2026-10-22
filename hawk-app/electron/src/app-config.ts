@@ -9,6 +9,8 @@ import type { CloseAction, LibraryHistoryItem, UpdateChannel } from './ipc-contr
 interface AppConfig {
   libraryPath?: string;
   libraryHistory?: string[];
+  /** 冷启动模式记忆：true = 远程查看模式（无本地库，daemon 以无库形态启动）；开本地库时复位 */
+  remoteViewer?: boolean;
   /** 全局缓存父目录（所有库共用，子目录按库名+哈希区分）；未设置时用系统缓存目录 */
   cacheParent?: string;
   /** 应用更新通道；未设置时视为 stable */
@@ -50,14 +52,15 @@ function pruneUndefined(config: Partial<AppConfig>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined));
 }
 
-/** 当前素材库根目录（show-in-finder 的路径守卫要用）；会话级，换库时更新 */
+/** 当前素材库根目录（show-in-finder 的路径守卫要用）；会话级，换库时更新；
+ *  远程查看模式（无本地库）为 null */
 let libraryRoot: string | null = null;
 
 export function getLibraryRoot(): string | null {
   return libraryRoot;
 }
 
-export function setLibraryRoot(root: string): void {
+export function setLibraryRoot(root: string | null): void {
   libraryRoot = root;
 }
 

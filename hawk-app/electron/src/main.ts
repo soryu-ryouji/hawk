@@ -6,8 +6,9 @@ import { app, dialog } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createTray, createWindow, loadMainPage, setQuitting, showMainWindow } from './window';
-import { openLibraryAt, stopServer } from './server';
-import { readConfig } from './app-config';
+import { openLibraryAt, startRemoteViewer, stopServer } from './server';
+import { readConfig, writeConfig } from './app-config';
+import { LEGACY_REMOTE_HOST_DIR } from './paths';
 import { registerIpc } from './ipc';
 import { registerUpdaterIpc } from './updater';
 
@@ -30,8 +31,28 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
 
-  const libPath = readConfig().libraryPath;
-  if (!libPath || !fs.existsSync(libPath)) {
+  const config = readConfig();
+  const libPath = config.libraryPath;
+  // 旧版宿主库目录（remote-library）已废弃：识别后转为远程查看模式记忆，不再启动该目录
+  const legacyHost = libPath && path.resolve(libPath) === path.resolve(LEGACY_REMOTE_HOST_DIR);
+  if (legacyHost) {
+    writeConfig({
+      libraryPath: undefined,
+      libraryHistory: (config.libraryHistory ?? []).filter((p) => path.resolve(p) !== path.resolve(LEGACY_REMOTE_HOST_DIR)),
+    });
+  }
+  if (config.remoteViewer || legacyHost) {
+    // 远程查看模式记忆：无库 daemon 直接拉起（无本地素材目录）
+    try {
+      const server = await startRemoteViewer();
+      loadMainPage({ address: server.address, token: server.token });
+    } catch (error) {
+      dialog.showErrorBox('hawk-daemon 启动失败', String(error));
+      app.quit();
+    }
+    return;
+  }
+  if (!libPath || legacyHost || !fs.existsSync(libPath)) {
     loadMainPage(); // 素材库未配置或已失效：进应用内引导页（无连接参数）
     return;
   }
