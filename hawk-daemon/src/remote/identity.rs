@@ -21,8 +21,21 @@ impl Identity {
     pub fn load_or_create(remote_dir: &str) -> Result<Identity, String> {
         let file = identity_file(remote_dir);
         match std::fs::read(&file) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|e| format!("设备身份文件解析失败 {}: {e}", file.display())),
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(identity) => Ok(identity),
+                Err(e) => {
+                    // 旧格式（证书时代字段）或损坏：备份后重新生成，不硬崩
+                    let legacy = file.with_extension("json.legacy");
+                    let _ = std::fs::rename(&file, &legacy);
+                    tracing::warn!(
+                        "设备身份文件格式过旧或损坏（{e}），已备份到 {} 并重新生成身份",
+                        legacy.display()
+                    );
+                    let identity = Identity::generate();
+                    identity.persist(remote_dir)?;
+                    Ok(identity)
+                }
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let identity = Identity::generate();
                 identity.persist(remote_dir)?;
@@ -104,6 +117,26 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_identity_file_regenerates() {
+        // 证书时代的旧格式：解析失败 → 备份 + 重新生成，不硬崩
+        let dir = tempfile::tempdir().unwrap();
+        let remote_dir = dir.path().join("remote");
+        std::fs::create_dir_all(&remote_dir).unwrap();
+        std::fs::write(
+            remote_dir.join("identity.json"),
+            r#"{"device_id":"d_old","cert_der_b64":"x","key_der_b64":"y","fingerprint":"z"}"#,
+        )
+        .unwrap();
+        let identity = Identity::load_or_create(remote_dir.to_str().unwrap()).unwrap();
+        assert!(
+            identity.device_id.is_none(),
+            "旧格式不保留 device_id（重新注册）"
+        );
+        assert_eq!(identity.endpoint_id.len(), 64);
+        assert!(remote_dir.join("identity.json.legacy").exists());
+    }
 
     #[test]
     fn identity_persists_across_loads() {

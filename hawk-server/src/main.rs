@@ -1,9 +1,8 @@
-use clap::Parser;
 use hawk_server::settings::{Cli, Command};
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
+    let cli = Cli::load();
     // 租户管理子命令：同步执行后直接退出（不初始化 tracing，输出保持干净）
     if let Some(Command::Tenant { action }) = &cli.command {
         if let Err(e) = hawk_server::run_tenant_command(action, &cli.data_dir()) {

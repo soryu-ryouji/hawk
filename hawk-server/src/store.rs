@@ -39,12 +39,23 @@ impl Store {
         fs::create_dir_all(data_dir)?;
         let path = data_dir.join("devices.json");
         let devices = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<DeviceTable>(&bytes)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
-                .devices
-                .into_iter()
-                .map(|d| (d.device_id.clone(), d))
-                .collect(),
+            Ok(bytes) => match serde_json::from_slice::<DeviceTable>(&bytes) {
+                Ok(table) => table
+                    .devices
+                    .into_iter()
+                    .map(|d| (d.device_id.clone(), d))
+                    .collect(),
+                Err(e) => {
+                    // 旧格式（字段变更）或损坏：备份后从空表重建，设备重新注册收敛
+                    let legacy = path.with_extension("json.legacy");
+                    let _ = fs::rename(&path, &legacy);
+                    tracing::warn!(
+                        "设备表格式过旧或损坏（{e}），已备份到 {} 并从空表重建",
+                        legacy.display()
+                    );
+                    HashMap::new()
+                }
+            },
             Err(e) if e.kind() == io::ErrorKind::NotFound => HashMap::new(),
             Err(e) => return Err(e),
         };

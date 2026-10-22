@@ -49,6 +49,13 @@ cargo run -- tenant add --label dev
 
 ## 配置
 
+配置文件与参数同义：**数据目录下的 `server.toml`**（首启自动写注释模板），优先级 CLI 参数 > 环境变量 > 配置文件 > 默认值——部署一次写进文件，不必每次启动调环境变量：
+
+```toml
+# ~/.config/hawk-server/server.toml
+relay_url = "https://hawk.example.com:9102"   # 配了它就提供中继（示例同时打开注释里的值）
+```
+
 | 参数 | 环境变量 | 默认值 | 说明 |
 | ---- | -------- | ------ | ---- |
 | `--port` | `HAWK_SERVER_PORT` | `9100` | 监听端口，绑定 `0.0.0.0`。本进程只说明文 HTTP，TLS 由前置反代终结 |
