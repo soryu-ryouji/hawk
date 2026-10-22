@@ -4,20 +4,18 @@
 
 use super::{ok, success, ApiError, JsonBody};
 use crate::auth::ServiceKey;
-use crate::state::{now_ms, Access, AppState, ProbeState, ProbeTicket, Session, SessionState};
+use crate::state::{now_ms, Access, AppState, Session, SessionState};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct CreateRequest {
     source_device_id: String,
     target_device_id: String,
-    mode: String,
 }
 
 #[derive(Deserialize)]
@@ -35,12 +33,6 @@ pub async fn create(
     key: ServiceKey,
     JsonBody(req): JsonBody<CreateRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if req.mode != "direct" && req.mode != "relay" {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "不支持的会话模式（direct / relay）",
-        ));
-    }
     for device_id in [&req.source_device_id, &req.target_device_id] {
         match state.device(device_id) {
             Some(device) if device.tenant_id == key.tenant_id => {}
@@ -51,7 +43,6 @@ pub async fn create(
         &state,
         &req.source_device_id,
         &req.target_device_id,
-        &req.mode,
         Access::Read,
         None,
     )?;
@@ -67,7 +58,6 @@ pub fn create_session_internal(
     state: &Arc<AppState>,
     source_device_id: &str,
     target_device_id: &str,
-    mode: &str,
     access: Access,
     credential: Option<String>,
 ) -> Result<(String, SessionState), ApiError> {
@@ -100,14 +90,11 @@ pub fn create_session_internal(
         session_id: new_session_id(),
         source_device_id: source_device_id.to_string(),
         target_device_id: target_device_id.to_string(),
-        mode: mode.to_string(),
         access,
         credential,
         state: initial,
         created_at_ms: now_ms(),
         connect: None,
-        probe: None,
-        relay_path: false,
     };
     let session_id = session.session_id.clone();
     let credential = session.credential.clone();
@@ -130,9 +117,8 @@ pub fn create_session_internal(
                     "library_name": source.as_ref().map(|s| s.library_name.as_str()).unwrap_or_default(),
                     // 对端指纹随请求下发（QUIC 放行依据），省一次设备列表往返；
                     // 网页版全局设备不在租户列表中，不走列表本来也查不到
-                    "fingerprint": source.as_ref().map(|s| s.fingerprint.as_str()).unwrap_or_default(),
+                    "endpoint_id": source.as_ref().map(|s| s.endpoint_id.as_str()).unwrap_or_default(),
                 },
-                "mode": mode,
                 "access": access.as_str(),
                 // 查看者会话的 key 验证子；app 间会话无此字段
                 "credential": credential,
@@ -203,86 +189,35 @@ fn respond(
         return Err(ApiError::new(StatusCode::FORBIDDEN, "仅目标设备可响应会话"));
     }
 
-    // 打洞编排（P3）：直连会话一律编排（探测口启用时）。UPnP 映射可能在 CGNAT 内层、
-    // IPv6 可能被防火墙拦——服务端无法验证候选真实可用性，punch 候选排队尾兜底
-    let mut probe_pushes: Vec<(String, Value)> = Vec::new();
-    // Some(has_direct) = 进入打洞编排（has_direct 决定探测等待档位）
-    let mut orchestrate: Option<bool> = None;
     if !accepted {
         session.state = SessionState::Rejected;
-    } else if session.mode == "relay" {
-        // 中继：无需可达性候选，connect 只携带目标指纹（QUIC 端到端钉扎语义不变）
-        let fingerprint = state
-            .device(&session.target_device_id)
-            .map(|d| d.fingerprint)
-            .unwrap_or_default();
-        session.connect = Some(json!({
-            "mode": "relay",
-            "fingerprint": fingerprint,
-        }));
-        session.state = SessionState::Ready;
-    } else if let Some(probe_port) = state.probe_port {
-        let candidates =
-            direct_candidates(&state, &session.source_device_id, &session.target_device_id);
-        let token_a = rand::random::<u128>().to_be_bytes();
-        let token_b = rand::random::<u128>().to_be_bytes();
-        session.probe = Some(ProbeState {
-            token_a,
-            token_b,
-            addr_a: None,
-            addr_b: None,
-        });
-        {
-            let mut index = state.probe_index.write().unwrap();
-            index.insert(
-                token_a,
-                ProbeTicket {
-                    session_id: session_id.clone(),
-                    role: "a".to_string(),
-                },
-            );
-            index.insert(
-                token_b,
-                ProbeTicket {
-                    session_id: session_id.clone(),
-                    role: "b".to_string(),
-                },
-            );
-        }
-        probe_pushes.push((
-            session.target_device_id.clone(),
-            probe_message(&session.session_id, probe_port, &token_a),
-        ));
-        probe_pushes.push((
-            session.source_device_id.clone(),
-            probe_message(&session.session_id, probe_port, &token_b),
-        ));
-        // 候选明细进日志：与探测观测值对比可直接识别 CGNAT（UPnP 端口 ≠ 观测端口）
-        tracing::info!(
-            "会话 {session_id} 打洞编排开始（直连候选：{}）",
-            if candidates.is_empty() {
-                "无".to_string()
-            } else {
-                serde_json::to_string(&candidates).unwrap_or_default()
-            }
-        );
-        orchestrate = Some(!candidates.is_empty());
     } else {
-        // 打洞编排未启用（探测口未配置）：按既有候选立即裁决
-        let candidates =
-            direct_candidates(&state, &session.source_device_id, &session.target_device_id);
-        if candidates.is_empty() {
+        // 连接信息 = iroh EndpointAddr 的控制面表达：endpoint_id + 直连地址 +（可选）中继。
+        // 服务端不验证地址可达性（拨号方的连接尝试即最终校验）；
+        // 无中继且无直连地址 → unreachable
+        let endpoint_id = state
+            .device(&session.target_device_id)
+            .map(|d| d.endpoint_id)
+            .unwrap_or_default();
+        let direct_addresses = state
+            .presence
+            .read()
+            .unwrap()
+            .get(&session.target_device_id)
+            .and_then(|p| p.addrs.as_ref())
+            .map(|a| a.list.clone())
+            .unwrap_or_default();
+        if state.relay_info.is_none() && direct_addresses.is_empty() {
             session.state = SessionState::Unreachable;
         } else {
-            let fingerprint = state
-                .device(&session.target_device_id)
-                .map(|d| d.fingerprint)
-                .unwrap_or_default();
-            session.connect = Some(json!({
-                "mode": "direct",
-                "candidates": candidates,
-                "fingerprint": fingerprint,
-            }));
+            let mut connect = json!({
+                "endpoint_id": endpoint_id,
+                "direct_addresses": direct_addresses,
+            });
+            if let Some(relay) = &state.relay_info {
+                connect["relay"] = relay.clone();
+            }
+            session.connect = Some(connect);
             session.state = SessionState::Ready;
         }
     }
@@ -294,205 +229,7 @@ fn respond(
     // 状态变更推送双方（协议约定；轮询为兜底）
     state.push_ws(&source, &update);
     state.push_ws(&target, &update);
-    // 打洞探测邀约（协议 P3：双方各自向探测口报到，结果由编排任务收敛）
-    for (device_id, message) in probe_pushes {
-        state.push_ws(&device_id, &message);
-    }
-    if let Some(has_direct) = orchestrate {
-        tokio::spawn(orchestrate_punch(
-            state.clone(),
-            session_id.clone(),
-            has_direct,
-        ));
-    }
     Ok(success())
-}
-
-/// 直连候选组装（IPv4 映射 → IPv6，协议约定）。双方同公网 IP（同 NAT 强信号）且目标
-/// 上报了 LAN 地址时，LAN 候选排最前：同局域网内网直连绕开 hairpin/UPnP/CGNAT 全部问题
-///（Syncthing 本地发现的服务端撮合等价物）；错配（CGNAT 同 IP 陌生人）由指纹钉扎快速证伪
-fn direct_candidates(
-    state: &AppState,
-    source_device_id: &str,
-    target_device_id: &str,
-) -> Vec<Value> {
-    let presence = state.presence.read().unwrap();
-    let Some(target) = presence
-        .get(target_device_id)
-        .and_then(|p| p.reachability.as_ref())
-    else {
-        return Vec::new();
-    };
-    let mut candidates = Vec::new();
-    let same_public_ip = presence
-        .get(source_device_id)
-        .and_then(|p| p.reachability.as_ref())
-        .is_some_and(|source| source.public_ip == target.public_ip);
-    if same_public_ip {
-        if let Some(lan) = &target.lan_ipv4 {
-            candidates.push(json!({
-                "transport": "lan",
-                "host": lan,
-                "port": target.ipv6_port.unwrap_or(crate::state::DEFAULT_QUIC_PORT),
-            }));
-        }
-    }
-    candidates.extend(target.candidates());
-    candidates
-}
-
-/// 打洞探测等待上限（无直连候选时——打洞是唯一指望；协议约定 8s，超时置 unreachable）
-const PROBE_WAIT: Duration = Duration::from_secs(8);
-/// 有直连候选时的探测等待（短等：探测正常 <0.5s；不显著拖累可用候选路径）
-const PROBE_WAIT_SHORT: Duration = Duration::from_secs(2);
-
-/// 探测等待上限：测试可经 HAWK_SERVER_PROBE_WAIT_MS 覆盖（提速编排超时路径）
-fn probe_wait() -> Duration {
-    std::env::var("HAWK_SERVER_PROBE_WAIT_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(Duration::from_millis)
-        .unwrap_or(PROBE_WAIT)
-}
-
-/// 短档探测等待：测试可经 HAWK_SERVER_PROBE_WAIT_SHORT_MS 覆盖
-fn probe_wait_short() -> Duration {
-    std::env::var("HAWK_SERVER_PROBE_WAIT_SHORT_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(Duration::from_millis)
-        .unwrap_or(PROBE_WAIT_SHORT)
-}
-/// 探测到达轮询粒度
-const PROBE_POLL: Duration = Duration::from_millis(100);
-
-/// 打洞编排任务（P3）：等双方 observed endpoint 到齐 → ready（直连候选附带 punch 候选，
-/// 携带 punch_peer）；有直连候选时只短等（候选可能貌似可用：CGNAT 内层 UPnP、被拦的 IPv6）。
-/// 无候选且探测未到齐 → unreachable；会话中途终态（取消/过期）→ 放弃编排。
-/// token 索引在每条收尾路径都清除（索引是编排期临时状态）
-async fn orchestrate_punch(state: Arc<AppState>, session_id: String, has_direct: bool) {
-    let budget = if has_direct {
-        probe_wait_short()
-    } else {
-        probe_wait()
-    };
-    let deadline = std::time::Instant::now() + budget;
-    let finalize = loop {
-        tokio::time::sleep(PROBE_POLL).await;
-        let sessions = state.sessions.read().unwrap();
-        match sessions.get(&session_id) {
-            Some(session) if session.state == SessionState::Pending => {
-                let arrived = session
-                    .probe
-                    .as_ref()
-                    .map(|p| (p.addr_a.is_some(), p.addr_b.is_some()))
-                    .unwrap_or_default();
-                if arrived == (true, true) || std::time::Instant::now() >= deadline {
-                    break true;
-                }
-            }
-            // 会话消失或已终态：放弃编排
-            _ => break false,
-        }
-    };
-    if !finalize {
-        cleanup_probe_index(&state, &session_id);
-        return;
-    }
-
-    let (update, source, target) = {
-        let mut sessions = state.sessions.write().unwrap();
-        let Some(session) = sessions.get_mut(&session_id) else {
-            cleanup_probe_index(&state, &session_id);
-            return;
-        };
-        // 写锁下复核：等待期间可能已被取消/过期
-        if session.state != SessionState::Pending {
-            cleanup_probe_index(&state, &session_id);
-            return;
-        }
-        let probe = session.probe.take().unwrap_or_default();
-        // 直连候选按最新心跳重组装（等待期间心跳可能刷新可达性）
-        let mut candidates =
-            direct_candidates(&state, &session.source_device_id, &session.target_device_id);
-        let direct_count = candidates.len();
-        let fingerprint = state
-            .device(&session.target_device_id)
-            .map(|d| d.fingerprint)
-            .unwrap_or_default();
-        match (probe.addr_a, probe.addr_b) {
-            (Some(addr_a), Some(addr_b)) => {
-                candidates.push(json!({
-                    "transport": "punch",
-                    "host": addr_a.ip().to_string(),
-                    "port": addr_a.port(),
-                }));
-                session.connect = Some(json!({
-                    "mode": "direct",
-                    "candidates": candidates,
-                    // 发起方的 observed endpoint：仅目标设备开口用（协议约定发起方忽略）
-                    "punch_peer": { "host": addr_b.ip().to_string(), "port": addr_b.port() },
-                    "fingerprint": fingerprint,
-                }));
-                session.state = SessionState::Ready;
-                tracing::info!(
-                    "打洞编排就绪 {session_id}：目标 {addr_a} / 发起方 {addr_b}（直连候选 {direct_count} 个）"
-                );
-            }
-            _ if !candidates.is_empty() => {
-                // 探测未就绪但有直连候选：按候选放行（未编排时的原有路径）
-                session.connect = Some(json!({
-                    "mode": "direct",
-                    "candidates": candidates,
-                    "fingerprint": fingerprint,
-                }));
-                session.state = SessionState::Ready;
-                tracing::info!(
-                    "打洞探测未在 {budget:?} 内到齐（目标侧 {} / 发起方侧 {}），按 {direct_count} 个直连候选放行: {session_id}",
-                    probe.addr_a.is_some(),
-                    probe.addr_b.is_some()
-                );
-            }
-            _ => {
-                session.state = SessionState::Unreachable;
-                tracing::warn!(
-                    "打洞探测未在 {budget:?} 内到齐（目标侧 {} / 发起方侧 {}），无直连候选: {session_id}",
-                    probe.addr_a.is_some(),
-                    probe.addr_b.is_some()
-                );
-            }
-        }
-        (
-            session_update(session),
-            session.source_device_id.clone(),
-            session.target_device_id.clone(),
-        )
-    };
-    cleanup_probe_index(&state, &session_id);
-    state.push_ws(&source, &update);
-    state.push_ws(&target, &update);
-}
-
-fn cleanup_probe_index(state: &AppState, session_id: &str) {
-    state
-        .probe_index
-        .write()
-        .unwrap()
-        .retain(|_, ticket| ticket.session_id != session_id);
-}
-
-/// session.probe 消息（P3 探测邀约）：token 按角色独立，hex 编码下发
-fn probe_message(session_id: &str, probe_port: u16, token: &[u8; 16]) -> Value {
-    json!({
-        "type": "session.probe",
-        "session_id": session_id,
-        "probe_port": probe_port,
-        "token": hex_encode(token),
-    })
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// `POST /api/v1/sessions/{session_id}/cancel`：任一方取消会话
@@ -540,54 +277,6 @@ pub async fn cancel(
             format!("会话已结束（{}）", session.state.as_str()),
         )),
     }
-}
-
-/// `POST /api/v1/sessions/{session_id}/relay-path`：为 ready 会话附加中继路径（P4，幂等）。
-/// mux 的中继降级通道：承载同一条 QUIC 连接（路径迁移），不是另建会话的新握手
-pub async fn relay_path(
-    State(state): State<Arc<AppState>>,
-    key: ServiceKey,
-    Path(session_id): Path<String>,
-) -> Result<Json<Value>, ApiError> {
-    // 会话双方之一须属调用者租户（同 cancel 的池校验）
-    {
-        let sessions = state.sessions.read().unwrap();
-        let in_pool = sessions.get(&session_id).is_some_and(|s| {
-            [s.source_device_id.as_str(), s.target_device_id.as_str()]
-                .iter()
-                .any(|id| {
-                    state
-                        .device(id)
-                        .is_some_and(|d| d.tenant_id == key.tenant_id)
-                })
-        });
-        if !in_pool {
-            return Err(ApiError::not_found("会话不存在"));
-        }
-    }
-    let mut sessions = state.sessions.write().unwrap();
-    let Some(session) = sessions.get_mut(&session_id) else {
-        return Err(ApiError::not_found("会话不存在"));
-    };
-    session.apply_expiry(now_ms());
-    if session.state != SessionState::Ready {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            format!("会话已结束（{}）", session.state.as_str()),
-        ));
-    }
-    let first_attach = !session.relay_path;
-    session.relay_path = true;
-    let source = session.source_device_id.clone();
-    let target = session.target_device_id.clone();
-    drop(sessions);
-    if first_attach {
-        let msg = json!({ "type": "session.relay_path", "session_id": session_id });
-        state.push_ws(&source, &msg);
-        state.push_ws(&target, &msg);
-        tracing::info!("会话 {session_id} 附加中继路径");
-    }
-    Ok(success())
 }
 
 fn session_view(session: &Session) -> Value {

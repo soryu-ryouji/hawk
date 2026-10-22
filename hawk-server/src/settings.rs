@@ -21,15 +21,19 @@ pub struct Cli {
     #[arg(long, env = "HAWK_SERVER_ADMIN_PORT", default_value_t = 9110)]
     pub admin_port: u16,
 
-    /// 打洞探测口（UDP，P3 NAT 打洞的 observed endpoint 观测，需公网直达；
-    /// 0 = 关闭打洞编排，无直连候选的会话直接 unreachable）
+    /// 内嵌中继监听端口（iroh-relay；中继 = 打洞协调 + 数据兜底）
     #[arg(
         long,
-        env = "HAWK_SERVER_PROBE_PORT",
-        default_value_t = 9101,
+        env = "HAWK_SERVER_RELAY_PORT",
+        default_value_t = 9102,
         global = true
     )]
-    pub probe_port: u16,
+    pub relay_port: u16,
+
+    /// 内嵌中继的公网 URL（http(s)://host:9102 或反代域名）；未配置 = 本部署不提供中继
+    ///（纯直连形态：无中继即无打洞协调，只有直连地址可达的会话能建立）
+    #[arg(long, env = "HAWK_SERVER_RELAY_URL", global = true)]
+    pub relay_url: Option<String>,
 
     /// 数据目录（设备/租户/key 注册表、pepper、网页版身份与令牌）；
     /// 缺省 ~/.config/hawk-server（与 hawk-app 的 ~/.config/hawk 同族的全平台约定）

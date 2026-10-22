@@ -4,8 +4,7 @@
 use super::{ok, success, ApiError, JsonBody};
 use crate::auth::ServiceKey;
 use crate::state::{
-    now_ms, AppState, Presence, Reachability, SessionState, HEARTBEAT_MIN_INTERVAL_MS,
-    HEARTBEAT_OFFLINE_MS,
+    now_ms, AppState, Presence, SessionState, HEARTBEAT_MIN_INTERVAL_MS, HEARTBEAT_OFFLINE_MS,
 };
 use crate::store::DeviceRecord;
 use axum::extract::{ConnectInfo, Path, State};
@@ -20,7 +19,7 @@ use std::sync::Arc;
 pub struct RegisterRequest {
     name: String,
     platform: String,
-    fingerprint: String,
+    endpoint_id: String,
     library_name: String,
     allow_remote: bool,
     /// 允许广域网写会话（目标设备 [remote].writable）；旧客户端缺省 false
@@ -37,30 +36,9 @@ pub struct HeartbeatRequest {
     /// 当前打开的素材库名（设备身份跨库共享，切换库后靠心跳收敛设备表）
     #[serde(default)]
     library_name: Option<String>,
-    reachability: HeartbeatReachability,
-}
-
-/// 心跳上报的可达性；public_ip 以服务端看到的连接源地址为准（自报值仅作占位不采用）
-#[derive(Deserialize)]
-pub struct HeartbeatReachability {
+    /// iroh endpoint 自报的直连地址集（服务端不验证可达性，拨号方的连接尝试即最终校验）
     #[serde(default)]
-    #[allow(dead_code)]
-    public_ip: Option<String>,
-    mapped_port: Option<u16>,
-    #[serde(default = "default_mapping_type")]
-    mapping_type: String,
-    public_ipv6: Option<String>,
-    ipv6_port: Option<u16>,
-    /// LAN IPv4（私网出接口）：同公网 IP 的会话双方大概率同一 NAT 后，作 LAN 候选下发
-    lan_ipv4: Option<String>,
-    /// P3 打洞预留，阶段 1 服务端不使用
-    #[serde(default)]
-    #[allow(dead_code)]
-    nat_type: Option<String>,
-}
-
-fn default_mapping_type() -> String {
-    "none".to_string()
+    addrs: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -68,7 +46,7 @@ pub struct UpdateRequest {
     name: Option<String>,
     allow_remote: Option<bool>,
     library_name: Option<String>,
-    fingerprint: Option<String>,
+    endpoint_id: Option<String>,
 }
 
 fn new_id(prefix: &str) -> String {
@@ -84,7 +62,7 @@ pub async fn register(
     if req.name.trim().is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "name 不能为空"));
     }
-    if req.fingerprint.trim().is_empty() {
+    if req.endpoint_id.trim().is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "fingerprint 不能为空",
@@ -95,7 +73,7 @@ pub async fn register(
         tenant_id: key.tenant_id,
         name: req.name,
         platform: req.platform,
-        fingerprint: req.fingerprint,
+        endpoint_id: req.endpoint_id,
         library_name: req.library_name,
         allow_remote: req.allow_remote,
         allow_write: req.allow_write,
@@ -158,16 +136,14 @@ pub async fn heartbeat(
         }
     }
     p.last_heartbeat_ms = Some(now);
-    p.reachability = Some(Reachability {
+    p.addrs = Some(crate::state::Addrs {
         public_ip: public_ip_seen.clone(),
-        mapped_port: req.reachability.mapped_port,
-        mapping_type: req.reachability.mapping_type,
-        public_ipv6: req.reachability.public_ipv6,
-        ipv6_port: req.reachability.ipv6_port,
-        lan_ipv4: req.reachability.lan_ipv4,
+        list: req.addrs,
     });
     Ok(ok(
-        json!({ "server_time_ms": now, "public_ip_seen": public_ip_seen }),
+        // relay：内嵌中继的公网入口与准入 token（None = 本部署不提供中继；
+        // 变化时客户端重建数据面，见协议「中继」一节）
+        json!({ "server_time_ms": now, "public_ip_seen": public_ip_seen, "relay": state.relay_info.clone().unwrap_or(Value::Null) }),
     ))
 }
 
@@ -289,8 +265,8 @@ pub async fn update(
                 if let Some(library_name) = req.library_name {
                     record.library_name = library_name;
                 }
-                if let Some(fingerprint) = req.fingerprint {
-                    record.fingerprint = fingerprint;
+                if let Some(endpoint_id) = req.endpoint_id {
+                    record.endpoint_id = endpoint_id;
                 }
             })
             .map_err(|e| {
@@ -374,16 +350,10 @@ pub(crate) fn device_view_pub(
 fn device_view(record: &DeviceRecord, presence: Option<&Presence>, now: u64) -> Value {
     let last_seen = presence.and_then(|p| p.last_heartbeat_ms);
     let online = last_seen.is_some_and(|last| now.saturating_sub(last) <= HEARTBEAT_OFFLINE_MS);
-    let reachability = presence.and_then(|p| p.reachability.as_ref()).map(|r| {
-        json!({
-            "public_ip": r.public_ip,
-            "mapped_port": r.mapped_port,
-            "mapping_type": r.mapping_type,
-            "public_ipv6": r.public_ipv6,
-            "ipv6_port": r.ipv6_port,
-            "lan_ipv4": r.lan_ipv4,
-        })
-    });
+    let addrs: Vec<String> = presence
+        .and_then(|p| p.addrs.as_ref())
+        .map(|a| a.list.clone())
+        .unwrap_or_default();
     json!({
         "device_id": record.device_id,
         "name": record.name,
@@ -391,9 +361,9 @@ fn device_view(record: &DeviceRecord, presence: Option<&Presence>, now: u64) -> 
         "library_name": record.library_name,
         "online": online,
         "last_seen_at_ms": last_seen,
-        "fingerprint": record.fingerprint,
+        "endpoint_id": record.endpoint_id,
         "allow_remote": record.allow_remote,
         "allow_write": record.allow_write,
-        "reachability": reachability,
+        "addrs": addrs,
     })
 }

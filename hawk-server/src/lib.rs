@@ -6,13 +6,10 @@ pub mod api;
 pub mod auth;
 pub mod identity;
 pub mod keystore;
-pub mod probe;
 pub mod ratelimit;
-pub mod relay_socket;
 pub mod settings;
 pub mod state;
 pub mod store;
-pub mod tls_client;
 pub mod viewer;
 
 use settings::Cli;
@@ -27,42 +24,66 @@ pub async fn run(settings: &Cli) -> std::io::Result<()> {
     let store = store::Store::load(&data_dir)?;
     let mut state = state::AppState::new(keys.clone(), store);
 
-    // 打洞探测口（P3，UDP）：绑定失败只降级不阻断启动——打洞编排关闭，
-    // 无直连候选的会话退回 unreachable（同编排出现之前的行为）
-    let probe_socket = if settings.probe_port == 0 {
-        None
-    } else {
-        match tokio::net::UdpSocket::bind(("0.0.0.0", settings.probe_port)).await {
-            Ok(socket) => Some(socket),
-            Err(e) => {
-                tracing::error!(
-                    port = settings.probe_port,
-                    "打洞探测口绑定失败（打洞编排关闭）: {e}"
-                );
-                None
-            }
+    // 内嵌中继（可选组件）：--relay-url 提供公网入口才启用；准入为数据目录里的
+    // 共享 token（随会话 connect 经控制面下发给池内成员，控制面已有鉴权 + TLS）
+    let relay_url = settings.relay_url.clone().filter(|u| !u.trim().is_empty());
+    let _relay_server = match &relay_url {
+        Some(url) => {
+            let token = load_or_create_relay_token(&data_dir)?;
+            let mut config = iroh_relay::server::ServerConfig::default();
+            let mut relay_config = iroh_relay::server::RelayConfig::new(SocketAddr::from((
+                [0, 0, 0, 0],
+                settings.relay_port,
+            )));
+            relay_config.access = Arc::new(TokenAccess(token.clone()));
+            config.relay = Some(relay_config);
+            let server = iroh_relay::server::Server::spawn(config)
+                .await
+                .map_err(std::io::Error::other)?;
+            tracing::info!(
+                port = settings.relay_port,
+                url = url.as_str(),
+                "hawk-server embedded relay listening"
+            );
+            state.relay_info = Some(serde_json::json!({ "url": url, "token": token }));
+            Some(server)
+        }
+        None => {
+            tracing::info!("未配置 --relay-url：本部署不提供中继（纯直连形态）");
+            None
         }
     };
-    state.probe_port = probe_socket.as_ref().map(|_| settings.probe_port);
     let state = Arc::new(state);
-    if let Some(socket) = probe_socket {
-        tracing::info!(
-            port = settings.probe_port,
-            "hawk-server probe listening (UDP)"
-        );
-        tokio::spawn(probe::run(state.clone(), socket));
-    }
 
-    // 网页版宿主：服务端设备身份 + 「网页版」设备行 upsert + 查看会话管理
+    // 网页版宿主：服务端设备身份 + 「网页版」设备行 upsert + 查看会话管理；
+    // 宿主的长驻 iroh endpoint 在此创建（B 侧拨号方；中继配置随服务端部署形态）
     let mut identity =
         identity::Identity::load_or_create(&data_dir).map_err(std::io::Error::other)?;
+    let endpoint = {
+        let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .alpns(vec![viewer::HAWK_ALPN.to_vec()])
+            .secret_key(identity.secret_key().map_err(std::io::Error::other)?);
+        builder = match &state.relay_info {
+            Some(info) => {
+                let url: iroh::RelayUrl = info["url"]
+                    .as_str()
+                    .and_then(|u| u.parse().ok())
+                    .ok_or_else(|| std::io::Error::other("relay url 非法"))?;
+                let map = iroh::RelayMap::from(url);
+                let token = info["token"].as_str().unwrap_or_default();
+                builder.relay_mode(iroh::RelayMode::Custom(map.with_auth_token(token)))
+            }
+            None => builder.relay_mode(iroh::RelayMode::Disabled),
+        };
+        builder.bind().await.map_err(std::io::Error::other)?
+    };
     let device_id =
         viewer::ensure_viewer_device(&state, &identity).map_err(std::io::Error::other)?;
     if identity.device_id.is_none() {
         identity.device_id = Some(device_id);
         identity.persist(&data_dir).map_err(std::io::Error::other)?;
     }
-    let viewer = viewer::ViewerManager::new(state.clone(), identity, &data_dir);
+    let viewer = viewer::ViewerManager::new(state.clone(), identity, endpoint, &data_dir);
 
     if settings.admin_port == settings.port {
         return Err(std::io::Error::new(
@@ -120,4 +141,39 @@ pub fn run_tenant_command(
         }
     }
     Ok(())
+}
+
+/// 内嵌中继的共享准入 token：数据目录 relay_token 文件（0600，首启自生成）
+fn load_or_create_relay_token(data_dir: &std::path::Path) -> std::io::Result<String> {
+    let file = data_dir.join("relay_token");
+    if let Ok(token) = std::fs::read_to_string(&file) {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Ok(token);
+        }
+    }
+    let token = identity::hex_encode(&rand::random::<[u8; 32]>());
+    std::fs::write(&file, &token)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(token)
+}
+
+/// 内嵌中继准入：共享 token（iroh-relay 的 AccessControl 实现点）
+#[derive(Debug)]
+struct TokenAccess(String);
+
+impl iroh_relay::server::AccessControl for TokenAccess {
+    async fn on_connect(
+        &self,
+        request: &iroh_relay::server::ClientRequest,
+    ) -> iroh_relay::server::Access {
+        match request.auth_token().as_deref() == Some(self.0.as_str()) {
+            true => iroh_relay::server::Access::Allow,
+            false => iroh_relay::server::Access::Deny { reason: None },
+        }
+    }
 }

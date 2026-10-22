@@ -14,7 +14,8 @@ pub struct DeviceRecord {
     pub tenant_id: String,
     pub name: String,
     pub platform: String,
-    pub fingerprint: String,
+    /// iroh EndpointId（Ed25519 公钥 hex；握手按公钥认证，无单独钉扎环节）
+    pub endpoint_id: String,
     pub library_name: String,
     pub allow_remote: bool,
     /// 目标设备是否允许广域网写会话（由设备注册/心跳上报）

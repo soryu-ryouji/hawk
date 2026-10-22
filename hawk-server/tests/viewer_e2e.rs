@@ -8,7 +8,6 @@ use axum::Router;
 use futures_util::StreamExt;
 use hawk_daemon::remote::data::{DataPlane, TunneledPeer};
 use hawk_daemon::remote::identity::Identity as DaemonIdentity;
-use hawk_daemon::remote::{relay as daemon_relay, tls as daemon_tls};
 use hawk_server::api;
 use hawk_server::keystore::{sha256_hex, KeyStore};
 use hawk_server::state::AppState;
@@ -34,7 +33,14 @@ async fn spawn_server(dir: &Path) -> (String, String) {
         identity.device_id = Some(device_id);
         identity.persist(dir).unwrap();
     }
-    let viewer = hawk_server::viewer::ViewerManager::new(state.clone(), identity, dir);
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .alpns(vec![hawk_daemon::remote::data::HAWK_ALPN.to_vec()])
+        .secret_key(identity.secret_key().unwrap())
+        .relay_mode(iroh::RelayMode::Disabled)
+        .bind()
+        .await
+        .unwrap();
+    let viewer = hawk_server::viewer::ViewerManager::new(state.clone(), identity, endpoint, dir);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -89,7 +95,7 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
         .post(format!("http://{base}/api/v1/devices"))
         .bearer_auth(service_key)
         .json(&json!({
-            "name": "家里台式机", "platform": "macos", "fingerprint": identity.fingerprint,
+            "name": "家里台式机", "platform": "macos", "endpoint_id": identity.endpoint_id,
             "library_name": "A 的库", "allow_remote": true, "allow_write": true,
         }))
         .send()
@@ -99,16 +105,6 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
         .await
         .unwrap();
     let device_a = resp["data"]["device_id"].as_str().unwrap().to_string();
-    client
-        .post(format!("http://{base}/api/v1/devices/heartbeat"))
-        .bearer_auth(service_key)
-        .json(&json!({
-            "device_id": device_a,
-            "reachability": { "mapped_port": null, "mapping_type": "none", "public_ipv6": null, "ipv6_port": null }
-        }))
-        .send()
-        .await
-        .unwrap();
 
     // key 映射同步（daemon 上送 sha256，server 不见明文）
     let resp = client
@@ -123,7 +119,23 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
         .unwrap();
     assert_eq!(resp.status(), 200, "key 映射同步失败");
 
-    let plane = DataPlane::bind(&identity, 0, a_router()).unwrap();
+    let plane = DataPlane::bind(&identity, 0, None, a_router())
+        .await
+        .unwrap();
+    // 心跳上报真实直连地址（网页版宿主经此拨号；iroh 传输层自治路径选择）
+    let resp_hb = client
+        .post(format!("http://{base}/api/v1/devices/heartbeat"))
+        .bearer_auth(service_key)
+        .json(&json!({
+            "device_id": device_a,
+            "addrs": plane.direct_addrs(),
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = resp_hb.status();
+    let body = resp_hb.text().await.unwrap();
+    assert!(status.is_success(), "心跳失败 {status}: {body}");
 
     // A 侧本地 key 执法依据（真实 daemon 由 remote::keys::KeyStore 承载；此处内联模拟）
     let known_keys: Arc<std::sync::Mutex<Vec<(String, bool)>>> =
@@ -138,7 +150,6 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
         let service_key = service_key.to_string();
         let device_a = device_a.clone();
         let plane = plane.clone();
-        let identity = identity.clone();
         tokio::spawn(async move {
             use tokio_tungstenite::tungstenite::client::IntoClientRequest;
             let mut req = format!("ws://{base}/api/v1/ws?device_id={device_a}")
@@ -180,14 +191,15 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
                         continue;
                     }
                 }
-                // 对端指纹随 session.request 下发（协议：from.fingerprint）
-                let fp_hex = match v["from"]["fingerprint"].as_str() {
-                    Some(fp) => fp.to_string(),
-                    None => continue,
+                // 对端身份随 session.request 下发（协议：from.endpoint_id）
+                let Some(peer) = v["from"]["endpoint_id"]
+                    .as_str()
+                    .and_then(|s| s.parse::<iroh::EndpointId>().ok())
+                else {
+                    continue;
                 };
-                let fp = daemon_tls::parse_fingerprint(&fp_hex).unwrap();
-                plane.allow_session(&session_id, fp, requested_write);
-                // accept
+                plane.allow_session(&session_id, peer, requested_write);
+                // accept（之后网页版宿主直接按 connect 的直连地址拨号过来）
                 let _resp = http
                     .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
                     .bearer_auth(&service_key)
@@ -195,25 +207,6 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
                     .send()
                     .await
                     .unwrap();
-                // 中继 WS（role=a）+ QUIC 服务
-                let relay_req = daemon_relay::relay_ws_request(
-                    &format!("http://{base}"),
-                    &service_key,
-                    &device_a,
-                    &session_id,
-                    "a",
-                )
-                .unwrap();
-                let (relay_ws, _) = match tokio_tungstenite::connect_async(relay_req).await {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-                let plane2 = plane.clone();
-                let identity2 = identity.clone();
-                tokio::spawn(async move {
-                    let _ = daemon_relay::serve_over_ws(&identity2, &plane2, relay_ws, a_router())
-                        .await;
-                });
             }
         });
     }

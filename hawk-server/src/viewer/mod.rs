@@ -8,9 +8,11 @@ pub mod page;
 pub mod proxy;
 mod tokens;
 
+/// 隧道 ALPN（协议常量；两侧零代码共享，各自硬编码同一值）
+pub const HAWK_ALPN: &[u8] = b"hawk/1";
+
 use crate::api::sessions::create_session_internal;
 use crate::identity::Identity;
-use crate::relay_socket::RelaySocket;
 use crate::state::{Access, AppState, SessionState};
 use crate::store::DeviceRecord;
 use serde_json::{json, Value};
@@ -33,8 +35,7 @@ pub struct ViewerSession {
     pub target_device_id: String,
     pub target_name: String,
     pub target_library_name: String,
-    pub conn: quinn::Connection,
-    _endpoint: quinn::Endpoint,
+    pub conn: iroh::endpoint::Connection,
 }
 
 struct ViewerInner {
@@ -49,6 +50,8 @@ struct ViewerInner {
 pub struct ViewerManager {
     state: Arc<AppState>,
     identity: Identity,
+    /// 「网页版」宿主的长驻 iroh endpoint（B 侧拨号方）
+    endpoint: iroh::Endpoint,
     inner: Mutex<ViewerInner>,
     tokens_file: PathBuf,
 }
@@ -57,12 +60,14 @@ impl ViewerManager {
     pub fn new(
         state: Arc<AppState>,
         identity: Identity,
+        endpoint: iroh::Endpoint,
         data_dir: &std::path::Path,
     ) -> Arc<ViewerManager> {
         let token_hashes = tokens::load(&data_dir.join("viewer_tokens.json"));
         Arc::new(ViewerManager {
             state,
             identity,
+            endpoint,
             inner: Mutex::new(ViewerInner {
                 token_hashes,
                 sessions: HashMap::new(),
@@ -150,7 +155,7 @@ impl ViewerManager {
         self.session_for(token).map(|s| session_view(&s))
     }
 
-    /// 打开（或复用）到绑定设备的查看会话：建会话 → 轮询 ready → 进程内中继 → QUIC 钉扎连接。
+    /// 打开（或复用）到绑定设备的查看会话：建会话 → 轮询 ready → iroh 拨号（身份即认证）。
     /// bt 在建令牌时已绑定唯一目标设备，target 只能等于它
     pub async fn open_session(
         self: &Arc<Self>,
@@ -187,7 +192,6 @@ impl ViewerManager {
             &self.state,
             &source,
             target_device_id,
-            "relay",
             access,
             Some(grant.credential.clone()),
         )
@@ -197,8 +201,8 @@ impl ViewerManager {
         }
 
         // 轮询 ready（A 侧经 WSS 异步 accept）
-        let fingerprint = match poll_ready(&self.state, &hawk_session_id).await {
-            Some(fingerprint) => fingerprint,
+        let connect = match poll_ready(&self.state, &hawk_session_id).await {
+            Some(connect) => connect,
             None => {
                 let state = self
                     .state
@@ -222,30 +226,21 @@ impl ViewerManager {
             }
         };
 
-        // 进程内中继 + QUIC 钉扎连接
-        let socket = RelaySocket::register(self.state.clone(), &hawk_session_id);
-        let client_config = crate::tls_client::client_config(&self.identity, fingerprint)?;
-        let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
-            None,
-            Arc::new(socket),
-            quinn::default_runtime().ok_or_else(|| "tokio runtime 不可用".to_string())?,
+        // iroh 拨号（endpoint_id 即认证；直连地址与中继由传输层自治竞速）
+        let addr = build_endpoint_addr(&connect)?;
+        let conn = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            self.endpoint.connect(addr, crate::viewer::HAWK_ALPN),
         )
-        .map_err(|e| format!("中继端点创建失败: {e}"))?;
-        endpoint.set_default_client_config(client_config);
-        let connecting = endpoint
-            .connect(crate::relay_socket::RELAY_ADDR, "hawk-remote")
-            .map_err(|e| format!("中继隧道发起失败: {e}"))?;
-        let conn = tokio::time::timeout(CONNECT_TIMEOUT, connecting)
-            .await
-            .map_err(|_| {
-                tracing::warn!("查看会话 {hawk_session_id} 中继隧道握手超时（{CONNECT_TIMEOUT:?}，目标 {target_device_id}）");
-                "中继隧道握手超时".to_string()
-            })?
-            .map_err(|e| {
-                tracing::warn!("查看会话 {hawk_session_id} 中继隧道握手失败: {e}");
-                format!("中继隧道握手失败: {e}")
-            })?;
+        .await
+        .map_err(|_| {
+            tracing::warn!("查看会话 {hawk_session_id} 隧道握手超时（{CONNECT_TIMEOUT:?}，目标 {target_device_id}）");
+            "隧道握手超时".to_string()
+        })?
+        .map_err(|e| {
+            tracing::warn!("查看会话 {hawk_session_id} 隧道握手失败: {e}");
+            format!("隧道握手失败: {e}")
+        })?;
 
         let (target_name, target_library_name) = self
             .state
@@ -264,7 +259,6 @@ impl ViewerManager {
             target_name,
             target_library_name,
             conn: conn.clone(),
-            _endpoint: endpoint,
         });
 
         // 新会话顶替旧绑定（旧会话尽力取消）
@@ -370,7 +364,7 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
                 rec.name = crate::identity::VIEWER_DEVICE_NAME.to_string();
                 rec.platform = "server".to_string();
                 rec.library_name = "网页查看器".to_string();
-                rec.fingerprint = identity.fingerprint.clone();
+                rec.endpoint_id = identity.endpoint_id.clone();
                 rec.allow_remote = false;
                 rec.allow_write = false;
             })
@@ -382,7 +376,7 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
                 tenant_id: String::new(),
                 name: crate::identity::VIEWER_DEVICE_NAME.to_string(),
                 platform: "server".to_string(),
-                fingerprint: identity.fingerprint.clone(),
+                endpoint_id: identity.endpoint_id.clone(),
                 library_name: "网页查看器".to_string(),
                 allow_remote: false,
                 allow_write: false,
@@ -393,8 +387,8 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
     Ok(device_id)
 }
 
-/// 轮询会话 ready 并取出目标指纹（A 侧 accept 后 connect 携带）
-async fn poll_ready(state: &Arc<AppState>, session_id: &str) -> Option<[u8; 32]> {
+/// 轮询会话 ready 并取出连接信息（A 侧 accept 后 connect 携带）
+async fn poll_ready(state: &Arc<AppState>, session_id: &str) -> Option<Value> {
     let deadline = tokio::time::Instant::now() + READY_TIMEOUT;
     loop {
         let (state_str, connect) = {
@@ -405,10 +399,7 @@ async fn poll_ready(state: &Arc<AppState>, session_id: &str) -> Option<[u8; 32]>
                 .unwrap_or_default()
         };
         match state_str.as_str() {
-            "ready" => {
-                let hex_str = connect?["fingerprint"].as_str()?.to_string();
-                return parse_fingerprint(&hex_str);
-            }
+            "ready" => return connect,
             "" => return None, // 会话不存在
             "rejected" | "unreachable" | "expired" | "cancelled" => return None,
             _ => {}
@@ -420,10 +411,24 @@ async fn poll_ready(state: &Arc<AppState>, session_id: &str) -> Option<[u8; 32]>
     }
 }
 
-fn parse_fingerprint(hex_str: &str) -> Option<[u8; 32]> {
-    let bytes: Vec<u8> = (0..hex_str.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(hex_str.get(i..i + 2)?, 16).ok())
-        .collect::<Option<_>>()?;
-    bytes.try_into().ok()
+/// connect 对象 → iroh EndpointAddr（endpoint_id + 直连地址 + 可选中继）
+fn build_endpoint_addr(connect: &Value) -> Result<iroh::EndpointAddr, String> {
+    let endpoint_id: iroh::EndpointId = connect["endpoint_id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| "连接信息缺少 endpoint_id".to_string())?;
+    let mut addr = iroh::EndpointAddr::new(endpoint_id);
+    if let Some(addrs) = connect["direct_addresses"].as_array() {
+        for a in addrs {
+            if let Some(sock) = a.as_str().and_then(|s| s.parse().ok()) {
+                addr = addr.with_ip_addr(sock);
+            }
+        }
+    }
+    if let Some(url) = connect["relay"]["url"].as_str() {
+        if let Ok(relay_url) = url.parse() {
+            addr = addr.with_relay_url(relay_url);
+        }
+    }
+    Ok(addr)
 }

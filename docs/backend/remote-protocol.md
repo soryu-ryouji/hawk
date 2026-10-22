@@ -2,7 +2,8 @@
 
 > hawk 客户端（hawk-daemon 的 remote 模块，见 [remote-access.md](remote-access.md)）与远程访问服务端（hawk-server，本仓库 `hawk-server/`）之间的接口契约。协议是两侧的唯一共享物，实现零代码共享。
 > 多租户方案：一台 hawk-server 可服务多个池（租户）。两级凭证——**service-key**（池门禁，程序生成，server 侧 `tenant add` 创建）与 **hawk-app key**（设备本地签发，逐把读/写权限，分发给网页版/插件等查看者）。协议无账号/会员/计费概念；账号系统后续接入时只替换 service-key 的签发水源，协议不动。访问被拒的语义为凭证无效（401）。
-> 总体架构见 [remote-access.md](remote-access.md)。标注 `[P1]` 为直连控制面（已实现）；`[P2]` 为中继（已实现，见「中继」一节）；`[P3]` 为 NAT 打洞（已实现，见「NAT 打洞」一节）。
+> 总体架构见 [remote-access.md](remote-access.md)。
+> **传输层为 [iroh](https://github.com/n0-computer/iroh)**（QUIC/noq + magicsock：打洞、中继、路径迁移、映射保活内建）。控制面只负责撮合与凭证——候选组装、打洞时序、中继回落等传输细节不进本协议；控制面交换的寻址信息是 iroh 的 `EndpointAddr`（endpoint_id + relay_url + 直连地址列表）。
 
 ## 凭证模型
 
@@ -53,6 +54,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 
 - 控制面鉴权头：`Authorization: Bearer <service_key>`。**WS 升级请求同样用该头**——key 一律不走 URL 查询串（反代 access log 会记录完整 URL）
 - **device_id**：设备注册时由服务端分配，客户端持久化，随请求携带。客户端设备身份是**应用级**的（不随素材库切换）；同一设备切换素材库后由心跳更新 `library_name`
+- **endpoint_id**：设备的 iroh 身份（Ed25519 公钥，hex 编码）。iroh 握手即按公钥认证——没有单独的证书钉扎环节；轮换即换钥，旧身份的会话随即失效
 - 控制面全量 TLS：由前置反代（Caddy 等）终结，hawk-server 进程监听明文 HTTP
 - 限速：心跳最小间隔 10s（违反返回 429）；凭证验证面限速见「凭证模型」
 
@@ -68,7 +70,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 
 设备注册表持久化于服务端数据目录（`devices.json`，含 `tenant_id` 池归属），会话与在线状态为内存状态，服务端重启后设备需重新心跳上线。
 
-### `[P1] POST /api/v1/devices`
+### `POST /api/v1/devices`
 
 注册设备（service-key 鉴权，设备入调用者所在池），返回 device_id。
 
@@ -77,7 +79,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 {
   "name": "家里台式机",
   "platform": "windows",
-  "fingerprint": "<sha256-hex，QUIC 自签名证书 DER 的哈希>",
+  "endpoint_id": "<hex，iroh EndpointId（Ed25519 公钥）>",
   "library_name": "我的素材库",
   "allow_remote": true,
   "allow_write": false
@@ -90,36 +92,33 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 `allow_write`：目标设备当前是否允许广域网写会话（对应应用级 `remote.toml` 的 `writable`）；由设备注册/心跳上报，服务端用于写会话预检，最终由目标 daemon 按本地 key 映射每请求裁决。
 `library_name`：设备当前打开的素材库名。设备身份跨库共享，同一台设备切换库后经心跳更新设备表，避免列表展示旧库名。
 
-### `[P1] POST /api/v1/devices/heartbeat`
+### `POST /api/v1/devices/heartbeat`
 
-设备在线心跳，携带可达性信息。间隔 30s；服务端 90s 未收到心跳判离线。设备须属调用者池（他池设备 404）。
+设备在线心跳，携带寻址信息。间隔 30s；服务端 90s 未收到心跳判离线。设备须属调用者池（他池设备 404）。
 
 ```json
 // 请求（service-key 鉴权；device_id 标识本机）
 {
   "device_id": "d_42",
   "allow_write": false,
-  "library_name": "我的素材库",      // 当前打开的库名；服务端据此收敛设备表（可省略）
-  "reachability": {
-    "public_ip": "1.2.3.4",          // 设备自报公网 IPv4；服务端与连接源地址比对，以服务端为准（自报值可不填）
-    "mapped_port": 27373,             // UPnP/NAT-PMP 映射的外部端口（期望端口被占时为网关实际分配的任意端口）；无映射为 null
-    "mapping_type": "upnp",           // none / upnp / pmp
-    "public_ipv6": "240e:xxxx::1",    // 全局 IPv6（通往服务端出接口的当前地址，临时地址轮换由心跳周期自然刷新）；无则 null
-    "ipv6_port": 27373,               // QUIC 监听端口；IPv6 无 NAT 映射，防火墙放行即可入站，服务端无法验证可达性——B 的连接尝试即最终校验
-    "lan_ipv4": "192.168.1.5",        // LAN IPv4（出接口私网地址）：双方同公网 IP 时作 LAN 候选下发；非公网私网地址不上报
-    "nat_type": "cone"                // [P3 预留] 打洞用；服务端当前忽略
-  }
+  "library_name": "我的素材库",   // 当前打开的库名；服务端据此收敛设备表（可省略）
+  "addrs": [                      // iroh 上报的直连地址集（本机接口 + 端口映射/外部地址；
+    "192.168.1.5:27373",          // 随网络环境刷新，心跳周期自然收敛），空数组 = 无直连地址
+    "1.2.3.4:27373"
+  ]
 }
 // 响应
 { "status": "success", "data": {
     "server_time_ms": 1750000000000,
-    "public_ip_seen": "1.2.3.4"       // 服务端看到的连接源地址（权威值）
+    "public_ip_seen": "1.2.3.4"   // 服务端看到的连接源地址（诊断用）
 } }
 ```
 
-### `[P1] GET /api/v1/devices`
+寻址的权威性说明：客户端上报的是自己视角的直连地址，服务端不验证其可达性——**拨号方的连接尝试即最终校验**（不可达的地址 iroh 会自然跳过；提供中继时打洞/回落由传输层兜底）。
 
-本池设备列表（service-key 鉴权；不含「网页版」全局设备）。`online` 以心跳为准（90s 内心跳为在线）；`reachability` 为最近一次心跳的上报（`public_ip` 为服务端权威值），未心跳过为 null：
+### `GET /api/v1/devices`
+
+本池设备列表（service-key 鉴权；不含「网页版」全局设备）。`online` 以心跳为准（90s 内心跳为在线）；`addrs` 为最近一次心跳的上报，未心跳过为空：
 
 ```json
 {
@@ -133,23 +132,17 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
         "library_name": "我的素材库",
         "online": true,
         "last_seen_at_ms": 1750000000000,
-        "fingerprint": "...",
+        "endpoint_id": "...",
         "allow_remote": true,
         "allow_write": false,
-        "reachability": {
-          "public_ip": "1.2.3.4",
-          "mapped_port": 27373,
-          "mapping_type": "upnp",
-          "public_ipv6": "240e:xxxx::1",
-          "ipv6_port": 27373
-        }
+        "addrs": ["192.168.1.5:27373", "1.2.3.4:27373"]
       }
     ]
   }
 }
 ```
 
-### `[P1] PATCH /api/v1/devices/{device_id}`
+### `PATCH /api/v1/devices/{device_id}`
 
 更新设备（service-key 鉴权；他池设备 404）：
 
@@ -159,18 +152,18 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
   "name": "新名字",
   "allow_remote": false,
   "library_name": "工作库",
-  "fingerprint": "<新证书指纹>"
+  "endpoint_id": "<新 endpoint_id>"
 }
 // 响应：更新后的设备信息（同 GET /devices 单条结构）
 ```
 
-`fingerprint` 更新即证书轮换：新指纹立即生效，旧证书的会话随即失效。
+`endpoint_id` 更新即身份轮换：新身份立即生效，旧身份的会话随即失效。
 
-### `[P1] DELETE /api/v1/devices/{device_id}`
+### `DELETE /api/v1/devices/{device_id}`
 
 注销设备（service-key 鉴权；他池设备 404）。其进行中的会话一并取消，对端经 WSS 收到 `session.cancelled`；该设备的 hawk-app key 映射一并清除。
 
-### `[P1] PUT /api/v1/devices/{device_id}/keys`
+### `PUT /api/v1/devices/{device_id}/keys`
 
 全量同步本设备的 hawk-app key 映射（service-key 鉴权；覆盖式，daemon 在 key 变更与每次接入时推送）。daemon 只上送验证子 `s = sha256(key)`，server 不见明文：
 
@@ -223,17 +216,15 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 
 ### 服务端 → 设备
 
-| type                | 内容                                                                                   | 阶段 |
-| ------------------- | -------------------------------------------------------------------------------------- | ---- |
-| `hello`             | `{ "device_id", "server_time_ms" }`                                                    | P1   |
-| `ping`              | `{}`（保活，30s 间隔，两次未回 pong 断开）                                              | P1   |
-| `session.request`   | `{ "session_id", "from": { "device_id", "name", "library_name", "fingerprint" }, "mode": "direct", "access": "read" \| "write", "credential": "<sha256-hex 或 null>" }` | P1   |
-| `session.update`    | `{ "session_id", "state", ... }`（状态变更推送双方；轮询为兜底）                         | P1   |
-| `session.probe`     | `{ "session_id", "probe_port", "token": "<32-hex>" }`（打洞探测邀约，见「NAT 打洞」一节） | P3   |
-| `session.relay_path` | `{ "session_id" }`（既有会话附加中继路径，双方收到后经 `/relay` 接入；见「中继」一节） | P4   |
-| `session.cancelled` | `{ "session_id" }`                                                                     | P1   |
+| type                | 内容                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| `hello`             | `{ "device_id", "server_time_ms" }`                                                    |
+| `ping`              | `{}`（保活，30s 间隔，两次未回 pong 断开）                                              |
+| `session.request`   | `{ "session_id", "from": { "device_id", "name", "library_name", "endpoint_id" }, "access": "read" \| "write", "credential": "<sha256-hex 或 null>" }` |
+| `session.update`    | `{ "session_id", "state", ... }`（状态变更推送双方；轮询为兜底）                         |
+| `session.cancelled` | `{ "session_id" }`                                                                     |
 
-`from.fingerprint`：发起方的 QUIC 证书指纹（服务端持有双方设备记录，随请求下发，省一次设备列表往返）。`credential`：查看者会话的 key 验证子（app 间会话为 null）；目标 daemon 据此比对本地 key 映射执法——未命中/权限不足/本机 writable 关闭即拒绝。
+`from.endpoint_id`：发起方的 iroh 身份（服务端持有双方设备记录，随请求下发，省一次设备列表往返）。`credential`：查看者会话的 key 验证子（app 间会话为 null）；目标 daemon 据此比对本地 key 映射执法——未命中/权限不足/本机 writable 关闭即拒绝。
 
 ### 设备 → 服务端
 
@@ -248,13 +239,13 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 
 ## 会话编排
 
-### `[P1] POST /api/v1/sessions`
+### `POST /api/v1/sessions`
 
-发起 app 间会话（service-key 鉴权；双方设备须同池，跨池 404）。`mode` 为 `direct`（本节）或 `relay`（见「中继」一节）。app 间会话默认 `access=read`、不携带凭证；查看面会话由 hawk-server 以「网页版」全局设备身份发起（relay 模式），携带查看者凭证，`access=write` 要求目标设备 `allow_write=true`。
+发起会话（service-key 鉴权；双方设备须同池，跨池 404）。**无 mode 参数**——直连/打洞/中继的选择是传输层自治，不进控制面。app 间会话默认 `access=read`、不携带凭证；查看面会话由 hawk-server 以「网页版」全局设备身份发起，携带查看者凭证，`access=write` 要求目标设备 `allow_write=true`。
 
 ```json
 // 请求
-{ "source_device_id": "d_77", "target_device_id": "d_42", "mode": "direct" }
+{ "source_device_id": "d_77", "target_device_id": "d_42" }
 // 响应
 { "status": "success", "data": { "session_id": "s_9", "state": "pending" } }
 ```
@@ -264,11 +255,11 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 1. 校验来源/目标设备存在且同池、目标设备在线（不在线返回 404）；`allow_remote=false` 直接置会话状态 `rejected`；`access=write` 且目标 `allow_write=false` 返回 403
 2. 经 WSS 向目标推送 `session.request`（含 `access`、查看者会话含 `credential`）
 3. 目标回 `POST /api/v1/sessions/{id}/accept`（service-key 鉴权），响应 `{ "status": "success" }`；拒绝则回 reject，会话状态变 `rejected`。目标 daemon 对查看者会话做本地执法（key 存在性/权限/writable 总开关），不通过即 reject
-4. 服务端组装连接信息：探测口启用时直连会话一律进入打洞编排（见「NAT 打洞」一节）——无直连候选等探测到齐（8s），有候选短等附带 punch 候选（2s）；探测口未启用则取目标最近心跳组装候选立即 ready（无任何候选置 unreachable），经 WSS `session.update` 推送双方
+4. 服务端组装连接信息并置 ready，经 WSS `session.update` 推送双方（见下）
 
 发起方以 WSS 推送为准（轮询 1s 间隔、上限 30s 为兜底；超时状态变 `expired`）：
 
-### `[P1] GET /api/v1/sessions/{session_id}`
+### `GET /api/v1/sessions/{session_id}`
 
 会话状态即全部结果语义：
 
@@ -279,152 +270,63 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 { "status": "success", "data": {
     "session_id": "s_9", "state": "ready",
     "connect": {
-      "mode": "direct",
-      "candidates": [
-        { "transport": "ipv4", "host": "1.2.3.4", "port": 27373 },     // UPnP/NAT-PMP 映射候选
-        { "transport": "ipv6", "host": "240e:xxxx::1", "port": 27373 } // 全局 IPv6 候选（无映射依赖）
-      ],
-      "fingerprint": "<sha256-hex，TOFU 钉扎目标 QUIC 证书>",
-      "punch_peer": { "host": "5.6.7.8", "port": 40123 }              // [P3] 仅打洞编排时存在：发起方的 observed endpoint，目标设备开口用（发起方忽略）
+      "endpoint_id": "<hex，目标设备的 iroh 身份>",
+      "relay": { "url": "https://<base>:9102", "token": "<relay 准入 token>" },  // 服务端内嵌中继启用时存在
+      "direct_addresses": ["192.168.1.5:27373", "1.2.3.4:27373"]                  // 目标最近心跳上报；可空
     }
 } }
 ```
 
-候选列表由服务端按心跳上报组装，顺序：**LAN 候选**（双方同公网 IP 且目标上报 `lan_ipv4` 时，`{ "transport": "lan", ... }` 排最前——同局域网内网直连，绕开 hairpin/UPnP/CGNAT；错配由指纹钉扎快速证伪）→ IPv4 映射 → IPv6 → 打洞候选 `{ "transport": "punch", ... }` 排最后（见「NAT 打洞」一节），缺失项省略。客户端对全部候选**并行竞速**（Happy Eyeballs：quinn 握手钉死在首个 Initial 的地址上，故竞速在握手层并行——每候选独立 mux endpoint，首个握手胜者赢，败者即取消），直连候选超时 5s（punch 候选 15s），任一成功即建立 QUIC 连接（指纹钉扎对所有候选一致）。**全部候选失败不是会话状态**——那是客户端本地判定直连失败：中继开关开启时弹窗询问用户是否经中继继续，未开启则提示到设置中开启；会话本身保持 ready，由用户选择后取消或另建中继会话。
+`connect` 即 iroh `EndpointAddr` 的控制面表达：`endpoint_id` + 直连地址 +（可选）中继。发起方据此拨号：
+
+- 服务端提供中继（`relay` 字段在场）：拨号带上 `relay`——iroh 先经中继建连（首字节零等待），后台打洞成功后流量自动迁移到直连；打洞不成则一直在中继上。**中继同时是打洞协调通道：无中继的部署（connect 无 relay 字段）只有直连地址可达的会话能建立**
+- 客户端设备级开关可选择不使用中继（拨号时丢弃 `relay` 字段并以 relay-disabled 形态重建 endpoint）；不需要逐次确认——是否使用中继只由「服务端是否提供 × 客户端是否接受」两个静态开关决定
+- `endpoint_id` 即身份：iroh 握手按 Ed25519 公钥认证，无需额外钉扎
 
 | state         | 含义                                          | 客户端行为                                                 |
 | ------------- | --------------------------------------------- | ---------------------------------------------------------- |
 | `pending`     | 等待目标设备响应                              | 继续等待                                                   |
-| `ready`       | 连接信息已就绪                                | 建立 QUIC 隧道                                             |
+| `ready`       | 连接信息已就绪                                | 建立隧道（iroh connect）                                   |
 | `rejected`    | 目标设备拒绝（或 `allow_remote=false`，或查看者 key 未过本地执法） | 展示"对方拒绝"                                             |
-| `unreachable` | 目标无任何可用直连路径（无 v4 映射、无全局 IPv6，且打洞编排不可用或探测失败） | 中继开关开启时询问用户是否走中继；未开启则提示到设置中开启 |
+| `unreachable` | 服务端未提供中继且目标无任何直连地址            | 提示当前网络不可达（开中继/换网络后重试）                   |
 | `expired`     | 建立超时（30s）                               | 提供重试                                                   |
 | `cancelled`   | 任一方取消（或设备注销）                      | 结束                                                       |
 
 查看方本地代理（端口、会话随机 token）由发起方客户端自行生成，不进协议——隧道建立后由客户端拼装 web 查看器 URL（见数据面一节）。
 
-### `[P1] POST /api/v1/sessions/{session_id}/accept`
+### `POST /api/v1/sessions/{session_id}/accept`
 
 目标设备接受会话（service-key 鉴权），请求体携带 `{ "device_id": "d_42" }` 标识本机，响应 `{ "status": "success" }`。仅 pending 状态可响应（重复响应或响应终态会话返回 409）；仅目标设备可响应（来源设备响应返回 403）；目标设备须属调用者池（跨池 404）。
 
-### `[P1] POST /api/v1/sessions/{session_id}/reject`
+### `POST /api/v1/sessions/{session_id}/reject`
 
 目标设备拒绝会话（service-key 鉴权），请求体携带 `{ "device_id": "d_42" }` 标识本机；会话状态变 `rejected`。
 
-### `[P1] POST /api/v1/sessions/{session_id}/cancel`
+### `POST /api/v1/sessions/{session_id}/cancel`
 
 任一方取消会话（无请求体；会话双方之一须属调用者池）。pending/ready → `cancelled`，双方经 WSS 收到 `session.cancelled`；已 cancelled 幂等成功；其余终态返回 409。
 
-## 中继（P2）
+## 中继（服务端可选组件）
 
-直连失败时的兜底：会话数据面经服务端 WebSocket 字节转发。QUIC 仍在 A↔B 之间端到端建立（中继只搬运加密数据报，看不到素材内容）；多租户方案无票据/配额/用量上报，准入即本池 service-key。
+hawk-server 内嵌 [iroh-relay](https://docs.rs/iroh-relay)（库形态，不另起进程）。对协议而言中继**没有独立端点**——它只是 `connect.relay` 字段的来源；客户端与 relay 之间的协议是 iroh 内部事务。
 
-### `[P2] POST /api/v1/sessions`（mode=relay）
+- **准入**：内嵌 relay 配置 shared token（服务端启动配置）；token 随 `connect.relay.token` 经控制面下发（控制面有 service-key 鉴权 + TLS，准入语义等价于池内成员）
+- **开关**：`--relay-port 0` 关闭中继组件（该部署退化为纯直连：无 relay 字段、无打洞协调——只有直连地址可达的会话能建立）；客户端设备级开关可不使用中继
+- **带宽语义**：中继承载的是端到端加密的 QUIC 数据报（服务端只见密文）；「是否使用中继」不再有逐次确认——自建带宽保护由两个静态开关承载（服务端可提供与否 × 客户端可接受与否）
+- **网页版**：服务端的「网页版」宿主以全局设备身份作为发起方走同一会话流程（进程内 iroh endpoint 拨号），浏览器与服务器之间的查看面登录是服务端实现细节（见「查看面登录」）
 
-```json
-// 请求
-{ "source_device_id": "d_77", "target_device_id": "d_42", "mode": "relay" }
-// 响应
-{ "status": "success", "data": { "session_id": "s_9", "state": "pending" } }
-```
+## 数据面（iroh 隧道）
 
-流程同直连：推送 `session.request`（`mode` 为 `relay`）→ 目标 accept → 会话 ready。relay 模式的 `connect` 不携带候选（无需可达性上报）：
-
-```json
-{ "status": "success", "data": {
-    "session_id": "s_9", "state": "ready",
-    "connect": { "mode": "relay", "fingerprint": "<sha256-hex，TOFU 钉扎目标 QUIC 证书>" }
-} }
-```
-
-### `[P2] GET /api/v1/relay`（WS 数据通道）
-
-双方各自建立一条中继 WebSocket（鉴权走 `Authorization: Bearer <service_key>` 头），服务端配对后逐帧转发：
-
-```text
-wss://<base>/api/v1/relay?device_id=<device_id>&session_id=<session_id>&role=a|b
-```
-
-- `role=a` 为目标设备（素材库所在机），`role=b` 为发起方；服务端校验：会话存在且 `state=ready`、`mode=relay`、device_id 与该会话对应角色一致（不符 403/404）、设备属调用者池
-- **B 侧可以是服务端自身**：官方 hawk-server 的网页版宿主即以「网页版」全局设备身份作为发起方走本流程——进程内中继 socket 取代真实 WS，协议字节零差异。浏览器与服务器之间的查看面登录是服务端实现细节（见「查看面登录」）
-- 双方到齐后逐条转发二进制帧（**一帧 = 一个 QUIC 数据报**），不解析内容；文本帧忽略
-- 任一方断开 → 双方连接关闭，会话置 `cancelled`（双方控制通道收到 `session.cancelled`）
-- 客户端行为约定：直连失败（候选全部超时或无候选/unreachable）且「中继回退」开启时，经用户确认后以 `mode=relay` 另建会话；任何环节都不自动回落
-
-### `[P4] POST /api/v1/sessions/{session_id}/relay-path`（既有会话附加中继路径）
-
-统一传输 socket（mux，见「数据面」一节）下，中继是既有会话可热附加的一条**路径**，承载同一条 QUIC 连接（路径迁移），而非另建会话的新握手：
-
-```json
-// 请求：空体（会话双方之一须属调用者池，幂等）
-// 响应
-{ "status": "success" }
-```
-
-- 会话须为 `ready`（direct 会话中途降级 / relay 会话重复附加幂等成功；终态 409）
-- 服务端置会话 `relay_path` 标志并经 WSS 向双方推送 `session.relay_path`；双方随后以既有 `GET /api/v1/relay`（role=a/b）接入——relay WS 校验对 `mode=relay` 或 `relay_path=true` 的会话放行
-- 客户端行为约定：mux 观测到 UDP 路径入站静默超 12s（QUIC 保活 10s 驱动的活性观察，远小于 idle 超时 60s）且「中继回退」开启时发起附加；中继回退开关的语义随之覆盖「建连失败回落」与「会话中断线迁移」两种场景，都不静默发生
-
-## NAT 打洞（P3）
-
-目标无可用直连路径时的直连补救与兑底：服务端撮合双方「被观测到的公网 endpoint」（observed endpoint），双方同时开口打通各自 NAT，QUIC 仍端到端建立（指纹钉扎语义不变——打洞只决定包能否到达）。
-
-**为什么有直连候选也要编排打洞**：UPnP 映射可能开在 CGNAT 内层、全局 IPv6 可能被入站防火墙拦截——服务端无法验证候选的真实可用性。因此探测口启用时直连会话一律编排：无直连候选时打洞是唯一指望（等探测到齐，8s 上限）；有候选时短等（2s）把 punch 候选附在队尾兑底，不显著拖累可用路径。
-
-**为什么不走心跳上报**：UDP NAT 映射生命周期短（常见 30~120s），且发起方的 QUIC socket 是会话时才建的——observed endpoint 必须在会话建立时新鲜探测，心跳周期上报的值不可信。
-
-### 打洞探测口（服务端 UDP，默认 9101）
-
-极简 STUN 式应答，只服务「观测会话参与者的公网 endpoint」一件事：
-
-```text
-请求（定长 64 字节）："HAWKP"（5B magic）+ token（16B）+ 零填充
-响应（≤64 字节）：   "HAWKR" + token + 地址族（1B：4/6）+ IP（4B/16B）+ 端口（2B，大端）
-否定应答（21 字节）： "HAWK?" + token（token 无效或编排已结束；不大于请求，无放大风险）
-```
-
-- token 由服务端按会话按角色签发（经 WSS `session.probe` 下发，32 位小写 hex），是探测包归属会话的唯一依据；无效 token 回**否定应答**——运维可据此区分「探测口不可达」与「token 错误」（tools/check-probe-port.mjs 即以此原理做连通性检查）；形状非法（不足 64B / magic 不符）与超限流量的包才静默丢弃
-- 响应不大于请求 + 按来源 IP 限速（10s 窗口 30 包，超限丢弃），杜绝反射放大滥用
-- 回包仅作诊断（客户端可比对本地端口感知 NAT 存在性），客户端实现可以不消费
-- 探测口仅绑 IPv4：打洞发生在 v4 NAT 域；v6 无 NAT，可达性走心跳上报的直连候选
-- 部署：探测口需公网直达（--probe-port，0 = 关闭打洞编排）；反代只暴露 443 的部署探测不到，退化为「无直连候选即 unreachable」，不破坏既有行为
-
-### 编排时序
-
-```text
-B POST /sessions(direct) → A accept → 探测口已启用：会话保持 pending，
-  服务端向双方各推 session.probe（token 各自独立）
-  → 双方各自用「自己 QUIC 端点的同一个 UDP socket」向 <服务端 host>:<probe_port>
-    发探测包（3 次，间隔 300ms，容忍单包丢失；host 即接入配置 base URL 的主机名）
-  → 服务端记录双方 observed endpoint（无直连候选等 8s，有候选短等 2s）
-  → 到齐：会话 ready，经 WSS session.update 推送双方——
-       connect.candidates = [...直连候选, { "transport": "punch", host, port }]  // punch = A 的 observed endpoint，排最后
-       connect.punch_peer  = { host, port }                                     // B 的 observed endpoint，仅 A 使用
-  → 未到齐且无直连候选：会话置 unreachable；未到齐但有候选：按候选 ready（无 punch 字段）
-```
-
-探测口不可达、token 丢失、UDP 被运营商拦截等失败形态统一收敛为「超时 → 退化路径」（无候选即 unreachable，有候选按候选走），客户端无需区分。
-
-### 开口与连接（客户端行为）
-
-- **A（目标设备）**：收到 ready 且 `connect.punch_peer` 存在 → 用 QUIC 端点同端口 socket 每 500ms 向 punch_peer 发开口包（16 字节垃圾数据；对端 quinn 收到无法解析的数据报自然丢弃），窗口 20s
-- **B（发起方）**：ready 的 candidates 含 punch 候选 → 用「探测时同一个 socket」建 QUIC endpoint 发起 connect（单候选超时 15s 而非 5s：开口依赖双方时序，QUIC Initial 自动重传覆盖洞口开启前的丢包）。探测与连接必须同端口——cone NAT 的映射按本地端口建立
-- 不需要时钟同步：双方以「收到 ready 即开打」为准，重传与窗口长度吸收时序差
-- 对称型 NAT（任一侧）观测端口随目的地址变化，打洞必然失败 → 15s 候选超时 → 按既有「直连失败」处理（中继回退开关开启时询问用户）
-- 心跳 `nat_type` 字段继续保留：当前客户端一律报 `unknown`，服务端不据此决策
-
-## 数据面（QUIC 隧道）
-
-- 双方 QUIC 连接（quinn），自签名证书，对端身份 = 信令交换的指纹钉扎（TOFU）。证书轮换走 `PATCH /devices/{id}` 更新指纹：新指纹立即生效，旧证书会话失效
-- **统一传输 socket（mux）**：每侧一个 QUIC endpoint，其 socket 是自定义的多路径合并层——一个真实 UDP socket + 零或多条中继 WS 路径。握手竞速在候选层并行（每候选独立 mux endpoint）；握手后 B 侧把对端归一为固定伪地址（quinn 客户端丢弃未知来源包，归一是迁移前提），A 侧不归一（服务端被动迁移由 quinn 原生完成：B 换路径后 A 经路径验证跟随）。mux 的单路径发送失败不杀连接（终局由 QUIC 重传/空闲超时负责）。连接死亡（路径迁移也救不回）时 B 侧原会话重建连接并热替换进会话代理，前端无感
-- 隧道内 HTTP 请求必须携带会话标识头 `x-hawk-session: <session_id>`（B 侧代理写入，客户端自带的同名头一律覆盖）。A 侧校验会话已接受、且与该 QUIC 连接的对端指纹一致后，在进程内插入 `TunneledPeer { writable }`；HTTP 客户端无法伪造该标记
+- 双方 iroh Endpoint（QUIC/noq + magicsock），身份 = `endpoint_id`（Ed25519 公钥，注册时登记，握手即认证）。轮换走 `PATCH /devices/{id}`：新身份立即生效，旧身份会话失效
+- 打洞、路径迁移、NAT 映射保活、relay↔direct 升级降级全部由 iroh 自治；控制面不感知。连接死亡（迁移救不回）时发起方在原会话内重拨并热替换进会话代理，前端无感
+- 隧道内 HTTP 请求必须携带会话标识头 `x-hawk-session: <session_id>`（B 侧代理写入，客户端自带的同名头一律覆盖）。A 侧校验会话已接受、且与该连接的对端 endpoint_id 一致后，在进程内插入 `TunneledPeer { writable }`；HTTP 客户端无法伪造该标记
 - A 侧按会话权限转发到本机 API：
   - 只读会话：viewer 级，仅 GET 与查询类 POST
   - 写会话：`access=write` 且请求时 `remote.writable=true` 且查看者 key 带写权限（本地执法三重裁决）；仅放行 GET、查询类 POST、`POST /api/v1/item/add`（禁止 `path`）与 `POST /api/v1/folder/create`，其余写端点 403
 - **隧道端必须拒绝转发 `GET /api/v1/app/token`（直接返回 404）**。该端点免鉴权返回主 token（完全读写权限），仅服务于本机浏览器插件的零配置发现（插件直连环回，不经隧道）；远程查看方不需要它——B 侧已持有代理会话 token
 - B 侧本地代理：监听环回随机端口，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口由客户端会话建立时分配，会话 token 由 B 侧生成，web 查看器 URL 由客户端拼装，不经过服务端
-- 同一设备指纹可同时承载多个查看会话（例如 hawk-server 的网页版与插件）：A 侧指纹放行按会话引用计数，连接与会话绑定，取消一个会话只关闭该会话的连接与请求
-- 隧道默认端口：A 侧 QUIC UDP 27373（UPnP 映射目标；双栈监听，IPv4/IPv6 同端口）；均可配置
+- 同一设备身份可同时承载多个查看会话（例如 hawk-server 的网页版与插件）：A 侧按会话放行，连接与会话绑定，取消一个会话只关闭该会话的连接与请求
+- 隧道端口：iroh endpoint 绑定 UDP 27373（可配置；双栈监听）；本地端口由客户端在会话建立时分配
 
 ## 默认值与时限
 
@@ -434,15 +336,10 @@ B POST /sessions(direct) → A accept → 探测口已启用：会话保持 pend
 | 心跳最小间隔          | 10s（429）                                                                                      |
 | WSS 保活              | ping 30s 间隔，两次未回 pong 断开；客户端 90s 未收到服务端帧即主动断开重连                       |
 | 会话建立超时          | 30s                                                                                             |
-| 直连候选超时          | 5s（客户端实现；含 punch 候选 15s；全候选握手层并行竞速，全失败即直连失败）                                 |
-| 打洞编排等待上限      | 无直连候选 8s（超时置 unreachable）/ 有候选 2s（超时按候选放行）                                  |
-| 开口包间隔 / 窗口     | 500ms / 20s（A 侧客户端实现）                                                                   |
-| mux 静默降级阈值      | 12s 无 UDP 入站 → 附加中继路径（客户端实现；QUIC 保活 10s / idle 60s 兜住迁移窗口）              |
-| 探测包重发            | 3 次 × 300ms（客户端实现，容忍单包丢失）                                                        |
-| 探测口限速            | 单来源 IP 10s 窗口 30 包（超限静默丢弃）                                                        |
+| 拨号超时              | 15s（客户端实现；iroh 内部竞速直连/中继，首字节不等打洞结果）                                    |
 | 门令牌 TTL / 尝试预算 | 5min / 5 次                                                                                     |
 | 风控                  | 单 IP 10min 内 30 次失败 → 冷却 15min；单租户 20 次登录失败 → 池冷却 15min 起指数增长（封顶 24h），成功清零 |
-| 端口默认值            | hawk-server 9100 / 打洞探测口 UDP 9101 / hawk API 27371 / LAN web 27372 / 远程 QUIC UDP 27373（本地端口由客户端在会话建立时分配） |
+| 端口默认值            | hawk-server 9100 / 内嵌中继 9102（可选组件）/ hawk API 27371 / LAN web 27372 / 远程隧道 UDP 27373（本地端口由客户端在会话建立时分配） |
 
 ## 版本策略
 

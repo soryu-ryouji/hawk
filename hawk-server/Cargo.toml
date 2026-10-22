@@ -7,6 +7,8 @@ description = "hawk 远程访问服务端（单用户：设备注册/心跳/会�
 license = "AGPL-3.0-only"
 
 [dependencies]
+iroh = { version = "1.4", features = ["tls-ring"] }
+iroh-relay = { version = "1.4", features = ["server"] }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -15,8 +17,6 @@ clap = { version = "4", features = ["derive", "env"] }
 rand = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-quinn = "0.11.12"
-rcgen = "0.14.10"
 sha2 = "0.11.1"
 base64 = "0.23.1"
 hyper = { version = "1.12.0", features = ["http1", "client"] }
