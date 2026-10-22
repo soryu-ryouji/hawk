@@ -52,9 +52,12 @@ fn handle(
         return None;
     }
     let token: [u8; 16] = packet[5..21].try_into().ok()?;
-    if !state.record_probe(&token, from) {
+    // 无效 token 也留一行 debug：运维可用任意 UDP 包验证探测口可达性（噪音被限速兜住）
+    let Some((session_id, role)) = state.record_probe(&token, from) else {
+        tracing::debug!("打洞探测 token 无效或编排已结束（{from}）");
         return None;
-    }
+    };
+    tracing::info!("打洞探测报到 {session_id}（{role} 侧）：{from}");
     let mut response = Vec::with_capacity(40);
     response.extend_from_slice(MAGIC_RESPONSE);
     response.extend_from_slice(&token);

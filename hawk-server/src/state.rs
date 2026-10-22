@@ -259,25 +259,18 @@ impl AppState {
         }
     }
 
-    /// 探测口收包归属：token 命中进行中会话的打洞编排则记录 observed endpoint；
-    /// 返回是否命中（未命中的包静默丢弃，不回包——防反射放大）
-    pub fn record_probe(&self, token: &[u8; 16], from: SocketAddr) -> bool {
-        let ticket = self.probe_index.read().unwrap().get(token).cloned();
-        let Some(ticket) = ticket else {
-            return false;
-        };
+    /// 探测口收包归属：token 命中进行中会话的打洞编排则记录 observed endpoint 并返回
+    /// （会话 id, 角色）（探测口记日志用）；未命中返回 None（静默丢弃不回包——防反射放大）
+    pub fn record_probe(&self, token: &[u8; 16], from: SocketAddr) -> Option<(String, String)> {
+        let ticket = self.probe_index.read().unwrap().get(token).cloned()?;
         let mut sessions = self.sessions.write().unwrap();
-        let Some(session) = sessions.get_mut(&ticket.session_id) else {
-            return false;
-        };
-        let Some(probe) = &mut session.probe else {
-            return false;
-        };
+        let session = sessions.get_mut(&ticket.session_id)?;
+        let probe = session.probe.as_mut()?;
         match ticket.role.as_str() {
             "a" => probe.addr_a = Some(from),
             _ => probe.addr_b = Some(from),
         }
-        true
+        Some((ticket.session_id, ticket.role))
     }
 
     /// 经 WSS 控制通道向设备推送消息；设备未连接时静默丢弃（推送是增强，轮询为兜底）

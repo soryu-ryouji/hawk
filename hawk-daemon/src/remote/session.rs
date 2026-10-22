@@ -171,6 +171,10 @@ impl SessionManager {
                     let socket = self.pending_punch.lock().unwrap().remove(&session_id);
                     match socket {
                         Some(socket) => {
+                            tracing::info!(
+                                "打洞候选连接 {host}:{port}（{:?} 上限，Initial 重传覆盖开口窗口）",
+                                crate::remote::data::PUNCH_TIMEOUT
+                            );
                             crate::remote::data::connect_punch(
                                 identity, socket, host, port, expected,
                             )

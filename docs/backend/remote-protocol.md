@@ -262,7 +262,7 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 1. 校验来源/目标设备存在且同池、目标设备在线（不在线返回 404）；`allow_remote=false` 直接置会话状态 `rejected`；`access=write` 且目标 `allow_write=false` 返回 403
 2. 经 WSS 向目标推送 `session.request`（含 `access`、查看者会话含 `credential`）
 3. 目标回 `POST /api/v1/sessions/{id}/accept`（service-key 鉴权），响应 `{ "status": "success" }`；拒绝则回 reject，会话状态变 `rejected`。目标 daemon 对查看者会话做本地执法（key 存在性/权限/writable 总开关），不通过即 reject
-4. 服务端取目标最近心跳的可达性组装候选列表（IPv4 映射优先、IPv6 次之），经 WSS `session.update` 推送双方；无任何候选时进入打洞编排（服务端探测口可用则探测双方 observed endpoint，见「NAT 打洞」一节；不可用则置 unreachable）
+4. 服务端组装连接信息：探测口启用时直连会话一律进入打洞编排（见「NAT 打洞」一节）——无直连候选等探测到齐（8s），有候选短等附带 punch 候选（2s）；探测口未启用则取目标最近心跳组装候选立即 ready（无任何候选置 unreachable），经 WSS `session.update` 推送双方
 
 发起方以 WSS 推送为准（轮询 1s 间隔、上限 30s 为兜底；超时状态变 `expired`）：
 
@@ -351,7 +351,9 @@ wss://<base>/api/v1/relay?device_id=<device_id>&session_id=<session_id>&role=a|b
 
 ## NAT 打洞（P3）
 
-目标无任何直连候选（无 UPnP/NAT-PMP 映射且无全局 IPv6）时的直连补救：服务端撮合双方「被观测到的公网 endpoint」（observed endpoint），双方同时开口打通各自 NAT，QUIC 仍端到端建立（指纹钉扎语义不变——打洞只决定包能否到达）。
+目标无可用直连路径时的直连补救与兑底：服务端撮合双方「被观测到的公网 endpoint」（observed endpoint），双方同时开口打通各自 NAT，QUIC 仍端到端建立（指纹钉扎语义不变——打洞只决定包能否到达）。
+
+**为什么有直连候选也要编排打洞**：UPnP 映射可能开在 CGNAT 内层、全局 IPv6 可能被入站防火墙拦截——服务端无法验证候选的真实可用性。因此探测口启用时直连会话一律编排：无直连候选时打洞是唯一指望（等探测到齐，8s 上限）；有候选时短等（2s）把 punch 候选附在队尾兑底，不显著拖累可用路径。
 
 **为什么不走心跳上报**：UDP NAT 映射生命周期短（常见 30~120s），且发起方的 QUIC socket 是会话时才建的——observed endpoint 必须在会话建立时新鲜探测，心跳周期上报的值不可信。
 
@@ -373,18 +375,18 @@ wss://<base>/api/v1/relay?device_id=<device_id>&session_id=<session_id>&role=a|b
 ### 编排时序
 
 ```text
-B POST /sessions(direct) → A accept → 服务端组装直连候选为空且探测口已启用
-  → 会话保持 pending，服务端向双方各推 session.probe（token 各自独立）
+B POST /sessions(direct) → A accept → 探测口已启用：会话保持 pending，
+  服务端向双方各推 session.probe（token 各自独立）
   → 双方各自用「自己 QUIC 端点的同一个 UDP socket」向 <服务端 host>:<probe_port>
     发探测包（3 次，间隔 300ms，容忍单包丢失；host 即接入配置 base URL 的主机名）
-  → 服务端记录双方 observed endpoint（等待上限 8s）
+  → 服务端记录双方 observed endpoint（无直连候选等 8s，有候选短等 2s）
   → 到齐：会话 ready，经 WSS session.update 推送双方——
-       connect.candidates = [{ "transport": "punch", host, port }]   // A 的 observed endpoint，B 依序尝试（punch 排最后）
-       connect.punch_peer  = { host, port }                          // B 的 observed endpoint，仅 A 使用
-  → 任一方探测未到：会话置 unreachable（语义同「无直连路径」）
+       connect.candidates = [...直连候选, { "transport": "punch", host, port }]  // punch = A 的 observed endpoint，排最后
+       connect.punch_peer  = { host, port }                                     // B 的 observed endpoint，仅 A 使用
+  → 未到齐且无直连候选：会话置 unreachable；未到齐但有候选：按候选 ready（无 punch 字段）
 ```
 
-探测口不可达、token 丢失、UDP 被运营商拦截等失败形态统一收敛为「8s 超时 → unreachable」，客户端无需区分。
+探测口不可达、token 丢失、UDP 被运营商拦截等失败形态统一收敛为「超时 → 退化路径」（无候选即 unreachable，有候选按候选走），客户端无需区分。
 
 ### 开口与连接（客户端行为）
 
@@ -415,7 +417,7 @@ B POST /sessions(direct) → A accept → 服务端组装直连候选为空且�
 | WSS 保活              | ping 30s 间隔，两次未回 pong 断开；客户端 90s 未收到服务端帧即主动断开重连                       |
 | 会话建立超时          | 30s                                                                                             |
 | 直连单候选超时        | 5s（客户端实现；punch 候选 15s；全部候选失败即直连失败）                                        |
-| 打洞编排等待上限      | 8s（超时置 unreachable）                                                                        |
+| 打洞编排等待上限      | 无直连候选 8s（超时置 unreachable）/ 有候选 2s（超时按候选放行）                                  |
 | 开口包间隔 / 窗口     | 500ms / 20s（A 侧客户端实现）                                                                   |
 | 探测包重发            | 3 次 × 300ms（客户端实现，容忍单包丢失）                                                        |
 | 探测口限速            | 单来源 IP 10s 窗口 30 包（超限静默丢弃）                                                        |

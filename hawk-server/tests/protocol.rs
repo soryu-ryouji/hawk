@@ -773,6 +773,92 @@ async fn punch_orchestration_timeout_unreachable() {
 }
 
 #[tokio::test]
+async fn punch_candidate_appended_when_direct_exists() {
+    // 直连候选可能存在但不可用（CGNAT 内层 UPnP、被拦的 IPv6）：探测到齐后 punch 候选
+    // 附加在队尾完底，punch_peer 照常下发
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key, probe_port) = spawn_server_with_probe(dir.path()).await;
+    let target = register(&base, &key, "台式机", true).await;
+    let source = register(&base, &key, "笔记本", true).await;
+    assert_eq!(
+        heartbeat(&base, &key, &target, full_reachability())
+            .await
+            .status(),
+        200
+    );
+    let mut target_ws = connect_ws(&base, &key, &target).await;
+    let mut source_ws = connect_ws(&base, &key, &source).await;
+    assert_eq!(next_json(&mut target_ws).await["type"], "hello");
+    assert_eq!(next_json(&mut source_ws).await["type"], "hello");
+
+    let (_, body) = create_session(&base, &key, &source, &target).await;
+    let session_id = body["data"]["session_id"].as_str().unwrap().to_string();
+    let _ = next_json_of(&mut target_ws, "session.request").await;
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(&key)
+        .json(&json!({ "device_id": target }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let probe_a = next_json_of(&mut target_ws, "session.probe").await;
+    let probe_b = next_json_of(&mut source_ws, "session.probe").await;
+    let socket_a = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let socket_b = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let _ = udp_probe(&socket_a, probe_port, probe_a["token"].as_str().unwrap()).await;
+    let _ = udp_probe(&socket_b, probe_port, probe_b["token"].as_str().unwrap()).await;
+
+    let update = next_json_of(&mut target_ws, "session.update").await;
+    assert_eq!(update["state"], "ready");
+    let candidates = update["connect"]["candidates"].as_array().unwrap();
+    // ipv4 → ipv6 → punch（协议约定顺序，punch 排最后）
+    assert_eq!(candidates.len(), 3);
+    assert_eq!(candidates[0]["transport"], "ipv4");
+    assert_eq!(candidates[1]["transport"], "ipv6");
+    assert_eq!(candidates[2]["transport"], "punch");
+    assert_eq!(candidates[2]["port"], socket_a.local_addr().unwrap().port());
+    assert_eq!(
+        update["connect"]["punch_peer"]["port"],
+        socket_b.local_addr().unwrap().port()
+    );
+}
+
+#[tokio::test]
+async fn direct_candidates_ready_when_probes_missing() {
+    // 有直连候选而探测未到（旧客户端/UDP 被拦）：短等后按候选放行，不退化不阻塞
+    std::env::set_var("HAWK_SERVER_PROBE_WAIT_SHORT_MS", "600");
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key, _probe_port) = spawn_server_with_probe(dir.path()).await;
+    let target = register(&base, &key, "台式机", true).await;
+    let source = register(&base, &key, "笔记本", true).await;
+    assert_eq!(
+        heartbeat(&base, &key, &target, full_reachability())
+            .await
+            .status(),
+        200
+    );
+
+    let (_, body) = create_session(&base, &key, &source, &target).await;
+    let session_id = body["data"]["session_id"].as_str().unwrap().to_string();
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(&key)
+        .json(&json!({ "device_id": target }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    // 双方都不探测 → 短等超时 → ready 只含直连候选、无 punch_peer
+    let state = wait_session_state(&base, &key, &session_id, "ready").await;
+    let candidates = state["connect"]["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0]["transport"], "ipv4");
+    assert!(state["connect"].get("punch_peer").is_none());
+}
+
+#[tokio::test]
 async fn session_cancel_notifies_peer() {
     let dir = tempfile::tempdir().unwrap();
     let (base, key) = spawn_server(dir.path()).await;

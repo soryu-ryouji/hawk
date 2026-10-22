@@ -523,9 +523,11 @@ async fn handle_message(
                     Ok(addr) => {
                         if accepted_peers.contains_key(session_id) {
                             // A 侧：常驻 QUIC 端点的开口句柄报到
+                            tracing::info!("会话 {session_id} 打洞探测报到（目标侧）: {addr}");
                             ctx.data_plane.send_probe(addr, token);
                         } else {
                             // B 侧：预绑 socket 报到并留存（connect 复用同端口）
+                            tracing::info!("会话 {session_id} 打洞探测报到（发起方）: {addr}");
                             supervisor.sessions.prepare_punch(session_id, addr, token);
                         }
                     }

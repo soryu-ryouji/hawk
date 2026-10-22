@@ -187,19 +187,17 @@ daemon 是双形态进程：`--library` 缺省即远程查看模式——不构�
 
 ```text
 B 配置接入（应用级 remote.toml url + key）→ 拉取设备列表（A 在线 + 心跳携带可达性信息）
-B 前端发起会话（mode=direct）
-hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）？
-  ├─ 是 → 创建会话，经 WSS 推送给 A：session.request
-  │        A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
-  │        服务端向双方推送 session.update(ready)：候选列表（IPv4 映射优先、IPv6 次之）+ 指纹
-  │        B 依序尝试候选（单候选超时 5s），任一成功即建立 QUIC 连接（指纹钉扎）
-  │        隧道就绪 → 主进程切换连接描述符 → B 前端无感重置为远端库
-  └─ 无任何候选 → 打洞编排（P3，探测口启用时）：双方 WSS 收到 session.probe，
-                   各自从 QUIC 端点同端口 socket 向服务端探测口报到；
-                   到齐 → ready（B 得 punch 候选 = A 的 observed endpoint，
-                   A 得 punch_peer = B 的 observed endpoint）→ 双方同时开口，
-                   B 的 QUIC Initial 穿过洞口（单候选超时 15s）；
-                   探测超时（8s）或对称型 NAT 打不通 → unreachable / 直连失败
+B 前端发起会话（mode=direct）→ 创建会话，经 WSS 推送给 A：session.request
+A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
+服务端进入打洞编排（P3，探测口启用时）：双方 WSS 收到 session.probe，
+  各自从 QUIC 端点同端口 socket 向服务端探测口报到
+  → 到齐（无候选等 8s / 有候选短等 2s）→ ready：候选列表（IPv4 映射 → IPv6 → punch）+ 指纹，
+    A 另得 punch_peer（B 的 observed endpoint）
+  → B 依序尝试候选（直连 5s / punch 15s），A 同时向 punch_peer 开口（500ms × 20s），
+    任一候选成功即建立 QUIC 连接（指纹钉扎）
+  → 隧道就绪 → 主进程切换连接描述符 → B 前端无感重置为远端库
+探测口未启用：有候选直接 ready；无候选即 unreachable。
+候选全部失败（含对称型 NAT 打不通）→ 直连失败，走中继确认路径
 ```
 
 直连失败（候选全部超时或无候选）时不自动回落中继：「中继回退」开关（默认关闭）已开启时，弹窗询问用户是否经中继继续（消耗自己的服务器带宽），确认后转入中继流程；未开启则提示「当前网络无法直连；如需经中继访问，可在设置中开启」。
