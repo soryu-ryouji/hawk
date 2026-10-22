@@ -43,8 +43,9 @@ pub async fn relay_channel(
         if session.state != SessionState::Ready {
             return Err(ApiError::new(StatusCode::CONFLICT, "会话未就绪"));
         }
-        if session.mode != "relay" {
-            return Err(ApiError::new(StatusCode::BAD_REQUEST, "会话非中继模式"));
+        // relay 模式会话，或已附加中继路径的 direct 会话（P4 mux 降级通道）
+        if session.mode != "relay" && !session.relay_path {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, "会话未启用中继路径"));
         }
         let matches = if query.role == "a" {
             session.target_device_id == query.device_id
@@ -129,7 +130,8 @@ async fn handle_socket(
         }
     }
 
-    // 任一方断开：注销本端、关闭对端、会话置 cancelled 并通知双方控制通道
+    // 任一方断开：注销本端、关闭对端。relay 模式会话（中继是唯一路径）置 cancelled 并通知
+    // 双方控制通道；附加中继路径的 direct 会话不取消（UDP 路径可能仍在，客户端按需重新附加）
     let peer = {
         let mut pairs = state.relay_pairs.write().unwrap();
         if let Some(pair) = pairs.get_mut(&session_id) {
@@ -145,22 +147,29 @@ async fn handle_socket(
         let _ = peer_tx.send(Message::Close(None));
     }
 
-    let (source, target) = {
+    let outcome = {
         let mut sessions = state.sessions.write().unwrap();
-        if let Some(session) = sessions.get_mut(&session_id) {
-            if !session.state.is_terminal() {
+        sessions.get_mut(&session_id).map(|session| {
+            let relay_session = session.mode == "relay";
+            if relay_session && !session.state.is_terminal() {
                 session.state = SessionState::Cancelled;
             }
             (
+                relay_session,
                 session.source_device_id.clone(),
                 session.target_device_id.clone(),
             )
-        } else {
-            return;
-        }
+        })
     };
-    let cancelled = json!({ "type": "session.cancelled", "session_id": session_id });
-    state.push_ws(&source, &cancelled);
-    state.push_ws(&target, &cancelled);
-    tracing::info!("中继会话 {session_id} 结束（{role} 侧断开）");
+    let Some((relay_session, source, target)) = outcome else {
+        return;
+    };
+    if relay_session {
+        let cancelled = json!({ "type": "session.cancelled", "session_id": session_id });
+        state.push_ws(&source, &cancelled);
+        state.push_ws(&target, &cancelled);
+        tracing::info!("中继会话 {session_id} 结束（{role} 侧断开）");
+    } else {
+        tracing::info!("会话 {session_id} 中继路径断开（{role} 侧，UDP 路径不受影响）");
+    }
 }

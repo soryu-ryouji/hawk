@@ -905,6 +905,117 @@ async fn direct_candidates_ready_when_probes_missing() {
 }
 
 #[tokio::test]
+async fn relay_path_attach_on_direct_session() {
+    // P4：ready 的 direct 会话可附加中继路径；双方收 WSS 推送；relay WS 对该会话放行；
+    // 附加路径断开不取消会话（UDP 路径可能仍在）
+    use futures_util::{SinkExt, StreamExt};
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key) = spawn_server(dir.path()).await;
+    let target = register(&base, &key, "台式机", true).await;
+    let source = register(&base, &key, "笔记本", true).await;
+    assert_eq!(
+        heartbeat(&base, &key, &target, full_reachability())
+            .await
+            .status(),
+        200
+    );
+    let mut target_ws = connect_ws(&base, &key, &target).await;
+    let mut source_ws = connect_ws(&base, &key, &source).await;
+    assert_eq!(next_json(&mut target_ws).await["type"], "hello");
+    assert_eq!(next_json(&mut source_ws).await["type"], "hello");
+
+    let (_, body) = create_session(&base, &key, &source, &target).await;
+    let session_id = body["data"]["session_id"].as_str().unwrap().to_string();
+    let _ = next_json_of(&mut target_ws, "session.request").await;
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(&key)
+        .json(&json!({ "device_id": target }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        session_state(&base, &key, &session_id).await["state"],
+        "ready"
+    );
+
+    // 附加前：relay WS 拒绝 direct 会话
+    let resp = client()
+        .get(format!(
+            "http://{base}/api/v1/relay?device_id={target}&session_id={session_id}&role=a"
+        ))
+        .bearer_auth(&key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // 附加中继路径（幂等）
+    for _ in 0..2 {
+        let resp = client()
+            .post(format!(
+                "http://{base}/api/v1/sessions/{session_id}/relay-path"
+            ))
+            .bearer_auth(&key)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+    // 双方收到 session.relay_path
+    assert_eq!(
+        next_json_of(&mut target_ws, "session.relay_path").await["session_id"],
+        session_id
+    );
+    assert_eq!(
+        next_json_of(&mut source_ws, "session.relay_path").await["session_id"],
+        session_id
+    );
+
+    // relay WS 对已附加路径的 direct 会话放行，配对转发如常
+    let mut ws_a = connect_ws_relay(&base, &key, &target, &session_id, "a").await;
+    let mut ws_b = connect_ws_relay(&base, &key, &source, &session_id, "b").await;
+    ws_a.send(tokio_tungstenite::tungstenite::Message::Binary(
+        b"datagram".to_vec().into(),
+    ))
+    .await
+    .unwrap();
+    let echoed = tokio::time::timeout(Duration::from_secs(2), ws_b.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(echoed.into_data().as_ref(), b"datagram");
+
+    // 附加路径断开：会话保持 ready（不取消）
+    drop(ws_b);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        session_state(&base, &key, &session_id).await["state"],
+        "ready"
+    );
+
+    // 终态会话附加被拒
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/cancel"))
+        .bearer_auth(&key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let resp = client()
+        .post(format!(
+            "http://{base}/api/v1/sessions/{session_id}/relay-path"
+        ))
+        .bearer_auth(&key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+}
+
+#[tokio::test]
 async fn session_cancel_notifies_peer() {
     let dir = tempfile::tempdir().unwrap();
     let (base, key) = spawn_server(dir.path()).await;

@@ -127,6 +127,9 @@ pub struct Session {
     pub connect: Option<Value>,
     /// 打洞编排状态（仅 direct 且目标无直连候选时创建；探测口记录 observed endpoint）
     pub probe: Option<ProbeState>,
+    /// 中继路径已附加（P4，relay-path 端点幂等置位）：direct 会话的 mux 降级通道；
+    /// relay WS 校验放行条件之一（mode=relay 或本标志）
+    pub relay_path: bool,
 }
 
 /// 打洞编排（P3）：双方探测 token 与探测口观测到的 observed endpoint。

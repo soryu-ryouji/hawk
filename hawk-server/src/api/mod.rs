@@ -101,6 +101,10 @@ pub fn router(state: Arc<AppState>, viewer: Arc<ViewerManager>) -> Router {
             "/api/v1/sessions/{session_id}/cancel",
             post(sessions::cancel),
         )
+        .route(
+            "/api/v1/sessions/{session_id}/relay-path",
+            post(sessions::relay_path),
+        )
         .route("/api/v1/ws", get(ws::control_channel))
         .route("/api/v1/relay", get(relay::relay_channel))
         .with_state(state);

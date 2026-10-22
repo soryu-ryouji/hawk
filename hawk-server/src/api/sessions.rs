@@ -107,6 +107,7 @@ pub fn create_session_internal(
         created_at_ms: now_ms(),
         connect: None,
         probe: None,
+        relay_path: false,
     };
     let session_id = session.session_id.clone();
     let credential = session.credential.clone();
@@ -539,6 +540,54 @@ pub async fn cancel(
             format!("会话已结束（{}）", session.state.as_str()),
         )),
     }
+}
+
+/// `POST /api/v1/sessions/{session_id}/relay-path`：为 ready 会话附加中继路径（P4，幂等）。
+/// mux 的中继降级通道：承载同一条 QUIC 连接（路径迁移），不是另建会话的新握手
+pub async fn relay_path(
+    State(state): State<Arc<AppState>>,
+    key: ServiceKey,
+    Path(session_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    // 会话双方之一须属调用者租户（同 cancel 的池校验）
+    {
+        let sessions = state.sessions.read().unwrap();
+        let in_pool = sessions.get(&session_id).is_some_and(|s| {
+            [s.source_device_id.as_str(), s.target_device_id.as_str()]
+                .iter()
+                .any(|id| {
+                    state
+                        .device(id)
+                        .is_some_and(|d| d.tenant_id == key.tenant_id)
+                })
+        });
+        if !in_pool {
+            return Err(ApiError::not_found("会话不存在"));
+        }
+    }
+    let mut sessions = state.sessions.write().unwrap();
+    let Some(session) = sessions.get_mut(&session_id) else {
+        return Err(ApiError::not_found("会话不存在"));
+    };
+    session.apply_expiry(now_ms());
+    if session.state != SessionState::Ready {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            format!("会话已结束（{}）", session.state.as_str()),
+        ));
+    }
+    let first_attach = !session.relay_path;
+    session.relay_path = true;
+    let source = session.source_device_id.clone();
+    let target = session.target_device_id.clone();
+    drop(sessions);
+    if first_attach {
+        let msg = json!({ "type": "session.relay_path", "session_id": session_id });
+        state.push_ws(&source, &msg);
+        state.push_ws(&target, &msg);
+        tracing::info!("会话 {session_id} 附加中继路径");
+    }
+    Ok(success())
 }
 
 fn session_view(session: &Session) -> Value {

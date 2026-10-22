@@ -230,6 +230,7 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 | `session.request`   | `{ "session_id", "from": { "device_id", "name", "library_name", "fingerprint" }, "mode": "direct", "access": "read" \| "write", "credential": "<sha256-hex 或 null>" }` | P1   |
 | `session.update`    | `{ "session_id", "state", ... }`（状态变更推送双方；轮询为兜底）                         | P1   |
 | `session.probe`     | `{ "session_id", "probe_port", "token": "<32-hex>" }`（打洞探测邀约，见「NAT 打洞」一节） | P3   |
+| `session.relay_path` | `{ "session_id" }`（既有会话附加中继路径，双方收到后经 `/relay` 接入；见「中继」一节） | P4   |
 | `session.cancelled` | `{ "session_id" }`                                                                     | P1   |
 
 `from.fingerprint`：发起方的 QUIC 证书指纹（服务端持有双方设备记录，随请求下发，省一次设备列表往返）。`credential`：查看者会话的 key 验证子（app 间会话为 null）；目标 daemon 据此比对本地 key 映射执法——未命中/权限不足/本机 writable 关闭即拒绝。
@@ -350,6 +351,20 @@ wss://<base>/api/v1/relay?device_id=<device_id>&session_id=<session_id>&role=a|b
 - 任一方断开 → 双方连接关闭，会话置 `cancelled`（双方控制通道收到 `session.cancelled`）
 - 客户端行为约定：直连失败（候选全部超时或无候选/unreachable）且「中继回退」开启时，经用户确认后以 `mode=relay` 另建会话；任何环节都不自动回落
 
+### `[P4] POST /api/v1/sessions/{session_id}/relay-path`（既有会话附加中继路径）
+
+统一传输 socket（mux，见「数据面」一节）下，中继是既有会话可热附加的一条**路径**，承载同一条 QUIC 连接（路径迁移），而非另建会话的新握手：
+
+```json
+// 请求：空体（会话双方之一须属调用者池，幂等）
+// 响应
+{ "status": "success" }
+```
+
+- 会话须为 `ready`（direct 会话中途降级 / relay 会话重复附加幂等成功；终态 409）
+- 服务端置会话 `relay_path` 标志并经 WSS 向双方推送 `session.relay_path`；双方随后以既有 `GET /api/v1/relay`（role=a/b）接入——relay WS 校验对 `mode=relay` 或 `relay_path=true` 的会话放行
+- 客户端行为约定：mux 观测到 UDP 路径入站静默超 12s（QUIC 保活 10s 驱动的活性观察，远小于 idle 超时 60s）且「中继回退」开启时发起附加；中继回退开关的语义随之覆盖「建连失败回落」与「会话中断线迁移」两种场景，都不静默发生
+
 ## NAT 打洞（P3）
 
 目标无可用直连路径时的直连补救与兑底：服务端撮合双方「被观测到的公网 endpoint」（observed endpoint），双方同时开口打通各自 NAT，QUIC 仍端到端建立（指纹钉扎语义不变——打洞只决定包能否到达）。
@@ -401,6 +416,7 @@ B POST /sessions(direct) → A accept → 探测口已启用：会话保持 pend
 ## 数据面（QUIC 隧道）
 
 - 双方 QUIC 连接（quinn），自签名证书，对端身份 = 信令交换的指纹钉扎（TOFU）。证书轮换走 `PATCH /devices/{id}` 更新指纹：新指纹立即生效，旧证书会话失效
+- **统一传输 socket（mux）**：每侧一个 QUIC endpoint，其 socket 是自定义的多路径合并层——一个真实 UDP socket + 零或多条中继 WS 路径。候选「竞速」由 mux 以 Initial 洪泛实现（同一握手经多条路径到达服务端是重复包语义，不产生重复连接）；首个入站数据报锁定路径。B 侧把对端归一为固定伪地址（quinn 客户端丢弃未知来源包，归一是迁移前提）；A 侧不归一（服务端被动迁移由 quinn 原生完成：B 换路径后 A 经路径验证跟随）。连接死亡（路径迁移也救不回）时 B 侧原会话重建连接并热替换进会话代理，前端无感
 - 隧道内 HTTP 请求必须携带会话标识头 `x-hawk-session: <session_id>`（B 侧代理写入，客户端自带的同名头一律覆盖）。A 侧校验会话已接受、且与该 QUIC 连接的对端指纹一致后，在进程内插入 `TunneledPeer { writable }`；HTTP 客户端无法伪造该标记
 - A 侧按会话权限转发到本机 API：
   - 只读会话：viewer 级，仅 GET 与查询类 POST
@@ -421,6 +437,7 @@ B POST /sessions(direct) → A accept → 探测口已启用：会话保持 pend
 | 直连单候选超时        | 5s（客户端实现；punch 候选 15s；全部候选并行竞速，全失败即直连失败）                                        |
 | 打洞编排等待上限      | 无直连候选 8s（超时置 unreachable）/ 有候选 2s（超时按候选放行）                                  |
 | 开口包间隔 / 窗口     | 500ms / 20s（A 侧客户端实现）                                                                   |
+| mux 静默降级阈值      | 12s 无 UDP 入站 → 附加中继路径（客户端实现；QUIC 保活 10s / idle 60s 兜住迁移窗口）              |
 | 探测包重发            | 3 次 × 300ms（客户端实现，容忍单包丢失）                                                        |
 | 探测口限速            | 单来源 IP 10s 窗口 30 包（超限静默丢弃）                                                        |
 | 门令牌 TTL / 尝试预算 | 5min / 5 次                                                                                     |
