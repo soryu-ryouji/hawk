@@ -51,7 +51,7 @@
 素材库服务本体 + `remote/` 模块承载全部广域网能力：
 
 - 信令客户端：设备注册、周期心跳（30s，携带当前库名与可达性）、WSS 控制通道（自动重连）、设备列表、会话发起与响应
-- 可达性：UPnP/NAT-PMP 端口映射（igd；期望端口被占时退到网关分配的任意外部端口并上报实际值）、公网 IPv4 / 全局 IPv6 探测上报（IPv6 探测独立于服务端地址族：UDP connect 知名全球 IPv6 仅做路由决策）（阶段 1b）
+- 可达性：UPnP/NAT-PMP 端口映射（igd 优先、失败回退 NAT-PMP（RFC 6886 极简客户端，default-net 查默认网关）；期望端口被占时退到网关分配的任意外部端口并上报实际值）、全局 IPv6 与 LAN IPv4 探测上报（均为 UDP connect 出接口，零流量）（阶段 1b/4）
 - 数据面（阶段 1b）：QUIC 隧道端与 B 侧会话代理
   - A 侧隧道端：隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级或受限远程写权限标记（见安全模型）
   - B 侧会话代理：环回监听器（supervisor 管理，同 LAN web 模型），每次会话随机 token，web 查看器以 `?token=` 携带，响应不带 CORS 头
@@ -193,7 +193,7 @@ A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
   各自从 QUIC 端点同端口 socket 向服务端探测口报到
   → 到齐（无候选等 8s / 有候选短等 2s）→ ready：候选列表 + 指纹，
     A 另得 punch_peer（B 的 observed endpoint）
-  → B 依序尝试候选（LAN 5s（同公网 IP 时下发，同局域网直连）→ IPv4 映射 5s → IPv6 5s →
+  → B 对全部候选并行竞速（Happy Eyeballs：首个握手成功者赢，败者即取消；单候选直连 5s /
     punch 15s），A 同时向 punch_peer 开口（500ms × 20s），任一成功即建立 QUIC 连接（指纹钉扎）
   → 隧道就绪 → 主进程切换连接描述符 → B 前端无感重置为远端库
 探测口未启用：有候选直接 ready；无候选即 unreachable。
@@ -245,6 +245,8 @@ A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
 | 1b   | ~~daemon 数据面~~（已完成：可达性 UPnP/IPv6、QUIC 双向指纹钉扎、A 侧隧道端进程内转发 TunneledPeer、B 侧会话代理、会话编排 API + SSE remote.session）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
 | 2    | ~~服务端中继 + 客户端中继逻辑 +「中继回退」开关与确认弹窗~~（已完成：relay WS 配对转发 + AsyncUdpSocket over WS + 回退确认） | 直连失败经用户确认走中继；QUIC 端到端语义不变（服务端只见密文） |
 | 3    | ~~QUIC 打洞（免端口映射 P2P）~~（已完成：服务端 UDP 探测口观测 observed endpoint + 会话时编排 + 双方同端口开口；对称型 NAT 打不通时落中继，不投 NAT 类型检测与端口预测） | 无直连候选的设备间可直连；探测口不可达自动退化为 unreachable |
+| 4    | ~~候选并行竞速（Happy Eyeballs）+ NAT-PMP 补全 + LAN 候选~~（已完成：全候选并发拨号首个胜者赢；UPnP 失败回退 NAT-PMP；同公网 IP 会话下发 LAN 地址内网直连） | 黑洞/失效候选不再拖慢建连（串行最坏 25s+ → 典型 ~1s）；Apple 系路由器可映射；同局域网零 NAT 依赖 |
+| 5    | 统一传输 socket 与路径迁移（iroh magicsock 思路：relay ↔ direct 共用同一 QUIC endpoint，会话内无感切换，不断连不回落） | 远期；需要自研地址抽象的多路径 socket，待 2.0 全量用户数据后评估 |
 
 ## remote/ 模块结构
 
@@ -256,12 +258,12 @@ hawk-daemon/src/remote/
 ├── keys.rs         # remote/keys.json：访问密钥（hawk-app key）签发/保管/吊销 + server 映射推送
 ├── signal.rs       # REST 客户端（注册/心跳/设备/会话/key 同步）+ WSS 通道 + 自动重连 + 查看者会话本地执法
 ├── tls.rs          # QUIC 双向指纹钉扎（rustls verifier：B 钉 A、A 放行已接受对端）
-├── reachability.rs # 全局 IPv6 探测（UDP connect 出接口）+ UPnP 映射维护（igd 阻塞任务）
+├── reachability.rs # 全局 IPv6/LAN 探测（UDP connect 出接口）+ UPnP/NAT-PMP 映射维护（阻塞任务）
 ├── data.rs         # quinn 端点（自建 socket + try_clone 开口句柄，P3 同端口前提）、A 侧隧道端（hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理、打洞开口/探测
-└── session.rs      # B 侧会话编排：发起 → 轮询 ready → 候选依序尝试（含 punch）→ 代理；SSE remote.session
+└── session.rs      # B 侧会话编排：发起 → 轮询 ready → 全候选并行竞速（含 punch）→ 代理；SSE remote.session
 ```
 
-新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、rcgen + sha2（自签证书与指纹）、quinn（QUIC）、igd-next（UPnP）、hyper + hyper-util（隧道内 HTTP/1.1 解析）。
+新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、rcgen + sha2（自签证书与指纹）、quinn（QUIC）、igd-next（UPnP）、default-net（NAT-PMP 默认网关查询）、hyper + hyper-util（隧道内 HTTP/1.1 解析）。
 
 数据面传输模型：一条 QUIC 双向流即一条 HTTP/1.1 连接——B 侧会话代理逐请求开流原样转发，A 侧经 hyper 解析后进程内调 API 路由。SSE/缩略图等流式响应由 HTTP/1.1 语义原生承载，两端都不解析素材数据。
 

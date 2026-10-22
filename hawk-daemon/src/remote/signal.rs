@@ -6,7 +6,7 @@
 use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
-use crate::remote::reachability::{self, SharedUpnpReport, UpnpReport};
+use crate::remote::reachability::{self, MappingReport, SharedMappingReport};
 use crate::remote::{LibraryContext, RemoteState, RemoteStatus, Supervisor};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -98,10 +98,10 @@ async fn run_inner(
     // 两者都装在守卫里：热重启（supervisor abort）或停用时必须随任务一起收尾，
     // 否则 UDP 端口被本进程泄漏，下次激活直接绑定失败
     let data_plane = PlaneGuard(bind_data_plane(&identity, cfg, router.clone()).await?);
-    let upnp_report: SharedUpnpReport = Arc::new(RwLock::new(UpnpReport::default()));
-    let _upnp = TaskGuard(tokio::spawn(reachability::maintain_upnp(
+    let mapping_report: SharedMappingReport = Arc::new(RwLock::new(MappingReport::default()));
+    let _mapping = TaskGuard(tokio::spawn(reachability::maintain_mapping(
         cfg.quic_port,
-        upnp_report.clone(),
+        mapping_report.clone(),
     )));
 
     let mut retry = RETRY_MIN;
@@ -137,7 +137,7 @@ async fn run_inner(
             device_id: &device_id,
             identity: &identity,
             data_plane: &data_plane.0,
-            upnp_report: &upnp_report,
+            mapping_report: &mapping_report,
             quic_port: cfg.quic_port,
             router: &router,
             library,
@@ -228,7 +228,7 @@ struct ChannelContext<'a> {
     device_id: &'a str,
     identity: &'a Identity,
     data_plane: &'a Arc<DataPlane>,
-    upnp_report: &'a SharedUpnpReport,
+    mapping_report: &'a SharedMappingReport,
     quic_port: u16,
     router: &'a axum::Router,
     /// 本地库上下文（None = 远程查看模式）
@@ -576,9 +576,12 @@ fn library_name(library: &Option<LibraryContext>) -> String {
 }
 
 async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
-    // 可达性：UPnP 映射（维护任务异步更新）+ 全局 IPv6（每次心跳探测，零成本）。
+    // 可达性：端口映射（维护任务异步更新，UPnP/NAT-PMP）+ 全局 IPv6（每次心跳探测，零成本）。
     // public_ip 不自报——以服务端 public_ip_seen 为准
-    let mapped_port = ctx.upnp_report.read().unwrap().mapped_port;
+    let (mapped_port, mapping_type) = {
+        let report = ctx.mapping_report.read().unwrap();
+        (report.mapped_port, report.mapping_type.unwrap_or("none"))
+    };
     let (public_ipv6, ipv6_port) = reachability::probe_ipv6(ctx.quic_port)
         .map(|(ip, port)| (Some(ip), Some(port)))
         .unwrap_or((None, None));
@@ -591,7 +594,7 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
         "reachability": {
             "public_ip": null,
             "mapped_port": mapped_port,
-            "mapping_type": if mapped_port.is_some() { "upnp" } else { "none" },
+            "mapping_type": mapping_type,
             "public_ipv6": public_ipv6,
             "ipv6_port": ipv6_port,
             // LAN 地址（每次心跳探测，零成本）：双方同公网 IP 时服务端下发为 LAN 候选

@@ -1,6 +1,8 @@
-//! 可达性探测：全局 IPv6（UDP connect 出接口，零流量）+ UPnP UDP 端口映射维护。
+//! 可达性探测：全局 IPv6（UDP connect 出接口，零流量）+ UPnP/NAT-PMP UDP 端口映射维护。
 //! v4 公网地址不本地自报——以心跳响应的 public_ip_seen（服务端权威值）为准；
-//! 这里产出的候选只有「UPnP 映射端口」与「全局 IPv6」。
+//! 这里产出的候选只有「映射端口」与「全局 IPv6」。
+//! 映射协议为 Syncthing 同款分层：UPnP 优先，失败回退 NAT-PMP（RFC 6886，Apple 系路由器
+//! 只讲此协议）；PCP 不投（运营商侧协议，家用场景无覆盖）。
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::{Arc, RwLock};
@@ -12,11 +14,13 @@ const RENEW: Duration = Duration::from_secs(25 * 60);
 const RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Default)]
-pub struct UpnpReport {
+pub struct MappingReport {
     pub mapped_port: Option<u16>,
+    /// 映射协议：upnp / pmp（无映射时 None，心跳上报 "none"）
+    pub mapping_type: Option<&'static str>,
 }
 
-pub type SharedUpnpReport = Arc<RwLock<UpnpReport>>;
+pub type SharedMappingReport = Arc<RwLock<MappingReport>>;
 
 /// 全局 IPv6 探测目标（Cloudflare 公共 DNS；UDP connect 只做路由决策，不产生流量）。
 /// 不能探服务端地址：服务端 IPv4-only 时出接口是 IPv4，本机的全球 IPv6 永远探不到
@@ -54,29 +58,110 @@ fn is_global_v6(ip: &std::net::Ipv6Addr) -> bool {
     !(ip.is_loopback() || ip.is_unicast_link_local() || ip.is_unique_local() || ip.is_unspecified())
 }
 
-/// UPnP 映射维护任务（igd 为阻塞 I/O，整体进 spawn_blocking 循环）：
-/// 发现网关 → 映射 UDP 端口（27373 被占时退到任意外部端口）→ 租约期内睡眠续期；
+/// 端口映射维护任务（igd/NAT-PMP 均为阻塞 I/O，整体进 spawn_blocking 循环）：
+/// 映射 UDP 端口（27373 被占时退到网关分配的任意外部端口）→ 租约期内睡眠续期；
 /// 失败清除上报并 60s 重试。上报值为实际分到的**外部端口**
-pub async fn maintain_upnp(quic_port: u16, report: SharedUpnpReport) {
+pub async fn maintain_mapping(quic_port: u16, report: SharedMappingReport) {
     loop {
-        let outcome = tokio::task::spawn_blocking(move || upnp_round(quic_port)).await;
+        let outcome = tokio::task::spawn_blocking(move || mapping_round(quic_port)).await;
         match outcome {
-            Ok(Ok(external_port)) => {
-                report.write().unwrap().mapped_port = Some(external_port);
+            Ok(Ok((external_port, mapping_type))) => {
+                // 块作用域圈住写 guard：不得跨 await（非 Send）
+                {
+                    let mut guard = report.write().unwrap();
+                    guard.mapped_port = Some(external_port);
+                    guard.mapping_type = Some(mapping_type);
+                }
                 tokio::time::sleep(RENEW).await;
             }
             Ok(Err(e)) => {
-                tracing::debug!("UPnP 映射失败（{RETRY:?} 后重试）: {e}");
-                report.write().unwrap().mapped_port = None;
+                tracing::debug!("端口映射失败（{RETRY:?} 后重试）: {e}");
+                *report.write().unwrap() = MappingReport::default();
                 tokio::time::sleep(RETRY).await;
             }
             Err(e) => {
-                tracing::error!("UPnP 任务异常: {e}");
-                report.write().unwrap().mapped_port = None;
+                tracing::error!("端口映射任务异常: {e}");
+                *report.write().unwrap() = MappingReport::default();
                 tokio::time::sleep(RETRY).await;
             }
         }
     }
+}
+
+/// 单轮映射：UPnP 优先，失败回退 NAT-PMP（协议分层见模块头注释）
+fn mapping_round(quic_port: u16) -> Result<(u16, &'static str), String> {
+    match upnp_round(quic_port) {
+        Ok(port) => Ok((port, "upnp")),
+        Err(upnp_err) => pmp_round(quic_port)
+            .map(|port| (port, "pmp"))
+            .map_err(|pmp_err| format!("UPnP（{upnp_err}）；NAT-PMP（{pmp_err}）")),
+    }
+}
+
+// ---------- NAT-PMP（RFC 6886，极简客户端） ----------
+
+/// NAT-PMP 网关端口
+const PMP_PORT: u16 = 5351;
+/// 单包收发超时（网关同局域网，正常 RTT <10ms）
+const PMP_IO_TIMEOUT: Duration = Duration::from_millis(800);
+
+/// UDP 映射请求（12B）：version=0, op=1(UDP), reserved=0, internal, suggested external, lifetime
+fn pmp_mapping_request(internal: u16, external: u16, lifetime: u32) -> [u8; 12] {
+    let mut request = [0u8; 12];
+    request[1] = 1;
+    request[4..6].copy_from_slice(&internal.to_be_bytes());
+    request[6..8].copy_from_slice(&external.to_be_bytes());
+    request[8..12].copy_from_slice(&lifetime.to_be_bytes());
+    request
+}
+
+/// 映射响应（16B）：version=0, op=129, result(2), epoch(4), internal(2), assigned external(2), lifetime(4)。
+/// 返回网关实际分配的外部端口（候选播报值必须与之口径一致，同 UPnP）
+fn pmp_parse_mapping_response(buf: &[u8], internal: u16) -> Result<u16, String> {
+    if buf.len() < 16 || buf[0] != 0 || buf[1] != 129 {
+        return Err("响应形状非法".to_string());
+    }
+    let result = u16::from_be_bytes([buf[2], buf[3]]);
+    if result != 0 {
+        return Err(format!("网关拒绝（结果码 {result}）"));
+    }
+    let resp_internal = u16::from_be_bytes([buf[8], buf[9]]);
+    if resp_internal != internal {
+        return Err(format!("响应内部端口不符（{resp_internal}）"));
+    }
+    Ok(u16::from_be_bytes(buf[10..12].try_into().unwrap()))
+}
+
+/// NAT-PMP 映射一轮：查默认网关（路由表）→ UDP 映射请求（两次重发容忍局域网丢包）
+fn pmp_round(quic_port: u16) -> Result<u16, String> {
+    let gateway =
+        default_net::get_default_gateway().map_err(|e| format!("默认网关查询失败: {e}"))?;
+    let IpAddr::V4(gateway) = gateway.ip_addr else {
+        return Err("默认网关非 IPv4".to_string());
+    };
+    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("socket 绑定失败: {e}"))?;
+    socket
+        .set_read_timeout(Some(PMP_IO_TIMEOUT))
+        .map_err(|e| format!("socket 超时设置失败: {e}"))?;
+    let target = SocketAddr::from((gateway, PMP_PORT));
+    let request = pmp_mapping_request(quic_port, quic_port, LEASE.as_secs() as u32);
+    let mut last_err = String::new();
+    for _ in 0..2 {
+        if let Err(e) = socket.send_to(&request, target) {
+            last_err = format!("发送失败: {e}");
+            continue;
+        }
+        let mut buf = [0u8; 64];
+        match socket.recv_from(&mut buf) {
+            Ok((len, _)) => {
+                let external = pmp_parse_mapping_response(&buf[..len], quic_port)?;
+                tracing::info!("NAT-PMP 已映射 UDP {external} → {quic_port}（网关 {gateway}）");
+                return Ok(external);
+            }
+            Err(e) => last_err = format!("接收失败: {e}"),
+        }
+    }
+    Err(last_err)
 }
 
 /// 单轮：发现网关 → 以网关地址探出本机局域网 v4 → 添加 UDP 映射（续期即重加）。
@@ -176,6 +261,35 @@ pub async fn ensure_firewall_rule_windows(quic_port: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pmp_request_layout() {
+        let req = pmp_mapping_request(27373, 27373, 1800);
+        assert_eq!(req[0], 0); // version
+        assert_eq!(req[1], 1); // op = UDP
+        assert_eq!(&req[4..6], &27373u16.to_be_bytes());
+        assert_eq!(&req[8..12], &1800u32.to_be_bytes());
+    }
+
+    #[test]
+    fn pmp_response_parsing() {
+        // 成功响应：op=129，结果码 0，内部端口回显，外部端口以网关分配为准
+        let mut resp = [0u8; 16];
+        resp[1] = 129;
+        resp[8..10].copy_from_slice(&27373u16.to_be_bytes());
+        resp[10..12].copy_from_slice(&40000u16.to_be_bytes());
+        assert_eq!(pmp_parse_mapping_response(&resp, 27373).unwrap(), 40000);
+        // 网关拒绝（结果码非 0）
+        let mut denied = resp;
+        denied[3] = 2;
+        assert!(pmp_parse_mapping_response(&denied, 27373).is_err());
+        // 内部端口回显不符（串台包）
+        let mut mismatched = resp;
+        mismatched[9] = 1;
+        assert!(pmp_parse_mapping_response(&mismatched, 27373).is_err());
+        // 形状非法
+        assert!(pmp_parse_mapping_response(&resp[..8], 27373).is_err());
+    }
 
     #[test]
     fn lan_ipv4_reports_private_or_nothing() {

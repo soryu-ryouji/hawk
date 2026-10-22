@@ -42,6 +42,7 @@ quinn = "0.11.12"
 igd-next = "0.18.0"
 hyper = { version = "1.12.0", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
+default-net = "0.22.0"
 
 [profile.release]
 lto = true
