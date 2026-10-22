@@ -6,7 +6,7 @@ import net from 'node:net';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { APP_DIR, REMOTE_CONFIG_FILE } from './paths';
+import { APP_DIR, DAEMON_LOG_FILE, REMOTE_CONFIG_FILE } from './paths';
 import { getMainWindow } from './window';
 import { readConfig, setLibraryRoot, writeConfig } from './app-config';
 import { IPC, type ServerConn } from './ipc-contract';
@@ -124,9 +124,24 @@ function startServer(libPath: string | null, address: string, token: string): Se
   let intentionalExit = false;
   const child = spawn(command, spawnArgs, {
     env: { ...process.env, HAWK_TOKEN: token },
-    stdio: ['ignore', 'ignore', 'pipe'], // stdout 不再承担协议，只看 stderr 报错
+    stdio: ['ignore', 'pipe', 'pipe'], // stdout 落日志文件（tracing info 级是远程排障主力），stderr 报错
     // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
     windowsHide: true,
+  });
+  // daemon 日志落盘（每次拉起截断重写，只看当次会话）；日志失败不阻断启动
+  let logStream: fs.WriteStream | null = null;
+  try {
+    fs.mkdirSync(path.dirname(DAEMON_LOG_FILE), { recursive: true });
+    logStream = fs.createWriteStream(DAEMON_LOG_FILE, { flags: 'w' });
+    logStream.on('error', () => {});
+  } catch {
+    logStream = null;
+  }
+  child.stdout?.on('data', (chunk: Buffer) => {
+    logStream?.write(chunk);
+    if (isDev) {
+      process.stdout.write(chunk);
+    }
   });
 
   let stderrTail = '';
@@ -152,6 +167,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
     fail(`hawk-daemon 启动失败: ${error.message}${missing ? '（安装包缺少 hawk-daemon，请重新安装完整版本）' : ''}`);
   });
   child.on('exit', (code) => {
+    logStream?.end();
     if (!intentionalExit) {
       // 旧 daemon 不认识新参数：提示版本不匹配，而不是只甩 clap 用法
       const stale = stderrTail.includes("unexpected argument '--remote-config'")

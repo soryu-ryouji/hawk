@@ -72,7 +72,7 @@ Electron 主进程启动
 
 启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。换库（引导页选库、侧栏库名下拉选历史库）与应用设置重启 server 不再重载页面——主进程停旧 server 的同时发 `hawk:server-restarting`，渲染进程立即切启动屏（旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效，必须此时就切）；`hawk:server-started` 带新地址/token 到达后原地重配 API、重启数据（store.init 会清掉上一库的会话状态：查询条件/选择/预览/进度指示；视图经 restoreView 恢复或回退全部素材，+SSE 重连）。历史库由主进程记录（`~/.config/hawk/config.toml` 的 `libraryHistory`，最近使用在前、去重、上限 10），侧栏库名下拉列出（当前库打勾、已删除的置灰），底部「打开文件夹…」弹系统目录选择框。
 
-握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。
+握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。daemon 的 stdout（tracing 日志）由主进程落盘到 `~/.config/hawk/daemon.log`（每次拉起截断重写）——远程打洞/中继排障的 info 级日志都在这里。
 
 关窗行为可配（`config.toml` 的 `closeAction`，设置面板「外观」分区可改，即改即生效）：
 `exit`（默认）关窗直接退出——close 不拦截，窗口销毁后经 `window-all-closed` 走 `app.quit()`；
