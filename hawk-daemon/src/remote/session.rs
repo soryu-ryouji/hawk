@@ -239,7 +239,8 @@ impl SessionManager {
                 }
             }
         }
-        if self.remote.current().relay {
+        let relay_on = self.remote.current().relay;
+        if relay_on {
             if let Some(url) = connect_info["relay"]["url"].as_str() {
                 if let Ok(relay_url) = url.parse() {
                     addr = addr.with_relay_url(relay_url);
@@ -258,7 +259,17 @@ impl SessionManager {
         let _ = identity; // endpoint 身份即本机身份（拨号不再需要另行出示）
         tokio::time::timeout(CONNECT_TIMEOUT, endpoint.connect(addr, HAWK_ALPN))
             .await
-            .map_err(|_| format!("隧道握手超时（{CONNECT_TIMEOUT:?}）"))?
+            .map_err(|_| {
+                // 附传输线索：中继是被本机开关丢弃的 / 服务端没提供中继 / 直连地址不可达
+                let relay_note = if connect_info["relay"]["url"].is_string() && !relay_on {
+                    "（服务端提供中继但本机未开启「使用中继」）"
+                } else if connect_info["relay"]["url"].is_string() {
+                    "（中继在场仍超时——检查 relay 可达性与对端在线）"
+                } else {
+                    "（该部署未提供中继，纯直连形态）"
+                };
+                format!("隧道握手超时（{CONNECT_TIMEOUT:?}）{relay_note}")
+            })?
             .map_err(|e| format!("隧道握手失败: {e}"))
     }
 
