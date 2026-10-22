@@ -56,12 +56,9 @@ export const useRemoteStore = defineStore('remote', () => {
     }
   }
 
-  /** 访问密钥列表（远程未接入时清空——key 只有接入后才有意义） */
+  /** 访问密钥列表。密钥由本地 daemon 持久保管（remote/keys.json），与是否接入无关——
+   *  不得以 dto 状态为门禁（挂载时 dto 未就绪会把列表清空且不再补拉，造成已签发密钥不可见） */
   async function refreshKeys(): Promise<void> {
-    if (!dto.value?.enabled) {
-      keys.value = [];
-      return;
-    }
     try {
       keys.value = (await shell.remoteKeys()).keys;
     } catch (e) {

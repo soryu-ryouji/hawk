@@ -166,12 +166,18 @@ describe('useRemoteStore', () => {
     expect(store.keys).toHaveLength(0);
   });
 
-  it('refreshKeys 远程未启用时清空', async () => {
+  it('refreshKeys 不依赖 dto 就绪/启用状态（密钥本地持久保管；挂载竞态回归）', async () => {
     const store = useRemoteStore();
-    store.dto = { ...env.status, enabled: false };
     env.keys = [{ id: 'k_1', label: '', read: true, write: false, prefix: 'hk_', created_at_ms: 1 }];
+    // dto 未拉取（null）与远程未启用两种形态下都必须照常列出
+    store.dto = null;
     await store.refreshKeys();
-    expect(store.keys).toEqual([]);
+    expect(store.keys).toHaveLength(1);
+
+    store.dto = { ...env.status, enabled: false };
+    await store.refreshKeys();
+    expect(store.keys).toHaveLength(1);
+    env.keys = [];
   });
 });
 
