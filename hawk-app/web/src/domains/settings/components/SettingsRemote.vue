@@ -86,6 +86,7 @@ async function save() {
     url: url.value.trim(),
     service_key: serviceKey.value.trim(),
     writable: writable.value,
+    relay_fallback: store.relayFallback,
   });
   saving.value = false;
   if (!ok) {

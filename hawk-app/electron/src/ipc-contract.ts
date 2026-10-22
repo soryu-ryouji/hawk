@@ -123,9 +123,11 @@ export interface RemoteConfig {
   service_key: string;
   /** 允许广域网会话导入素材/新建文件夹（与 [web] 局域网写权限独立） */
   writable: boolean;
+  /** 中继回退（直连失败/UDP 静默时经服务端中继；消耗自己的服务器带宽） */
+  relay_fallback: boolean;
 }
 
-/** 信令运行状态（daemon /remote 的 status 子对象） */
+/** 信令运行状态（daemon /remote 的 status 子对象，含 relay_fallback 等运行配置回显） */
 export interface RemoteStatus {
   state: 'disabled' | 'connecting' | 'online' | 'error';
   server_url?: string;

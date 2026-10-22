@@ -6,7 +6,14 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { ConnectionDescriptor, RemoteDto } from '@/shared/types';
 
 const env = vi.hoisted(() => ({
-  status: { enabled: true, url: 'https://hub', service_key: 'hs_k', writable: false, status: { state: 'online', device_id: 'd_self' } } as RemoteDto,
+  status: {
+    enabled: true,
+    url: 'https://hub',
+    service_key: 'hs_k',
+    writable: false,
+    relay_fallback: false,
+    status: { state: 'online', device_id: 'd_self' },
+  } as RemoteDto,
   putOk: true,
   connectError: null as string | null,
   connection: null as ConnectionDescriptor | null,
@@ -17,7 +24,9 @@ const env = vi.hoisted(() => ({
 
 const shellMock = vi.hoisted(() => ({
   remoteStatus: vi.fn(() => Promise.resolve(env.status)),
-  remotePutConfig: vi.fn(() => (env.putOk ? Promise.resolve(env.status) : Promise.reject(new Error('校验失败')))),
+  remotePutConfig: vi.fn((config: Record<string, unknown>) =>
+    env.putOk ? Promise.resolve({ ...env.status, ...config } as RemoteDto) : Promise.reject(new Error('校验失败')),
+  ),
   remoteDevices: vi.fn(() =>
     Promise.resolve({
       devices: [
@@ -89,11 +98,11 @@ describe('useRemoteStore', () => {
 
   it('saveConfig 成功回写 dto；失败写入 error 并返回 false', async () => {
     const store = useRemoteStore();
-    expect(await store.saveConfig({ enabled: true, url: 'https://hub', service_key: 'hs_k', writable: false })).toBe(true);
+    expect(await store.saveConfig({ enabled: true, url: 'https://hub', service_key: 'hs_k', writable: false, relay_fallback: false })).toBe(true);
     expect(store.dto?.url).toBe('https://hub');
 
     env.putOk = false;
-    expect(await store.saveConfig({ enabled: true, url: '', service_key: '', writable: false })).toBe(false);
+    expect(await store.saveConfig({ enabled: true, url: '', service_key: '', writable: false, relay_fallback: false })).toBe(false);
     expect(store.error).toBe('校验失败');
   });
 
@@ -107,6 +116,7 @@ describe('useRemoteStore', () => {
 
   it('中继回退：开启后直连失败经确认走 relay 重试', async () => {
     const store = useRemoteStore();
+    store.dto = { ...env.status }; // 开关数据源是 daemon 配置（dto），先注水
     env.connectError = "Error invoking remote method 'hawk:remote-connect': Error: 直连失败：超时";
     vi.stubGlobal(
       'confirm',
@@ -119,12 +129,12 @@ describe('useRemoteStore', () => {
     expect(shellMock.remoteConnect).toHaveBeenLastCalledWith('d_x', 'direct');
     expect(store.error).toContain('中继回退');
 
-    // 开启后：确认弹窗 → relay 重试成功，无 error
-    store.setRelayFallback(true);
+    // 开启后（开关写回 daemon 配置）：确认弹窗 → relay 重试成功，无 error
+    await store.setRelayFallback(true);
+    expect(shellMock.remotePutConfig).toHaveBeenLastCalledWith(expect.objectContaining({ relay_fallback: true }));
     await store.connect('d_x');
     expect(shellMock.remoteConnect).toHaveBeenLastCalledWith('d_x', 'relay');
     expect(store.error).toBeNull();
-    expect(localStorage.getItem('hawk:relayFallback')).toBe('1');
     vi.unstubAllGlobals();
   });
 

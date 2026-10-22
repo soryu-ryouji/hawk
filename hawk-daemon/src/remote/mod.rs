@@ -6,6 +6,7 @@ pub mod config;
 pub mod data;
 pub mod identity;
 pub mod keys;
+pub mod mux;
 pub mod reachability;
 pub mod relay;
 pub mod session;
@@ -73,7 +74,7 @@ impl Supervisor {
         Arc::new(Supervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new(RemoteStatus::default()),
-            sessions: session::SessionManager::new(bus.clone()),
+            sessions: session::SessionManager::new(bus.clone(), config.clone()),
             keys: keys::KeyStore::open(config.identity_dir()),
             bus,
             config,

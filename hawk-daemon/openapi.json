@@ -1185,6 +1185,10 @@
               "enabled": {
                 "type": "boolean"
               },
+              "relay_fallback": {
+                "description": "中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽）",
+                "type": "boolean"
+              },
               "service_key": {
                 "description": "服务端 service-key（池门禁凭证，hawk-server tenant add 生成）",
                 "type": "string"
@@ -1206,6 +1210,7 @@
               "url",
               "service_key",
               "writable",
+              "relay_fallback",
               "status"
             ],
             "type": "object"
@@ -2768,6 +2773,13 @@
           "enabled": {
             "type": "boolean"
           },
+          "relay_fallback": {
+            "description": "中继回退（直连失败/UDP 静默时经服务端中继）；省略时保留现值",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "service_key": {
             "description": "服务端 service-key",
             "type": "string"
@@ -2894,6 +2906,10 @@
           "enabled": {
             "type": "boolean"
           },
+          "relay_fallback": {
+            "description": "中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽）",
+            "type": "boolean"
+          },
           "service_key": {
             "description": "服务端 service-key（池门禁凭证，hawk-server tenant add 生成）",
             "type": "string"
@@ -2915,6 +2931,7 @@
           "url",
           "service_key",
           "writable",
+          "relay_fallback",
           "status"
         ],
         "type": "object"

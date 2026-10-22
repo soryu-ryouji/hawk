@@ -1,9 +1,8 @@
 // 远程访问域：设置面板的状态源（接入配置/信令状态/设备列表/会话动作）。
 // 连接切换本身由主进程驱动（remoteConnect → connection-changed → startup 重注水），
 // 本 store 只管面板数据与动作，不持连接语义。
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 
 export { initConnectionLabel, useConnectionLabel } from './connection';
 import { shell } from '@/shared/lib/platform';
@@ -25,14 +24,25 @@ export const useRemoteStore = defineStore('remote', () => {
   /** 正在建立会话的设备 id（列表行内 spinner） */
   const connectingId = ref<string | null>(null);
   const error = ref<string | null>(null);
-  /** 「中继回退」开关（localStorage 持久化，默认关闭：中继消耗自己的服务器带宽，须用户主动开启） */
-  const relayFallback = ref(loadText(STORAGE_KEYS.relayFallback) === '1');
+  /** 「中继回退」开关（设备级，daemon 远程配置 relay_fallback；默认关闭：中继消耗自己的服务器带宽）。
+   *  开关语义覆盖两处：建连失败的回落确认（本 store）与会话中 UDP 静默降级（daemon 自治） */
+  const relayFallback = computed(() => dto.value?.relay_fallback ?? false);
 
   let pollTimer = 0;
 
-  function setRelayFallback(on: boolean): void {
-    relayFallback.value = on;
-    saveText(STORAGE_KEYS.relayFallback, on ? '1' : '0');
+  /** 开关随配置写回 daemon（dto 即回显；未拉到配置时不动作） */
+  async function setRelayFallback(on: boolean): Promise<void> {
+    const current = dto.value;
+    if (!current) {
+      return;
+    }
+    await saveConfig({
+      enabled: current.enabled,
+      url: current.url,
+      service_key: current.service_key,
+      writable: current.writable,
+      relay_fallback: on,
+    });
   }
 
   async function refresh(): Promise<void> {

@@ -125,7 +125,7 @@ Connection {
 
 - 本地库：`api_base` 指向 daemon API 端口；远程库：指向 B 侧会话代理端口
 - 前端收到 `connection-changed` 后执行**统一的切换重置**：abort 进行中的请求与 SSE → 清空内存 store → `GET /app/info` → 按返回重新注水。该流程是启动注水的泛化，只写一次
-- **断线自动回切**：隧道断开、对端离线时，主进程经 daemon SSE 的 remote 事件获知，自动把当前连接切回本地库再通知前端。用户看到的是无声回到自己的库，而非远程白屏报错
+- **断线分级处理**：UDP 路径静默（12s 无入站）且中继回退开启时，mux 自动附加中继路径迁移连接（不断连）；连接真正死亡时原会话内原地重建（重建成功前端无感）；重建连续失败/对端离线才回切——主进程经 daemon SSE 的 remote 事件获知，自动把当前连接切回本地库再通知前端。用户看到的是无声回到自己的库，而非远程白屏报错
 - **无感的边界**：只读降级与来源标识保留。桌面端远程浏览仍按 `app/info` 的 `access`（viewer 级）做只读降级，前端无专门分支；浏览器插件的广域网保存使用独立的写会话，不改变桌面端远程浏览的只读语义；窗口保留「当前浏览：家里台式机」轻标识——这是安全与认知底线，不是可省略的区分逻辑
 
 ## 关键设计决策
@@ -166,7 +166,7 @@ QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P
 
 **7. 中继需用户主动开启**
 
-连接顺序：IPv4 直连（UPnP）→ IPv6 直连 → 询问用户是否中继。中继消耗自己的服务器带宽，任何环节都不自动回落——「中继回退」是客户端设置项（默认关闭），开启后直连失败时弹确认，用户同意才建立中继会话。IPv6 直连是免映射、不经服务器的 P2P 路径；候选可达性由客户端实际连接尝试判定，服务端只负责收集上报、不下结论。
+连接顺序：候选洪泛竞速（LAN → IPv4 映射 → IPv6 → 打洞同时发出，首个胜者赢）→ 询问用户是否中继。中继消耗自己的服务器带宽，任何环节都不自动回落——「中继回退」是设备级设置项（daemon remote.toml，默认关闭），语义覆盖两处：建连失败时弹确认回落；会话中 UDP 路径静默超阈值（12s）时自动附加中继路径（mux 路径迁移，不断连）。用户同意/开启才消耗带宽。IPv6 直连是免映射、不经服务器的 P2P 路径；候选可达性由客户端实际连接尝试判定，服务端只负责收集上报、不下结论。
 
 ## 远程查看模式（没有本地素材库）
 
@@ -202,9 +202,9 @@ A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
 
 直连失败（候选全部超时或无候选）时不自动回落中继：「中继回退」开关（默认关闭）已开启时，弹窗询问用户是否经中继继续（消耗自己的服务器带宽），确认后转入中继流程；未开启则提示「当前网络无法直连；如需经中继访问，可在设置中开启」。
 
-### 中继模式（阶段 2，已实现）
+### 中继模式（阶段 2/4，已实现）
 
-直连失败（候选全部超时或无候选）时，「中继回退」开关已开启的用户经确认弹窗同意后，以 `mode=relay` 另建会话：双方各连一条服务端中继 WS，QUIC 经 quinn 自定义传输（AsyncUdpSocket over WS，一帧 = 一个数据报）在 A↔B 之间端到端建立——服务端只配对转发加密数据报，看不到素材内容。多租户方案下无票据/配额/用量上报，准入即本池 service-key。协议细节见 [remote-protocol.md](remote-protocol.md)「中继」一节。
+直连失败（候选全部超时或无候选）时，「中继回退」开关已开启的用户经确认弹窗同意后，以 `mode=relay` 另建会话；会话进行中 UDP 路径静默超阈值时同开关授权自动附加中继路径（`POST /sessions/{id}/relay-path`，既有会话的路径迁移，不另建会话）。中继 WS 并入 mux（一帧 = 一个数据报），QUIC 在 A↔B 之间端到端——服务端只配对转发加密数据报，看不到素材内容。多租户方案下无票据/配额/用量上报，准入即本池 service-key。协议细节见 [remote-protocol.md](remote-protocol.md)「中继」一节。
 
 ## 安全模型
 
@@ -246,7 +246,7 @@ A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
 | 2    | ~~服务端中继 + 客户端中继逻辑 +「中继回退」开关与确认弹窗~~（已完成：relay WS 配对转发 + AsyncUdpSocket over WS + 回退确认） | 直连失败经用户确认走中继；QUIC 端到端语义不变（服务端只见密文） |
 | 3    | ~~QUIC 打洞（免端口映射 P2P）~~（已完成：服务端 UDP 探测口观测 observed endpoint + 会话时编排 + 双方同端口开口；对称型 NAT 打不通时落中继，不投 NAT 类型检测与端口预测） | 无直连候选的设备间可直连；探测口不可达自动退化为 unreachable |
 | 4    | ~~候选并行竞速（Happy Eyeballs）+ NAT-PMP 补全 + LAN 候选~~（已完成：全候选并发拨号首个胜者赢；UPnP 失败回退 NAT-PMP；同公网 IP 会话下发 LAN 地址内网直连） | 黑洞/失效候选不再拖慢建连（串行最坏 25s+ → 典型 ~1s）；Apple 系路由器可映射；同局域网零 NAT 依赖 |
-| 5    | 统一传输 socket 与路径迁移（iroh magicsock 思路：relay ↔ direct 共用同一 QUIC endpoint，会话内无感切换，不断连不回落） | 远期；需要自研地址抽象的多路径 socket，待 2.0 全量用户数据后评估 |
+| 5    | ~~统一传输 socket 与路径迁移~~（已完成：mux 单 endpoint 合并 UDP/中继路径，候选竞速即 Initial 洪泛；B 侧入站归一伪地址（quinn 客户端丢未知来源包的硬约束），A 侧由 quinn 被动迁移跟随；UDP 静默 12s 降级中继；连接级原地重建兑底） | 网络切换/NAT 重绑定不再踢回本地库；relay/direct 不再有两套并行数据面管线 |
 
 ## remote/ 模块结构
 
@@ -256,11 +256,13 @@ hawk-daemon/src/remote/
 ├── config.rs       # 应用级 remote.toml 读写（设备身份目录由配置位置派生）
 ├── identity.rs     # remote/identity.json（device_id、rcgen 自签证书与指纹）
 ├── keys.rs         # remote/keys.json：访问密钥（hawk-app key）签发/保管/吊销 + server 映射推送
-├── signal.rs       # REST 客户端（注册/心跳/设备/会话/key 同步）+ WSS 通道 + 自动重连 + 查看者会话本地执法
+├── signal.rs       # REST 客户端（注册/心跳/设备/会话/key 同步）+ WSS 通道 + 自动重连 + 查看者会话本地执法 + 中继路径附加
 ├── tls.rs          # QUIC 双向指纹钉扎（rustls verifier：B 钉 A、A 放行已接受对端）
 ├── reachability.rs # 全局 IPv6/LAN 探测（UDP connect 出接口）+ UPnP/NAT-PMP 映射维护（阻塞任务）
-├── data.rs         # quinn 端点（自建 socket + try_clone 开口句柄，P3 同端口前提）、A 侧隧道端（hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理、打洞开口/探测
-└── session.rs      # B 侧会话编排：发起 → 轮询 ready → 全候选并行竞速（含 punch）→ 代理；SSE remote.session
+├── mux.rs          # P4 统一传输 socket：UDP + 中继 WS 路径合并为单 endpoint；B 侧伪地址归一/洪泛/静默观察，A 侧被动迁移
+├── data.rs         # mux 上的 quinn 端点（自建 socket + try_clone 开口句柄，P3 同端口前提）、A 侧隧道端（hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理（连接可热替换）、打洞开口/探测
+├── relay.rs        # 中继 WS 通道建立辅助（请求构建 + 带超时连接；数据报传输归 mux）
+└── session.rs      # B 侧会话编排：发起 → 轮询 ready → mux 洪泛建连 → 代理；静默降级观察 + 原地重建；SSE remote.session
 ```
 
 新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、rcgen + sha2（自签证书与指纹）、quinn（QUIC）、igd-next（UPnP）、default-net（NAT-PMP 默认网关查询）、hyper + hyper-util（隧道内 HTTP/1.1 解析）。

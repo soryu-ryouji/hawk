@@ -31,6 +31,8 @@ struct RemoteDto {
     service_key: String,
     /// 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）
     writable: bool,
+    /// 中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽）
+    relay_fallback: bool,
     /// 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因
     status: RemoteStatus,
 }
@@ -42,6 +44,7 @@ fn remote_dto(state: &SharedState) -> RemoteDto {
         url: cfg.url,
         service_key: cfg.service_key,
         writable: cfg.writable,
+        relay_fallback: cfg.relay_fallback,
         status: state.remote.snapshot(),
     }
 }
@@ -70,6 +73,9 @@ struct PutRemoteBody {
     /// 允许广域网会话导入素材/新建文件夹；省略时按关闭处理
     #[serde(default)]
     writable: bool,
+    /// 中继回退（直连失败/UDP 静默时经服务端中继）；省略时保留现值
+    #[serde(default)]
+    relay_fallback: Option<bool>,
 }
 
 /// 写回应用级 remote.toml 并热重启信令（admin 限定）。
@@ -94,6 +100,10 @@ async fn put_remote(
         service_key: body.service_key.trim().to_string(),
         quic_port: state.remote.remote_config().current().quic_port,
         writable: body.writable,
+        // 省略时保留现值（设置面板整体保存时会显式携带）
+        relay_fallback: body
+            .relay_fallback
+            .unwrap_or_else(|| state.remote.remote_config().current().relay_fallback),
     };
     if new_remote.enabled {
         if new_remote.url.is_empty() || new_remote.service_key.is_empty() {

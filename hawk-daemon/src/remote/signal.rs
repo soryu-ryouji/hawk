@@ -135,11 +135,9 @@ async fn run_inner(
             base: &base,
             key: &cfg.service_key,
             device_id: &device_id,
-            identity: &identity,
             data_plane: &data_plane.0,
             mapping_report: &mapping_report,
             quic_port: cfg.quic_port,
-            router: &router,
             library,
             remote,
             keys: &supervisor.keys,
@@ -226,11 +224,9 @@ struct ChannelContext<'a> {
     /// service-key（池门禁凭证）
     key: &'a str,
     device_id: &'a str,
-    identity: &'a Identity,
     data_plane: &'a Arc<DataPlane>,
     mapping_report: &'a SharedMappingReport,
     quic_port: u16,
-    router: &'a axum::Router,
     /// 本地库上下文（None = 远程查看模式）
     library: &'a Option<LibraryContext>,
     remote: &'a Arc<RemoteConfigStore>,
@@ -453,55 +449,17 @@ async fn handle_message(
                     return Err(e);
                 }
 
-                // 中继模式：accept 后经服务端中继 WS 建立 QUIC（role=a 目标设备）
+                // 中继模式：accept 后连服务端中继 WS 并入 mux（P4：A 侧单 endpoint，
+                // 中继只是 mux 的一条路径，不再有每会话独立中继端点）
                 if value.get("mode").and_then(|m| m.as_str()) == Some("relay") {
-                    match crate::remote::relay::relay_ws_request(
-                        ctx.base,
-                        ctx.key,
-                        ctx.device_id,
-                        session_id,
-                        "a",
-                    ) {
-                        Ok(request) => {
-                            let identity = ctx.identity.clone();
-                            let plane = ctx.data_plane.clone();
-                            let router = ctx.router.clone();
-                            let session_id = session_id.to_string();
-                            tokio::spawn(async move {
-                                // connect_async 无内置超时：反代对 Upgrade 处理不当时会静默
-                                // 挂起（查看方 15s 就超时放弃了），必须自己掐表
-                                match tokio::time::timeout(
-                                    Duration::from_secs(10),
-                                    tokio_tungstenite::connect_async(request),
-                                )
-                                .await
-                                {
-                                    Err(_) => {
-                                        tracing::warn!("中继会话 {session_id} 通道连接超时（10s，检查反代的 WebSocket Upgrade 配置）")
-                                    }
-                                    Ok(Err(e)) => {
-                                        tracing::warn!("中继会话 {session_id} 通道连接失败: {e}")
-                                    }
-                                    Ok(Ok((ws, _))) => {
-                                        tracing::info!("中继会话 {session_id}：A 侧通道已连接");
-                                        if let Err(e) = crate::remote::relay::serve_over_ws(
-                                            &identity, &plane, ws, router,
-                                        )
-                                        .await
-                                        {
-                                            tracing::warn!(
-                                                "中继会话 {session_id} 服务端点失败: {e}"
-                                            );
-                                        }
-                                    }
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            tracing::warn!("中继地址构建失败: {e}");
-                        }
-                    }
+                    spawn_relay_attach(ctx, supervisor, session_id, true, accepted_peers);
                 }
+            }
+        }
+        Some("session.relay_path") => {
+            // P4 中继路径附加（既有会话降级通道）：双方各连一条中继 WS 并入 mux
+            if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
+                spawn_relay_attach(ctx, supervisor, session_id, false, accepted_peers);
             }
         }
         Some("session.probe") => {
@@ -623,6 +581,39 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
     } else {
         Err(response_error(resp, "心跳").await)
     }
+}
+
+/// 中继 WS 接入并入 mux（P4）：relay 模式会话的初始路径 / 既有会话的降级附加路径。
+/// 目标侧进 DataPlane mux，发起侧进会话 mux（attach_relay_to_active 判定会话仍在场）
+fn spawn_relay_attach(
+    ctx: &ChannelContext<'_>,
+    supervisor: &Arc<Supervisor>,
+    session_id: &str,
+    relay_session: bool,
+    accepted_peers: &std::collections::HashMap<String, [u8; 32]>,
+) {
+    // relay 模式会话的接受方必是目标侧；relay_path 推送按会话归属裁决角色
+    let is_target = relay_session || accepted_peers.contains_key(session_id);
+    let base = ctx.base.to_string();
+    let key = ctx.key.to_string();
+    let device_id = ctx.device_id.to_string();
+    let sid = session_id.to_string();
+    let plane = ctx.data_plane.clone();
+    let sessions = supervisor.sessions.clone();
+    tokio::spawn(async move {
+        let role = if is_target { "a" } else { "b" };
+        match crate::remote::relay::connect_relay_ws(&base, &key, &device_id, &sid, role).await {
+            Ok(ws) => {
+                if is_target {
+                    plane.attach_relay(ws);
+                    tracing::info!("会话 {sid} 中继路径已接入（目标侧）");
+                } else if sessions.attach_relay_to_active(&sid, ws) {
+                    tracing::info!("会话 {sid} 中继路径已接入（发起侧）");
+                } // 会话已更替：WS 随 drop 关闭，服务端侧摘除配对
+            }
+            Err(e) => tracing::warn!("会话 {sid} 中继通道连接失败: {e}"),
+        }
+    });
 }
 
 /// 探测口地址解析（P3）：主机名取接入配置 base URL（协议约定），IPv4 优先（探测口仅绑 v4）

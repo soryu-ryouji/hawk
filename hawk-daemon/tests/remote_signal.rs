@@ -383,6 +383,7 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
             service_key: KEY.to_string(),
             quic_port: 0, // OS 分配，避免测试间端口冲突
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -434,6 +435,7 @@ async fn punch_probe_and_opening_share_quic_port() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -485,6 +487,7 @@ async fn signal_reports_fatal_on_invalid_key() {
             service_key: "wrong-key".to_string(),
             quic_port: 0,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -525,6 +528,7 @@ async fn signal_re_registers_when_server_forgets_device() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -594,6 +598,7 @@ async fn hot_restart_rebinds_quic_port() {
         service_key: KEY.to_string(),
         quic_port: port,
         writable: false,
+        relay_fallback: false,
     };
     lib.remote.update(&remote(&base)).unwrap();
 
@@ -637,6 +642,7 @@ async fn hot_restart_rebinds_quic_port() {
             service_key: String::new(),
             quic_port: port,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
     supervisor.wake();
@@ -668,6 +674,7 @@ async fn ws_404_triggers_re_register() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -730,6 +737,7 @@ async fn write_session_rejected_when_writable_off() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -774,6 +782,7 @@ async fn write_session_rejected_without_credential() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: true,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -822,6 +831,7 @@ async fn heartbeat_429_does_not_break_channel() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -887,6 +897,7 @@ async fn viewer_session_rejected_with_unknown_credential() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: true,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -931,6 +942,7 @@ async fn write_session_accepted_when_writable_on() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: true,
+            relay_fallback: false,
         })
         .unwrap();
 
@@ -979,6 +991,7 @@ async fn silent_channel_triggers_reconnect() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
+            relay_fallback: false,
         })
         .unwrap();
 

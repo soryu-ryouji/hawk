@@ -6,8 +6,10 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use hawk_daemon::core::events::EventBus;
+use hawk_daemon::remote::config::RemoteConfigStore;
 use hawk_daemon::remote::data::{serve_proxy, DataPlane, ProxyContext, TunneledPeer};
 use hawk_daemon::remote::identity::Identity;
+use hawk_daemon::remote::mux::MuxSocket;
 use hawk_daemon::remote::session::SessionManager;
 use hawk_daemon::remote::tls;
 use serde_json::{json, Value};
@@ -25,6 +27,38 @@ fn new_identity(dir: &tempfile::TempDir, device_id: Option<&str>) -> Identity {
 
 fn fingerprint_hex(identity: &Identity) -> String {
     identity.fingerprint.clone()
+}
+
+/// 测试用 SessionManager（远程配置为临时目录，中继回退默认关）
+fn test_manager(dir: &tempfile::TempDir) -> Arc<SessionManager> {
+    let remote =
+        RemoteConfigStore::open(Some(dir.path().join("remote.toml").to_str().unwrap()), None);
+    SessionManager::new(EventBus::new(), remote)
+}
+
+/// B 侧 mux 直连 A（loopback 单候选洪泛）：替代 P4 前的逐候选 connect
+async fn mux_connect(
+    identity: &Identity,
+    port_a: u16,
+    fp_a: [u8; 32],
+) -> (quinn::Endpoint, Arc<MuxSocket>, quinn::Connection) {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let mux = MuxSocket::new_client(socket, vec![SocketAddr::from(([127, 0, 0, 1], port_a))]);
+    let (endpoint, conn) =
+        hawk_daemon::remote::data::connect_mux(identity, mux.clone(), fp_a, Duration::from_secs(5))
+            .await
+            .expect("mux 隧道连接");
+    (endpoint, mux, conn)
+}
+
+/// ProxyContext 构造（P4 连接单元格）
+fn test_proxy_ctx(conn: quinn::Connection, token: &str, session_id: &str) -> Arc<ProxyContext> {
+    Arc::new(ProxyContext {
+        conn: Arc::new(std::sync::RwLock::new(conn)),
+        token: token.to_string(),
+        session_id: session_id.to_string(),
+    })
 }
 
 /// 测试路由：/hello 校验 TunneledPeer 标记与写权限（进程内受托语义）；
@@ -68,17 +102,10 @@ async fn tunnel_carries_http_with_viewer_marker() {
     plane_a.allow_session("s_tunnel", fp_b, false);
 
     // B 侧：钉扎 A 的指纹连接
-    let (_endpoint, conn) = DataPlane::connect(&identity_b, "127.0.0.1", port_a, fp_a)
-        .await
-        .expect("隧道连接");
+    let (_endpoint, _mux, conn) = mux_connect(&identity_b, port_a, fp_a).await;
 
     // B 侧会话代理
-    let ctx = Arc::new(ProxyContext {
-        conn,
-        token: "session-token".to_string(),
-        session_id: "s_tunnel".to_string(),
-    });
-    let proxy_port = free_proxy(ctx).await;
+    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_tunnel")).await;
 
     let client = reqwest::Client::new();
     // 正向：代理 → 隧道 → A 路由（携带 viewer 标记）
@@ -141,15 +168,8 @@ async fn await_first_conn_times_out_and_succeeds() {
     );
 
     // 对端连接并发出首个隧道请求：等待立即返回 true
-    let (_endpoint, conn) = DataPlane::connect(&identity_b, "127.0.0.1", port_a, fp_a)
-        .await
-        .expect("隧道连接");
-    let ctx = Arc::new(ProxyContext {
-        conn,
-        token: "session-token".to_string(),
-        session_id: "s_first".to_string(),
-    });
-    let proxy_port = free_proxy(ctx).await;
+    let (_endpoint, _mux, conn) = mux_connect(&identity_b, port_a, fp_a).await;
+    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_first")).await;
     let waiter = {
         let plane = plane_a.clone();
         tokio::spawn(async move {
@@ -183,24 +203,10 @@ async fn sessions_with_same_fingerprint_are_isolated() {
     plane_a.allow_session("s_a", fp_b, false);
     plane_a.allow_session("s_b", fp_b, false);
 
-    let (_endpoint_a, conn_a) = DataPlane::connect(&identity_b, "127.0.0.1", port_a, fp_a)
-        .await
-        .expect("会话 A 隧道连接");
-    let (_endpoint_b, conn_b) = DataPlane::connect(&identity_b, "127.0.0.1", port_a, fp_a)
-        .await
-        .expect("会话 B 隧道连接");
-    let proxy_a = free_proxy(Arc::new(ProxyContext {
-        conn: conn_a,
-        token: "token-a".to_string(),
-        session_id: "s_a".to_string(),
-    }))
-    .await;
-    let proxy_b = free_proxy(Arc::new(ProxyContext {
-        conn: conn_b,
-        token: "token-b".to_string(),
-        session_id: "s_b".to_string(),
-    }))
-    .await;
+    let (_endpoint_a, _mux_a, conn_a) = mux_connect(&identity_b, port_a, fp_a).await;
+    let (_endpoint_b, _mux_b, conn_b) = mux_connect(&identity_b, port_a, fp_a).await;
+    let proxy_a = free_proxy(test_proxy_ctx(conn_a, "token-a", "s_a")).await;
+    let proxy_b = free_proxy(test_proxy_ctx(conn_b, "token-b", "s_b")).await;
 
     let client = reqwest::Client::new();
     for (port, token) in [(proxy_a, "token-a"), (proxy_b, "token-b")] {
@@ -231,9 +237,7 @@ async fn sessions_with_same_fingerprint_are_isolated() {
     assert_eq!(resp.status(), 200, "其他会话被误伤");
 
     // 指纹仍被 s_b 引用：新连接仍可完成 QUIC 握手
-    let (_endpoint_c, conn_c) = DataPlane::connect(&identity_b, "127.0.0.1", port_a, fp_a)
-        .await
-        .expect("s_b 存续期间指纹应保持放行");
+    let (_endpoint_c, _mux_c, conn_c) = mux_connect(&identity_b, port_a, fp_a).await;
     drop(conn_c);
 
     plane_a.disallow_session("s_b");
@@ -253,7 +257,12 @@ async fn tunnel_rejects_wrong_fingerprint() {
 
     // B 钉扎一个错误指纹：握手必须失败
     let wrong = tls::fingerprint_of(b"not-a");
-    let result = DataPlane::connect(&identity_b, "127.0.0.1", port_a, wrong).await;
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let mux = MuxSocket::new_client(socket, vec![SocketAddr::from(([127, 0, 0, 1], port_a))]);
+    let result =
+        hawk_daemon::remote::data::connect_mux(&identity_b, mux, wrong, Duration::from_secs(5))
+            .await;
     assert!(result.is_err(), "错误指纹不应建立隧道");
 }
 
@@ -341,27 +350,15 @@ async fn relay_session_end_to_end() {
     // mock hub：relay 会话即 ready + WS 配对转发
     let (base, _pairs) = spawn_relay_hub(fingerprint_hex(&identity_a)).await;
 
-    // A 侧连中继 WS（role=a）并在其上接受 QUIC
-    let ws_req_a =
-        hawk_daemon::remote::relay::relay_ws_request(&base, "key", "d_a", "s_r", "a").unwrap();
-    let (ws_a, _) = tokio_tungstenite::connect_async(ws_req_a).await.unwrap();
-    let serve = {
-        let identity_a = identity_a.clone();
-        let plane_a = plane_a.clone();
-        tokio::spawn(async move {
-            let _ = hawk_daemon::remote::relay::serve_over_ws(
-                &identity_a,
-                &plane_a,
-                ws_a,
-                test_router(),
-            )
-            .await;
-        })
-    };
+    // A 侧：中继 WS 并入 mux（P4：单 endpoint，中继只是 mux 的一条路径）
+    let ws_a = hawk_daemon::remote::relay::connect_relay_ws(&base, "key", "d_a", "s_r", "a")
+        .await
+        .unwrap();
+    plane_a.attach_relay(ws_a);
 
     // B 侧：经 SessionManager 以 relay 模式建立会话
     let http = reqwest::Client::new();
-    let manager = SessionManager::new(EventBus::new());
+    let manager = test_manager(&dir_b);
     let dto = manager
         .connect(&http, &base, "key", &identity_b, "d_a", "relay")
         .await
@@ -378,7 +375,238 @@ async fn relay_session_end_to_end() {
     assert_eq!(resp.text().await.unwrap(), "hi from A");
 
     manager.disconnect(&http, &base, "key").await;
-    serve.abort();
+}
+
+// ---------- mux mock hub（direct 候选 + relay-path 附加 + WS 配对转发计数） ----------
+
+/// 中继转发帧计数（验证流量确实走了中继路径）
+type RelayFrames = Arc<std::sync::atomic::AtomicU64>;
+
+async fn spawn_mux_hub(port_a: u16, fp_a_hex: String) -> (String, RelayFrames) {
+    use axum::extract::ws::Message;
+    use axum::extract::{Query, WebSocketUpgrade};
+    use futures_util::{SinkExt, StreamExt};
+
+    let frames: RelayFrames = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let pairs: RelayPairs = Arc::new(Mutex::new(HashMap::new()));
+    let pairs_ws = pairs.clone();
+    let frames_ws = frames.clone();
+    let fp_devices = fp_a_hex.clone();
+    let fp_ready = fp_a_hex.clone();
+    let app = Router::new()
+        .route(
+            "/api/v1/devices",
+            axum::routing::get(move || {
+                let fp = fp_devices.clone();
+                async move {
+                    Json(json!({"status":"success","data":{"devices":[
+                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
+                         "online":true,"allow_remote":true,"fingerprint":fp}
+                    ]}}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions",
+            axum::routing::post(|Json(_body): Json<Value>| async move {
+                Json(json!({"status":"success","data":{"session_id":"s_m","state":"pending"}}))
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_m",
+            axum::routing::get(move || {
+                let fp = fp_ready.clone();
+                async move {
+                    Json(json!({"status":"success","data":{
+                        "session_id":"s_m","state":"ready",
+                        "connect":{
+                            "mode":"direct",
+                            "candidates":[{"transport":"ipv4","host":"127.0.0.1","port":port_a}],
+                            "fingerprint": fp,
+                        }
+                    }}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_m/relay-path",
+            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
+        )
+        .route(
+            "/api/v1/sessions/s_m/cancel",
+            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
+        )
+        .route(
+            "/api/v1/relay",
+            axum::routing::get(
+                move |Query(q): Query<std::collections::HashMap<String, String>>,
+                      ws: WebSocketUpgrade| {
+                    let pairs = pairs_ws.clone();
+                    let frames = frames_ws.clone();
+                    let session = q.get("session_id").cloned().unwrap_or_default();
+                    let role = q.get("role").cloned().unwrap_or_default();
+                    async move {
+                        ws.on_upgrade(move |socket| async move {
+                            let (tx, mut rx) =
+                                tokio::sync::mpsc::unbounded_channel::<Message>();
+                            pairs
+                                .lock()
+                                .unwrap()
+                                .insert((session.clone(), role.clone()), tx);
+                            let peer_role = if role == "a" { "b" } else { "a" }.to_string();
+                            let (mut sink, mut stream) = socket.split();
+                            loop {
+                                tokio::select! {
+                                    msg = rx.recv() => {
+                                        let Some(msg) = msg else { break };
+                                        if sink.send(msg).await.is_err() { break; }
+                                    }
+                                    incoming = stream.next() => {
+                                        match incoming {
+                                            Some(Ok(Message::Binary(data))) => {
+                                                let peer = pairs
+                                                    .lock()
+                                                    .unwrap()
+                                                    .get(&(session.clone(), peer_role.clone()))
+                                                    .cloned();
+                                                if let Some(peer) = peer {
+                                                    frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                                    let _ = peer.send(Message::Binary(data));
+                                                }
+                                            }
+                                            _ => break,
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                    }
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{addr}"), frames)
+}
+
+/// P4 路径迁移端到端：UDP 路径死亡 → 附加中继路径 → 同一 QUIC 连接继续服务（stable_id 不变）。
+/// 生产路径由 degrade_watch → relay-path REST → WSS 推送驱动；本测试无 WSS 通道，
+/// 手动驱动两侧附加（迁移机制本身是验证对象，WSS 编排另由信令测试覆盖）
+#[tokio::test]
+async fn udp_silence_migrates_session_to_relay() {
+    std::env::set_var("HAWK_REMOTE_MUX_SILENCE_MS", "600");
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = new_identity(&dir_b, Some("d_b"));
+    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
+
+    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
+    let port_a = plane_a.local_addr().unwrap().port();
+    plane_a.allow_session("s_m", fp_b, false);
+    let (base, relay_frames) = spawn_mux_hub(port_a, fingerprint_hex(&identity_a)).await;
+
+    let http = reqwest::Client::new();
+    let manager = test_manager(&dir_b);
+    let dto = manager
+        .connect(&http, &base, "key", &identity_b, "d_a", "direct")
+        .await
+        .expect("mux 会话建立");
+    let hello = |port: u16, token: &str| {
+        let http = http.clone();
+        let token = token.to_string();
+        async move {
+            http.get(format!("http://127.0.0.1:{port}/hello"))
+                .bearer_auth(&token)
+                .send()
+                .await
+        }
+    };
+    assert_eq!(
+        hello(dto.proxy_port, &dto.token).await.unwrap().status(),
+        200
+    );
+    let conn_before = manager.debug_active_stable_id().unwrap();
+    let frames_before = relay_frames.load(std::sync::atomic::Ordering::Relaxed);
+
+    // UDP 路径死亡（B 侧入站屏蔽）→ 等待静默超阈值
+    manager.debug_active_mux().unwrap().debug_block_udp(true);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    // 附加中继路径（生产由 WSS 驱动，此处手动）
+    let ws_a = hawk_daemon::remote::relay::connect_relay_ws(&base, "key", "d_a", "s_m", "a")
+        .await
+        .unwrap();
+    plane_a.attach_relay(ws_a);
+    let ws_b = hawk_daemon::remote::relay::connect_relay_ws(&base, "key", "d_b", "s_m", "b")
+        .await
+        .unwrap();
+    assert!(manager.attach_relay_to_active("s_m", ws_b));
+
+    // 连接迁移到中继：代理仍可用、stable_id 不变（同一连接）、中继链路有流量
+    let resp = tokio::time::timeout(Duration::from_secs(5), hello(dto.proxy_port, &dto.token))
+        .await
+        .expect("迁移后请求超时")
+        .unwrap();
+    assert_eq!(resp.status(), 200, "迁移后代理应继续可用");
+    assert_eq!(
+        manager.debug_active_stable_id().unwrap(),
+        conn_before,
+        "路径迁移不应重建连接"
+    );
+    assert!(
+        relay_frames.load(std::sync::atomic::Ordering::Relaxed) > frames_before,
+        "迁移后流量应经过中继"
+    );
+
+    manager.disconnect(&http, &base, "key").await;
+    std::env::remove_var("HAWK_REMOTE_MUX_SILENCE_MS");
+}
+
+/// P4 连接级重建兜底：路径迁移也救不回的连接死亡 → 原会话内重建新连接，代理恢复
+#[tokio::test]
+async fn session_rebuilds_in_place_when_connection_dies() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = new_identity(&dir_b, Some("d_b"));
+    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
+
+    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
+    let port_a = plane_a.local_addr().unwrap().port();
+    plane_a.allow_session("s_m", fp_b, false);
+    let (base, _frames) = spawn_mux_hub(port_a, fingerprint_hex(&identity_a)).await;
+
+    let http = reqwest::Client::new();
+    let manager = test_manager(&dir_b);
+    let dto = manager
+        .connect(&http, &base, "key", &identity_b, "d_a", "direct")
+        .await
+        .expect("会话建立");
+    let conn_before = manager.debug_active_stable_id().unwrap();
+
+    // 连接级死亡（A 侧会话放行仍在，重建可重新握手）
+    manager.debug_close_current_conn();
+    // 监控任务 1s 退避后重建 → 代理恢复
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    loop {
+        let resp = http
+            .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
+            .bearer_auth(&dto.token)
+            .send()
+            .await;
+        if resp.is_ok_and(|r| r.status() == 200) {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "重建后代理未恢复");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let conn_after = manager.debug_active_stable_id().unwrap();
+    assert_ne!(conn_before, conn_after, "重建应产生新连接");
+    manager.disconnect(&http, &base, "key").await;
 }
 
 // ---------- 中继 mock hub（relay 会话 + WS 配对转发） ----------
@@ -573,7 +801,7 @@ async fn punch_session_end_to_end() {
 
     let base = spawn_punch_hub(port_a, fingerprint_hex(&identity_a)).await;
     let http = reqwest::Client::new();
-    let manager = SessionManager::new(EventBus::new());
+    let manager = test_manager(&dir_b);
 
     // 模拟 WSS session.probe 触发（协议 P3）：B 预绑 socket 并向探测口 3 连发报到
     let token = [7u8; 16];
@@ -685,7 +913,7 @@ async fn candidates_race_skips_blackhole() {
 
     let base = spawn_race_hub(port_a, fingerprint_hex(&identity_a)).await;
     let http = reqwest::Client::new();
-    let manager = SessionManager::new(EventBus::new());
+    let manager = test_manager(&dir_b);
 
     let started = tokio::time::Instant::now();
     let dto = manager
@@ -724,7 +952,7 @@ async fn session_orchestration_end_to_end() {
 
     let (base, _hub) = spawn_hub(port_a, fingerprint_hex(&identity_a)).await;
     let http = reqwest::Client::new();
-    let manager = SessionManager::new(EventBus::new());
+    let manager = test_manager(&dir_b);
 
     let dto = manager
         .connect(&http, &base, "key", &identity_b, "d_a", "direct")

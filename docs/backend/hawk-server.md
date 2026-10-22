@@ -132,6 +132,7 @@ curl -X DELETE http://127.0.0.1:9110/api/v1/admin/tenants/t_xxxx
 | POST | `/api/v1/sessions/{session_id}/accept` | 目标设备接受会话 |
 | POST | `/api/v1/sessions/{session_id}/reject` | 目标设备拒绝会话 |
 | POST | `/api/v1/sessions/{session_id}/cancel` | 任一方取消会话 |
+| POST | `/api/v1/sessions/{session_id}/relay-path` | 为 ready 会话附加中继路径（P4 mux 降级，幂等；双方收 `session.relay_path` 推送） |
 | GET | `/api/v1/ws?device_id=` | WSS 控制通道（Authorization 头鉴权），服务端推送 `hello` / `ping` / `session.*` |
 | GET | `/api/v1/relay?device_id=&session_id=&role=` | WS 中继通道（Authorization 头鉴权；`role=a` 为素材库所在机，`role=b` 为发起方） |
 

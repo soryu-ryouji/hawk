@@ -1,10 +1,12 @@
-//! B 侧会话编排：发起会话 → 轮询 ready → 候选依序连接（指纹钉扎）→ 拉起会话代理。
+//! B 侧会话编排：发起会话 → 轮询 ready → mux 洪泛建连（指纹钉扎）→ 拉起会话代理。
 //! 单活动会话模型（查看方同时只看一个远端库）：新会话自动顶替并断开旧会话。
-//! 会话生命周期经 SSE `remote.session` 事件推送（app 断线回切依赖）。
+//! 连接韧性（P4）：UDP 静默降级中继路径（mux 路径迁移）；连接死亡原会话内原地重建，
+//! 重建连续失败才判定断开。会话生命周期经 SSE `remote.session` 事件推送（app 断线回切依赖）。
 
 use crate::core::events::EventBus;
 use crate::remote::data::{serve_proxy, ProxyContext};
 use crate::remote::identity::Identity;
+use crate::remote::mux::MuxSocket;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -56,14 +58,18 @@ pub struct ActiveSessionDto {
     pub token: String,
 }
 
+/// 会话传输层（endpoint + mux）：重建时整体替换，旧件随 drop 释放端口
+struct SessionTransport {
+    endpoint: quinn::Endpoint,
+    mux: Arc<MuxSocket>,
+}
+
 struct ActiveSession {
     dto: ActiveSessionDto,
-    /// QUIC endpoint 须随连接持有（drop 即断开）
-    _endpoint: quinn::Endpoint,
-    conn: quinn::Connection,
+    /// 当前连接（与会话代理共享的单元格；P4 连接级重建热替换）
+    conn_cell: Arc<std::sync::RwLock<quinn::Connection>>,
+    transport: Mutex<SessionTransport>,
     proxy_shutdown: tokio::sync::oneshot::Sender<()>,
-    /// 中继会话的 WS 驱动（中止即关闭中继通道；直连为 None）
-    relay_driver: Option<tokio::task::JoinHandle<()>>,
 }
 
 pub struct SessionManager {
@@ -71,14 +77,20 @@ pub struct SessionManager {
     /// 打洞预绑 socket（P3，session.probe 时创建并向服务端探测口报到，ready 后 connect
     /// 复用——探测与连接同端口是 observed endpoint 有效的前提）；残留条目随下次准备/断开清理
     pending_punch: Mutex<HashMap<String, std::net::UdpSocket>>,
+    /// 应用级远程配置（中继回退开关：静默降级是否自动附加中继路径）
+    remote: Arc<crate::remote::config::RemoteConfigStore>,
     bus: EventBus,
 }
 
 impl SessionManager {
-    pub fn new(bus: EventBus) -> Arc<SessionManager> {
+    pub fn new(
+        bus: EventBus,
+        remote: Arc<crate::remote::config::RemoteConfigStore>,
+    ) -> Arc<SessionManager> {
         Arc::new(SessionManager {
             active: Mutex::new(None),
             pending_punch: Mutex::new(HashMap::new()),
+            remote,
             bus,
         })
     }
@@ -109,6 +121,37 @@ impl SessionManager {
         self.active.lock().unwrap().as_ref().map(|s| s.dto.clone())
     }
 
+    /// 测试挂钩：当前会话的 mux（迁移测试屏蔽 UDP 路径用）
+    #[doc(hidden)]
+    pub fn debug_active_mux(&self) -> Option<Arc<MuxSocket>> {
+        self.active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.transport.lock().unwrap().mux.clone())
+    }
+
+    /// 测试挂钩：当前连接的 stable_id（区分「迁移」与「重建」的硬证据）
+    #[doc(hidden)]
+    pub fn debug_active_stable_id(&self) -> Option<usize> {
+        self.active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.conn_cell.read().unwrap().stable_id())
+    }
+
+    /// 测试挂钩：掐断当前连接（模拟连接级死亡，驱动重建路径）
+    #[doc(hidden)]
+    pub fn debug_close_current_conn(&self) {
+        if let Some(s) = self.active.lock().unwrap().as_ref() {
+            s.conn_cell
+                .read()
+                .unwrap()
+                .close(42u32.into(), b"debug kill");
+        }
+    }
+
     /// 建立到目标设备的远程会话：成功返回代理连接信息（app 据此切换连接描述符）。
     /// mode = direct（直连候选）/ relay（服务端中继，见协议「中继」一节）
     pub async fn connect(
@@ -133,90 +176,74 @@ impl SessionManager {
         let connect_info = poll_ready(http, base, key, &session_id).await?;
         let expected = parse_connect_fingerprint(&connect_info)?;
 
-        // ---- 建立数据面：relay 经服务端中继 WS；direct 依序尝试候选 ----
-        let (endpoint, conn, relay_driver) = if mode == "relay" {
-            let ws_request = crate::remote::relay::relay_ws_request(
+        // ---- 建立数据面（P4 mux 统一 endpoint）：relay 附加中继路径；direct 候选洪泛 ----
+        let (endpoint, mux, conn) = if mode == "relay" {
+            let ws = crate::remote::relay::connect_relay_ws(
                 base,
                 key,
                 &self_device_id,
                 &session_id,
                 "b",
             )
+            .await
             .map_err(ConnectError::server)?;
-            let (ws, _) = tokio_tungstenite::connect_async(ws_request)
-                .await
-                .map_err(|e| ConnectError::server(format!("中继通道连接失败: {e}")))?;
-            let (endpoint, conn, driver) =
-                crate::remote::relay::connect_over_ws(identity, ws, expected)
-                    .await
-                    .map_err(ConnectError::session)?;
-            (endpoint, conn, Some(driver))
+            let socket = bind_ephemeral_udp().map_err(ConnectError::session)?;
+            let mux = MuxSocket::new_client(socket, Vec::new());
+            mux.add_relay_path(ws);
+            let (endpoint, conn) = crate::remote::data::connect_mux(
+                identity,
+                mux.clone(),
+                expected,
+                RELAY_CONNECT_TIMEOUT,
+            )
+            .await
+            .map_err(ConnectError::session)?;
+            (endpoint, mux, conn)
         } else {
             let candidates = connect_info["candidates"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            // Happy Eyeballs（ICE/Tailscale 同款）：全部候选并行竞速，首个握手成功赢。
-            // 串行依序尝试在最坏路径（LAN 失败 → UPnP 超时 → IPv6 超时 → punch）上要 25s+
-            // 才出结果；竞速把典型连接压到 ~1s，失败场景也快进中继确认。
-            // 败者随 endpoint drop 取消握手；A 侧接受循环对多连接天然兼容，败者断开即清理
-            let mut punch_socket = self.pending_punch.lock().unwrap().remove(&session_id);
-            let mut race = tokio::task::JoinSet::new();
-            for candidate in &candidates {
-                let (Some(host), Some(port)) = (
-                    candidate["host"].as_str().map(String::from),
-                    candidate["port"].as_u64().map(|p| p as u16),
-                ) else {
-                    continue;
-                };
-                let identity = identity.clone();
-                if candidate["transport"].as_str() == Some("punch") {
-                    // P3 打洞：复用 session.probe 时预绑的 socket（同端口前提，仅一个 punch 候选可用它）
-                    let Some(socket) = punch_socket.take() else {
-                        tracing::debug!(
-                            "打洞预绑 socket 缺失（session.probe 未收到），跳过 punch 候选"
-                        );
-                        continue;
-                    };
-                    tracing::info!(
-                        "打洞候选连接 {host}:{port}（{:?} 上限，Initial 重传覆盖开口窗口）",
-                        crate::remote::data::PUNCH_TIMEOUT
-                    );
-                    race.spawn(async move {
-                        crate::remote::data::connect_punch(&identity, socket, &host, port, expected)
-                            .await
-                    });
-                } else {
-                    race.spawn(async move {
-                        crate::remote::data::DataPlane::connect(&identity, &host, port, expected)
-                            .await
-                    });
-                }
-            }
-            let mut last_err = "无可用候选".to_string();
-            let mut connected = None;
-            while let Some(result) = race.join_next().await {
-                match result {
-                    Ok(Ok((endpoint, conn))) => {
-                        connected = Some((endpoint, conn));
-                        break;
-                    }
-                    Ok(Err(e)) => {
-                        tracing::debug!("候选连接失败: {e}");
-                        last_err = e;
-                    }
-                    Err(e) => {
-                        tracing::debug!("候选连接任务异常: {e}");
+            // 候选洪泛（P4，ICE/Tailscale 同款的 mux 版）：握手 Initial 发往全部候选地址，
+            // 首个入站数据报锁定路径。串行最坏 25s+ → 洪泛典型 ~1s
+            let punch_present = candidates
+                .iter()
+                .any(|c| c["transport"].as_str() == Some("punch"));
+            let flood: Vec<SocketAddr> = candidates
+                .iter()
+                .filter_map(|c| {
+                    Some(SocketAddr::new(
+                        c["host"].as_str()?.parse().ok()?,
+                        c["port"].as_u64()? as u16,
+                    ))
+                })
+                .collect();
+            // P3 打洞：复用 session.probe 时预绑的 socket（同端口前提）；缺失时退普通
+            // socket（打洞失效，其余候选不受影响）
+            let socket = if punch_present {
+                match self.pending_punch.lock().unwrap().remove(&session_id) {
+                    Some(socket) => socket,
+                    None => {
+                        tracing::debug!("打洞预绑 socket 缺失（session.probe 未收到），打洞失效");
+                        bind_ephemeral_udp().map_err(ConnectError::session)?
                     }
                 }
-            }
-            // 败者全部中止（endpoint 随任务 drop，对端接受循环看到断开即清理）
-            race.abort_all();
-            let Some((endpoint, conn)) = connected else {
-                let _ = cancel_session(http, base, key, &session_id).await;
-                return Err(ConnectError::session(format!("直连失败：{last_err}")));
+            } else {
+                bind_ephemeral_udp().map_err(ConnectError::session)?
             };
-            (endpoint, conn, None)
+            let timeout = if punch_present {
+                crate::remote::data::PUNCH_TIMEOUT
+            } else {
+                crate::remote::data::CANDIDATE_TIMEOUT
+            };
+            let mux = MuxSocket::new_client(socket, flood);
+            match crate::remote::data::connect_mux(identity, mux.clone(), expected, timeout).await {
+                Ok((endpoint, conn)) => (endpoint, mux, conn),
+                Err(e) => {
+                    let _ = cancel_session(http, base, key, &session_id).await;
+                    return Err(ConnectError::session(format!("直连失败：{e}")));
+                }
+            }
         };
 
         // ---- 目标信息（label 展示用，尽力而为） ----
@@ -233,8 +260,10 @@ impl SessionManager {
             .port();
         let token = random_token();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        // 连接单元格：代理与监控任务共享，重建时热替换（P4）
+        let conn_cell = Arc::new(std::sync::RwLock::new(conn));
         let ctx = Arc::new(ProxyContext {
-            conn: conn.clone(),
+            conn: conn_cell.clone(),
             token: token.clone(),
             session_id: session_id.clone(),
         });
@@ -257,10 +286,12 @@ impl SessionManager {
         // ---- 顶替旧会话（断开并尽力取消）。锁 guard 不跨 await：先取出再处理 ----
         let old = self.active.lock().unwrap().replace(ActiveSession {
             dto: dto.clone(),
-            _endpoint: endpoint,
-            conn: conn.clone(),
+            conn_cell: conn_cell.clone(),
+            transport: Mutex::new(SessionTransport {
+                endpoint,
+                mux: mux.clone(),
+            }),
             proxy_shutdown: shutdown_tx,
-            relay_driver,
         });
         if let Some(old) = old {
             let old_session_id = old.dto.session_id.clone();
@@ -268,22 +299,72 @@ impl SessionManager {
             let _ = cancel_session(http, base, key, &old_session_id).await;
         }
 
-        // ---- 断线监控：隧道断开 → 本地收尾 + SSE 通知（app 断线回切） ----
+        // ---- 断线监控（P4：先原地重建，重建连续失败才判定断开） ----
         {
             let manager = self.clone();
+            let http = http.clone();
+            let base = base.to_string();
+            let key = key.to_string();
+            let identity = identity.clone();
+            let session_id = dto.session_id.clone();
+            let target_device_id = dto.target_device_id.clone();
+            let mode = mode.to_string();
+            tokio::spawn(async move {
+                watch_session(
+                    manager,
+                    http,
+                    base,
+                    key,
+                    identity,
+                    session_id,
+                    target_device_id,
+                    mode,
+                    conn_cell,
+                )
+                .await;
+            });
+        }
+
+        // ---- UDP 静默降级观察（P4，仅 direct 会话；中继路径由 WSS 推送驱动附加） ----
+        if mode == "direct" {
+            let manager = self.clone();
+            let http = http.clone();
+            let base = base.to_string();
+            let key = key.to_string();
             let session_id = dto.session_id.clone();
             let target_device_id = dto.target_device_id.clone();
             tokio::spawn(async move {
-                conn.closed().await;
-                if manager.clear_if_current(&session_id) {
-                    tracing::info!("远程会话 {session_id} 隧道已断开");
-                    manager.publish(&session_id, &target_device_id, "disconnected");
-                }
+                degrade_watch(manager, http, base, key, session_id, target_device_id, mux).await;
             });
         }
 
         self.publish(&dto.session_id, &dto.target_device_id, "connected");
         Ok(dto)
+    }
+
+    /// 中继路径并入当前会话 mux（WSS session.relay_path 驱动）；会话已更替返回 false
+    pub fn attach_relay_to_active(
+        &self,
+        session_id: &str,
+        ws: crate::remote::relay::RelayWs,
+    ) -> bool {
+        let active = self.active.lock().unwrap();
+        match active.as_ref() {
+            Some(s) if s.dto.session_id == session_id => {
+                s.transport.lock().unwrap().mux.add_relay_path(ws);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 当前活动会话是否仍是指定会话（监控/观察任务与顶替、断开的竞态裁决）
+    fn is_current(&self, session_id: &str) -> bool {
+        self.active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|s| s.dto.session_id == session_id)
     }
 
     /// 断开当前会话（幂等）：通知服务端取消 + 本地收尾
@@ -327,20 +408,184 @@ impl SessionManager {
 }
 
 impl ActiveSession {
-    /// 主动收尾：断隧道 + 停代理 + 关中继通道
+    /// 主动收尾：断隧道 + 停代理 + 释放传输层
     fn teardown(self) {
         let _ = self.proxy_shutdown.send(());
-        self.conn.close(0u32.into(), b"session closed");
-        if let Some(driver) = self.relay_driver {
-            driver.abort();
-        }
+        self.conn_cell
+            .read()
+            .unwrap()
+            .close(0u32.into(), b"session closed");
+        let transport = self.transport.lock().unwrap();
+        transport.mux.close();
+        transport.endpoint.close(0u32.into(), b"session closed");
     }
 
-    /// 断线监控收尾：连接已死，只停代理与中继通道
+    /// 断线监控收尾：连接已死，只停代理与释放传输层
     fn teardown_silent(self) {
         let _ = self.proxy_shutdown.send(());
-        if let Some(driver) = self.relay_driver {
-            driver.abort();
+        let transport = self.transport.lock().unwrap();
+        transport.mux.close();
+        transport.endpoint.close(0u32.into(), b"session ended");
+    }
+}
+
+/// 中继会话握手超时：15s。中继比直连多一串串行链路（accept RTT → 对端经反代
+/// 连 relay WS → 配对 → WS 上的 QUIC 往返），直连的 5s 在跨网中继下过紧
+const RELAY_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 断线监控（P4）：连接死亡先在原会话内原地重建（路径迁移救不回的兜底层）；
+/// 连续 3 次重建失败才判定断开（SSE disconnected，app 回切本地库）。
+/// relay 模式会话唯一路径即中继，连接死亡即终态（重建语义交给新一轮中继确认流程）
+#[allow(clippy::too_many_arguments)]
+async fn watch_session(
+    manager: Arc<SessionManager>,
+    http: reqwest::Client,
+    base: String,
+    key: String,
+    identity: Identity,
+    session_id: String,
+    target_device_id: String,
+    mode: String,
+    conn_cell: Arc<std::sync::RwLock<quinn::Connection>>,
+) {
+    let mut failures = 0u32;
+    loop {
+        let conn = conn_cell.read().unwrap().clone();
+        conn.closed().await;
+        if !manager.is_current(&session_id) {
+            return; // 已被顶替或主动断开：收尾由对应路径负责
+        }
+        if mode != "direct" {
+            break;
+        }
+        failures += 1;
+        if failures > 3 {
+            break;
+        }
+        let backoff = Duration::from_secs(1 << (failures - 1)); // 1s/2s/4s
+        tracing::info!(
+            "远程会话 {session_id} 连接断开，{backoff:?} 后原地重建（第 {failures} 次）"
+        );
+        tokio::time::sleep(backoff).await;
+        match rebuild_once(&http, &base, &key, &identity, &session_id).await {
+            Ok((endpoint, mux, conn)) => {
+                // 热替换（重建期间会话可能已被顶替/断开，锁内复核）
+                let active = manager.active.lock().unwrap();
+                let Some(current) = active.as_ref() else {
+                    conn.close(0u32.into(), b"superseded");
+                    return;
+                };
+                if current.dto.session_id != session_id {
+                    conn.close(0u32.into(), b"superseded");
+                    return;
+                }
+                *conn_cell.write().unwrap() = conn;
+                *current.transport.lock().unwrap() = SessionTransport { endpoint, mux };
+                drop(active);
+                failures = 0;
+                tracing::info!("远程会话 {session_id} 已原地重建（连接级路径迁移）");
+            }
+            Err(e) => tracing::debug!("会话 {session_id} 重建失败: {e}"),
+        }
+    }
+    if manager.clear_if_current(&session_id) {
+        tracing::info!("远程会话 {session_id} 隧道已断开（重建失败）");
+        manager.publish(&session_id, &target_device_id, "disconnected");
+    }
+}
+
+/// 原会话内重建连接：重取连接信息（服务端会话仍 ready）→ 排除打洞候选（observed
+/// 端点在重建时可能已过期）→ 新 socket + mux 洪泛其余候选
+async fn rebuild_once(
+    http: &reqwest::Client,
+    base: &str,
+    key: &str,
+    identity: &Identity,
+    session_id: &str,
+) -> Result<(quinn::Endpoint, Arc<MuxSocket>, quinn::Connection), String> {
+    let resp = http
+        .get(format!("{base}/api/v1/sessions/{session_id}"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| format!("会话状态查询失败: {e}"))?;
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("会话状态解析失败: {e}"))?;
+    if body["data"]["state"].as_str() != Some("ready") {
+        return Err(format!("会话已非 ready（{}）", body["data"]["state"]));
+    }
+    let connect = body["data"]["connect"].clone();
+    let expected = parse_connect_fingerprint(&connect).map_err(|e| e.message)?;
+    let flood: Vec<SocketAddr> = connect["candidates"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter(|c| c["transport"].as_str() != Some("punch"))
+        .filter_map(|c| {
+            Some(SocketAddr::new(
+                c["host"].as_str()?.parse().ok()?,
+                c["port"].as_u64()? as u16,
+            ))
+        })
+        .collect();
+    let socket = bind_ephemeral_udp()?;
+    let mux = MuxSocket::new_client(socket, flood);
+    crate::remote::data::connect_mux(
+        identity,
+        mux.clone(),
+        expected,
+        crate::remote::data::CANDIDATE_TIMEOUT,
+    )
+    .await
+    .map(|(endpoint, conn)| (endpoint, mux, conn))
+}
+
+/// UDP 静默降级观察（P4）：mux 观测的 UDP 入站静默超阈值时，中继回退已开启则
+/// 请求服务端附加中继路径（WSS session.relay_path 驱动双方接入），否则只发布
+/// degraded 事件（连接将随 idle 超时断开，走重建/断开路径）
+async fn degrade_watch(
+    manager: Arc<SessionManager>,
+    http: reqwest::Client,
+    base: String,
+    key: String,
+    session_id: String,
+    target_device_id: String,
+    mux: Arc<MuxSocket>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(2));
+    loop {
+        interval.tick().await;
+        if !manager.is_current(&session_id) {
+            return;
+        }
+        if mux.relay_attached() {
+            return; // 已在中继上；UDP 恢复时 mux 出站路由自动回切（路径活性驱动）
+        }
+        if mux.udp_silence() > crate::remote::mux::silence_threshold() {
+            if manager.remote.current().relay_fallback {
+                tracing::warn!(
+                    "会话 {session_id} UDP 路径静默超阈值，附加中继路径（中继回退已开启）"
+                );
+                let resp = http
+                    .post(format!("{base}/api/v1/sessions/{session_id}/relay-path"))
+                    .bearer_auth(&key)
+                    .send()
+                    .await;
+                match resp {
+                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) => tracing::warn!("中继路径附加被拒（{}）", resp.status()),
+                    Err(e) => tracing::warn!("中继路径附加失败: {e}"),
+                }
+            } else {
+                tracing::warn!(
+                    "会话 {session_id} UDP 路径静默超阈值（中继回退未开启，连接将随 idle 超时断开）"
+                );
+            }
+            manager.publish(&session_id, &target_device_id, "degraded");
+            return;
         }
     }
 }
