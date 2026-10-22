@@ -615,6 +615,100 @@ async fn punch_session_end_to_end() {
     manager.disconnect(&http, &base, "key").await;
 }
 
+/// 竞速 mock hub：首候选为黑洞地址（192.0.2.1 TEST-NET-1，串行尝试要等满 5s 超时）
+async fn spawn_race_hub(port_a: u16, fp_a_hex: String) -> String {
+    let fp_devices = fp_a_hex.clone();
+    let fp_ready = fp_a_hex.clone();
+    let app = Router::new()
+        .route(
+            "/api/v1/devices",
+            axum::routing::get(move || {
+                let fp = fp_devices.clone();
+                async move {
+                    Json(json!({"status":"success","data":{"devices":[
+                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
+                         "online":true,"allow_remote":true,"fingerprint":fp}
+                    ]}}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions",
+            axum::routing::post(|Json(_body): Json<Value>| async move {
+                Json(json!({"status":"success","data":{"session_id":"s_race","state":"pending"}}))
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_race",
+            axum::routing::get(move || {
+                let fp = fp_ready.clone();
+                async move {
+                    Json(json!({"status":"success","data":{
+                        "session_id":"s_race","state":"ready",
+                        "connect":{
+                            "mode":"direct",
+                            "candidates":[
+                                {"transport":"ipv4","host":"192.0.2.1","port":1},
+                                {"transport":"ipv4","host":"127.0.0.1","port":port_a}
+                            ],
+                            "fingerprint": fp,
+                        }
+                    }}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_race/cancel",
+            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://127.0.0.1:{addr}")
+}
+
+/// Happy Eyeballs 竞速：黑洞候选在前不阻塞可用候选。串行尝试此场景必然 ≥5s（黑洞候选
+/// 超时）；并行竞速下可用候选即时胜出，总耗时应远小于串行下限
+#[tokio::test]
+async fn candidates_race_skips_blackhole() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = new_identity(&dir_b, Some("d_b"));
+    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
+
+    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
+    let port_a = plane_a.local_addr().unwrap().port();
+    plane_a.allow_session("s_race", fp_b, false);
+
+    let base = spawn_race_hub(port_a, fingerprint_hex(&identity_a)).await;
+    let http = reqwest::Client::new();
+    let manager = SessionManager::new(EventBus::new());
+
+    let started = tokio::time::Instant::now();
+    let dto = manager
+        .connect(&http, &base, "key", &identity_b, "d_a", "direct")
+        .await
+        .expect("竞速会话建立");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "竞速应跳过黑洞候选（串行下限 5s），实际 {elapsed:?}"
+    );
+
+    // 胜者隧道功能完整
+    let resp = http
+        .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
+        .bearer_auth(&dto.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    manager.disconnect(&http, &base, "key").await;
+}
+
 #[tokio::test]
 async fn session_orchestration_end_to_end() {
     let dir_a = tempfile::tempdir().unwrap();

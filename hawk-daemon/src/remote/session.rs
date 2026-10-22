@@ -156,46 +156,62 @@ impl SessionManager {
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            let mut last_err = "无可用候选".to_string();
-            let mut connected = None;
+            // Happy Eyeballs（ICE/Tailscale 同款）：全部候选并行竞速，首个握手成功赢。
+            // 串行依序尝试在最坏路径（LAN 失败 → UPnP 超时 → IPv6 超时 → punch）上要 25s+
+            // 才出结果；竞速把典型连接压到 ~1s，失败场景也快进中继确认。
+            // 败者随 endpoint drop 取消握手；A 侧接受循环对多连接天然兼容，败者断开即清理
+            let mut punch_socket = self.pending_punch.lock().unwrap().remove(&session_id);
+            let mut race = tokio::task::JoinSet::new();
             for candidate in &candidates {
                 let (Some(host), Some(port)) = (
-                    candidate["host"].as_str(),
+                    candidate["host"].as_str().map(String::from),
                     candidate["port"].as_u64().map(|p| p as u16),
                 ) else {
                     continue;
                 };
-                let result = if candidate["transport"].as_str() == Some("punch") {
-                    // P3 打洞：复用 session.probe 时预绑的 socket（同端口前提）。
-                    // 锁 guard 不跨 await：先取出再连接
-                    let socket = self.pending_punch.lock().unwrap().remove(&session_id);
-                    match socket {
-                        Some(socket) => {
-                            tracing::info!(
-                                "打洞候选连接 {host}:{port}（{:?} 上限，Initial 重传覆盖开口窗口）",
-                                crate::remote::data::PUNCH_TIMEOUT
-                            );
-                            crate::remote::data::connect_punch(
-                                identity, socket, host, port, expected,
-                            )
+                let identity = identity.clone();
+                if candidate["transport"].as_str() == Some("punch") {
+                    // P3 打洞：复用 session.probe 时预绑的 socket（同端口前提，仅一个 punch 候选可用它）
+                    let Some(socket) = punch_socket.take() else {
+                        tracing::debug!(
+                            "打洞预绑 socket 缺失（session.probe 未收到），跳过 punch 候选"
+                        );
+                        continue;
+                    };
+                    tracing::info!(
+                        "打洞候选连接 {host}:{port}（{:?} 上限，Initial 重传覆盖开口窗口）",
+                        crate::remote::data::PUNCH_TIMEOUT
+                    );
+                    race.spawn(async move {
+                        crate::remote::data::connect_punch(&identity, socket, &host, port, expected)
                             .await
-                        }
-                        None => Err("打洞预绑 socket 缺失（session.probe 未收到）".to_string()),
-                    }
+                    });
                 } else {
-                    crate::remote::data::DataPlane::connect(identity, host, port, expected).await
-                };
+                    race.spawn(async move {
+                        crate::remote::data::DataPlane::connect(&identity, &host, port, expected)
+                            .await
+                    });
+                }
+            }
+            let mut last_err = "无可用候选".to_string();
+            let mut connected = None;
+            while let Some(result) = race.join_next().await {
                 match result {
-                    Ok((endpoint, conn)) => {
+                    Ok(Ok((endpoint, conn))) => {
                         connected = Some((endpoint, conn));
                         break;
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         tracing::debug!("候选连接失败: {e}");
                         last_err = e;
                     }
+                    Err(e) => {
+                        tracing::debug!("候选连接任务异常: {e}");
+                    }
                 }
             }
+            // 败者全部中止（endpoint 随任务 drop，对端接受循环看到断开即清理）
+            race.abort_all();
             let Some((endpoint, conn)) = connected else {
                 let _ = cancel_session(http, base, key, &session_id).await;
                 return Err(ConnectError::session(format!("直连失败：{last_err}")));
