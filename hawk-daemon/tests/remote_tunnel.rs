@@ -44,7 +44,7 @@ async fn mux_connect(
 ) -> (quinn::Endpoint, Arc<MuxSocket>, quinn::Connection) {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
     socket.set_nonblocking(true).unwrap();
-    let mux = MuxSocket::new_client(socket, vec![SocketAddr::from(([127, 0, 0, 1], port_a))]);
+    let mux = MuxSocket::new_client(socket, Some(SocketAddr::from(([127, 0, 0, 1], port_a))));
     let (endpoint, conn) =
         hawk_daemon::remote::data::connect_mux(identity, mux.clone(), fp_a, Duration::from_secs(5))
             .await
@@ -259,196 +259,116 @@ async fn tunnel_rejects_wrong_fingerprint() {
     let wrong = tls::fingerprint_of(b"not-a");
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
     socket.set_nonblocking(true).unwrap();
-    let mux = MuxSocket::new_client(socket, vec![SocketAddr::from(([127, 0, 0, 1], port_a))]);
+    let mux = MuxSocket::new_client(socket, Some(SocketAddr::from(([127, 0, 0, 1], port_a))));
     let result =
         hawk_daemon::remote::data::connect_mux(&identity_b, mux, wrong, Duration::from_secs(5))
             .await;
     assert!(result.is_err(), "错误指纹不应建立隧道");
 }
 
-// ---------- 会话编排全流程（mock hub） ----------
+// ---------- 会话编排 mock hub（统一参数化） ----------
 
 use axum::Json;
 
-#[derive(Default)]
-struct HubState {
-    cancelled: Mutex<Vec<String>>,
-}
-
-/// mock hub：devices（含 A 的指纹）+ sessions（发起即 ready，候选指向 A 侧数据面）
-async fn spawn_hub(port_a: u16, fp_a_hex: String) -> (String, Arc<HubState>) {
-    let hub = Arc::new(HubState::default());
-    let fp_devices = fp_a_hex.clone();
-    let fp_ready = fp_a_hex.clone();
-    let app = Router::new()
-        .route(
-            "/api/v1/devices",
-            axum::routing::get(move || {
-                let fp = fp_devices.clone();
-                async move {
-                    Json(json!({"status":"success","data":{"devices":[
-                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
-                         "online":true,"allow_remote":true,"fingerprint":fp},
-                        {"device_id":"d_b","name":"笔记本","platform":"macos","library_name":"B 的库",
-                         "online":true,"allow_remote":true,"fingerprint":"00"}
-                    ]}}))
-                }
-            }),
-        )
-        .route(
-            "/api/v1/sessions",
-            axum::routing::post(|Json(_body): Json<Value>| async move {
-                Json(json!({"status":"success","data":{"session_id":"s_1","state":"pending"}}))
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_1",
-            axum::routing::get(move || async move {
-                Json(json!({"status":"success","data":{
-                    "session_id":"s_1","state":"ready",
-                    "connect":{
-                        "mode":"direct",
-                        "candidates":[{"transport":"ipv4","host":"127.0.0.1","port":port_a}],
-                        "fingerprint": fp_ready,
-                    }
-                }}))
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_1/cancel",
-            axum::routing::post({
-                let hub = hub.clone();
-                move || {
-                    let hub = hub.clone();
-                    async move {
-                        hub.cancelled.lock().unwrap().push("s_1".to_string());
-                        Json(json!({"status":"success"}))
-                    }
-                }
-            }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), hub)
-}
-
-#[tokio::test]
-async fn relay_session_end_to_end() {
-    let dir_a = tempfile::tempdir().unwrap();
-    let dir_b = tempfile::tempdir().unwrap();
-    let identity_a = new_identity(&dir_a, Some("d_a"));
-    let identity_b = new_identity(&dir_b, Some("d_b"));
-    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
-
-    // A 侧：放行 B 的指纹与会话（真实流程由 signal 的 session.request 驱动）
-    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
-    plane_a.allow_session("s_r", fp_b, false);
-
-    // mock hub：relay 会话即 ready + WS 配对转发
-    let (base, _pairs) = spawn_relay_hub(fingerprint_hex(&identity_a)).await;
-
-    // A 侧：中继 WS 并入 mux（P4：单 endpoint，中继只是 mux 的一条路径）
-    let ws_a = hawk_daemon::remote::relay::connect_relay_ws(&base, "key", "d_a", "s_r", "a")
-        .await
-        .unwrap();
-    plane_a.attach_relay(ws_a);
-
-    // B 侧：经 SessionManager 以 relay 模式建立会话
-    let http = reqwest::Client::new();
-    let manager = test_manager(&dir_b);
-    let dto = manager
-        .connect(&http, &base, "key", &identity_b, "d_a", "relay")
-        .await
-        .expect("中继会话建立");
-
-    // 经会话代理访问 A 的素材服务（QUIC 全程跑在中继字节流上）
-    let resp = http
-        .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
-        .bearer_auth(&dto.token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    assert_eq!(resp.text().await.unwrap(), "hi from A");
-
-    manager.disconnect(&http, &base, "key").await;
-}
-
-// ---------- mux mock hub（direct 候选 + relay-path 附加 + WS 配对转发计数） ----------
-
+/// 中继 WS 配对表（session_id+role → 发送端）
+type RelayPairs = Arc<
+    Mutex<
+        HashMap<(String, String), tokio::sync::mpsc::UnboundedSender<axum::extract::ws::Message>>,
+    >,
+>;
 /// 中继转发帧计数（验证流量确实走了中继路径）
 type RelayFrames = Arc<std::sync::atomic::AtomicU64>;
 
-async fn spawn_mux_hub(port_a: u16, fp_a_hex: String) -> (String, RelayFrames) {
+/// 统一 mock hub 配置：会话 id、ready 的 connect 对象（mode/候选/指纹）、可选路由开关
+struct HubOpts {
+    session_id: &'static str,
+    connect: Value,
+    /// 挂 relay WS 配对转发路由（relay 会话与 mux 迁移测试）
+    relay: bool,
+    /// 挂 relay-path POST 路由（P4 附加；空实现只回 success）
+    relay_path: bool,
+}
+
+struct TestHub {
+    base: String,
+    /// 中继转发帧计数（未挂 relay 路由时恒 0）
+    frames: RelayFrames,
+}
+
+/// 统一 mock hub：devices（含 A 指纹）+ sessions 生命周期 + 可选中继/relay-path 路由
+async fn spawn_hub(opts: HubOpts) -> TestHub {
     use axum::extract::ws::Message;
     use axum::extract::{Query, WebSocketUpgrade};
     use futures_util::{SinkExt, StreamExt};
 
     let frames: RelayFrames = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let pairs: RelayPairs = Arc::new(Mutex::new(HashMap::new()));
-    let pairs_ws = pairs.clone();
-    let frames_ws = frames.clone();
-    let fp_devices = fp_a_hex.clone();
-    let fp_ready = fp_a_hex.clone();
+    let session_id = opts.session_id;
+    let connect = opts.connect.clone();
+
     let app = Router::new()
         .route(
             "/api/v1/devices",
-            axum::routing::get(move || {
-                let fp = fp_devices.clone();
-                async move {
-                    Json(json!({"status":"success","data":{"devices":[
-                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
-                         "online":true,"allow_remote":true,"fingerprint":fp}
-                    ]}}))
+            axum::routing::get({
+                let fp = connect["fingerprint"].as_str().unwrap_or_default().to_string();
+                move || {
+                    let fp = fp.clone();
+                    async move {
+                        Json(json!({"status":"success","data":{"devices":[
+                            {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
+                             "online":true,"allow_remote":true,"fingerprint":fp},
+                            {"device_id":"d_b","name":"笔记本","platform":"macos","library_name":"B 的库",
+                             "online":true,"allow_remote":true,"fingerprint":"00"}
+                        ]}}))
+                    }
                 }
             }),
         )
         .route(
             "/api/v1/sessions",
-            axum::routing::post(|Json(_body): Json<Value>| async move {
-                Json(json!({"status":"success","data":{"session_id":"s_m","state":"pending"}}))
+            axum::routing::post(move |Json(_body): Json<Value>| async move {
+                Json(json!({"status":"success","data":{"session_id":session_id,"state":"pending"}}))
             }),
         )
         .route(
-            "/api/v1/sessions/s_m",
-            axum::routing::get(move || {
-                let fp = fp_ready.clone();
-                async move {
-                    Json(json!({"status":"success","data":{
-                        "session_id":"s_m","state":"ready",
-                        "connect":{
-                            "mode":"direct",
-                            "candidates":[{"transport":"ipv4","host":"127.0.0.1","port":port_a}],
-                            "fingerprint": fp,
-                        }
-                    }}))
+            &format!("/api/v1/sessions/{session_id}"),
+            axum::routing::get({
+                let connect = connect.clone();
+                move || {
+                    let connect = connect.clone();
+                    async move {
+                        Json(json!({"status":"success","data":{
+                            "session_id":session_id,"state":"ready","connect":connect,
+                        }}))
+                    }
                 }
             }),
         )
         .route(
-            "/api/v1/sessions/s_m/relay-path",
+            &format!("/api/v1/sessions/{session_id}/cancel"),
+            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
+        );
+    let app = if opts.relay_path {
+        app.route(
+            &format!("/api/v1/sessions/{session_id}/relay-path"),
             axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
         )
-        .route(
-            "/api/v1/sessions/s_m/cancel",
-            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
-        )
-        .route(
+    } else {
+        app
+    };
+    let app = if opts.relay {
+        let frames_ws = frames.clone();
+        app.route(
             "/api/v1/relay",
             axum::routing::get(
-                move |Query(q): Query<std::collections::HashMap<String, String>>,
-                      ws: WebSocketUpgrade| {
-                    let pairs = pairs_ws.clone();
+                move |Query(q): Query<HashMap<String, String>>, ws: WebSocketUpgrade| {
+                    let pairs = pairs.clone();
                     let frames = frames_ws.clone();
-                    let session = q.get("session_id").cloned().unwrap_or_default();
-                    let role = q.get("role").cloned().unwrap_or_default();
                     async move {
+                        let session = q.get("session_id").cloned().unwrap_or_default();
+                        let role = q.get("role").cloned().unwrap_or_default();
                         ws.on_upgrade(move |socket| async move {
-                            let (tx, mut rx) =
-                                tokio::sync::mpsc::unbounded_channel::<Message>();
+                            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
                             pairs
                                 .lock()
                                 .unwrap()
@@ -483,13 +403,73 @@ async fn spawn_mux_hub(port_a: u16, fp_a_hex: String) -> (String, RelayFrames) {
                     }
                 },
             ),
-        );
+        )
+    } else {
+        app
+    };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{addr}"), frames)
+    TestHub {
+        base: format!("http://{addr}"),
+        frames,
+    }
+}
+
+/// direct 模式 connect 对象（候选指向 A 侧数据面）
+fn direct_connect(fp: &str, candidates: Value) -> Value {
+    json!({ "mode": "direct", "candidates": candidates, "fingerprint": fp })
+}
+
+#[tokio::test]
+async fn relay_session_end_to_end() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = new_identity(&dir_b, Some("d_b"));
+    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
+
+    // A 侧：放行 B 的指纹与会话（真实流程由 signal 的 session.request 驱动）
+    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
+    plane_a.allow_session("s_r", fp_b, false);
+
+    // mock hub：relay 会话即 ready + WS 配对转发
+    let hub = spawn_hub(HubOpts {
+        session_id: "s_r",
+        connect: json!({ "mode": "relay", "fingerprint": fingerprint_hex(&identity_a) }),
+        relay: true,
+        relay_path: false,
+    })
+    .await;
+    let base = hub.base.clone();
+
+    // A 侧：中继 WS 并入 mux（P4：单 endpoint，中继只是 mux 的一条路径）
+    let ws_a = hawk_daemon::remote::relay::connect_relay_ws(&base, "key", "d_a", "s_r", "a")
+        .await
+        .unwrap();
+    plane_a.attach_relay(ws_a);
+
+    // B 侧：经 SessionManager 以 relay 模式建立会话
+    let http = reqwest::Client::new();
+    let manager = test_manager(&dir_b);
+    let dto = manager
+        .connect(&http, &base, "key", &identity_b, "d_a", "relay")
+        .await
+        .expect("中继会话建立");
+
+    // 经会话代理访问 A 的素材服务（QUIC 全程跑在中继字节流上）
+    let resp = http
+        .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
+        .bearer_auth(&dto.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "hi from A");
+
+    manager.disconnect(&http, &base, "key").await;
 }
 
 /// P4 路径迁移端到端：UDP 路径死亡 → 附加中继路径 → 同一 QUIC 连接继续服务（stable_id 不变）。
@@ -507,7 +487,18 @@ async fn udp_silence_migrates_session_to_relay() {
     let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
     let port_a = plane_a.local_addr().unwrap().port();
     plane_a.allow_session("s_m", fp_b, false);
-    let (base, relay_frames) = spawn_mux_hub(port_a, fingerprint_hex(&identity_a)).await;
+    let hub = spawn_hub(HubOpts {
+        session_id: "s_m",
+        connect: direct_connect(
+            &fingerprint_hex(&identity_a),
+            json!([{"transport":"ipv4","host":"127.0.0.1","port":port_a}]),
+        ),
+        relay: true,
+        relay_path: true,
+    })
+    .await;
+    let base = hub.base.clone();
+    let relay_frames = hub.frames.clone();
 
     let http = reqwest::Client::new();
     let manager = test_manager(&dir_b);
@@ -578,7 +569,17 @@ async fn session_rebuilds_in_place_when_connection_dies() {
     let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
     let port_a = plane_a.local_addr().unwrap().port();
     plane_a.allow_session("s_m", fp_b, false);
-    let (base, _frames) = spawn_mux_hub(port_a, fingerprint_hex(&identity_a)).await;
+    let hub = spawn_hub(HubOpts {
+        session_id: "s_m",
+        connect: direct_connect(
+            &fingerprint_hex(&identity_a),
+            json!([{"transport":"ipv4","host":"127.0.0.1","port":port_a}]),
+        ),
+        relay: false,
+        relay_path: false,
+    })
+    .await;
+    let base = hub.base.clone();
 
     let http = reqwest::Client::new();
     let manager = test_manager(&dir_b);
@@ -607,164 +608,6 @@ async fn session_rebuilds_in_place_when_connection_dies() {
     let conn_after = manager.debug_active_stable_id().unwrap();
     assert_ne!(conn_before, conn_after, "重建应产生新连接");
     manager.disconnect(&http, &base, "key").await;
-}
-
-// ---------- 中继 mock hub（relay 会话 + WS 配对转发） ----------
-
-type RelayPairs = Arc<
-    Mutex<
-        HashMap<(String, String), tokio::sync::mpsc::UnboundedSender<axum::extract::ws::Message>>,
-    >,
->;
-
-async fn spawn_relay_hub(fp_a_hex: String) -> (String, RelayPairs) {
-    use axum::extract::ws::Message;
-    use axum::extract::{Query, WebSocketUpgrade};
-    use futures_util::{SinkExt, StreamExt};
-
-    let pairs: RelayPairs = Arc::new(Mutex::new(HashMap::new()));
-    let pairs_ws = pairs.clone();
-    let fp_devices = fp_a_hex.clone();
-    let fp_ready = fp_a_hex.clone();
-    let app = Router::new()
-        .route(
-            "/api/v1/devices",
-            axum::routing::get(move || {
-                let fp = fp_devices.clone();
-                async move {
-                    Json(json!({"status":"success","data":{"devices":[
-                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
-                         "online":true,"allow_remote":true,"fingerprint":fp}
-                    ]}}))
-                }
-            }),
-        )
-        .route(
-            "/api/v1/sessions",
-            axum::routing::post(|Json(_body): Json<Value>| async move {
-                Json(json!({"status":"success","data":{"session_id":"s_r","state":"pending"}}))
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_r",
-            axum::routing::get(move || {
-                let fp = fp_ready.clone();
-                async move {
-                    Json(json!({"status":"success","data":{
-                        "session_id":"s_r","state":"ready",
-                        "connect":{ "mode":"relay", "fingerprint": fp }
-                    }}))
-                }
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_r/cancel",
-            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
-        )
-        .route(
-            "/api/v1/relay",
-            axum::routing::get(
-                move |Query(q): Query<std::collections::HashMap<String, String>>,
-                      ws: WebSocketUpgrade| {
-                    let pairs = pairs_ws.clone();
-                    let session = q.get("session_id").cloned().unwrap_or_default();
-                    let role = q.get("role").cloned().unwrap_or_default();
-                    async move {
-                    ws.on_upgrade(move |socket| async move {
-                        let (tx, mut rx) =
-                            tokio::sync::mpsc::unbounded_channel::<Message>();
-                        pairs
-                            .lock()
-                            .unwrap()
-                            .insert((session.clone(), role.clone()), tx);
-                        let peer_role = if role == "a" { "b" } else { "a" }.to_string();
-                        let (mut sink, mut stream) = socket.split();
-                        loop {
-                            tokio::select! {
-                                msg = rx.recv() => {
-                                    let Some(msg) = msg else { break };
-                                    if sink.send(msg).await.is_err() { break; }
-                                }
-                                incoming = stream.next() => {
-                                    match incoming {
-                                        Some(Ok(Message::Binary(data))) => {
-                                            let peer = pairs
-                                                .lock()
-                                                .unwrap()
-                                                .get(&(session.clone(), peer_role.clone()))
-                                                .cloned();
-                                            if let Some(peer) = peer {
-                                                let _ = peer.send(Message::Binary(data));
-                                            }
-                                        }
-                                        _ => break,
-                                    }
-                                }
-                            }
-                        }
-                        })
-                    }
-                },
-            ),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    (format!("http://{addr}"), pairs)
-}
-
-/// 打洞会话 mock hub：ready 候选为 punch（指向 A 侧数据面），携带 punch_peer（B 忽略）
-async fn spawn_punch_hub(port_a: u16, fp_a_hex: String) -> String {
-    let fp_devices = fp_a_hex.clone();
-    let fp_ready = fp_a_hex.clone();
-    let app = Router::new()
-        .route(
-            "/api/v1/devices",
-            axum::routing::get(move || {
-                let fp = fp_devices.clone();
-                async move {
-                    Json(json!({"status":"success","data":{"devices":[
-                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
-                         "online":true,"allow_remote":true,"fingerprint":fp}
-                    ]}}))
-                }
-            }),
-        )
-        .route(
-            "/api/v1/sessions",
-            axum::routing::post(|Json(_body): Json<Value>| async move {
-                Json(json!({"status":"success","data":{"session_id":"s_p","state":"pending"}}))
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_p",
-            axum::routing::get(move || {
-                let fp = fp_ready.clone();
-                async move {
-                    Json(json!({"status":"success","data":{
-                        "session_id":"s_p","state":"ready",
-                        "connect":{
-                            "mode":"direct",
-                            "candidates":[{"transport":"punch","host":"127.0.0.1","port":port_a}],
-                            "punch_peer":{"host":"127.0.0.1","port":27399},
-                            "fingerprint": fp,
-                        }
-                    }}))
-                }
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_p/cancel",
-            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    format!("http://{addr}")
 }
 
 /// 探测口收包记录（源地址, 包原文）
@@ -799,7 +642,19 @@ async fn punch_session_end_to_end() {
         }
     });
 
-    let base = spawn_punch_hub(port_a, fingerprint_hex(&identity_a)).await;
+    let base = spawn_hub(HubOpts {
+        session_id: "s_p",
+        connect: json!({
+            "mode": "direct",
+            "candidates": [{"transport":"punch","host":"127.0.0.1","port":port_a}],
+            "punch_peer": {"host":"127.0.0.1","port":27399},
+            "fingerprint": fingerprint_hex(&identity_a),
+        }),
+        relay: false,
+        relay_path: false,
+    })
+    .await
+    .base;
     let http = reqwest::Client::new();
     let manager = test_manager(&dir_b);
 
@@ -843,60 +698,6 @@ async fn punch_session_end_to_end() {
     manager.disconnect(&http, &base, "key").await;
 }
 
-/// 竞速 mock hub：首候选为黑洞地址（192.0.2.1 TEST-NET-1，串行尝试要等满 5s 超时）
-async fn spawn_race_hub(port_a: u16, fp_a_hex: String) -> String {
-    let fp_devices = fp_a_hex.clone();
-    let fp_ready = fp_a_hex.clone();
-    let app = Router::new()
-        .route(
-            "/api/v1/devices",
-            axum::routing::get(move || {
-                let fp = fp_devices.clone();
-                async move {
-                    Json(json!({"status":"success","data":{"devices":[
-                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
-                         "online":true,"allow_remote":true,"fingerprint":fp}
-                    ]}}))
-                }
-            }),
-        )
-        .route(
-            "/api/v1/sessions",
-            axum::routing::post(|Json(_body): Json<Value>| async move {
-                Json(json!({"status":"success","data":{"session_id":"s_race","state":"pending"}}))
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_race",
-            axum::routing::get(move || {
-                let fp = fp_ready.clone();
-                async move {
-                    Json(json!({"status":"success","data":{
-                        "session_id":"s_race","state":"ready",
-                        "connect":{
-                            "mode":"direct",
-                            "candidates":[
-                                {"transport":"ipv4","host":"192.0.2.1","port":1},
-                                {"transport":"ipv4","host":"127.0.0.1","port":port_a}
-                            ],
-                            "fingerprint": fp,
-                        }
-                    }}))
-                }
-            }),
-        )
-        .route(
-            "/api/v1/sessions/s_race/cancel",
-            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap().port();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    format!("http://127.0.0.1:{addr}")
-}
-
 /// Happy Eyeballs 竞速：黑洞候选在前不阻塞可用候选。串行尝试此场景必然 ≥5s（黑洞候选
 /// 超时）；并行竞速下可用候选即时胜出，总耗时应远小于串行下限
 #[tokio::test]
@@ -911,7 +712,20 @@ async fn candidates_race_skips_blackhole() {
     let port_a = plane_a.local_addr().unwrap().port();
     plane_a.allow_session("s_race", fp_b, false);
 
-    let base = spawn_race_hub(port_a, fingerprint_hex(&identity_a)).await;
+    let base = spawn_hub(HubOpts {
+        session_id: "s_race",
+        connect: direct_connect(
+            &fingerprint_hex(&identity_a),
+            json!([
+                {"transport":"ipv4","host":"192.0.2.1","port":1},
+                {"transport":"ipv4","host":"127.0.0.1","port":port_a}
+            ]),
+        ),
+        relay: false,
+        relay_path: false,
+    })
+    .await
+    .base;
     let http = reqwest::Client::new();
     let manager = test_manager(&dir_b);
 
@@ -950,7 +764,17 @@ async fn session_orchestration_end_to_end() {
     let port_a = plane_a.local_addr().unwrap().port();
     plane_a.allow_session("s_1", fp_b, false);
 
-    let (base, _hub) = spawn_hub(port_a, fingerprint_hex(&identity_a)).await;
+    let hub = spawn_hub(HubOpts {
+        session_id: "s_1",
+        connect: direct_connect(
+            &fingerprint_hex(&identity_a),
+            json!([{"transport":"ipv4","host":"127.0.0.1","port":port_a}]),
+        ),
+        relay: false,
+        relay_path: false,
+    })
+    .await;
+    let base = hub.base.clone();
     let http = reqwest::Client::new();
     let manager = test_manager(&dir_b);
 

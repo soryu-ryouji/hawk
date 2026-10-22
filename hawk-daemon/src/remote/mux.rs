@@ -1,12 +1,16 @@
 //! 统一传输 socket（P4 路径迁移）：一个真实 UDP socket + 零或多条中继 WS 路径合并为
 //! 单一 quinn endpoint，对 QUIC 呈现稳定地址——路径切换对连接不可见。
 //! 对标 iroh magicsock 的最小自研等价，借助 quinn 原生能力减负：
+//! - 握手不在 mux 层多路径：quinn 握手钉死在首个 Initial 的地址（is_handshaking 期丢弃
+//!   异源包），候选竞速在握手层并行（每候选独立 mux endpoint，首个胜者赢，见 session.rs）
 //! - B 侧（client 角色）：quinn 客户端丢弃未知来源地址的包，因此全部入站归一到固定伪地址
-//!   MUX_PEER；出站按路径活性路由（握手期洪泛全部候选，首个入站包锁定胜者）
+//!   MUX_PEER；出站按路径活性路由（UDP 静默超阈值且中继在场 → 中继，恢复即自动回切）
 //! - A 侧（server 角色）：UDP 入站保持真实地址、中继通道按分配伪地址入站；B 换路径后
 //!   由 quinn 服务端被动迁移（migration 默认开启）自动跟随，A 侧不做任何主动决策
 //!
 //! mux 自身不产任何控制帧：静默观察只是读入站时间戳，没有额外的探测协议。
+//! 单路径发送错误一律吞掉（返回 Ok）：多路径 socket 的一条路径失效不应杀死连接，
+//! 终局由 QUIC 自身的重传/空闲超时负责（quinn 对 try_send 返回 Err 的处理是关闭连接）。
 
 use futures_util::{SinkExt, StreamExt};
 use quinn::udp::{RecvMeta, Transmit};
@@ -48,10 +52,8 @@ struct MuxState {
     recv_waker: Mutex<Option<Waker>>,
     /// UDP 出站句柄（endpoint socket 的克隆；读归 mux 入站泵任务独占）
     udp: Arc<std::net::UdpSocket>,
-    /// B 侧握手洪泛集（锁定前每个出站包发全部候选）；A 侧恒空
-    flood: Vec<SocketAddr>,
-    /// B 侧锁定的 UDP 对端（首个 UDP 入站包的来源）
-    locked_udp: Mutex<Option<SocketAddr>>,
+    /// B 侧 UDP 对端（握手竞速胜出的候选地址）；None = 纯中继路径形态；A 侧恒 None
+    udp_peer: Option<SocketAddr>,
     /// 最近一次 UDP 入站时间（B 侧静默降级的判据；初值为创建时间，新 mux 不算静默）
     last_udp_recv: Mutex<Instant>,
     /// 中继路径：伪地址 → WS 发送端（B 侧至多一条、键为 MUX_PEER；A 侧每通道一条）
@@ -75,17 +77,18 @@ pub struct MuxSocket {
 impl MuxSocket {
     /// A 侧：多 peer 服务端形态（UDP 真实地址 + 中继通道伪地址）
     pub fn new_server(socket: std::net::UdpSocket) -> Arc<MuxSocket> {
-        Self::new(socket, Vec::new(), None)
+        Self::new(socket, None, None)
     }
 
-    /// B 侧：单对端客户端形态（入站全部归一到 MUX_PEER；flood 为握手候选地址集）
-    pub fn new_client(socket: std::net::UdpSocket, flood: Vec<SocketAddr>) -> Arc<MuxSocket> {
-        Self::new(socket, flood, Some(MUX_PEER))
+    /// B 侧：单对端客户端形态（入站全部归一到 MUX_PEER；udp_peer 为竞速胜出的候选地址，
+    /// None = 纯中继路径形态）
+    pub fn new_client(socket: std::net::UdpSocket, udp_peer: Option<SocketAddr>) -> Arc<MuxSocket> {
+        Self::new(socket, udp_peer, Some(MUX_PEER))
     }
 
     fn new(
         socket: std::net::UdpSocket,
-        flood: Vec<SocketAddr>,
+        udp_peer: Option<SocketAddr>,
         normalize: Option<SocketAddr>,
     ) -> Arc<MuxSocket> {
         // 入站泵用 tokio socket（原 socket）；出站用克隆句柄（与 quinn endpoint 同端口）
@@ -96,8 +99,7 @@ impl MuxSocket {
                 inbound: Mutex::new(VecDeque::new()),
                 recv_waker: Mutex::new(None),
                 udp: send,
-                flood,
-                locked_udp: Mutex::new(None),
+                udp_peer,
                 last_udp_recv: Mutex::new(Instant::now()),
                 relay_paths: Mutex::new(HashMap::new()),
                 relay_seq: AtomicU32::new(0),
@@ -189,16 +191,6 @@ async fn udp_pump(socket: tokio::net::UdpSocket, state: Arc<MuxState>) {
             continue; // 测试挂钩：模拟路径死亡
         }
         *state.last_udp_recv.lock().unwrap() = Instant::now();
-        // B 侧：首个 UDP 入站包锁定路径胜者（洪泛结束）
-        if state.normalize.is_some() {
-            let mut locked = state.locked_udp.lock().unwrap();
-            if locked.is_none() {
-                *locked = Some(from);
-                tracing::info!("mux 路径锁定（竞速胜者）: {from}");
-            } else if *locked != Some(from) {
-                tracing::debug!("mux 锁定路径外的 UDP 入站（{from}），忽略锁变更");
-            }
-        }
         let addr = state.normalize.unwrap_or(from);
         state.push_inbound(addr, buf[..len].to_vec());
     }
@@ -317,48 +309,40 @@ impl AsyncUdpSocket for MuxSocket {
 }
 
 impl MuxState {
-    /// B 侧出站路由：UDP 静默且中继在场 → 中继；已锁定 → 单发锁定点；
-    /// 未锁定（握手中）→ 洪泛全部候选 + 中继（若已附加）。UDP 恢复入站即自动回切
-    /// （udp_alive 随入站刷新），无需显式升级逻辑
+    /// B 侧出站路由：UDP 静默超阈值且中继在场 → 中继；其余 → UDP 对端（无 UDP 对端
+    /// 即纯中继形态）。UDP 恢复入站即自动回切（udp_alive 随入站刷新），无需显式升级逻辑。
+    /// 发送失败一律吞掉（多路径单点失效不杀连接，终局由 QUIC 重传/空闲超时负责）
     fn send_client(&self, transmit: &Transmit) -> io::Result<()> {
         let relay = self.relay_paths.lock().unwrap().get(&MUX_PEER).cloned();
         let udp_alive = self.last_udp_recv.lock().unwrap().elapsed() < silence_threshold();
-        let locked = *self.locked_udp.lock().unwrap();
         if let (Some(sender), false) = (&relay, udp_alive) {
             return send_ws(sender, transmit);
         }
-        if let Some(addr) = locked {
-            return self.send_udp(transmit, addr);
+        if let Some(addr) = self.udp_peer {
+            self.send_udp(transmit, addr);
+            return Ok(());
         }
-        // 握手洪泛：全部 UDP 候选各发一份；中继路径在场时同样发（relay 模式会话 flood 为空）
-        let mut result = Ok(());
-        for addr in &self.flood {
-            if let Err(e) = self.send_udp(transmit, *addr) {
-                result = Err(e);
-            }
+        if let Some(sender) = relay {
+            return send_ws(&sender, transmit);
         }
-        if self.flood.is_empty() || !udp_alive {
-            if let Some(sender) = relay {
-                let relay_result = send_ws(&sender, transmit);
-                if self.flood.is_empty() {
-                    result = relay_result;
-                }
-            }
-        }
-        result
+        Ok(())
     }
 
-    /// A 侧出站路由：中继伪地址 → 对应通道；其余 → UDP 实发（v4-mapped 换算沿用）
+    /// A 侧出站路由：中继伪地址 → 对应通道；其余 → UDP 实发（v4-mapped 换算沿用）。
+    /// 发送失败同样吞掉（某条路径失效不影响其余路径上的连接）
     fn send_server(&self, transmit: &Transmit) -> io::Result<()> {
         if let Some(sender) = self.relay_paths.lock().unwrap().get(&transmit.destination) {
             return send_ws(sender, transmit);
         }
-        self.send_udp(transmit, transmit.destination)
+        self.send_udp(transmit, transmit.destination);
+        Ok(())
     }
 
-    fn send_udp(&self, transmit: &Transmit, addr: SocketAddr) -> io::Result<()> {
+    fn send_udp(&self, transmit: &Transmit, addr: SocketAddr) {
         let target = crate::remote::data::punch_target(&self.udp, addr);
-        self.udp.send_to(transmit.contents, target).map(|_| ())
+        if let Err(e) = self.udp.send_to(transmit.contents, target) {
+            tracing::debug!("mux UDP 发送失败（{target}）: {e}");
+        }
     }
 }
 
@@ -404,69 +388,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn client_floods_then_locks_on_first_inbound() {
-        let mux = MuxSocket::new_client(
-            loopback_socket(),
-            vec![
-                SocketAddr::from(([127, 0, 0, 1], 40001)),
-                SocketAddr::from(([127, 0, 0, 1], 40002)),
-            ],
-        );
-        // 锁定前：洪泛到两个候选
-        let receiver_1 = std::net::UdpSocket::bind("127.0.0.1:40001").unwrap();
-        let receiver_2 = std::net::UdpSocket::bind("127.0.0.1:40002").unwrap();
-        for r in [&receiver_1, &receiver_2] {
-            r.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        }
-        let t = transmit(b"initial");
-        // 未锁定：洪泛
-        let send = mux.state.send_client(&t);
-        assert!(send.is_ok());
-        let mut buf = [0u8; 64];
-        assert_eq!(receiver_1.recv(&mut buf).unwrap(), 7);
-        assert_eq!(receiver_2.recv(&mut buf).unwrap(), 7);
+    async fn client_udp_routing_and_normalize() {
+        let receiver = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let peer = SocketAddr::from(([127, 0, 0, 1], receiver.local_addr().unwrap().port()));
+        let mux = MuxSocket::new_client(loopback_socket(), Some(peer));
 
-        // 模拟 40002 先回包 → 锁定
-        receiver_2
-            .send_to(b"response", mux.local_addr().unwrap())
+        // UDP 路径在场且活跃：发送直达对端
+        mux.state.send_client(&transmit(b"hello")).unwrap();
+        let mut buf = [0u8; 64];
+        assert_eq!(receiver.recv(&mut buf).unwrap(), 5);
+
+        // 对端回包：入站归一到伪地址（quinn 客户端丢未知来源包的硬约束）
+        receiver
+            .send_to(b"resp", mux.local_addr().unwrap())
             .unwrap();
         let (addr, data) = recv_inbound(&mux).await;
-        assert_eq!(addr, MUX_PEER, "B 侧入站归一到伪地址");
-        assert_eq!(data, b"response");
-        assert_eq!(
-            *mux.state.locked_udp.lock().unwrap(),
-            Some(SocketAddr::from(([127, 0, 0, 1], 40002)))
-        );
+        assert_eq!(addr, MUX_PEER);
+        assert_eq!(data, b"resp");
 
-        // 锁定后单发胜者（40001 不再收到）
-        let t = transmit(b"after-lock");
-        mux.state.send_client(&t).unwrap();
-        receiver_1
-            .set_read_timeout(Some(Duration::from_millis(300)))
-            .unwrap();
-        assert!(receiver_1.recv(&mut buf).is_err());
-        assert_eq!(receiver_2.recv(&mut buf).unwrap(), 10);
+        // 单路径发送失败被吞掉（地址族不符：v4 socket 发 v6 目标）——不杀连接
+        let v6_peer = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1u16], 9));
+        let mux_v4 = MuxSocket::new_client(loopback_socket(), Some(v6_peer));
+        assert!(mux_v4.state.send_client(&transmit(b"x")).is_ok());
+        mux_v4.close();
         mux.close();
     }
 
     #[tokio::test]
     async fn silence_switch_prefers_relay_when_attached() {
         std::env::set_var("HAWK_REMOTE_MUX_SILENCE_MS", "200");
-        let mux = MuxSocket::new_client(loopback_socket(), Vec::new());
-        // 无 flood 无 relay：发送无处可达（不报错，结果为空成功）
-        mux.state.send_client(&transmit(b"x")).unwrap();
-        // relay 附加后：UDP 静默超阈值（无入站）→ 走 relay
-        mux.state
-            .relay_paths
-            .lock()
-            .unwrap()
-            .insert(MUX_PEER, mpsc::unbounded_channel().0);
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        // UDP 对端无人监听（永不入站 → 静默）
+        let dead_peer = SocketAddr::from(([127, 0, 0, 1], 9));
+        let mux = MuxSocket::new_client(loopback_socket(), Some(dead_peer));
+        // 静默阈值内：仍走 UDP（无入站但时限未到）
+        mux.state.send_client(&transmit(b"udp-first")).unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
         mux.state.relay_paths.lock().unwrap().insert(MUX_PEER, tx);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        // 超阈值：切中继
         mux.state.send_client(&transmit(b"via-relay")).unwrap();
         assert_eq!(rx.recv().await.unwrap(), b"via-relay");
         mux.close();
         std::env::remove_var("HAWK_REMOTE_MUX_SILENCE_MS");
+    }
+
+    #[tokio::test]
+    async fn pure_relay_form_sends_over_relay() {
+        // 无 UDP 对端（纯中继形态，relay 模式会话）：中继在场即走中继
+        let mux = MuxSocket::new_client(loopback_socket(), None);
+        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        mux.state.relay_paths.lock().unwrap().insert(MUX_PEER, tx);
+        mux.state.send_client(&transmit(b"dgram")).unwrap();
+        assert_eq!(rx.recv().await.unwrap(), b"dgram");
+        mux.close();
     }
 }

@@ -188,7 +188,7 @@ impl SessionManager {
             .await
             .map_err(ConnectError::server)?;
             let socket = bind_ephemeral_udp().map_err(ConnectError::session)?;
-            let mux = MuxSocket::new_client(socket, Vec::new());
+            let mux = MuxSocket::new_client(socket, None);
             mux.add_relay_path(ws);
             let (endpoint, conn) = crate::remote::data::connect_mux(
                 identity,
@@ -204,41 +204,59 @@ impl SessionManager {
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            // 候选洪泛（P4，ICE/Tailscale 同款的 mux 版）：握手 Initial 发往全部候选地址，
-            // 首个入站数据报锁定路径。串行最坏 25s+ → 洪泛典型 ~1s
+            // 候选竞速（ICE/Tailscale 同款）：quinn 握手钉死在首个 Initial 的地址上，
+            // 因此竞速在握手层并行——每候选独立 mux endpoint，首个胜者赢，败者 abort
+            // 取消握手（A 侧对并发多连接天然兼容，败者断开即清理）
             let punch_present = candidates
                 .iter()
                 .any(|c| c["transport"].as_str() == Some("punch"));
-            let flood: Vec<SocketAddr> = candidates
-                .iter()
-                .filter_map(|c| {
-                    Some(SocketAddr::new(
-                        c["host"].as_str()?.parse().ok()?,
-                        c["port"].as_u64()? as u16,
-                    ))
-                })
-                .collect();
-            // P3 打洞：复用 session.probe 时预绑的 socket（同端口前提）；缺失时退普通
-            // socket（打洞失效，其余候选不受影响）
-            let socket = if punch_present {
-                match self.pending_punch.lock().unwrap().remove(&session_id) {
-                    Some(socket) => socket,
-                    None => {
-                        tracing::debug!("打洞预绑 socket 缺失（session.probe 未收到），打洞失效");
-                        bind_ephemeral_udp().map_err(ConnectError::session)?
-                    }
+            // P3 打洞：复用 session.probe 时预绑的 socket（同端口前提）；
+            // 缺失时打洞候选直接跳过（其余候选不受影响）
+            let mut punch_socket = if punch_present {
+                let socket = self.pending_punch.lock().unwrap().remove(&session_id);
+                if socket.is_none() {
+                    tracing::debug!("打洞预绑 socket 缺失（session.probe 未收到），打洞失效");
                 }
+                socket
             } else {
-                bind_ephemeral_udp().map_err(ConnectError::session)?
+                None
             };
-            let timeout = if punch_present {
-                crate::remote::data::PUNCH_TIMEOUT
-            } else {
-                crate::remote::data::CANDIDATE_TIMEOUT
-            };
-            let mux = MuxSocket::new_client(socket, flood);
-            match crate::remote::data::connect_mux(identity, mux.clone(), expected, timeout).await {
-                Ok((endpoint, conn)) => (endpoint, mux, conn),
+            let mut attempts = Vec::new();
+            for candidate in &candidates {
+                let (Some(host), Some(port)) = (
+                    candidate["host"].as_str(),
+                    candidate["port"].as_u64().map(|p| p as u16),
+                ) else {
+                    continue;
+                };
+                let Ok(ip) = host.parse() else { continue };
+                let is_punch = candidate["transport"].as_str() == Some("punch");
+                let socket = if is_punch {
+                    match punch_socket.take() {
+                        Some(socket) => socket,
+                        None => continue,
+                    }
+                } else {
+                    match bind_ephemeral_udp() {
+                        Ok(socket) => socket,
+                        Err(e) => {
+                            tracing::debug!("候选 socket 绑定失败: {e}");
+                            continue;
+                        }
+                    }
+                };
+                attempts.push((
+                    SocketAddr::new(ip, port),
+                    if is_punch {
+                        crate::remote::data::PUNCH_TIMEOUT
+                    } else {
+                        crate::remote::data::CANDIDATE_TIMEOUT
+                    },
+                    socket,
+                ));
+            }
+            match race_candidates(identity, attempts, expected).await {
+                Ok(triple) => triple,
                 Err(e) => {
                     let _ = cancel_session(http, base, key, &session_id).await;
                     return Err(ConnectError::session(format!("直连失败：{e}")));
@@ -495,7 +513,7 @@ async fn watch_session(
 }
 
 /// 原会话内重建连接：重取连接信息（服务端会话仍 ready）→ 排除打洞候选（observed
-/// 端点在重建时可能已过期）→ 新 socket + mux 洪泛其余候选
+/// 端点在重建时可能已过期）→ 竞速其余候选
 async fn rebuild_once(
     http: &reqwest::Client,
     base: &str,
@@ -518,29 +536,58 @@ async fn rebuild_once(
     }
     let connect = body["data"]["connect"].clone();
     let expected = parse_connect_fingerprint(&connect).map_err(|e| e.message)?;
-    let flood: Vec<SocketAddr> = connect["candidates"]
+    let attempts = connect["candidates"]
         .as_array()
         .cloned()
         .unwrap_or_default()
         .iter()
         .filter(|c| c["transport"].as_str() != Some("punch"))
         .filter_map(|c| {
-            Some(SocketAddr::new(
+            let addr = SocketAddr::new(
                 c["host"].as_str()?.parse().ok()?,
                 c["port"].as_u64()? as u16,
-            ))
+            );
+            let socket = bind_ephemeral_udp().ok()?;
+            Some((addr, crate::remote::data::CANDIDATE_TIMEOUT, socket))
         })
         .collect();
-    let socket = bind_ephemeral_udp()?;
-    let mux = MuxSocket::new_client(socket, flood);
-    crate::remote::data::connect_mux(
-        identity,
-        mux.clone(),
-        expected,
-        crate::remote::data::CANDIDATE_TIMEOUT,
-    )
-    .await
-    .map(|(endpoint, conn)| (endpoint, mux, conn))
+    race_candidates(identity, attempts, expected).await
+}
+
+/// 候选竞速（Happy Eyeballs 的 mux 版）：每候选独立 mux endpoint 并行握手，首个胜者赢；
+/// 败者 abort 取消握手，endpoint/mux 随 drop 释放（A 侧对并发多连接天然兼容）
+async fn race_candidates(
+    identity: &Identity,
+    attempts: Vec<(SocketAddr, Duration, std::net::UdpSocket)>,
+    expected: [u8; 32],
+) -> Result<(quinn::Endpoint, Arc<MuxSocket>, quinn::Connection), String> {
+    let mut race = tokio::task::JoinSet::new();
+    for (addr, timeout, socket) in attempts {
+        let identity = identity.clone();
+        race.spawn(async move {
+            let mux = MuxSocket::new_client(socket, Some(addr));
+            crate::remote::data::connect_mux(&identity, mux.clone(), expected, timeout)
+                .await
+                .map(|(endpoint, conn)| (endpoint, mux, conn))
+        });
+    }
+    let mut last_err = "无可用候选".to_string();
+    let mut winner = None;
+    while let Some(result) = race.join_next().await {
+        match result {
+            Ok(Ok(triple)) => {
+                winner = Some(triple);
+                break;
+            }
+            Ok(Err(e)) => {
+                tracing::debug!("候选连接失败: {e}");
+                last_err = e;
+            }
+            Err(e) => tracing::debug!("候选连接任务异常: {e}"),
+        }
+    }
+    race.abort_all();
+    winner.ok_or(last_err)
 }
 
 /// UDP 静默降级观察（P4）：mux 观测的 UDP 入站静默超阈值时，中继回退已开启则
