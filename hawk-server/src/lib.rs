@@ -31,22 +31,34 @@ pub async fn run(settings: &Cli) -> std::io::Result<()> {
         Some(url) => {
             let token = load_or_create_relay_token(&data_dir)?;
             let mut config = iroh_relay::server::ServerConfig::default();
+            // 中继监听环回（公网入口一律由反代终结，与主端口 9100 同模型）；
+            // 内外端口分离：反代对外端口与 relay_port 无关，部署别撞车
             let mut relay_config = iroh_relay::server::RelayConfig::new(SocketAddr::from((
-                [0, 0, 0, 0],
+                [127, 0, 0, 1],
                 settings.relay_port,
             )));
             relay_config.access = Arc::new(TokenAccess(token.clone()));
             config.relay = Some(relay_config);
-            let server = iroh_relay::server::Server::spawn(config)
-                .await
-                .map_err(std::io::Error::other)?;
-            tracing::info!(
-                port = settings.relay_port,
-                url = url.as_str(),
-                "hawk-server embedded relay listening"
-            );
-            state.relay_info = Some(serde_json::json!({ "url": url, "token": token }));
-            Some(server)
+            // 可选组件绑定失败只降级（本部署不提供中继），不阻断主服务
+            let server = match iroh_relay::server::Server::spawn(config).await {
+                Ok(server) => {
+                    tracing::info!(
+                        port = settings.relay_port,
+                        url = url.as_str(),
+                        "hawk-server embedded relay listening (127.0.0.1)"
+                    );
+                    state.relay_info = Some(serde_json::json!({ "url": url, "token": token }));
+                    Some(server)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        port = settings.relay_port,
+                        "内嵌中继绑定失败（本部署不提供中继，退化为纯直连）: {e}"
+                    );
+                    None
+                }
+            };
+            server
         }
         None => {
             tracing::info!("未配置 --relay-url：本部署不提供中继（纯直连形态）");
