@@ -265,6 +265,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 | 插件保存返回 413 | 反代请求体上限过小（nginx 默认 1MB）：配置 `client_max_body_size 256m` |
 | 插件保存返回 403 `目标设备未开启广域网写入` / `remote writer is limited...` | 目标设备未开启远程访问的 `writable`，或该 key 无写权限；按提示检查目标设备设置 |
 | 心跳返回 429 | 心跳间隔小于 10s，检查客户端配置 |
+| 日志「打洞探测未在 Xs 内到齐」 | 未到齐一侧的探测包没到服务器：该侧 daemon 过旧（v2.3.0 前不认识 `session.probe`）、探测口 UDP 被安全组/防火墙拦（用 `tools/check-probe-port.mjs` 验证）、或该侧网络拦出站 UDP |
+| 日志「打洞编排就绪」但客户端连接超时 | 至少一侧是对称型 NAT（观测端口随目的地址变化），打洞必然失败，属预期——客户端开「中继回退」走中继。蜂窝热点/移动数据几乎必为对称型 NAT 且常禁入站 UDP，是打洞成功率最低的测试环境，别用它下结论 |
 | 服务端日志看会话细节 | `RUST_LOG=debug` 重启；systemd 部署用 `journalctl -u hawk-server -f` |
 
 ## 相关文档
