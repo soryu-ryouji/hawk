@@ -51,6 +51,8 @@ pub struct HeartbeatReachability {
     mapping_type: String,
     public_ipv6: Option<String>,
     ipv6_port: Option<u16>,
+    /// LAN IPv4（私网出接口）：同公网 IP 的会话双方大概率同一 NAT 后，作 LAN 候选下发
+    lan_ipv4: Option<String>,
     /// P3 打洞预留，阶段 1 服务端不使用
     #[serde(default)]
     #[allow(dead_code)]
@@ -162,6 +164,7 @@ pub async fn heartbeat(
         mapping_type: req.reachability.mapping_type,
         public_ipv6: req.reachability.public_ipv6,
         ipv6_port: req.reachability.ipv6_port,
+        lan_ipv4: req.reachability.lan_ipv4,
     });
     Ok(ok(
         json!({ "server_time_ms": now, "public_ip_seen": public_ip_seen }),
@@ -378,6 +381,7 @@ fn device_view(record: &DeviceRecord, presence: Option<&Presence>, now: u64) -> 
             "mapping_type": r.mapping_type,
             "public_ipv6": r.public_ipv6,
             "ipv6_port": r.ipv6_port,
+            "lan_ipv4": r.lan_ipv4,
         })
     });
     json!({

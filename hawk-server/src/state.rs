@@ -52,6 +52,8 @@ pub struct Reachability {
     pub mapping_type: String,
     pub public_ipv6: Option<String>,
     pub ipv6_port: Option<u16>,
+    /// LAN IPv4（私网出接口地址）：双方同公网 IP 时作 LAN 候选下发（同局域网直连）
+    pub lan_ipv4: Option<String>,
 }
 
 impl Reachability {

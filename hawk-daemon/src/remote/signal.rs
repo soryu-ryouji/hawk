@@ -594,6 +594,8 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
             "mapping_type": if mapped_port.is_some() { "upnp" } else { "none" },
             "public_ipv6": public_ipv6,
             "ipv6_port": ipv6_port,
+            // LAN 地址（每次心跳探测，零成本）：双方同公网 IP 时服务端下发为 LAN 候选
+            "lan_ipv4": reachability::probe_lan_ipv4(),
             "nat_type": "unknown",
         }
     });

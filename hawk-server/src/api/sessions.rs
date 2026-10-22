@@ -221,7 +221,8 @@ fn respond(
         }));
         session.state = SessionState::Ready;
     } else if let Some(probe_port) = state.probe_port {
-        let candidates = direct_candidates(&state, &session.target_device_id);
+        let candidates =
+            direct_candidates(&state, &session.source_device_id, &session.target_device_id);
         let token_a = rand::random::<u128>().to_be_bytes();
         let token_b = rand::random::<u128>().to_be_bytes();
         session.probe = Some(ProbeState {
@@ -267,7 +268,8 @@ fn respond(
         orchestrate = Some(!candidates.is_empty());
     } else {
         // 打洞编排未启用（探测口未配置）：按既有候选立即裁决
-        let candidates = direct_candidates(&state, &session.target_device_id);
+        let candidates =
+            direct_candidates(&state, &session.source_device_id, &session.target_device_id);
         if candidates.is_empty() {
             session.state = SessionState::Unreachable;
         } else {
@@ -305,16 +307,37 @@ fn respond(
     Ok(success())
 }
 
-/// 目标设备最近心跳组装出的直连候选（IPv4 映射优先、IPv6 次之，协议约定）
-fn direct_candidates(state: &AppState, target_device_id: &str) -> Vec<Value> {
-    state
-        .presence
-        .read()
-        .unwrap()
+/// 直连候选组装（IPv4 映射 → IPv6，协议约定）。双方同公网 IP（同 NAT 强信号）且目标
+/// 上报了 LAN 地址时，LAN 候选排最前：同局域网内网直连绕开 hairpin/UPnP/CGNAT 全部问题
+///（Syncthing 本地发现的服务端撮合等价物）；错配（CGNAT 同 IP 陌生人）由指纹钉扎快速证伪
+fn direct_candidates(
+    state: &AppState,
+    source_device_id: &str,
+    target_device_id: &str,
+) -> Vec<Value> {
+    let presence = state.presence.read().unwrap();
+    let Some(target) = presence
         .get(target_device_id)
         .and_then(|p| p.reachability.as_ref())
-        .map(|r| r.candidates())
-        .unwrap_or_default()
+    else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    let same_public_ip = presence
+        .get(source_device_id)
+        .and_then(|p| p.reachability.as_ref())
+        .is_some_and(|source| source.public_ip == target.public_ip);
+    if same_public_ip {
+        if let Some(lan) = &target.lan_ipv4 {
+            candidates.push(json!({
+                "transport": "lan",
+                "host": lan,
+                "port": target.ipv6_port.unwrap_or(crate::state::DEFAULT_QUIC_PORT),
+            }));
+        }
+    }
+    candidates.extend(target.candidates());
+    candidates
 }
 
 /// 打洞探测等待上限（无直连候选时——打洞是唯一指望；协议约定 8s，超时置 unreachable）
@@ -389,7 +412,8 @@ async fn orchestrate_punch(state: Arc<AppState>, session_id: String, has_direct:
         }
         let probe = session.probe.take().unwrap_or_default();
         // 直连候选按最新心跳重组装（等待期间心跳可能刷新可达性）
-        let mut candidates = direct_candidates(&state, &session.target_device_id);
+        let mut candidates =
+            direct_candidates(&state, &session.source_device_id, &session.target_device_id);
         let direct_count = candidates.len();
         let fingerprint = state
             .device(&session.target_device_id)

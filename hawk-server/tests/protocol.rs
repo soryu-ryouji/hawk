@@ -569,6 +569,52 @@ async fn session_direct_flow_end_to_end() {
 }
 
 #[tokio::test]
+async fn lan_candidate_first_when_same_public_ip() {
+    // 双方心跳来自同一连接源（loopback 同为 127.0.0.1，同公网 IP 的撮合信号）且目标
+    // 上报 LAN 地址 → LAN 候选排最前（同局域网直连，绕开 hairpin）
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key) = spawn_server(dir.path()).await;
+    let target = register(&base, &key, "台式机", true).await;
+    let source = register(&base, &key, "笔记本", true).await;
+    let reachability = json!({
+        "public_ip": null,
+        "mapped_port": 27373,
+        "mapping_type": "upnp",
+        "public_ipv6": null,
+        "ipv6_port": null,
+        "lan_ipv4": "192.168.1.5",
+    });
+    assert_eq!(
+        heartbeat(&base, &key, &target, reachability.clone())
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        heartbeat(&base, &key, &source, reachability).await.status(),
+        200
+    );
+
+    let (_, body) = create_session(&base, &key, &source, &target).await;
+    let session_id = body["data"]["session_id"].as_str().unwrap().to_string();
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(&key)
+        .json(&json!({ "device_id": target }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let state = session_state(&base, &key, &session_id).await;
+    let candidates = state["connect"]["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["transport"], "lan");
+    assert_eq!(candidates[0]["host"], "192.168.1.5");
+    assert_eq!(candidates[0]["port"], 27373); // ipv6_port 未上报 → 默认 QUIC 端口
+    assert_eq!(candidates[1]["transport"], "ipv4");
+}
+
+#[tokio::test]
 async fn session_rejected_when_allow_remote_false() {
     let dir = tempfile::tempdir().unwrap();
     let (base, key) = spawn_server(dir.path()).await;

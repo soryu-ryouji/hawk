@@ -35,6 +35,20 @@ pub fn probe_ipv6(quic_port: u16) -> Option<(String, u16)> {
     }
 }
 
+/// LAN IPv4 探测（UDP connect 出接口，零流量，同 probe_ipv6 原理）：
+/// 同公网 IP 的会话双方很可能在同一 NAT 后——LAN 候选让同局域网设备直接内网直连，
+/// 绕开 hairpin/UPnP/CGNAT 全部问题。仅私网地址上报（机器直连公网时直连候选已覆盖）
+pub fn probe_lan_ipv4() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket
+        .connect((std::net::Ipv4Addr::new(1, 1, 1, 1), 53))
+        .ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(v4) if v4.is_private() => Some(v4.to_string()),
+        _ => None,
+    }
+}
+
 fn is_global_v6(ip: &std::net::Ipv6Addr) -> bool {
     // Ipv6Addr::is_global 尚未稳定：排除回环/链路本地/唯一本地/未指定即全局
     !(ip.is_loopback() || ip.is_unicast_link_local() || ip.is_unique_local() || ip.is_unspecified())
@@ -162,6 +176,15 @@ pub async fn ensure_firewall_rule_windows(quic_port: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lan_ipv4_reports_private_or_nothing() {
+        // 环境敏感（无默认路由的命名空间返回 None）：有值则必须是私网地址
+        if let Some(ip) = probe_lan_ipv4() {
+            let v4: std::net::Ipv4Addr = ip.parse().unwrap();
+            assert!(v4.is_private(), "LAN 候选必须私网: {v4}");
+        }
+    }
 
     #[test]
     fn global_v6_classification() {
