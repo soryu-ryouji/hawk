@@ -46,8 +46,10 @@ export const api = {
       version: string;
       platform: string;
       exec_path: string;
-      /** viewer=局域网查看 token；writable=当前 token 可写（admin 恒 true，viewer 为 [web].writable） */
-      access: 'viewer' | 'admin';
+      /** viewer=局域网/远程查看 token；writable=当前 token 可写（admin 恒 true，viewer 为 [web].writable） */
+      access: 'viewer' | 'admin' | 'remote_writer';
+      /** 本地素材库是否就位（false = 远程查看模式：库端点不可用） */
+      has_library: boolean;
       writable: boolean;
       lan: { active: boolean; port?: number; error?: string };
     }>('GET', '/api/v1/app/info'),

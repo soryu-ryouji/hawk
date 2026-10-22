@@ -26,7 +26,7 @@ vi.mock('@/shared/api/client', async (importOriginal) => {
 
 const apiMocks = vi.hoisted(() => ({
   startupStatus: vi.fn(() => Promise.resolve({ status: 'ready' as const })),
-  appInfo: vi.fn(() => Promise.resolve({ access: 'admin', writable: true })),
+  appInfo: vi.fn(() => Promise.resolve({ access: 'admin', has_library: true, writable: true })),
   libraryInfo: vi.fn(() => Promise.resolve({ name: '库', path: '/lib' })),
   viewPreferences: vi.fn(() => Promise.resolve({})),
   itemSkeleton: vi.fn(() => Promise.resolve({ items: [], total_size: 0 })),
@@ -143,8 +143,17 @@ describe('启动相位机', () => {
 
     expect(apiMocks.startupStatus).toHaveBeenCalled();
     expect(apiMocks.folderList).toHaveBeenCalled(); // taxonomy 先行
-    expect(apiMocks.appInfo).toHaveBeenCalled(); // store.init
+    expect(apiMocks.appInfo).toHaveBeenCalled(); // runBoot 预检 + store.init
     expect(env.connectEvents).toHaveBeenCalledTimes(1);
     expect(boot.phase.value).toBe('ready');
+  });
+
+  it('远程查看模式（has_library=false）：转远程查看屏，不拉库数据', async () => {
+    apiMocks.appInfo.mockImplementation(() => Promise.resolve({ access: 'admin', has_library: false, writable: true }));
+    const boot = mountBoot();
+    await boot.runBoot();
+    expect(boot.phase.value).toBe('remote');
+    expect(apiMocks.libraryInfo).not.toHaveBeenCalled(); // 库端点不可用（NO_LIBRARY）
+    expect(env.connectEvents).not.toHaveBeenCalled();
   });
 });

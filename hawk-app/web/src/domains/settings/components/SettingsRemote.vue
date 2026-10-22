@@ -9,6 +9,9 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRemoteStore, useConnectionLabel } from '@/domains/remote';
 import type { RemoteKeyCreated } from '@/shared/types';
 
+/** libraryless：远程查看模式（本地无库）——隐藏分享向开关（没有本地素材可服务）；
+ *  设置对话框内（有本地库）不传 */
+const props = defineProps<{ libraryless?: boolean }>();
 const error = defineModel<string | null>('error', { default: null });
 const store = useRemoteStore();
 const connection = useConnectionLabel();
@@ -187,6 +190,18 @@ async function rotate() {
     error.value = store.error;
   }
 }
+
+/** 移除设备记录（本机当前设备不可移除，daemon 侧拦截）；列表轮询自动收敛 */
+async function removeDevice(deviceId: string, name: string) {
+  if (!window.confirm(`移除设备「${name}」的记录？其进行中的会话与访问密钥映射将一并失效。`)) {
+    return;
+  }
+  error.value = null;
+  const ok = await store.deleteDevice(deviceId);
+  if (!ok) {
+    error.value = store.error;
+  }
+}
 </script>
 
 <template>
@@ -212,7 +227,7 @@ async function rotate() {
         <input v-model="serviceKey" type="password" placeholder="hawk-server tenant add 生成的 hs_ 密钥" autocomplete="off" spellcheck="false" />
         <p class="hint">池门禁凭证：接入后本机可被发现，也可浏览池内其他设备。服务密钥不对外分发——分发给查看者的是下面的访问密钥。</p>
       </div>
-      <div class="switch-row">
+      <div v-if="!props.libraryless" class="switch-row">
         <div>
           <div class="switch-label">允许广域网保存素材</div>
           <p class="hint">允许持有服务端写入密钥的浏览器插件向本库导入图片、新建文件夹。与局域网写权限独立；不开放删除、改标签等操作。</p>
@@ -300,7 +315,7 @@ async function rotate() {
               <button :disabled="renaming || !selfName.trim()" @click="saveSelfName">改名</button>
             </div>
           </div>
-          <div class="switch-row">
+          <div v-if="!props.libraryless" class="switch-row">
             <div>
               <div class="switch-label">允许其他设备访问本库</div>
               <p class="hint">关闭后其他设备的会话请求被自动拒绝。</p>
@@ -348,6 +363,13 @@ async function rotate() {
             {{ store.connectingId === device.device_id ? '连接中…' : '浏览素材库' }}
           </button>
           <span v-else class="hint">{{ device.online ? '不可访问' : '离线' }}</span>
+          <button
+            class="device-remove"
+            title="从列表移除该设备记录（其进行中的会话与访问密钥映射一并失效）"
+            @click="removeDevice(device.device_id, device.name)"
+          >
+            移除
+          </button>
         </div>
       </template>
     </div>
@@ -457,5 +479,15 @@ async function rotate() {
 .key-revoke {
   flex-shrink: 0;
   color: var(--danger);
+}
+.device-remove {
+  flex-shrink: 0;
+  color: var(--fg-1);
+}
+
+@media (hover: hover) {
+  .device-remove:hover {
+    color: var(--danger);
+  }
 }
 </style>

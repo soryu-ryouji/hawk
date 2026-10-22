@@ -148,6 +148,18 @@ export const useRemoteStore = defineStore('remote', () => {
     await shell.remoteDisconnect();
   }
 
+  /** 注销服务端设备记录（本机当前设备由 daemon 拒绝）；成功后就地刷新列表 */
+  async function deleteDevice(deviceId: string): Promise<boolean> {
+    try {
+      await shell.remoteDeleteDevice(deviceId);
+      await refreshDevices();
+      return true;
+    } catch (e) {
+      error.value = ipcMessage(e);
+      return false;
+    }
+  }
+
   async function patchDevice(patch: { name?: string; allow_remote?: boolean }): Promise<boolean> {
     try {
       await shell.remotePatchDevice(patch);
@@ -205,6 +217,7 @@ export const useRemoteStore = defineStore('remote', () => {
     saveConfig,
     connect,
     disconnect,
+    deleteDevice,
     patchDevice,
     rotate,
     startPolling,

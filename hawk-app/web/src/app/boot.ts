@@ -1,8 +1,10 @@
 // 启动相位机与 SSE 桥（装配层）：phase 状态机、runBoot 编排（拉数据 + 连 SSE）、
 // server 重启监听、浏览器路径轮询接线。从 App.vue 抽出，App 只做相位分发与模板。
-// 相位：starting（等 server 就绪）→ ready（主界面）；旁路 setup（未配置库）/ connect（token 门页）/ error。
+// 相位：starting（等 server 就绪）→ ready（主界面）；旁路 setup（未配置库）/ connect（token 门页）/
+// remote（远程查看模式：本地无库，配置/选设备）/ error。
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { initApi, apiConfig, clearStoredToken, ApiError } from '@/shared/api/client';
+import { api } from '@/shared/api/endpoints';
 import { connectEvents } from '@/shared/api/events';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { useStartup } from './startup';
@@ -10,12 +12,12 @@ import { useLibraryStore } from '@/domains/library';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import { usePreviewStore } from '@/domains/preview';
 
-export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'error';
+export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'remote' | 'error';
 
 export function useBoot() {
   const phase = ref<BootPhase>('starting');
   const bootError = ref<string | null>(null);
-  const { readyCount, failed, progress, remoteHost, poll } = useStartup();
+  const { readyCount, failed, progress, poll } = useStartup();
   let disconnectEvents: (() => void) | null = null;
 
   // 连接就绪（冷启动/换库/应用设置重启都会触发）：拉取数据 + 重连 SSE，成功后进入主界面。
@@ -26,10 +28,18 @@ export function useBoot() {
     const taxonomy = useTaxonomyStore();
     const preview = usePreviewStore();
     try {
-      // 换库/应用设置重启复用本入口：先清上一库的预览/编辑浮层会话状态（跨 store 会话清理由
-      // 装配层编排，store 之间不互相调用初始化逻辑），再重启数据
+      // 换库/断开远程/应用设置重启复用本入口：先清上一库的预览/编辑浮层会话状态（跨 store 会话
+      // 清理由装配层编排，store 之间不互相调用初始化逻辑），再按连接形态分流
       preview.closePreview();
       preview.closeEditor();
+      // 远程查看模式（本地无库）：库端点不可用，进远程查看屏（配置服务端/选设备）；
+      // 连上远程库后连接描述符切换会重新进本流程（此时 api 指向远程库，has_library=true）
+      const info = await api.appInfo();
+      if (!info.has_library) {
+        store.library = null; // 清掉上一库的标题残留（远程查看屏不展示库数据）
+        phase.value = 'remote';
+        return;
+      }
       // 分类维度先行：主 store init 的 restoreView 校验依赖 taxonomy 数据（validators 注入，保持 store 间 DAG）
       await taxonomy.refreshAll();
       await store.init({
@@ -124,5 +134,5 @@ export function useBoot() {
     disconnectEvents?.();
   });
 
-  return { phase, bootError, progress, remoteHost, runBoot };
+  return { phase, bootError, progress, runBoot };
 }

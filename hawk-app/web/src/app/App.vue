@@ -21,6 +21,7 @@ import { PreviewOverlay } from '@/domains/preview';
 import { ImageEditDialog } from '@/domains/preview';
 import ContextMenu from '@/shared/ui/ContextMenu.vue';
 import SetupScreen from './screens/SetupScreen.vue';
+import RemoteScreen from './screens/RemoteScreen.vue';
 import ConnectScreen from './screens/ConnectScreen.vue';
 import StartingScreen from './screens/StartingScreen.vue';
 import { SettingsDialog } from '@/domains/settings';
@@ -30,7 +31,7 @@ const store = useLibraryStore();
 const importer = useImporterStore();
 const preview = usePreviewStore();
 const { narrow, touch } = useLayout();
-const { phase, bootError, progress, remoteHost, runBoot } = useBoot();
+const { phase, bootError, progress, runBoot } = useBoot();
 const { sidebarWidth, inspectorWidth, dragSide, startResize } = usePanelResize();
 initConnectionLabel();
 // 窄屏下侧栏为抽屉式：进入窄屏默认收起（抽屉关闭），回宽屏恢复双栏
@@ -42,27 +43,10 @@ watch(
   { immediate: true },
 );
 const showSettings = ref(false);
-const settingsInitialRemote = ref(false);
-/** 远程查看宿主库启动时自动打开一次远程设置（之后由用户主动打开） */
-const remoteSettingsShown = ref(false);
 
 function openSettings(): void {
-  settingsInitialRemote.value = false;
   showSettings.value = true;
 }
-
-// 只在「进入 ready」时自动打开一次：远程连接/断开的连接变更（phase 仍为 ready）不触发
-watch([phase, remoteHost], ([p, host], [prevPhase]) => {
-  if (!host) {
-    remoteSettingsShown.value = false;
-    return;
-  }
-  if (p === 'ready' && prevPhase !== 'ready' && !remoteSettingsShown.value) {
-    remoteSettingsShown.value = true;
-    settingsInitialRemote.value = true;
-    showSettings.value = true;
-  }
-});
 
 // 页面标题：hawk | 素材库名（浏览器标签页；Electron 下同为本窗口标题，任务栏/切换窗口可见）。
 // 库未加载/门页阶段保持纯 hawk
@@ -121,6 +105,7 @@ useDragImport();
     <div class="drag-bar"><WindowControls /></div>
     <StartingScreen v-if="phase === 'starting' || phase === 'error'" :progress="progress" :error="phase === 'error' ? bootError : null" @quit="quitApp" />
     <SetupScreen v-else-if="phase === 'setup'" @selected="phase = 'starting'" />
+    <RemoteScreen v-else-if="phase === 'remote'" />
     <ConnectScreen v-else-if="phase === 'connect'" @connect="onConnected" />
   </div>
 
@@ -142,7 +127,7 @@ useDragImport();
     <TitleBar class="titlebar" @open-settings="openSettings" />
     <!-- 筛选工具列：顶栏漏斗按钮展开，或评分/颜色/尺寸条件激活时常驻 -->
     <FilterBar v-if="store.filterBarVisible || store.hasActiveFilters" />
-    <ItemGrid :remote-host="remoteHost" />
+    <ItemGrid />
     <!-- 索引进度指示：入库队列/扫描进度（与缩略图条同为只读指示） -->
     <div v-if="store.indexProgress" class="task-bar index">
       <div class="task-bar-fill" />
@@ -170,7 +155,7 @@ useDragImport();
     <PreviewOverlay v-if="preview.previewItem" :item="preview.previewItem" @close="preview.closePreview()" @navigate="preview.navigatePreview($event)" />
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
     <ImageEditDialog v-if="preview.editorTarget" :item="preview.editorTarget" @close="preview.closeEditor()" />
-    <SettingsDialog v-if="showSettings" :initial-remote="settingsInitialRemote" @close="showSettings = false" @logout="logoutToken" />
+    <SettingsDialog v-if="showSettings" @close="showSettings = false" @logout="logoutToken" />
     <!-- 导入重复策略对话框（导入中首个重复内容触发，选择整批生效） -->
     <ImportDuplicateDialog />
     <!-- 多位置删除策略对话框（删除含多位置副本的素材时触发） -->

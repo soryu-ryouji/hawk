@@ -10,6 +10,8 @@ import { useLibraryStore } from '@/domains/library';
 import { cleanupIndex, setPeriodicRescan } from '@/domains/library';
 
 const store = useLibraryStore();
+/** 当前连接是否 admin（远程浏览时隐藏库侧配置：只读 token 调管理端点只会 403） */
+const isAdmin = computed(() => store.access === 'admin');
 
 // ---- 元数据存储方案 ----
 /** 当前模式（library/info 的 storage_mode；数据库=默认本地，配置文件=网盘同步友好） */
@@ -115,7 +117,7 @@ async function runCleanup() {
 
 <template>
   <div class="pane">
-    <div class="switch-row">
+    <div v-if="isAdmin" class="switch-row">
       <div>
         <div class="switch-label">周期兜底重扫</div>
         <p class="hint">
@@ -129,7 +131,7 @@ async function runCleanup() {
       </label>
     </div>
 
-    <div class="field column">
+    <div v-if="isAdmin" class="field column">
       <span class="field-label">元数据存储</span>
       <div class="mode-row">
         <label class="mode-option" :class="{ active: storageMode === 'database' }">
@@ -152,7 +154,7 @@ async function runCleanup() {
       <p class="hint">缩略图与索引缓存（派生物，可重建）统一存放在此目录下，各素材库按子目录区分。默认位于系统缓存目录；盘空间紧张时可迁移到其他盘。</p>
     </div>
 
-    <div class="field column">
+    <div v-if="isAdmin" class="field column">
       <span class="field-label">索引体检</span>
       <p class="hint">
         检查索引中不该存在的条目并清除：`.` 开头的隐藏文件（如 .DS_Store、.stignore）、ignore 规则命中的文件、源文件已删除的残留。

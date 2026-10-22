@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 引导页：素材库未配置或失效时展示。打开本地库弹系统目录选择框；
-// 「仅浏览远程素材库」自动创建远程查看宿主库，不需要本地素材目录。
+// 「仅浏览远程素材库」拉起无库 daemon 进远程查看屏，不创建任何本地目录。
 import { ref } from 'vue';
 import { hasShell, shell } from '@/shared/lib/platform';
 
@@ -22,7 +22,7 @@ async function openLibrary() {
   }
 }
 
-/** 远程查看模式：主进程自动创建宿主库并拉起 server，就绪后自动打开远程设置 */
+/** 远程查看模式：主进程拉起无库 daemon，就绪后进远程查看屏（配置服务端/选设备） */
 async function openRemote() {
   if (!hasShell) {
     return;
@@ -45,7 +45,7 @@ async function openRemote() {
     <div class="options">
       <button class="open" :disabled="busy" @click="openLibrary">打开资源文件夹</button>
       <button class="open secondary" :disabled="busy" @click="openRemote">仅浏览远程素材库</button>
-      <p class="hint">不需要本地素材目录；配置服务端后直接查看其他设备上的素材库。</p>
+      <p class="hint">不在本机创建任何目录；接入服务端后即可浏览池内其他设备的素材库。</p>
     </div>
   </div>
 </template>

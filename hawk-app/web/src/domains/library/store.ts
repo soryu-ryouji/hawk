@@ -268,9 +268,13 @@ export const useLibraryStore = defineStore('library', () => {
   /** 局域网 web 查看（viewer token）：默认只读（全部写入口隐藏，服务端 403 为最终防线）；
    * [web] writable 开启后解除只读（app/info.writable 驱动，web 端可上传/删除/修改） */
   const viewerMode = ref(false);
+  /** 当前连接的访问级别（app/info.access）：admin=本地库全权限；viewer=局域网/远程只读查看。
+   *  设置面板的 admin 限定分区（局域网/存储的库侧部分）据此门禁 */
+  const access = ref<'admin' | 'viewer' | 'remote_writer'>('admin');
 
   async function init(validators: ViewValidators) {
     const info = await api.appInfo();
+    access.value = info.access;
     viewerMode.value = info.access === 'viewer' && !info.writable;
     library.value = await api.libraryInfo();
 
@@ -670,6 +674,7 @@ export const useLibraryStore = defineStore('library', () => {
     sidebarVisible,
     filterBarVisible,
     viewerMode,
+    access,
     viewPrefs,
     lockedView,
     setLockedView,

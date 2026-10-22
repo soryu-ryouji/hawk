@@ -20,7 +20,6 @@ import { useLayout } from '@/shared/composables/useLayout';
 import { CARD_META_H, GRID_GAP, layoutRows, type LayoutCell, type LayoutRow } from '../logic/layout';
 import { FolderPickerDialog, CategoryPickerDialog } from '@/domains/taxonomy';
 
-const props = defineProps<{ remoteHost?: boolean }>();
 const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
 const preview = usePreviewStore();
@@ -295,10 +294,7 @@ function onMenu(item: Item, e: MouseEvent) {
   <div ref="gridRef" class="grid-scroll" @scroll.passive="onScroll">
     <!-- 锁定视图占位：优先于空态与网格（骨架已被清空），密码正确后替换为实际内容 -->
     <LockScreen v-if="store.lockedView" />
-    <EmptyState
-      v-else-if="!store.loading && store.total === 0"
-      :text="store.isTrash ? '回收站为空' : props.remoteHost ? '远程查看宿主库为空。请在设置 → 远程中配置服务端并连接设备。' : '暂无素材，拖入文件开始'"
-    />
+    <EmptyState v-else-if="!store.loading && store.total === 0" :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'" />
 
     <div v-if="totalHeight > 0" class="grid" :style="{ height: `${totalHeight}px`, '--grid-gap': `${GRID_GAP}px` }">
       <div v-for="row in renderedRows" :key="row.key" class="row" :style="{ transform: `translateY(${row.y}px)` }">

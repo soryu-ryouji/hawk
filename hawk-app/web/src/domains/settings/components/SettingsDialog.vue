@@ -11,9 +11,10 @@
 // - Esc 关闭（捕获阶段拦截并阻断全局快捷键；IME 组合态已被 main.ts 更早的捕获监听拦下）。
 // - 打开期间挂 body.dialog-open 挂起窗口拖拽区（同 ContextMenu 的 body.menu-open）：Electron 的
 //   -webkit-app-region: drag 由 OS 命中测试优先消费，不禁用的话点遮罩盖住的标题栏会变成拖动窗口。
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { hasShell } from '@/shared/lib/platform';
+import { useLibraryStore } from '@/domains/library';
 import Icon from '@/shared/ui/Icon.vue';
 import SettingsAppearance from './SettingsAppearance.vue';
 import SettingsHiding from './SettingsHiding.vue';
@@ -23,13 +24,17 @@ import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
 import SettingsConnection from './SettingsConnection.vue';
 
-const props = defineProps<{ initialRemote?: boolean }>();
 const emit = defineEmits<{ close: []; logout: [] }>();
 
 /** 当前分区：外观 / 隐藏项 / 局域网（Electron）/ 远程（Electron）/ 存储（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
-const section = ref<'appearance' | 'hiding' | 'lan' | 'remote' | 'storage' | 'update' | 'connection'>(props.initialRemote ? 'remote' : 'appearance');
+const section = ref<'appearance' | 'hiding' | 'lan' | 'remote' | 'storage' | 'update' | 'connection'>('appearance');
 /** 错误条（各分区经 v-model:error 写入；LAN 分区的读取/校验/保存错误） */
 const error = ref<string | null>(null);
+
+const store = useLibraryStore();
+/** 当前连接是否 admin：远程浏览/局域网 viewer 下隐藏 admin 限定分区（局域网），
+ *  避免只读 token 调管理端点 403（viewer token cannot access admin settings） */
+const isAdmin = computed(() => store.access === 'admin');
 
 /** LAN 分区实例（v-show 保活，footer 保存按钮委托其 save；外观/更新分区无保存语义） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
@@ -103,7 +108,7 @@ async function save() {
           <nav class="nav">
             <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">外观</button>
             <button class="nav-item" :class="{ active: section === 'hiding' }" @click="section = 'hiding'">隐藏项</button>
-            <button v-if="hasShell" class="nav-item" :class="{ active: section === 'lan' }" @click="section = 'lan'">局域网</button>
+            <button v-if="hasShell && isAdmin" class="nav-item" :class="{ active: section === 'lan' }" @click="section = 'lan'">局域网</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'remote' }" @click="section = 'remote'">远程</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'storage' }" @click="section = 'storage'">存储</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'update' }" @click="section = 'update'">更新</button>
@@ -113,7 +118,7 @@ async function save() {
           <!-- 分区保活挂载（v-show）：LAN 字段编辑与更新下载进度切分区不丢；web 端不挂载 LAN/更新 -->
           <SettingsAppearance v-show="section === 'appearance'" />
           <SettingsHiding v-show="section === 'hiding'" />
-          <SettingsLan v-if="hasShell" v-show="section === 'lan'" ref="lanPane" v-model:error="error" />
+          <SettingsLan v-if="hasShell && isAdmin" v-show="section === 'lan'" ref="lanPane" v-model:error="error" />
           <SettingsRemote v-if="hasShell" v-show="section === 'remote'" v-model:error="error" />
           <SettingsStorage v-if="hasShell" v-show="section === 'storage'" />
           <SettingsUpdate v-if="hasShell" v-show="section === 'update'" />
@@ -123,8 +128,8 @@ async function save() {
         <div v-if="error" class="dialog-error">{{ error }}</div>
 
         <footer class="actions">
-          <button :disabled="lanBusy()" @click="emit('close')">{{ hasShell ? '取消' : '关闭' }}</button>
-          <button v-if="hasShell" class="primary" :disabled="lanBusy()" @click="save">保存</button>
+          <button :disabled="lanBusy()" @click="emit('close')">{{ hasShell && isAdmin ? '取消' : '关闭' }}</button>
+          <button v-if="hasShell && isAdmin" class="primary" :disabled="lanBusy()" @click="save">保存</button>
         </footer>
       </div>
     </div>
