@@ -30,8 +30,12 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     tags = ["lock"],
     responses((status = 200, description = "OK", body = Envelope<LocksSnapshot>))
 )]
-async fn lock_list(State(state): State<SharedState>) -> Json<Envelope<LocksSnapshot>> {
-    Json(Envelope::ok(state.locks.snapshot()))
+async fn lock_list(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<LocksSnapshot>>, ApiError> {
+    Ok(Json(Envelope::ok(
+        state.require_library()?.locks.snapshot(),
+    )))
 }
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
@@ -121,14 +125,14 @@ async fn lock_set(
         return Err(ApiError::invalid_param("密码不能为空"));
     }
     let (dim_c, name_c, pwd, old) = (dim, name.clone(), req.password, req.old_password.clone());
-    let locks = state.locks.clone();
+    let locks = state.require_library()?.locks.clone();
     let outcome =
         tokio::task::spawn_blocking(move || locks.set(dim_c, &name_c, &pwd, old.as_deref()))
             .await
             .map_err(|e| ApiError::internal(format!("密码哈希任务失败: {e}")))?;
     match outcome {
         ManageOutcome::Ok => {
-            publish_changed(&state.bus, &state.locks.snapshot());
+            publish_changed(&state.bus, &state.require_library()?.locks.snapshot());
             Ok(success())
         }
         ManageOutcome::WrongOldPassword => Err(ApiError::new(
@@ -165,13 +169,13 @@ async fn lock_remove(
     require_admin(&access)?;
     let (dim, name) = parse_target(&req.target)?;
     let (dim_c, name_c, pwd) = (dim, name, req.password);
-    let locks = state.locks.clone();
+    let locks = state.require_library()?.locks.clone();
     let outcome = tokio::task::spawn_blocking(move || locks.remove(dim_c, &name_c, &pwd))
         .await
         .map_err(|e| ApiError::internal(format!("密码验证任务失败: {e}")))?;
     match outcome {
         ManageOutcome::Ok => {
-            publish_changed(&state.bus, &state.locks.snapshot());
+            publish_changed(&state.bus, &state.require_library()?.locks.snapshot());
             Ok(success())
         }
         ManageOutcome::NotFound => Err(ApiError::lock_not_found(&req.target.name)),
@@ -213,7 +217,7 @@ async fn lock_unlock(
 ) -> Result<Json<Envelope<UnlockResponse>>, ApiError> {
     let (dim, name) = parse_target(&req.target)?;
     let (dim_c, name_c, pwd) = (dim, name, req.password);
-    let locks = state.locks.clone();
+    let locks = state.require_library()?.locks.clone();
     let outcome = tokio::task::spawn_blocking(move || locks.unlock(dim_c, &name_c, &pwd))
         .await
         .map_err(|e| ApiError::internal(format!("密码验证任务失败: {e}")))?;

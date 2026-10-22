@@ -61,13 +61,12 @@ pub(crate) struct IdQuery {
 pub(crate) use add::ItemAddResponse;
 
 fn find_location(
-    state: &SharedState,
+    lib: &crate::api::LibraryState,
     id: &str,
     path: Option<&str>,
     want_trash: Option<bool>,
 ) -> Result<LocationSnapshot, ApiError> {
-    state
-        .index
+    lib.index
         .find_location(id, path, want_trash)
         .ok_or_else(|| ApiError::item_not_found(path.unwrap_or(id)))
 }

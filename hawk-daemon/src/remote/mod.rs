@@ -36,6 +36,14 @@ pub enum RemoteState {
     Error,
 }
 
+/// 本地库上下文（注册/心跳上报库名与可访问性；远程查看模式无本地库 → None，
+/// 设备以「远程查看」名义上线且不可被访问）
+#[derive(Clone)]
+pub struct LibraryContext {
+    pub paths: LibraryPaths,
+    pub config: Arc<LibraryConfig>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, utoipa::ToSchema)]
 pub struct RemoteStatus {
     pub state: RemoteState,
@@ -94,13 +102,8 @@ impl Supervisor {
     }
 
     /// 常驻任务：唤醒 → 收敛 → 等待下一轮。router 为 daemon API 路由克隆（A 侧隧道端进程内转发目标）。
-    /// library 提供注册时的库名（设备身份是应用级，切换库后心跳会同步库名）
-    pub async fn run(
-        self: Arc<Self>,
-        paths: LibraryPaths,
-        library: Arc<LibraryConfig>,
-        router: axum::Router,
-    ) {
+    /// library 为本地库上下文（设备身份是应用级，切换库后心跳会同步库名）；None = 远程查看模式
+    pub async fn run(self: Arc<Self>, library: Option<LibraryContext>, router: axum::Router) {
         let mut current: Option<(RemoteSettings, tokio::task::JoinHandle<()>)> = None;
         loop {
             let cfg = self.config.current();
@@ -126,7 +129,6 @@ impl Supervisor {
                         error: None,
                     });
                     let handle = tokio::spawn(signal::run(
-                        paths.clone(),
                         library.clone(),
                         self.config.clone(),
                         cfg.clone(),
@@ -179,7 +181,7 @@ mod tests {
         let mut rx = bus.subscribe();
         let dir = tempfile::tempdir().unwrap();
         let paths = LibraryPaths::new(dir.path().to_str().unwrap(), None);
-        let config = RemoteConfigStore::open(None, &paths);
+        let config = RemoteConfigStore::open(None, Some(&paths));
         let supervisor = Supervisor::new(bus, config);
         supervisor.set_status(RemoteStatus {
             state: RemoteState::Online,

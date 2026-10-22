@@ -141,17 +141,18 @@ struct TaskStatus {
     tags = ["app"],
     responses((status = 200, description = "OK", body = Envelope<TaskStatus>))
 )]
-async fn status(State(state): State<SharedState>) -> Json<Envelope<TaskStatus>> {
-    let (thumb_pending, thumb_active) = state.worker.backlog();
-    let index = state.pipeline.index_progress();
-    let last_scan = state.pipeline.scan_stats().map(|s| ScanStatsInfo {
+async fn status(State(state): State<SharedState>) -> Result<Json<Envelope<TaskStatus>>, ApiError> {
+    let lib = state.require_library()?;
+    let (thumb_pending, thumb_active) = lib.worker.backlog();
+    let index = lib.pipeline.index_progress();
+    let last_scan = lib.pipeline.scan_stats().map(|s| ScanStatsInfo {
         started_unix_ms: s.started_unix_ms,
         duration_ms: s.duration_ms,
         files: s.files,
         dirty_dirs: s.dirty_dirs,
         applied: s.applied,
     });
-    Json(Envelope::ok(TaskStatus {
+    Ok(Json(Envelope::ok(TaskStatus {
         thumbnail: TaskBacklog {
             pending: thumb_pending,
             active: thumb_active,
@@ -164,10 +165,10 @@ async fn status(State(state): State<SharedState>) -> Json<Envelope<TaskStatus>> 
             total: index.total,
         },
         last_scan,
-        queue_overflow: state.pipeline.queue_overflowed(),
-        config_error: state.config.config_error(),
+        queue_overflow: lib.pipeline.queue_overflowed(),
+        config_error: lib.config.config_error(),
         sse_lagged: state.sse_lagged.load(std::sync::atomic::Ordering::Relaxed),
-    }))
+    })))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -185,6 +186,8 @@ struct AppInfo {
     platform: &'static str,
     exec_path: String,
     access: &'static str,
+    /// 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理）
+    has_library: bool,
     /// 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
     /// （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
     writable: bool,
@@ -224,6 +227,7 @@ async fn info(
         platform,
         exec_path,
         access,
+        has_library: state.library.is_some(),
         writable,
         lan: LanInfo {
             active: lan.active,

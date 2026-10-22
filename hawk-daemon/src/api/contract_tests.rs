@@ -138,6 +138,7 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     ("DELETE", "/api/v1/remote/session"),
     ("PATCH", "/api/v1/remote/device"),
     ("POST", "/api/v1/remote/device/rotate"),
+    ("DELETE", "/api/v1/remote/devices/{device_id}"),
     // key 的 PATCH/DELETE 路径参数依赖前置签发，由 SUCCESS_CASES 的 POST 覆盖创建路径
     ("PATCH", "/api/v1/remote/keys/{key_id}"),
     ("DELETE", "/api/v1/remote/keys/{key_id}"),
@@ -174,9 +175,9 @@ fn test_app_at(base: PathBuf) -> TestApp {
 
     let root_str = root.to_string_lossy().to_string();
     let paths = LibraryPaths::new(&root_str, Some(cache.to_string_lossy().to_string()));
+    let folder_tree = Arc::new(crate::api::folder::FolderTreeCache::new());
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
-    let folder_tree = Arc::new(crate::api::folder::FolderTreeCache::new());
     let startup = Arc::new(StartupState::default());
     let store = Arc::new(MetadataStore::new(paths.clone(), &startup));
     let index = Arc::new(ItemIndex::default());
@@ -198,7 +199,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
     ));
     let scanner = LibraryScanner::new(paths.clone(), config.clone());
     let settings = Settings {
-        library_root: root_str,
+        library_root: Some(root_str),
         port: 0,
         token: TOKEN.to_string(),
         reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为
@@ -226,30 +227,37 @@ fn test_app_at(base: PathBuf) -> TestApp {
     pipeline.start();
     startup.mark_ready();
 
-    let remote_config = crate::remote::config::RemoteConfigStore::open(None, &paths);
+    let remote_config = crate::remote::config::RemoteConfigStore::open(None, Some(&paths));
     let state: SharedState = Arc::new(AppState {
         settings,
-        paths,
-        config,
-        folder_tree,
         startup,
-        index,
         bus: bus.clone(),
-        pipeline,
-        store,
-        thumbs,
-        prefs,
-        categories,
-        tags,
-        global_filter,
-        locks,
-        worker,
+        sse_lagged: std::sync::atomic::AtomicU64::new(0),
         lan: LanSupervisor::new(),
         remote: crate::remote::Supervisor::new(bus.clone(), remote_config),
-        sse_lagged: std::sync::atomic::AtomicU64::new(0),
+        library: Some(Arc::new(crate::api::LibraryState {
+            paths,
+            config,
+            folder_tree,
+            index,
+            pipeline,
+            store,
+            thumbs,
+            worker,
+            prefs,
+            categories,
+            tags,
+            global_filter,
+            locks,
+        })),
     });
     let router = build_router(state.clone());
-    state.folder_tree.spawn_invalidation(&state.bus);
+    state
+        .library
+        .as_ref()
+        .unwrap()
+        .folder_tree
+        .spawn_invalidation(&state.bus);
     TestApp {
         base,
         router,
@@ -275,6 +283,11 @@ impl TestApp {
         self.base.join("library")
     }
 
+    /// 本地库状态（测试装配必有库）
+    fn lib(&self) -> &crate::api::LibraryState {
+        self.state.library.as_ref().unwrap()
+    }
+
     /// 写入 8×8 纯色 PNG 并经流水线入库（mtime 拨回一天避开写入防抖），返回 item id
     async fn add_test_item(&self, rel: &str, rgb: [u8; 3]) -> String {
         let abs = self.library_root().join(rel);
@@ -291,7 +304,7 @@ impl TestApp {
         filetime::set_file_mtime(&abs, day_ago).unwrap();
 
         let result = self
-            .state
+            .lib()
             .pipeline
             .submit_upsert(abs.to_string_lossy().to_string(), None)
             .await
@@ -542,10 +555,10 @@ async fn cleanup_index_removes_stale_entries() {
     let root = app.library_root();
     std::fs::rename(root.join("plain.png"), root.join(".stignore")).unwrap();
     let size = std::fs::metadata(root.join(".stignore")).unwrap().len() as i64;
-    app.state
+    app.lib()
         .index
         .add_or_update_location(&hidden_id, ".stignore", size, 0);
-    app.state.index.remove_location("plain.png");
+    app.lib().index.remove_location("plain.png");
     // 源文件消失残留：入库后直接删磁盘文件（无 watcher，索引位置残留）
     let gone_id = app.add_test_item("gone.png", [30, 30, 200]).await;
     std::fs::remove_file(root.join("gone.png")).unwrap();
@@ -562,7 +575,7 @@ async fn cleanup_index_removes_stale_entries() {
     // 清理经流水线单写者异步应用：轮询等待索引收敛
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let paths = app.state.index.all_location_paths();
+        let paths = app.lib().index.all_location_paths();
         if paths.len() == 1 && paths[0] == "keep.png" {
             break;
         }
@@ -572,10 +585,10 @@ async fn cleanup_index_removes_stale_entries() {
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    assert_eq!(app.state.index.count(), 1);
-    assert!(app.state.index.contains(&keep_id));
-    assert!(!app.state.index.contains(&hidden_id));
-    assert!(!app.state.index.contains(&gone_id));
+    assert_eq!(app.lib().index.count(), 1);
+    assert!(app.lib().index.contains(&keep_id));
+    assert!(!app.lib().index.contains(&hidden_id));
+    assert!(!app.lib().index.contains(&gone_id));
     // 只清索引不动磁盘：隐藏文件本体仍在
     assert!(root.join(".stignore").exists());
 }
@@ -631,7 +644,7 @@ async fn folder_list_excludes_hidden_dirs() {
     let root = app.library_root();
     std::fs::create_dir_all(root.join(".stfolder")).unwrap();
     std::fs::create_dir_all(root.join("普通")).unwrap();
-    app.state.folder_tree.invalidate(); // 测试直接建目录不经 API，缓存无事件失效，手动作废
+    app.lib().folder_tree.invalidate(); // 测试直接建目录不经 API，缓存无事件失效，手动作废
 
     let (status, bytes) = call(&app.router, "GET", "/api/v1/folder/list", None).await;
     assert_eq!(status, StatusCode::OK, "folder/list");
@@ -659,17 +672,17 @@ async fn cleanup_survives_restart() {
     std::fs::rename(root.join("plain.png"), root.join(".stignore")).unwrap();
     let size = std::fs::metadata(root.join(".stignore")).unwrap().len() as i64;
     // 真实残留是索引与元数据都带着隐藏路径（历史版本扫描写入）；两处同步构造
-    app.state
+    app.lib()
         .index
         .add_or_update_location(&id, ".stignore", size, 0);
-    app.state.index.remove_location("plain.png");
-    if let Some(mut meta) = app.state.store.try_get(&id) {
+    app.lib().index.remove_location("plain.png");
+    if let Some(mut meta) = app.lib().store.try_get(&id) {
         for p in meta.paths.iter_mut() {
             if p.path == "plain.png" {
                 p.path = ".stignore".to_string();
             }
         }
-        let _ = app.state.store.save(&id, &meta);
+        let _ = app.lib().store.save(&id, &meta);
     }
 
     let (status, bytes) = call(&app.router, "POST", "/api/v1/library/cleanup_index", None).await;
@@ -681,7 +694,7 @@ async fn cleanup_survives_restart() {
 
     // 清理经队列异步应用：等索引与元数据都收敛后再重开
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while app.state.index.count() > 0 || app.state.store.find_hash_by_path(".stignore").is_some() {
+    while app.lib().index.count() > 0 || app.lib().store.find_hash_by_path(".stignore").is_some() {
         assert!(std::time::Instant::now() < deadline, "清理未收敛");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
@@ -691,15 +704,15 @@ async fn cleanup_survives_restart() {
     let app2 = test_app_at(base);
     assert!(
         !app2
-            .state
+            .lib()
             .index
             .all_location_paths()
             .contains(&".stignore".to_string()),
         "重启后隐藏文件不应复活"
     );
-    assert_eq!(app2.state.index.count(), 0);
+    assert_eq!(app2.lib().index.count(), 0);
     assert!(
-        app2.state.store.find_hash_by_path(".stignore").is_none(),
+        app2.lib().store.find_hash_by_path(".stignore").is_none(),
         "元数据不应再含该位置"
     );
 }
@@ -1404,10 +1417,10 @@ async fn folder_delete_missing_dir_is_idempotent() {
 
     // 索引位置经 Delete job 按前缀清除（notify_deleted 为火忘任务，轮询索引收敛）
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while app.state.index.contains(&id) && std::time::Instant::now() < deadline {
+    while app.lib().index.contains(&id) && std::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    assert!(!app.state.index.contains(&id), "目录下残留位置应被清除");
+    assert!(!app.lib().index.contains(&id), "目录下残留位置应被清除");
 
     // 文件夹树不含已删目录
     let (_, bytes) = call_json(&app.router, "GET", "/api/v1/folder/list", None).await;

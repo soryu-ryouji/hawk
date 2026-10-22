@@ -27,7 +27,8 @@ pub(crate) async fn item_replace(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemReplaceRequest>,
 ) -> Result<Json<Envelope<ItemDto>>, ApiError> {
-    let loc = find_location(&state, &req.id, req.path.as_deref(), None)?;
+    let lib = state.require_library()?;
+    let loc = find_location(lib, &req.id, req.path.as_deref(), None)?;
     if loc.in_trash {
         return Err(ApiError::invalid_param(
             "回收站中的文件不支持内容替换,请先恢复",
@@ -49,14 +50,14 @@ pub(crate) async fn item_replace(
     let hash = content_hash::hash_bytes(&bytes);
     if hash == req.id {
         // 内容未变化(幂等):不触发漂移,直接返回当前投影
-        let dto = state
+        let dto = lib
             .index
             .get_dto(&req.id)
             .ok_or_else(|| ApiError::item_not_found(&req.id))?;
         return Ok(Json(Envelope::ok(dto)));
     }
 
-    let target_abs = state.paths.to_absolute(&loc.path).unwrap();
+    let target_abs = lib.paths.to_absolute(&loc.path).unwrap();
     // 写回（阻塞 IO 移出运行时线程）保留原文件的修改时间（修正性编辑不改变素材的时序位置）
     tokio::task::spawn_blocking({
         let target = target_abs.clone();
@@ -77,7 +78,7 @@ pub(crate) async fn item_replace(
     .map_err(|e| ApiError::internal(format!("写回任务失败: {e}")))?
     .map_err(ApiError::internal)?;
 
-    let result = state
+    let result = lib
         .pipeline
         .submit_upsert(target_abs, Some(hash))
         .await

@@ -59,10 +59,13 @@ struct FolderPathRequest {
     tags = ["folder"],
     responses((status = 200, description = "OK", body = Envelope<FolderNode>))
 )]
-async fn folder_list(State(state): State<SharedState>) -> Json<Envelope<FolderNode>> {
-    let mut root = state.folder_tree.get_or_build(&state.paths, &state.config);
-    fill_counts(&mut root, &state.index.folder_counts());
-    Json(Envelope::ok(root))
+async fn folder_list(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<FolderNode>>, ApiError> {
+    let lib = state.require_library()?;
+    let mut root = lib.folder_tree.get_or_build(&lib.paths, &lib.config);
+    fill_counts(&mut root, &lib.index.folder_counts());
+    Ok(Json(Envelope::ok(root)))
 }
 
 /// 新建目录（目标已存在报 FILE_EXISTS）；目录结构变化经 folder.changed 广播
@@ -83,21 +86,22 @@ async fn folder_create(
             req.name
         )));
     }
+    let lib = state.require_library()?;
     let parent_rel = req.parent_path.unwrap_or_default();
-    let parent_abs = resolve_existing_dir(&state.paths, &parent_rel)?;
+    let parent_abs = resolve_existing_dir(&lib.paths, &parent_rel)?;
     let target_abs = format!("{parent_abs}/{}", req.name);
     if std::path::Path::new(&target_abs).is_dir() {
         return Err(ApiError::file_exists(join_rel(&parent_rel, &req.name)));
     }
     std::fs::create_dir(&target_abs)
         .map_err(|e| ApiError::internal(format!("创建目录失败: {e}")))?;
-    state.folder_tree.invalidate();
+    lib.folder_tree.invalidate();
     // 目录结构变化广播(folder.changed):本端操作 + 其他客户端的 SSE 刷新统一走事件
-    state.pipeline.notify_folder_changed(REASON_EXTERNAL);
+    lib.pipeline.notify_folder_changed(REASON_EXTERNAL);
     Ok(Json(Envelope::ok(to_node(
-        &state.paths,
-        &state.config,
-        &state.index,
+        &lib.paths,
+        &lib.config,
+        &lib.index,
         &target_abs,
     ))))
 }
@@ -120,7 +124,8 @@ async fn folder_update(
             req.path
         )));
     }
-    let dir_abs = state.paths.to_absolute(&req.path).unwrap();
+    let lib = state.require_library()?;
+    let dir_abs = lib.paths.to_absolute(&req.path).unwrap();
     if !std::path::Path::new(&dir_abs).is_dir() {
         return Err(ApiError::folder_not_found(&req.path));
     }
@@ -140,13 +145,13 @@ async fn folder_update(
         .parent_path
         .clone()
         .unwrap_or_else(|| LibraryPaths::dir_of(&req.path).to_string());
-    let new_parent_abs = resolve_existing_dir(&state.paths, &new_parent_rel)?;
+    let new_parent_abs = resolve_existing_dir(&lib.paths, &new_parent_rel)?;
     let target_rel = join_rel(&new_parent_rel, &new_name);
     if target_rel == req.path {
         return Ok(Json(Envelope::ok(to_node(
-            &state.paths,
-            &state.config,
-            &state.index,
+            &lib.paths,
+            &lib.config,
+            &lib.index,
             &dir_abs,
         ))));
     }
@@ -161,17 +166,16 @@ async fn folder_update(
 
     std::fs::rename(&dir_abs, &target_abs)
         .map_err(|e| ApiError::internal(format!("移动目录失败: {e}")))?;
-    state.folder_tree.invalidate();
-    state
-        .pipeline
+    lib.folder_tree.invalidate();
+    lib.pipeline
         .submit_dir_move(dir_abs.clone(), target_abs.clone())
         .await
         .map_err(ApiError::internal)?;
     // DirMoveJob 内会广播 folder.changed,此处不重复通知
     Ok(Json(Envelope::ok(to_node(
-        &state.paths,
-        &state.config,
-        &state.index,
+        &lib.paths,
+        &lib.config,
+        &lib.index,
         &target_abs,
     ))))
 }
@@ -194,23 +198,23 @@ async fn folder_delete(
             req.path
         )));
     }
-    let dir_abs = state.paths.to_absolute(&req.path).unwrap();
+    let lib = state.require_library()?;
+    let dir_abs = lib.paths.to_absolute(&req.path).unwrap();
     if !std::path::Path::new(&dir_abs).is_dir() {
         // 目录已被外部删除：按幂等删除处理——流水线按前缀清掉索引位置与目录设置残留，
         // 广播树变化让各客户端刷新，返回成功（删除的目标已达成，不报错）
-        state.folder_tree.invalidate();
-        state.pipeline.notify_deleted(dir_abs);
-        state.pipeline.notify_folder_changed(REASON_EXTERNAL);
+        lib.folder_tree.invalidate();
+        lib.pipeline.notify_deleted(dir_abs);
+        lib.pipeline.notify_folder_changed(REASON_EXTERNAL);
         return Ok(success());
     }
 
-    let trash_abs = fs_util::find_free_trash_path(&state.paths, &req.path, true);
+    let trash_abs = fs_util::find_free_trash_path(&lib.paths, &req.path, true);
     fs_util::ensure_parent_dir(&trash_abs);
     std::fs::rename(&dir_abs, &trash_abs)
         .map_err(|e| ApiError::internal(format!("移入回收站失败: {e}")))?;
-    state.folder_tree.invalidate();
-    state
-        .pipeline
+    lib.folder_tree.invalidate();
+    lib.pipeline
         .submit_dir_move(dir_abs, trash_abs)
         .await
         .map_err(ApiError::internal)?;
@@ -235,20 +239,20 @@ async fn folder_restore(
             req.path
         )));
     }
-    let trash_abs = join(&state.paths.trash_dir, &req.path);
+    let lib = state.require_library()?;
+    let trash_abs = join(&lib.paths.trash_dir, &req.path);
     if !std::path::Path::new(&trash_abs).is_dir() {
         return Err(ApiError::folder_not_found(&req.path));
     }
-    let target_abs = state.paths.to_absolute(&req.path).unwrap();
+    let target_abs = lib.paths.to_absolute(&req.path).unwrap();
     if std::path::Path::new(&target_abs).exists() {
         return Err(ApiError::file_exists(&req.path));
     }
     fs_util::ensure_parent_dir(&target_abs);
     std::fs::rename(&trash_abs, &target_abs)
         .map_err(|e| ApiError::internal(format!("恢复目录失败: {e}")))?;
-    state.folder_tree.invalidate();
-    state
-        .pipeline
+    lib.folder_tree.invalidate();
+    lib.pipeline
         .submit_dir_move(trash_abs, target_abs)
         .await
         .map_err(ApiError::internal)?;

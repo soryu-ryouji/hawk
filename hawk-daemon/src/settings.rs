@@ -1,4 +1,4 @@
-//! 启动设置：素材库路径、监听端口、访问 token。
+//! 启动设置：素材库路径（可空 = 远程查看模式）、监听端口、访问 token。
 //! 桌面版由 Electron 通过命令行 / 环境变量传入（见 docs/architecture.md）。
 //! CLI 定义集中在 Cli（clap derive，单一权威：未知参数/非法值直接报错退出），
 //! Settings 只承接业务校验与加工——解析层/配置层分离。
@@ -13,8 +13,9 @@ pub const DEFAULT_PORT: u16 = 27371;
 #[derive(Parser)]
 #[command(name = "hawk-daemon", version, about = "hawk 素材库后端服务")]
 pub struct Cli {
-    /// 素材库根目录（--dump-openapi 模式豁免必填校验）
-    #[arg(long, env = "HAWK_LIBRARY", required_unless_present = "dump_openapi")]
+    /// 素材库根目录；省略即远程查看模式（无本地库，仅提供远程管理面与会话代理，
+    /// 此时必须显式提供 --remote-config）
+    #[arg(long, env = "HAWK_LIBRARY")]
     pub library: Option<String>,
 
     /// 本地监听端口（被占用时回退动态分配）
@@ -30,6 +31,7 @@ pub struct Cli {
     pub cache_parent: Option<String>,
 
     /// 应用级远程访问配置（remote.toml，含身份目录）；缺省为 <library>/.hawk/remote.toml
+    /// （远程查看模式无库内回退位，必显式提供）
     #[arg(long, env = "HAWK_REMOTE_CONFIG")]
     pub remote_config: Option<String>,
 
@@ -47,7 +49,8 @@ impl Cli {
 
 #[derive(Clone)]
 pub struct Settings {
-    pub library_root: String,
+    /// 本地素材库根目录；None = 远程查看模式（无本地库）
+    pub library_root: Option<String>,
     pub port: u16,
     pub token: String,
     /// 元数据对账间隔（秒），0 关闭：`.hawk/metadata/` 的外部变更（网盘同步等）并入
@@ -61,15 +64,25 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Cli 已完成词法解析（library 非空、端口合法由 clap 保证），此处承接业务校验与 env-only 参数
+    /// Cli 已完成词法解析（端口合法由 clap 保证），此处承接业务校验与 env-only 参数
     pub fn from_cli(cli: Cli) -> Settings {
-        let library = cli.library.unwrap_or_default().trim().to_string();
-        if library.is_empty() {
-            eprintln!("素材库路径为空（--library 或 HAWK_LIBRARY）");
-            std::process::exit(2);
+        let library = cli
+            .library
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
+        if let Some(library) = &library {
+            if !std::path::Path::new(library).is_dir() {
+                eprintln!("素材库目录不存在: {library}");
+                std::process::exit(2);
+            }
         }
-        if !std::path::Path::new(&library).is_dir() {
-            eprintln!("素材库目录不存在: {library}");
+        let remote_config = cli
+            .remote_config
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty());
+        // 无库模式没有库内 .hawk/ 回退位，远程配置（含设备身份目录）必须显式指定
+        if library.is_none() && remote_config.is_none() {
+            eprintln!("远程查看模式（无 --library）必须显式提供 --remote-config");
             std::process::exit(2);
         }
 
@@ -92,10 +105,7 @@ impl Settings {
                 .unwrap_or(60),
             cache_parent: cli.cache_parent,
             web_dist: cli.web_dist,
-            remote_config: cli
-                .remote_config
-                .map(|p| p.trim().to_string())
-                .filter(|p| !p.is_empty()),
+            remote_config,
         }
     }
 }

@@ -50,50 +50,100 @@ pub async fn run(settings: Settings) {
             tracing::error!("本地监听退出: {e}");
         }
     });
-    let lan_task = tokio::spawn(state.lan.clone().run(state.clone()));
-    let remote_task = tokio::spawn(state.remote.clone().run(
-        state.paths.clone(),
-        state.config.clone(),
-        tunnel_router,
-    ));
+    let remote_library = state
+        .library
+        .as_ref()
+        .map(|lib| crate::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        });
+    let remote_task = tokio::spawn(state.remote.clone().run(remote_library, tunnel_router));
 
-    // 文件夹树缓存失效：与 folder.changed 同线（事件即「目录结构可能变化」信号，含扫描兜底）
-    state.folder_tree.spawn_invalidation(&state.bus);
+    // 库子系统（流水线/文件监听/LAN）仅本地库模式装配；远程查看模式监听就绪即 ready
+    let mut lan_task = None;
+    let mut watcher = None;
+    if let Some(lib) = &state.library {
+        lan_task = Some(tokio::spawn(state.lan.clone().run(state.clone())));
 
-    // ---------- 随后装配索引流水线（HTTP 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
-    state.pipeline.start();
-    let watcher = start_watcher(&state);
-    state.startup.mark_ready();
-    tracing::info!("hawk-daemon 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
+        // 文件夹树缓存失效：与 folder.changed 同线（事件即「目录结构可能变化」信号，含扫描兜底）
+        lib.folder_tree.spawn_invalidation(&state.bus);
 
-    // 全库对账扫描转后台：完成前停机期间的删除/新增短暂残留（watcher 实时事件已覆盖运行期变更），
-    // 失败不置启动错误——周期对账（默认 60s）兜底重试
-    {
-        let pipeline = state.pipeline.clone();
+        // ---------- 随后装配索引流水线（HTTP 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
+        lib.pipeline.start();
+        watcher = Some(start_watcher(&state, lib));
+        state.startup.mark_ready();
+        tracing::info!("hawk-daemon 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
+
+        // 全库对账扫描转后台：完成前停机期间的删除/新增短暂残留（watcher 实时事件已覆盖运行期变更），
+        // 失败不置启动错误——周期对账（默认 60s）兜底重试
+        let pipeline = lib.pipeline.clone();
         tokio::spawn(async move {
             if let Err(e) = pipeline.run_scan(false).await {
                 tracing::error!("后台对账扫描失败（周期对账将重试）: {e}");
             }
         });
+    } else {
+        state.startup.mark_ready();
+        tracing::info!("hawk-daemon 已就绪（远程查看模式，无本地素材库）");
     }
 
     tracing::info!(
         "hawk-daemon 监听 http://127.0.0.1:{}，素材库: {}",
         local_addr.port(),
-        state.settings.library_root
+        state
+            .settings
+            .library_root
+            .as_deref()
+            .unwrap_or("（无，远程查看模式）")
     );
 
     // 保持进程存活直至退出信号
     shutdown_signal().await;
     // 显式 drop：句柄只为保活（任务已分离），退出时一并丢弃
-    drop((watcher, local_serve, lan_task, remote_task));
+    drop((watcher, lan_task, local_serve, remote_task));
 }
 
 /// 组件图组装（→ api::AppState，组合根）：分段顺序即依赖顺序；
-/// db/store/scanner/migrator 是构造中间件（由 pipeline/JobCtx 持有），不进组件图
+/// db/store/scanner/migrator 是构造中间件（由 pipeline/JobCtx 持有），不进组件图。
+/// 无库模式（settings.library_root 为 None）不构建 LibraryState，仅保留远程子系统
 fn build_state(settings: Settings) -> SharedState {
+    let startup = Arc::new(StartupState::default());
+    let bus = EventBus::new();
+    let lan = api::lan::LanSupervisor::new();
+
+    let library = settings
+        .library_root
+        .as_deref()
+        .map(|root| build_library_state(root, &settings, &startup, &bus));
+
+    // ---- 远程访问 supervisor：remote.toml 启用才激活信令（同 LAN 的 reconcile 模型） ----
+    let remote_config = crate::remote::config::RemoteConfigStore::open(
+        settings.remote_config.as_deref(),
+        library.as_ref().map(|lib| &lib.paths),
+    );
+    let remote = crate::remote::Supervisor::new(bus.clone(), remote_config);
+
+    // 组件图落位：字段分组见 AppState 定义处注释
+    Arc::new(api::AppState {
+        settings,
+        startup,
+        bus,
+        sse_lagged: std::sync::atomic::AtomicU64::new(0),
+        lan,
+        remote,
+        library,
+    })
+}
+
+/// 本地库状态组装（→ api::LibraryState）：存储底座 → 索引流水线 → 派生服务
+fn build_library_state(
+    root: &str,
+    settings: &Settings,
+    startup: &Arc<StartupState>,
+    bus: &EventBus,
+) -> Arc<api::LibraryState> {
     // ---- 存储底座 ----
-    let paths = LibraryPaths::new(&settings.library_root, settings.cache_parent.clone());
+    let paths = LibraryPaths::new(root, settings.cache_parent.clone());
     // 缓存位置底线校验（主进程传参错误/手工参数场景；桌面端设置面板已先做用户友好校验）
     if let Some(reason) = paths.cache_location_error() {
         eprintln!(
@@ -105,12 +155,10 @@ fn build_state(settings: Settings) -> SharedState {
     paths.ensure_layout();
     let config = Arc::new(LibraryConfig::new(paths.clone()));
     let folder_tree = Arc::new(api::folder::FolderTreeCache::new());
-    let startup = Arc::new(StartupState::default());
-    let store = Arc::new(MetadataStore::new(paths.clone(), &startup));
+    let store = Arc::new(MetadataStore::new(paths.clone(), startup));
 
     // ---- 索引流水线（单写者） ----
     let index = Arc::new(ItemIndex::default());
-    let bus = EventBus::new();
     let scanner = LibraryScanner::new(paths.clone(), config.clone());
 
     // ---- 分类与视图偏好 ----
@@ -152,23 +200,11 @@ fn build_state(settings: Settings) -> SharedState {
     // 必须在 pipeline.start()（worker.start）之前完成
     worker.attach(index.clone(), store.clone(), pipeline.sender());
 
-    // ---- LAN 监听 supervisor：期望态收敛（首轮回合即按配置绑定，变更由 watcher 唤醒重绑） ----
-    let lan = api::lan::LanSupervisor::new();
-
-    // ---- 远程访问 supervisor：remote.toml 启用才激活信令（同 LAN 的 reconcile 模型） ----
-    let remote_config =
-        crate::remote::config::RemoteConfigStore::open(settings.remote_config.as_deref(), &paths);
-    let remote = crate::remote::Supervisor::new(bus.clone(), remote_config);
-
-    // 组件图落位：字段分组见 AppState 定义处注释
-    Arc::new(api::AppState {
-        settings,
+    Arc::new(api::LibraryState {
         paths,
         config,
         folder_tree,
-        startup,
         index,
-        bus,
         pipeline,
         store,
         thumbs,
@@ -178,24 +214,21 @@ fn build_state(settings: Settings) -> SharedState {
         tags,
         global_filter,
         locks,
-        lan,
-        remote,
-        sse_lagged: std::sync::atomic::AtomicU64::new(0),
     })
 }
 
 /// 文件/配置监听接线：变更按类别分发（流水线任务 / 配置热更 / 视图偏好重读 / LAN 重绑）。
 /// 返回的 watcher 由调用方持有保活
-fn start_watcher(state: &api::AppState) -> Arc<LibraryWatcher> {
+fn start_watcher(state: &api::AppState, lib: &api::LibraryState) -> Arc<LibraryWatcher> {
     use crate::core::events::REASON_EXTERNAL;
-    let watcher = LibraryWatcher::new(state.paths.clone(), state.config.clone(), {
-        let pipeline = state.pipeline.clone();
-        let config = state.config.clone();
-        let paths = state.paths.clone();
-        let folder_tree = state.folder_tree.clone();
-        let prefs = state.prefs.clone();
-        let global_filter = state.global_filter.clone();
-        let locks = state.locks.clone();
+    let watcher = LibraryWatcher::new(lib.paths.clone(), lib.config.clone(), {
+        let pipeline = lib.pipeline.clone();
+        let config = lib.config.clone();
+        let paths = lib.paths.clone();
+        let folder_tree = lib.folder_tree.clone();
+        let prefs = lib.prefs.clone();
+        let global_filter = lib.global_filter.clone();
+        let locks = lib.locks.clone();
         let bus = state.bus.clone();
         let lan = state.lan.clone();
         Arc::new(move |event| match event {

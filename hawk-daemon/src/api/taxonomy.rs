@@ -53,16 +53,19 @@ struct CategoryNameRequest {
     tags = ["category"],
     responses((status = 200, description = "OK", body = Envelope<Vec<TaxonInfo>>))
 )]
-async fn category_list(State(state): State<SharedState>) -> Json<Envelope<Vec<TaxonInfo>>> {
-    let counts = state.index.category_counts();
-    let mut names: Vec<String> = state.categories.snapshot();
+async fn category_list(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<Vec<TaxonInfo>>>, ApiError> {
+    let lib = state.require_library()?;
+    let counts = lib.index.category_counts();
+    let mut names: Vec<String> = lib.categories.snapshot();
     for n in counts.keys() {
         if !names.contains(n) {
             names.push(n.clone());
         }
     }
     names.sort_by_key(|a| a.to_lowercase());
-    Json(Envelope::ok(
+    Ok(Json(Envelope::ok(
         names
             .into_iter()
             .map(|n| TaxonInfo {
@@ -70,7 +73,7 @@ async fn category_list(State(state): State<SharedState>) -> Json<Envelope<Vec<Ta
                 name: n,
             })
             .collect(),
-    ))
+    )))
 }
 
 /// 创建分类（注册表写入由索引流水线执行）
@@ -87,11 +90,11 @@ async fn category_create(
 ) -> Result<Json<SuccessOnly>, ApiError> {
     let name = normalize_category_name(Some(&req.name))
         .ok_or_else(|| ApiError::invalid_param(format!("非法分类名称: {}", req.name)))?;
-    if category_exists(&state, &name) {
+    let lib = state.require_library()?;
+    if category_exists(lib, &name) {
         return Err(ApiError::category_exists(&name));
     }
-    state
-        .pipeline
+    lib.pipeline
         .submit_category_create(name)
         .await
         .map_err(ApiError::internal)?;
@@ -112,14 +115,14 @@ async fn category_update(
 ) -> Result<Json<SuccessOnly>, ApiError> {
     let name = normalize_category_name(Some(&req.name))
         .ok_or_else(|| ApiError::invalid_param(format!("非法分类名称: {}", req.name)))?;
-    if !category_exists(&state, &name) {
+    let lib = state.require_library()?;
+    if !category_exists(lib, &name) {
         return Err(ApiError::category_not_found(&name));
     }
     let new_name = normalize_category_name(Some(&req.new_name))
         .ok_or_else(|| ApiError::invalid_param(format!("非法分类名称: {}", req.new_name)))?;
     if new_name != name {
-        state
-            .pipeline
+        lib.pipeline
             .submit_category_update(name, new_name)
             .await
             .map_err(ApiError::internal)?;
@@ -141,11 +144,11 @@ async fn category_delete(
 ) -> Result<Json<SuccessOnly>, ApiError> {
     let name = normalize_category_name(Some(&req.name))
         .ok_or_else(|| ApiError::invalid_param(format!("非法分类名称: {}", req.name)))?;
-    if !category_exists(&state, &name) {
+    let lib = state.require_library()?;
+    if !category_exists(lib, &name) {
         return Err(ApiError::category_not_found(&name));
     }
-    state
-        .pipeline
+    lib.pipeline
         .submit_category_delete(name)
         .await
         .map_err(ApiError::internal)?;
@@ -159,17 +162,20 @@ async fn category_delete(
     tags = ["tag"],
     responses((status = 200, description = "OK", body = Envelope<Vec<TaxonInfo>>))
 )]
-async fn tag_list(State(state): State<SharedState>) -> Json<Envelope<Vec<TaxonInfo>>> {
+async fn tag_list(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<Vec<TaxonInfo>>>, ApiError> {
+    let lib = state.require_library()?;
     let counts: std::collections::HashMap<String, usize> =
-        state.index.tags_with_counts().into_iter().collect();
-    let mut names: Vec<String> = state.tags.snapshot();
+        lib.index.tags_with_counts().into_iter().collect();
+    let mut names: Vec<String> = lib.tags.snapshot();
     for n in counts.keys() {
         if !names.contains(n) {
             names.push(n.clone());
         }
     }
     names.sort_by_key(|a| a.to_lowercase());
-    Json(Envelope::ok(
+    Ok(Json(Envelope::ok(
         names
             .into_iter()
             .map(|n| TaxonInfo {
@@ -177,7 +183,7 @@ async fn tag_list(State(state): State<SharedState>) -> Json<Envelope<Vec<TaxonIn
                 name: n,
             })
             .collect(),
-    ))
+    )))
 }
 
 /// 创建标签（注册表写入由索引流水线执行）
@@ -194,6 +200,7 @@ async fn tag_create(
 ) -> Result<Json<SuccessOnly>, ApiError> {
     let name = normalize_tag(&req.name)?;
     state
+        .require_library()?
         .pipeline
         .submit_tag_create(name)
         .await
@@ -213,14 +220,14 @@ async fn tag_update(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<CategoryUpdateRequest>,
 ) -> Result<Json<SuccessOnly>, ApiError> {
+    let lib = state.require_library()?;
     let name = normalize_tag(&req.name)?;
-    if !tag_exists(&state, &name) {
+    if !tag_exists(lib, &name) {
         return Err(ApiError::tag_not_found(&name));
     }
     let new_name = normalize_tag(&req.new_name)?;
     if new_name != name {
-        state
-            .pipeline
+        lib.pipeline
             .submit_tag_update(name, new_name)
             .await
             .map_err(ApiError::internal)?;
@@ -240,12 +247,12 @@ async fn tag_delete(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<CategoryNameRequest>,
 ) -> Result<Json<SuccessOnly>, ApiError> {
+    let lib = state.require_library()?;
     let name = normalize_tag(&req.name)?;
-    if !tag_exists(&state, &name) {
+    if !tag_exists(lib, &name) {
         return Err(ApiError::tag_not_found(&name));
     }
-    state
-        .pipeline
+    lib.pipeline
         .submit_tag_delete(name)
         .await
         .map_err(ApiError::internal)?;
@@ -253,17 +260,12 @@ async fn tag_delete(
 }
 
 /// 分类存在性：注册表 ∪ 全部 item 赋值（含回收站）
-fn category_exists(state: &SharedState, name: &str) -> bool {
-    state.categories.contains(name) || state.index.all_categories().iter().any(|c| c == name)
+fn category_exists(lib: &crate::api::LibraryState, name: &str) -> bool {
+    lib.categories.contains(name) || lib.index.all_categories().iter().any(|c| c == name)
 }
 
-fn tag_exists(state: &SharedState, name: &str) -> bool {
-    state.tags.contains(name)
-        || state
-            .index
-            .tags_with_counts()
-            .iter()
-            .any(|(n, _)| n == name)
+fn tag_exists(lib: &crate::api::LibraryState, name: &str) -> bool {
+    lib.tags.contains(name) || lib.index.tags_with_counts().iter().any(|(n, _)| n == name)
 }
 
 fn normalize_tag(name: &str) -> Result<String, ApiError> {

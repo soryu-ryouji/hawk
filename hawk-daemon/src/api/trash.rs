@@ -21,13 +21,13 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     responses((status = 200, description = "OK", body = SuccessOnly))
 )]
 async fn trash_clear(State(state): State<SharedState>) -> Result<Json<SuccessOnly>, ApiError> {
-    state
-        .pipeline
+    let lib = state.require_library()?;
+    lib.pipeline
         .submit_clear_trash()
         .await
         .map_err(ApiError::internal)?;
 
-    let entries = match std::fs::read_dir(&state.paths.trash_dir) {
+    let entries = match std::fs::read_dir(&lib.paths.trash_dir) {
         Ok(e) => e,
         Err(e) => return Err(ApiError::internal(format!("读取回收站失败: {e}"))),
     };

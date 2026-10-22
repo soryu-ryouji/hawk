@@ -867,6 +867,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/remote/devices/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 注销设备记录（admin 限定）：转发服务端 DELETE /devices/{id}（其进行中会话与 key 映射一并清理）。
+         *     本机当前设备不可经此移除（会删掉自己的信令身份）；先关闭远程接入是唯一安全路径
+         */
+        delete: operations["delete_device"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/remote/keys": {
         parameters: {
             query?: never;
@@ -1082,6 +1102,8 @@ export interface components {
         AppInfo: {
             access: string;
             exec_path: string;
+            /** @description 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理） */
+            has_library: boolean;
             lan: components["schemas"]["LanInfo"];
             platform: string;
             version: string;
@@ -1159,6 +1181,8 @@ export interface components {
             data?: {
                 access: string;
                 exec_path: string;
+                /** @description 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理） */
+                has_library: boolean;
                 lan: components["schemas"]["LanInfo"];
                 platform: string;
                 version: string;
@@ -3300,6 +3324,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_RemoteDevicesDto"];
+                };
+            };
+        };
+    };
+    delete_device: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 服务端设备 id */
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuccessOnly"];
                 };
             };
         };

@@ -91,7 +91,7 @@ impl Rig {
         ));
         let scanner = LibraryScanner::new(paths.clone(), config.clone());
         let settings = Settings {
-            library_root: root_str,
+            library_root: Some(root_str),
             port: 0,
             token: "test".to_string(),
             reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为

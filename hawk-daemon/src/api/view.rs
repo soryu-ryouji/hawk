@@ -42,13 +42,14 @@ impl From<&ViewSort> for ViewSortDto {
 )]
 async fn preferences(
     State(state): State<SharedState>,
-) -> Json<Envelope<HashMap<String, ViewSortDto>>> {
-    let snapshot = state.prefs.snapshot();
+) -> Result<Json<Envelope<HashMap<String, ViewSortDto>>>, ApiError> {
+    let lib = state.require_library()?;
+    let snapshot = lib.prefs.snapshot();
     let dto: HashMap<String, ViewSortDto> = snapshot
         .iter()
         .map(|(k, v)| (k.clone(), ViewSortDto::from(v)))
         .collect();
-    Json(Envelope::ok(dto))
+    Ok(Json(Envelope::ok(dto)))
 }
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
@@ -76,7 +77,7 @@ async fn preference_put(
     let sort = try_normalize_sort(&req.order_by, &req.order).ok_or_else(|| {
         ApiError::invalid_param(format!("非法排序值: {}/{}", req.order_by, req.order))
     })?;
-    state.prefs.set(&scope, sort);
+    state.require_library()?.prefs.set(&scope, sort);
     Ok(success())
 }
 
@@ -101,6 +102,6 @@ async fn preference_delete(
 ) -> Result<Json<SuccessOnly>, ApiError> {
     let scope = try_parse_scope(&q.scope)
         .ok_or_else(|| ApiError::invalid_param(format!("非法作用域: {}", q.scope)))?;
-    state.prefs.delete(&scope);
+    state.require_library()?.prefs.delete(&scope);
     Ok(success())
 }

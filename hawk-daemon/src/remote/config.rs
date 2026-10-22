@@ -58,10 +58,16 @@ pub struct RemoteConfigStore {
 impl RemoteConfigStore {
     /// 打开（必要时创建）配置文件并加载到内存。解析失败按默认值继续：远程保持关闭，
     /// 错误写日志，用户可在设置面板重新保存覆盖。
-    pub fn open(path: Option<&str>, paths: &LibraryPaths) -> Arc<RemoteConfigStore> {
+    /// paths 为库内回退位（<library>/.hawk/remote.toml）；远程查看模式无库，必须显式 path
+    pub fn open(path: Option<&str>, paths: Option<&LibraryPaths>) -> Arc<RemoteConfigStore> {
         let file = match path.map(str::trim).filter(|p| !p.is_empty()) {
             Some(path) => PathBuf::from(path),
-            None => Path::new(&paths.hawk_dir).join("remote.toml"),
+            None => Path::new(
+                &paths
+                    .expect("远程查看模式（无本地库）必须显式提供 --remote-config")
+                    .hawk_dir,
+            )
+            .join("remote.toml"),
         };
         let identity_dir = file
             .parent()
@@ -188,7 +194,7 @@ mod tests {
     fn explicit_path_is_app_level_and_creates_default() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("config").join("remote.toml");
-        let store = RemoteConfigStore::open(Some(file.to_str().unwrap()), &paths(dir.path()));
+        let store = RemoteConfigStore::open(Some(file.to_str().unwrap()), None);
 
         let current = store.current();
         assert!(!current.enabled);
@@ -204,7 +210,7 @@ mod tests {
     fn update_persists_and_reloads() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("remote.toml");
-        let store = RemoteConfigStore::open(Some(file.to_str().unwrap()), &paths(dir.path()));
+        let store = RemoteConfigStore::open(Some(file.to_str().unwrap()), None);
         store
             .update(&RemoteSettings {
                 enabled: true,
@@ -215,7 +221,7 @@ mod tests {
             })
             .unwrap();
 
-        let reloaded = RemoteConfigStore::open(Some(file.to_str().unwrap()), &paths(dir.path()));
+        let reloaded = RemoteConfigStore::open(Some(file.to_str().unwrap()), None);
         let current = reloaded.current();
         assert!(current.enabled);
         assert_eq!(current.url, "https://hawk.example.com/");
@@ -228,7 +234,7 @@ mod tests {
     fn fallback_lives_in_library_hawk_dir() {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths(dir.path());
-        let store = RemoteConfigStore::open(None, &paths);
+        let store = RemoteConfigStore::open(None, Some(&paths));
         assert_eq!(
             store.identity_dir(),
             Path::new(&paths.hawk_dir).join("remote").to_str().unwrap()

@@ -50,14 +50,17 @@ pub(crate) struct ScanInfo {
     tags = ["library"],
     responses((status = 200, description = "OK", body = Envelope<LibraryInfo>))
 )]
-async fn library_info(State(state): State<SharedState>) -> Json<Envelope<LibraryInfo>> {
-    Json(Envelope::ok(build_library_info(&state)))
+async fn library_info(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<LibraryInfo>>, ApiError> {
+    let lib = state.require_library()?;
+    Ok(Json(Envelope::ok(build_library_info(lib))))
 }
 
 /// 组装库信息（GET 响应与改名后回传共用；显示名每次读 config 快照）
-fn build_library_info(state: &SharedState) -> LibraryInfo {
-    let root = &state.paths.root;
-    let name = state.config.current().name.clone().unwrap_or_else(|| {
+fn build_library_info(lib: &crate::api::LibraryState) -> LibraryInfo {
+    let root = &lib.paths.root;
+    let name = lib.config.current().name.clone().unwrap_or_else(|| {
         root.trim_end_matches('/')
             .rsplit('/')
             .next()
@@ -73,12 +76,12 @@ fn build_library_info(state: &SharedState) -> LibraryInfo {
         path: root.clone(),
         modification_time,
         application_version: env!("CARGO_PKG_VERSION"),
-        storage_mode: match state.store.mode() {
+        storage_mode: match lib.store.mode() {
             crate::core::metadata_store::StorageMode::Db => "database",
             crate::core::metadata_store::StorageMode::Toml => "toml",
         },
         scan: {
-            let scan = state.config.scan_settings();
+            let scan = lib.config.scan_settings();
             ScanInfo {
                 periodic: scan.periodic,
                 interval: scan.interval_seconds,
@@ -115,9 +118,9 @@ async fn storage_mode_set(
             )))
         }
     };
-    if state.store.mode() != target {
-        state
-            .pipeline
+    let lib = state.require_library()?;
+    if lib.store.mode() != target {
+        lib.pipeline
             .submit_storage_migrate(target)
             .await
             .map_err(ApiError::internal)?;
@@ -144,12 +147,12 @@ async fn library_update(
     State(state): State<SharedState>,
     JsonBody(body): JsonBody<LibraryRenameBody>,
 ) -> Result<Json<Envelope<LibraryInfo>>, ApiError> {
-    state
-        .config
+    let lib = state.require_library()?;
+    lib.config
         .update_name(Some(&body.name))
         .map_err(ApiError::internal)?;
     // 广播库信息（含新显示名）：所有连接的客户端（含 LAN 浏览器）就地对齐，无需重拉
-    let info = build_library_info(&state);
+    let info = build_library_info(lib);
     state
         .bus
         .publish(LibraryEvents::UPDATED, serde_json::to_value(&info).unwrap());
@@ -163,9 +166,10 @@ async fn library_update(
     tags = ["library"],
     responses((status = 200, description = "OK", body = SuccessOnly))
 )]
-async fn reindex(State(state): State<SharedState>) -> Json<SuccessOnly> {
-    state.pipeline.request_scan(true);
-    success()
+async fn reindex(State(state): State<SharedState>) -> Result<Json<SuccessOnly>, ApiError> {
+    let lib = state.require_library()?;
+    lib.pipeline.request_scan(true);
+    Ok(success())
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -189,16 +193,14 @@ async fn scan_settings_set(
     State(state): State<SharedState>,
     JsonBody(body): JsonBody<ScanSettingsBody>,
 ) -> Result<Json<Envelope<LibraryInfo>>, ApiError> {
-    let current = state.config.scan_settings();
+    let lib = state.require_library()?;
+    let current = lib.config.scan_settings();
     let scan = crate::core::config::ScanSettings {
         periodic: body.periodic,
         interval_seconds: body.interval.unwrap_or(current.interval_seconds),
     };
-    state
-        .config
-        .update_scan(&scan)
-        .map_err(ApiError::internal)?;
-    let info = build_library_info(&state);
+    lib.config.update_scan(&scan).map_err(ApiError::internal)?;
+    let info = build_library_info(lib);
     state
         .bus
         .publish(LibraryEvents::UPDATED, serde_json::to_value(&info).unwrap());
@@ -232,18 +234,19 @@ async fn rescan(
             .map_err(|e| ApiError::invalid_param(format!("请求体解析失败: {e}")))?;
         req.path.unwrap_or_default()
     };
+    let lib = state.require_library()?;
     if path.is_empty() {
-        state.pipeline.request_rescan();
+        lib.pipeline.request_rescan();
         return Ok(success());
     }
     if !LibraryPaths::is_valid_library_path(Some(&path)) {
         return Err(ApiError::invalid_param(format!("非法文件夹路径: {path}")));
     }
-    let abs = state.paths.to_absolute(&path).unwrap();
+    let abs = lib.paths.to_absolute(&path).unwrap();
     if !std::path::Path::new(&abs).is_dir() {
         return Err(ApiError::folder_not_found(&path));
     }
-    state.pipeline.request_scoped_rescan(path);
+    lib.pipeline.request_scoped_rescan(path);
     Ok(success())
 }
 
@@ -268,7 +271,7 @@ struct RefreshCacheResponse {
 /// 范围内消失对账：索引位置的源文件明确不存在（NotFound）时移除——
 /// watcher 删除事件丢失（网络盘/外接盘常见）时该位置会永远残留，本对账是手动收敛入口。
 /// IO/权限错误（网络盘瞬断等）保守保留，不误删。移除走流水线单写者（notify_deleted → 索引摘除 + 事件广播）
-async fn reconcile_scope_missing(state: &SharedState, scope: &RefreshScope) -> usize {
+async fn reconcile_scope_missing(lib: &crate::api::LibraryState, scope: &RefreshScope) -> usize {
     // 范围内库内位置快照（folder 前缀含子目录，空串 = 全库；category/tag 按成员位置；library 含回收站）
     let rels: Vec<String> = match scope {
         RefreshScope::Folder(f) => {
@@ -277,20 +280,20 @@ async fn reconcile_scope_missing(state: &SharedState, scope: &RefreshScope) -> u
             } else {
                 format!("{f}/")
             };
-            state.index.locations_under(&prefix)
+            lib.index.locations_under(&prefix)
         }
-        RefreshScope::Category(_) | RefreshScope::Tag(_) => state
+        RefreshScope::Category(_) | RefreshScope::Tag(_) => lib
             .index
             .hashes_in_scope(scope)
             .into_iter()
-            .flat_map(|h| state.index.item_locations(&h, Some(false)))
+            .flat_map(|h| lib.index.item_locations(&h, Some(false)))
             .map(|l| l.path)
             .collect(),
-        RefreshScope::Library => state.index.all_location_paths(),
+        RefreshScope::Library => lib.index.all_location_paths(),
     };
     let abs_list: Vec<String> = rels
         .iter()
-        .filter_map(|rel| state.paths.to_absolute(rel))
+        .filter_map(|rel| lib.paths.to_absolute(rel))
         .collect();
     // stat 批量检查移出运行时线程（万级位置的元数据调用也是毫秒级，但不阻塞 reactor）
     let missing = tokio::task::spawn_blocking(move || {
@@ -303,7 +306,7 @@ async fn reconcile_scope_missing(state: &SharedState, scope: &RefreshScope) -> u
     .unwrap_or_default();
     let removed = missing.len();
     for abs in missing {
-        state.pipeline.notify_deleted(abs);
+        lib.pipeline.notify_deleted(abs);
     }
     removed
 }
@@ -336,13 +339,14 @@ async fn refresh_cache(
         },
         other => return Err(ApiError::invalid_param(format!("未知范围类型: {other}"))),
     };
+    let lib = state.require_library()?;
     // 先消失对账（源文件已删的失效位置移除），再对存活项派发修复
-    let removed = reconcile_scope_missing(&state, &scope).await;
-    let hashes = state.index.hashes_in_scope(&scope);
+    let removed = reconcile_scope_missing(lib, &scope).await;
+    let hashes = lib.index.hashes_in_scope(&scope);
     let mut dispatched = 0;
     for hash in &hashes {
-        if let Some(abs) = state.index.main_source_abs(hash, &state.paths) {
-            if state.worker.enqueue_thumbs(hash, &abs) {
+        if let Some(abs) = lib.index.main_source_abs(hash, &lib.paths) {
+            if lib.worker.enqueue_thumbs(hash, &abs) {
                 dispatched += 1;
             }
         }
@@ -379,13 +383,16 @@ struct CleanupIndexResponse {
     tags = ["library"],
     responses((status = 200, description = "OK", body = Envelope<CleanupIndexResponse>))
 )]
-async fn cleanup_index(State(state): State<SharedState>) -> Json<Envelope<CleanupIndexResponse>> {
+async fn cleanup_index(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<CleanupIndexResponse>>, ApiError> {
+    let lib = state.require_library()?;
     let mut hidden = 0usize;
     let mut ignored = 0usize;
     let mut checked = 0usize;
     // 规则未命中的位置，待 stat 对账源文件存在性
     let mut rest: Vec<String> = Vec::new();
-    for rel in state.index.all_location_paths() {
+    for rel in lib.index.all_location_paths() {
         // 回收站条目不参与清理：恢复与否由用户在 UI 内决定
         if LibraryPaths::is_in_trash(&rel) {
             continue;
@@ -393,13 +400,13 @@ async fn cleanup_index(State(state): State<SharedState>) -> Json<Envelope<Cleanu
         checked += 1;
         if LibraryPaths::is_hidden(&rel) {
             hidden += 1;
-            if let Some(abs) = state.paths.to_absolute(&rel) {
-                state.pipeline.notify_deleted(abs);
+            if let Some(abs) = lib.paths.to_absolute(&rel) {
+                lib.pipeline.notify_deleted(abs);
             }
-        } else if !state.config.is_file_included(&rel) {
+        } else if !lib.config.is_file_included(&rel) {
             ignored += 1;
-            if let Some(abs) = state.paths.to_absolute(&rel) {
-                state.pipeline.notify_deleted(abs);
+            if let Some(abs) = lib.paths.to_absolute(&rel) {
+                lib.pipeline.notify_deleted(abs);
             }
         } else {
             rest.push(rel);
@@ -409,7 +416,7 @@ async fn cleanup_index(State(state): State<SharedState>) -> Json<Envelope<Cleanu
     // 仅 NotFound 移除，IO/权限错误保守保留，避免网络盘瞬断误删
     let abs_list: Vec<String> = rest
         .iter()
-        .filter_map(|rel| state.paths.to_absolute(rel))
+        .filter_map(|rel| lib.paths.to_absolute(rel))
         .collect();
     let missing_abs = tokio::task::spawn_blocking(move || {
         abs_list
@@ -421,13 +428,13 @@ async fn cleanup_index(State(state): State<SharedState>) -> Json<Envelope<Cleanu
     .unwrap_or_default();
     let missing = missing_abs.len();
     for abs in missing_abs {
-        state.pipeline.notify_deleted(abs);
+        lib.pipeline.notify_deleted(abs);
     }
-    Json(Envelope::ok(CleanupIndexResponse {
+    Ok(Json(Envelope::ok(CleanupIndexResponse {
         checked,
         removed: hidden + ignored + missing,
         hidden,
         ignored,
         missing,
-    }))
+    })))
 }

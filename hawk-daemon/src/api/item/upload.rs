@@ -89,10 +89,11 @@ pub(crate) async fn item_upload(
             "非法文件夹路径: {folder_rel}"
         )));
     }
+    let lib = state.require_library()?;
     let folder_abs = if folder_rel.is_empty() {
-        state.paths.root.clone()
+        lib.paths.root.clone()
     } else {
-        state.paths.to_absolute(&folder_rel).unwrap()
+        lib.paths.to_absolute(&folder_rel).unwrap()
     };
     std::fs::create_dir_all(&folder_abs)
         .map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
@@ -113,28 +114,28 @@ pub(crate) async fn item_upload(
         format!("{folder_rel}/{file_name}")
     };
     // 入库策略前置校验（ignore 规则 / 扩展名白名单）：写盘前拒绝
-    if state.config.is_ignored(&target_rel) {
+    if lib.config.is_ignored(&target_rel) {
         return Err(ApiError::invalid_param(format!(
             "目标路径被 ignore 规则排除: {target_rel}"
         )));
     }
-    if !state.config.is_extension_included(&file_name) {
+    if !lib.config.is_extension_included(&file_name) {
         return Err(ApiError::unsupported_format(format!(
             "扩展名不在素材库可见格式白名单内: {file_name}"
         )));
     }
-    let target_abs = state.paths.to_absolute(&target_rel).unwrap();
+    let target_abs = lib.paths.to_absolute(&target_rel).unwrap();
     if std::path::Path::new(&target_abs).exists() {
         return Err(ApiError::file_exists(&target_rel));
     }
 
     // 先算哈希判断内容是否已存在(already_existed 语义以写入前为准)
     let hash = content_hash::hash_bytes(&bytes);
-    let existed_before_write = state.index.contains(&hash);
+    let existed_before_write = lib.index.contains(&hash);
 
     // skip_existing：内容已在库内则跳过（不写文件、不追加路径）；仅回收站存在时不跳过
-    if skip_existing && state.index.has_library_location(&hash) {
-        let dto = state
+    if skip_existing && lib.index.has_library_location(&hash) {
+        let dto = lib
             .index
             .get_dto(&hash)
             .ok_or_else(|| ApiError::internal("索引失败"))?;
@@ -155,14 +156,13 @@ pub(crate) async fn item_upload(
     .map_err(ApiError::internal)?;
 
     // 哈希已算好,流水线跳过重算,避免大文件导入时二次读盘
-    state
-        .pipeline
+    lib.pipeline
         .submit_upsert(target_abs, Some(hash.clone()))
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::internal("索引失败"))?;
 
-    let dto = state
+    let dto = lib
         .index
         .get_dto(&hash)
         .ok_or_else(|| ApiError::internal("索引失败"))?;

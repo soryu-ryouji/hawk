@@ -3,13 +3,11 @@
 //! 致命错误（401 key 无效、url 非法）返回给 supervisor 置错误状态，等配置变更重启。
 //! 协议契约见 docs/backend/remote-protocol.md。
 
-use crate::core::config::LibraryConfig;
-use crate::core::paths::LibraryPaths;
 use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
 use crate::remote::reachability::{self, SharedUpnpReport, UpnpReport};
-use crate::remote::{RemoteState, RemoteStatus, Supervisor};
+use crate::remote::{LibraryContext, RemoteState, RemoteStatus, Supervisor};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
@@ -58,17 +56,17 @@ enum SignalError {
 type Result<T> = std::result::Result<T, SignalError>;
 
 /// 信令主任务（由 supervisor 拉起；返回即终态：致命错误已写入状态）。
-/// router 为 daemon API 路由克隆：A 侧隧道端进程内转发的目标
+/// router 为 daemon API 路由克隆：A 侧隧道端进程内转发的目标；
+/// library 为本地库上下文（None = 远程查看模式：不可被访问、不上报写权限）
 pub async fn run(
-    paths: LibraryPaths,
-    library: Arc<LibraryConfig>,
+    library: Option<LibraryContext>,
     remote: Arc<RemoteConfigStore>,
     cfg: RemoteSettings,
     supervisor: Arc<Supervisor>,
     router: axum::Router,
 ) {
     if let Err(SignalError::Fatal(msg)) =
-        run_inner(&paths, &library, &remote, &cfg, &supervisor, router).await
+        run_inner(&library, &remote, &cfg, &supervisor, router).await
     {
         tracing::error!("远程访问信令终止（等配置变更重启）: {msg}");
         supervisor.set_status(RemoteStatus {
@@ -81,8 +79,7 @@ pub async fn run(
 }
 
 async fn run_inner(
-    paths: &LibraryPaths,
-    library: &Arc<LibraryConfig>,
+    library: &Option<LibraryContext>,
     remote: &Arc<RemoteConfigStore>,
     cfg: &RemoteSettings,
     supervisor: &Arc<Supervisor>,
@@ -111,17 +108,7 @@ async fn run_inner(
     loop {
         // 注册（含服务端设备表丢失后的重注册）：瞬时失败退避重试，直到成功或致命
         while identity.device_id.is_none() {
-            match register(
-                &http,
-                &base,
-                &cfg.service_key,
-                paths,
-                library,
-                remote,
-                &identity,
-            )
-            .await
-            {
+            match register(&http, &base, &cfg.service_key, library, remote, &identity).await {
                 Ok(device_id) => {
                     tracing::info!("远程访问设备已注册: {device_id}（{base}）");
                     identity.device_id = Some(device_id);
@@ -153,7 +140,6 @@ async fn run_inner(
             quic_port: cfg.quic_port,
             router: &router,
             library,
-            library_root: &paths.root,
             remote,
             keys: &supervisor.keys,
         };
@@ -244,8 +230,8 @@ struct ChannelContext<'a> {
     upnp_report: &'a SharedUpnpReport,
     quic_port: u16,
     router: &'a axum::Router,
-    library: &'a Arc<LibraryConfig>,
-    library_root: &'a str,
+    /// 本地库上下文（None = 远程查看模式）
+    library: &'a Option<LibraryContext>,
     remote: &'a Arc<RemoteConfigStore>,
     /// 访问密钥本地存储（查看者会话执法 + 接入后推送 server）
     keys: &'a Arc<crate::remote::keys::KeyStore>,
@@ -525,15 +511,18 @@ async fn handle_message(
     Ok(())
 }
 
-/// 当前库显示名：库内配置的 name，缺失回退目录名。注册与心跳共用，
-/// 设备身份跨库共享后由心跳保持服务端设备表的库名最新
-fn library_name(config: &Arc<LibraryConfig>, root: &str) -> String {
-    config.current().name.unwrap_or_else(|| {
-        std::path::Path::new(root)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "素材库".to_string())
-    })
+/// 当前库显示名：库内配置的 name，缺失回退目录名；远程查看模式（无本地库）恒为「远程查看」。
+/// 注册与心跳共用，设备身份跨库共享后由心跳保持服务端设备表的库名最新
+fn library_name(library: &Option<LibraryContext>) -> String {
+    match library {
+        Some(ctx) => ctx.config.current().name.clone().unwrap_or_else(|| {
+            std::path::Path::new(&ctx.paths.root)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "素材库".to_string())
+        }),
+        None => "远程查看".to_string(),
+    }
 }
 
 async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
@@ -546,8 +535,9 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
     let body = json!({
         "device_id": ctx.device_id,
         // 设备身份应用级：切换素材库后靠心跳把服务端设备表的库名收敛到当前库
-        "library_name": library_name(ctx.library, ctx.library_root),
-        "allow_write": ctx.remote.current().writable,
+        "library_name": library_name(ctx.library),
+        // 远程查看模式无本地库可供写入，不上报写权限
+        "allow_write": ctx.library.is_some() && ctx.remote.current().writable,
         "reachability": {
             "public_ip": null,
             "mapped_port": mapped_port,
@@ -635,8 +625,7 @@ async fn register(
     http: &reqwest::Client,
     base: &str,
     key: &str,
-    paths: &LibraryPaths,
-    library: &Arc<LibraryConfig>,
+    library: &Option<LibraryContext>,
     remote: &Arc<RemoteConfigStore>,
     identity: &Identity,
 ) -> Result<String> {
@@ -651,9 +640,10 @@ async fn register(
         "name": name,
         "platform": std::env::consts::OS,
         "fingerprint": identity.fingerprint,
-        "library_name": library_name(library, &paths.root),
-        "allow_remote": true,
-        "allow_write": remote.current().writable,
+        "library_name": library_name(library),
+        // 远程查看模式无本地库：可被发现但不接受会话（没有素材可服务）
+        "allow_remote": library.is_some(),
+        "allow_write": library.is_some() && remote.current().writable,
     });
     let resp = http
         .post(format!("{base}/api/v1/devices"))

@@ -227,6 +227,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | GET | `/api/v1/remote` | 读取远程访问接入配置（应用级 `remote.toml`）与信令运行状态（admin 限定） |
 | PUT | `/api/v1/remote` | 写回应用级 `remote.toml` 并热重启信令（admin 限定） |
 | GET | `/api/v1/remote/devices` | 拉取服务端设备列表（admin 限定） |
+| DELETE | `/api/v1/remote/devices/{device_id}` | 注销设备记录（admin 限定；转发服务端，会话与 key 映射一并清理；本机当前设备不可移除） |
 | PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定；allow_write 由目标设备配置上报，不经此端点修改） |
 | POST | `/api/v1/remote/device/rotate` | 证书轮换（重新生成自签证书并同步服务端，admin 限定） |
 | GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |

@@ -71,8 +71,12 @@ impl LanSupervisor {
         self.status.lock().unwrap().0 += 1;
     }
 
-    /// 常驻任务：唤醒 → 收敛 → 等待下一轮
+    /// 常驻任务：唤醒 → 收敛 → 等待下一轮。仅本地库模式由 bootstrap 拉起
+    /// （远程查看模式无库内 [web] 配置，LAN 查看无意义）
     pub async fn run(self: Arc<Self>, state: SharedState) {
+        let Some(lib) = state.library.clone() else {
+            return;
+        };
         // (端口, serve 任务, 优雅关停信号)
         let mut current: Option<(
             u16,
@@ -80,7 +84,7 @@ impl LanSupervisor {
             tokio::sync::oneshot::Sender<()>,
         )> = None;
         loop {
-            let web = state.config.current().web;
+            let web = lib.config.current().web;
             let desired = if web.enabled && web.token.is_some() {
                 Some(web.port)
             } else {
@@ -167,8 +171,8 @@ struct LanSettingsDto {
     error: Option<String>,
 }
 
-fn lan_dto(state: &SharedState) -> LanSettingsDto {
-    let web = state.config.current().web;
+fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
+    let web = lib.config.current().web;
     let status = state.lan.snapshot();
     LanSettingsDto {
         enabled: web.enabled,
@@ -194,7 +198,8 @@ async fn get_lan(
     Extension(access): Extension<AccessLevel>,
 ) -> Result<Json<Envelope<LanSettingsDto>>, ApiError> {
     require_admin(&access)?;
-    Ok(Json(Envelope::ok(lan_dto(&state))))
+    let lib = state.require_library()?;
+    Ok(Json(Envelope::ok(lan_dto(&state, lib))))
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -297,9 +302,10 @@ async fn put_lan(
         ));
     }
 
-    let old_web = state.config.current().web;
+    let lib = state.require_library()?;
+    let old_web = lib.config.current().web;
     let epoch0 = state.lan.snapshot_epoch().0;
-    state.config.update_web(&new_web).map_err(|e| {
+    lib.config.update_web(&new_web).map_err(|e| {
         ApiError::new(
             codes::INTERNAL,
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -310,7 +316,7 @@ async fn put_lan(
 
     if let Err(err) = wait_converged(&state, &new_web, epoch0).await {
         // 失败回滚：写回旧配置，走同一条热更路径收敛回旧态（尽力，结果不敏感）
-        if state.config.update_web(&old_web).is_ok() {
+        if lib.config.update_web(&old_web).is_ok() {
             let epoch1 = state.lan.snapshot_epoch().0;
             state.lan.wake();
             let _ = wait_converged(&state, &old_web, epoch1).await;
@@ -321,5 +327,5 @@ async fn put_lan(
             format!("局域网监听未生效：{err}（已回滚原配置）"),
         ));
     }
-    Ok(Json(Envelope::ok(lan_dto(&state))))
+    Ok(Json(Envelope::ok(lan_dto(&state, lib))))
 }

@@ -44,6 +44,10 @@
           "exec_path": {
             "type": "string"
           },
+          "has_library": {
+            "description": "本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理）",
+            "type": "boolean"
+          },
           "lan": {
             "$ref": "#/components/schemas/LanInfo"
           },
@@ -63,6 +67,7 @@
           "platform",
           "exec_path",
           "access",
+          "has_library",
           "writable",
           "lan"
         ],
@@ -276,6 +281,10 @@
               "exec_path": {
                 "type": "string"
               },
+              "has_library": {
+                "description": "本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理）",
+                "type": "boolean"
+              },
               "lan": {
                 "$ref": "#/components/schemas/LanInfo"
               },
@@ -295,6 +304,7 @@
               "platform",
               "exec_path",
               "access",
+              "has_library",
               "writable",
               "lan"
             ],
@@ -4888,6 +4898,38 @@
           }
         },
         "summary": "拉取服务端设备列表（admin 限定）。本机设备与对端设备同列，app 据 online/allow_remote 展示",
+        "tags": [
+          "remote"
+        ]
+      }
+    },
+    "/api/v1/remote/devices/{device_id}": {
+      "delete": {
+        "operationId": "delete_device",
+        "parameters": [
+          {
+            "description": "服务端设备 id",
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "注销设备记录（admin 限定）：转发服务端 DELETE /devices/{id}（其进行中会话与 key 映射一并清理）。\n本机当前设备不可经此移除（会删掉自己的信令身份）；先关闭远程接入是唯一安全路径",
         "tags": [
           "remote"
         ]

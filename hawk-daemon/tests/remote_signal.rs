@@ -282,7 +282,7 @@ fn test_library() -> TestLibrary {
     let config = Arc::new(LibraryConfig::new(paths.clone()));
     let remote = RemoteConfigStore::open(
         Some(dir.path().join("remote.toml").to_str().unwrap()),
-        &paths,
+        Some(&paths),
     );
     TestLibrary {
         _dir: dir,
@@ -326,8 +326,10 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
         lib.remote.clone(),
     );
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
 
@@ -371,8 +373,10 @@ async fn signal_reports_fatal_on_invalid_key() {
         lib.remote.clone(),
     );
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
 
@@ -409,8 +413,10 @@ async fn signal_re_registers_when_server_forgets_device() {
         lib.remote.clone(),
     );
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
 
@@ -474,8 +480,10 @@ async fn hot_restart_rebinds_quic_port() {
     let bus = hawk_daemon::core::events::EventBus::new();
     let supervisor = Supervisor::new(bus.clone(), lib.remote.clone());
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
     wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
@@ -548,8 +556,10 @@ async fn ws_404_triggers_re_register() {
         lib.remote.clone(),
     );
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
     wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
@@ -611,8 +621,10 @@ async fn write_session_rejected_when_writable_off() {
     let (entry, _) = supervisor.keys.create("插件", true, true, None).unwrap();
     *hub.credential.lock().unwrap() = Some(entry.hash.clone());
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
 
@@ -650,8 +662,10 @@ async fn write_session_rejected_without_credential() {
         lib.remote.clone(),
     );
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
 
@@ -695,8 +709,10 @@ async fn heartbeat_429_does_not_break_channel() {
     let mut events = bus.subscribe();
     let supervisor = Supervisor::new(bus, lib.remote.clone());
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
     wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
@@ -759,8 +775,10 @@ async fn viewer_session_rejected_with_unknown_credential() {
         lib.remote.clone(),
     );
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
 
@@ -804,8 +822,10 @@ async fn write_session_accepted_when_writable_on() {
     let (entry, _) = supervisor.keys.create("插件", true, true, None).unwrap();
     *hub.credential.lock().unwrap() = Some(entry.hash.clone());
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
 
@@ -847,8 +867,10 @@ async fn silent_channel_triggers_reconnect() {
         lib.remote.clone(),
     );
     let task = tokio::spawn(supervisor.clone().run(
-        lib.paths.clone(),
-        lib.config.clone(),
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
         axum::Router::new(),
     ));
     wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;

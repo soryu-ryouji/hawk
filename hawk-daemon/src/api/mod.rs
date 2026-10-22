@@ -95,17 +95,16 @@ pub(crate) fn require_admin(access: &AccessLevel) -> Result<(), envelope::ApiErr
     }
 }
 
-pub struct AppState {
-    pub settings: Settings,
-    // ---- 存储底座：路径布局 / 库配置 / 启动进度 ----
+/// 本地素材库状态（仅本地库模式存在；远程查看模式无本地库时为 None）。
+/// 库端点统一经 [AppState::require_library] 取用，无库即 400 NO_LIBRARY
+pub struct LibraryState {
+    // ---- 存储底座：路径布局 / 库配置 ----
     pub paths: LibraryPaths,
     pub config: Arc<LibraryConfig>,
-    pub startup: Arc<StartupState>,
     /// 目录结构缓存（folder/list 的递归建树结果；失效与 folder.changed 同线）
     pub folder_tree: Arc<folder::FolderTreeCache>,
-    // ---- 索引流水线（单写者）：内存索引 + 事件总线 + 消费循环 ----
+    // ---- 索引流水线（单写者）：内存索引 + 消费循环 ----
     pub index: Arc<ItemIndex>,
-    pub bus: EventBus,
     pub pipeline: IndexPipeline,
     /// 元数据存储（存储方案模式/迁移入口的读取面）
     pub store: Arc<MetadataStore>,
@@ -120,12 +119,35 @@ pub struct AppState {
     pub global_filter: Arc<GlobalFilter>,
     /// 文件夹/分类/标签锁（.hawk/locks.toml，服务端强制）
     pub locks: Arc<Locks>,
+}
+
+pub struct AppState {
+    pub settings: Settings,
+    /// 启动进度（无库模式无索引构建，监听就绪即 ready）
+    pub startup: Arc<StartupState>,
+    /// 事件总线（库事件与远程事件共用；远程 supervisor 依赖它，故不属于 LibraryState）
+    pub bus: EventBus,
     /// SSE 订阅因消费落后被断开（lagged）的累计次数（app/status 观测）
     pub sse_lagged: std::sync::atomic::AtomicU64,
-    /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱）
+    /// LAN 监听 supervisor（状态快照供 app/info；监听重绑由常驻任务自驱；无库不启动）
     pub lan: Arc<lan::LanSupervisor>,
     /// 远程访问 supervisor（remote.toml 启用才激活；状态快照供 api/remote）
     pub remote: Arc<crate::remote::Supervisor>,
+    /// 本地素材库状态；None = 远程查看模式（仅远程管理面与会话代理可用）
+    pub library: Option<Arc<LibraryState>>,
+}
+
+impl AppState {
+    /// 本地库状态（库端点统一入口）；远程查看模式返回 400 NO_LIBRARY
+    pub fn require_library(&self) -> Result<&Arc<LibraryState>, envelope::ApiError> {
+        self.library.as_ref().ok_or_else(|| {
+            envelope::ApiError::new(
+                envelope::codes::NO_LIBRARY,
+                axum::http::StatusCode::BAD_REQUEST,
+                "远程查看模式无本地素材库",
+            )
+        })
+    }
 }
 
 pub type SharedState = Arc<AppState>;
@@ -230,7 +252,7 @@ async fn auth(
         }
     } else {
         resolve_access(&state, &req)
-    };
+    }; // 无库模式仅 admin token 有效（viewer token 存于库内配置）
     let Some(access) = access else {
         return (
             axum::http::StatusCode::UNAUTHORIZED,
@@ -262,9 +284,12 @@ async fn auth(
 
     req.extensions_mut().insert(access);
     // 解锁票据 → 请求级锁守卫（未解锁锁集合）：列表/内容端点经 Extension 消费。
-    // 票据不是鉴权凭证（鉴权已过），仅扩展本请求的可见范围
+    // 票据不是鉴权凭证（鉴权已过），仅扩展本请求的可见范围；无库模式无锁集，守卫恒空
     let tickets = parse_unlock_tickets(&req);
-    let guard = state.locks.guard(&tickets);
+    let guard = match &state.library {
+        Some(lib) => lib.locks.guard(&tickets),
+        None => crate::core::locks::LockGuard::default(),
+    };
     req.extensions_mut().insert(guard);
     next.run(req).await
 }
@@ -353,8 +378,10 @@ fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<Acce
 /// 局域网 viewer token 的访问能力（每请求解析，配置变更热生效）：
 /// - token：未拆分时随 writable，拆分（separate_write_token）时恒只读
 /// - write_token：仅在启用写 + 拆分时有效，恒可写
+///
+/// 无库模式无库内 [web] 配置，viewer token 不生效
 fn viewer_access(state: &AppState, token: &str) -> Option<AccessLevel> {
-    let web = &state.config.current().web;
+    let web = &state.library.as_ref()?.config.current().web;
     if !web.enabled {
         return None;
     }

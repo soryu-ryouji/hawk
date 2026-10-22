@@ -68,11 +68,12 @@ pub(crate) async fn item_add(
         )));
     }
 
+    let lib = state.require_library()?;
     // 导入时目标目录不存在则自动创建
     let folder_abs = if folder_rel.is_empty() {
-        state.paths.root.clone()
+        lib.paths.root.clone()
     } else {
-        state.paths.to_absolute(&folder_rel).unwrap()
+        lib.paths.to_absolute(&folder_rel).unwrap()
     };
     std::fs::create_dir_all(&folder_abs)
         .map_err(|e| ApiError::internal(format!("创建目标目录失败: {e}")))?;
@@ -126,24 +127,24 @@ pub(crate) async fn item_add(
     };
     // 入库策略前置校验（ignore 规则 / 扩展名白名单）：写盘前拒绝，
     // 否则文件落库后又被 prepare_upsert 剔除，调用方只会拿到「索引失败」
-    if state.config.is_ignored(&target_rel) {
+    if lib.config.is_ignored(&target_rel) {
         return Err(ApiError::invalid_param(format!(
             "目标路径被 ignore 规则排除: {target_rel}"
         )));
     }
-    if !state.config.is_extension_included(&file_name) {
+    if !lib.config.is_extension_included(&file_name) {
         return Err(ApiError::unsupported_format(format!(
             "扩展名不在素材库可见格式白名单内: {file_name}"
         )));
     }
-    let mut target_abs = state.paths.to_absolute(&target_rel).unwrap();
+    let mut target_abs = lib.paths.to_absolute(&target_rel).unwrap();
     if std::path::Path::new(&target_abs).exists() {
         // 目标已存在：同内容 → 幂等复用（不写文件，按既有位置入库应答）；
         // 异内容 → 自动重命名（“名字 2”、“名字 3”…递增）而非报错
         let existing_hash = content_hash::hash_file(&target_abs)
             .map_err(|e| ApiError::internal(format!("计算哈希失败: {e}")))?;
         if existing_hash == hash {
-            let result = state
+            let result = lib
                 .pipeline
                 .submit_upsert(target_abs, Some(hash))
                 .await
@@ -168,7 +169,7 @@ pub(crate) async fn item_add(
             } else {
                 format!("{folder_rel}/{candidate}")
             };
-            target_abs = state.paths.to_absolute(&target_rel).unwrap();
+            target_abs = lib.paths.to_absolute(&target_rel).unwrap();
             if !std::path::Path::new(&target_abs).exists() {
                 break;
             }
@@ -179,12 +180,12 @@ pub(crate) async fn item_add(
         }
     }
 
-    let existed_before_write = state.index.contains(&hash);
+    let existed_before_write = lib.index.contains(&hash);
 
     // skip_existing：内容已在库内（不含回收站——删掉的内容应可重新导入）则跳过，
     // 不写文件也不追加路径（多路径副本是重复导入的磁盘占用来源）
-    if req.skip_existing && state.index.has_library_location(&hash) {
-        let dto = state
+    if req.skip_existing && lib.index.has_library_location(&hash) {
+        let dto = lib
             .index
             .get_dto(&hash)
             .ok_or_else(|| ApiError::internal("索引失败"))?;
@@ -217,7 +218,7 @@ pub(crate) async fn item_add(
     .map_err(ApiError::internal)?;
 
     // 哈希已算好,流水线跳过重算,避免大文件导入时二次读盘
-    let _result = state
+    let _result = lib
         .pipeline
         .submit_upsert(target_abs.clone(), Some(hash.clone()))
         .await
@@ -234,8 +235,7 @@ pub(crate) async fn item_add(
         let tags = req.tags.clone();
         let annotation = req.annotation.clone();
         let website = req.website.clone();
-        state
-            .pipeline
+        lib.pipeline
             .submit_metadata(hash.clone(), move |meta| {
                 if let Some(tags) = tags {
                     meta.tags = tags;
@@ -255,7 +255,7 @@ pub(crate) async fn item_add(
     }
 
     // 元数据可能刚经 submit_metadata 更新,响应以最新投影为准
-    let dto = state
+    let dto = lib
         .index
         .get_dto(&hash)
         .ok_or_else(|| ApiError::internal("索引失败"))?;

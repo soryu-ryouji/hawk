@@ -18,7 +18,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(get_remote, put_remote))
         .routes(routes!(list_devices))
         .routes(routes!(get_session, create_session, delete_session))
-        .routes(routes!(patch_device, rotate_device))
+        .routes(routes!(patch_device, rotate_device, delete_device))
         .routes(routes!(list_keys, create_key))
         .routes(routes!(patch_key, delete_key))
 }
@@ -372,6 +372,14 @@ async fn patch_device(
             "至少提供一项待更新字段",
         ));
     }
+    // 远程查看模式无本地库可供服务，禁止打开「允许其他设备访问」
+    if body.allow_remote == Some(true) && state.library.is_none() {
+        return Err(ApiError::new(
+            codes::NO_LIBRARY,
+            axum::http::StatusCode::BAD_REQUEST,
+            "远程查看模式无本地素材库，不可被其他设备访问",
+        ));
+    }
     let (http, base, key) = signal_client(&state)?;
     let device_id = registered_device_id(&state)?;
     let mut payload = serde_json::Map::new();
@@ -416,6 +424,46 @@ async fn patch_device(
 struct RotateDeviceDto {
     /// 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）
     fingerprint: String,
+}
+
+/// 注销设备记录（admin 限定）：转发服务端 DELETE /devices/{id}（其进行中会话与 key 映射一并清理）。
+/// 本机当前设备不可经此移除（会删掉自己的信令身份）；先关闭远程接入是唯一安全路径
+#[utoipa::path(
+    delete,
+    path = "/api/v1/remote/devices/{device_id}",
+    tags = ["remote"],
+    params(("device_id" = String, Path, description = "服务端设备 id")),
+    responses((status = 200, description = "OK", body = SuccessOnly))
+)]
+async fn delete_device(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+    axum::extract::Path(device_id): axum::extract::Path<String>,
+) -> Result<Json<super::envelope::SuccessOnly>, ApiError> {
+    require_admin(&access)?;
+    // 本机已注册身份与目标相同 → 拒绝（注销自己会让信令立即 404 重注册，记录删不干净）
+    if let Ok(identity) = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    ) {
+        if identity.device_id.as_deref() == Some(device_id.as_str()) {
+            return Err(ApiError::new(
+                codes::INVALID_PARAM,
+                axum::http::StatusCode::BAD_REQUEST,
+                "不能移除本机当前设备（如需注销请先关闭远程接入）",
+            ));
+        }
+    }
+    let (http, base, key) = signal_client(&state)?;
+    let resp = http
+        .delete(format!("{base}/api/v1/devices/{device_id}"))
+        .bearer_auth(&key)
+        .send()
+        .await
+        .map_err(|e| bad_gateway(format!("服务端不可达: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(bad_gateway(server_message(resp).await));
+    }
+    Ok(super::envelope::success())
 }
 
 /// 证书轮换：重新生成自签证书，同步服务端指纹并落盘，信令热重启（旧证书会话失效）

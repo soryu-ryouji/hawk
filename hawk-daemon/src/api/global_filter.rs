@@ -28,8 +28,10 @@ pub fn routes() -> OpenApiRouter<SharedState> {
 )]
 async fn global_filter_list(
     State(state): State<SharedState>,
-) -> Json<Envelope<GlobalFilterSnapshot>> {
-    Json(Envelope::ok(state.global_filter.snapshot()))
+) -> Result<Json<Envelope<GlobalFilterSnapshot>>, ApiError> {
+    Ok(Json(Envelope::ok(
+        state.require_library()?.global_filter.snapshot(),
+    )))
 }
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
@@ -54,6 +56,7 @@ async fn global_filter_put(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<GlobalFilterPutRequest>,
 ) -> Result<Json<SuccessOnly>, ApiError> {
+    let lib = state.require_library()?;
     let changed = match req.kind.as_str() {
         "folder" => {
             if req.name.is_empty() || !LibraryPaths::is_valid_library_path(Some(&req.name)) {
@@ -62,19 +65,19 @@ async fn global_filter_put(
                     req.name
                 )));
             }
-            state.global_filter.set_folder_hidden(&req.name, req.hidden)
+            lib.global_filter.set_folder_hidden(&req.name, req.hidden)
         }
         "category" => {
             let name = normalize_category_name(Some(&req.name))
                 .ok_or_else(|| ApiError::invalid_param(format!("非法分类名称: {}", req.name)))?;
-            state.global_filter.set_category_hidden(&name, req.hidden)
+            lib.global_filter.set_category_hidden(&name, req.hidden)
         }
         "tag" => {
             let name = req.name.trim();
             if name.is_empty() {
                 return Err(ApiError::invalid_param("标签名称不能为空"));
             }
-            state.global_filter.set_tag_hidden(name, req.hidden)
+            lib.global_filter.set_tag_hidden(name, req.hidden)
         }
         other => {
             return Err(ApiError::invalid_param(format!(
@@ -83,7 +86,7 @@ async fn global_filter_put(
         }
     };
     if changed {
-        publish_changed(&state.bus, &state.global_filter.snapshot());
+        publish_changed(&state.bus, &lib.global_filter.snapshot());
     }
     Ok(success())
 }

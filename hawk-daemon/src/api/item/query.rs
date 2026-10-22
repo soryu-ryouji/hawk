@@ -159,10 +159,11 @@ pub(crate) async fn item_list(
     Extension(guard): Extension<LockGuard>,
     JsonBody(req): JsonBody<ItemListRequest>,
 ) -> Result<Json<Envelope<ItemListResponse>>, ApiError> {
+    let lib = state.require_library()?;
     check_view_locks(&req, &guard)?;
     let query = build_query(req, &guard)?;
-    let (items, total, total_size) = state.index.query(&query);
-    dispatch_dim_heal(&state, items.iter().map(|i| (i.id.as_str(), i.width)));
+    let (items, total, total_size) = lib.index.query(&query);
+    dispatch_dim_heal(lib, items.iter().map(|i| (i.id.as_str(), i.width)));
     Ok(Json(Envelope::ok(ItemListResponse {
         items,
         total,
@@ -188,10 +189,11 @@ pub(crate) async fn item_skeleton(
     Extension(guard): Extension<LockGuard>,
     JsonBody(req): JsonBody<ItemListRequest>,
 ) -> Result<Json<Envelope<ItemSkeletonResponse>>, ApiError> {
+    let lib = state.require_library()?;
     check_view_locks(&req, &guard)?;
     let query = build_query(req, &guard)?;
-    let (items, total_size) = state.index.query_skeleton(&query);
-    dispatch_dim_heal(&state, items.iter().map(|i| (i.id.as_str(), i.width)));
+    let (items, total_size) = lib.index.query_skeleton(&query);
+    dispatch_dim_heal(lib, items.iter().map(|i| (i.id.as_str(), i.width)));
     Ok(Json(Envelope::ok(ItemSkeletonResponse {
         items,
         total_size,
@@ -207,13 +209,16 @@ fn should_heal_dim(width: i32, negative_cached: bool) -> bool {
 /// 读取端宽高自愈：响应中发现 0 × 0 的 item → 派发后台补全任务（identify 补宽高 + 按需调色板）。
 /// 入库时解码暂时失败会把 width=0 落库且无事件再触及，用户拉列表即触发重试，
 /// 修复后经 item.updated 事件自动刷新骨架/卡片。in-flight 去重，幂等，高频调用零负担
-fn dispatch_dim_heal<'a>(state: &SharedState, items: impl Iterator<Item = (&'a str, i32)>) {
+fn dispatch_dim_heal<'a>(
+    lib: &crate::api::LibraryState,
+    items: impl Iterator<Item = (&'a str, i32)>,
+) {
     for (hash, width) in items {
-        if !should_heal_dim(width, state.store.palette_negative_cached(hash)) {
+        if !should_heal_dim(width, lib.store.palette_negative_cached(hash)) {
             continue;
         }
-        if let Some(abs) = state.index.main_source_abs(hash, &state.paths) {
-            state.worker.enqueue_palette(hash, &abs);
+        if let Some(abs) = lib.index.main_source_abs(hash, &lib.paths) {
+            lib.worker.enqueue_palette(hash, &abs);
         }
     }
 }
@@ -301,16 +306,17 @@ pub(crate) async fn item_aggregate(
     if req.ids.is_empty() {
         return Err(ApiError::invalid_param("ids 不能为空"));
     }
+    let lib = state.require_library()?;
     if !guard.is_empty() {
         for id in &req.ids {
-            if let Some((paths, categories, tags)) = state.index.lock_projection(id) {
+            if let Some((paths, categories, tags)) = lib.index.lock_projection(id) {
                 if !guard.item_visible(paths.into_iter(), &categories, &tags) {
                     return Err(ApiError::locked("选择集含已锁定的内容，需要解锁后操作"));
                 }
             }
         }
     }
-    let (common_tags, common_categories) = state.index.common_taxonomy(&req.ids);
+    let (common_tags, common_categories) = lib.index.common_taxonomy(&req.ids);
     Ok(Json(Envelope::ok(ItemAggregateResponse {
         common_tags,
         common_categories,
@@ -334,6 +340,7 @@ pub(crate) async fn item_detail(
     Query(q): Query<IdQuery>,
 ) -> Result<Json<Envelope<ItemDto>>, ApiError> {
     let dto = state
+        .require_library()?
         .index
         .get_dto_at(&q.id, q.path.as_deref())
         .ok_or_else(|| ApiError::item_not_found(&q.id))?;
@@ -350,6 +357,8 @@ pub(crate) async fn item_detail(
     tags = ["item"],
     responses((status = 200, description = "OK", body = Envelope<usize>))
 )]
-pub(crate) async fn item_count(State(state): State<SharedState>) -> Json<Envelope<usize>> {
-    Json(Envelope::ok(state.index.count()))
+pub(crate) async fn item_count(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<usize>>, ApiError> {
+    Ok(Json(Envelope::ok(state.require_library()?.index.count())))
 }

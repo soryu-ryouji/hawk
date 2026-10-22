@@ -16,6 +16,8 @@ pub mod codes {
     pub const CATEGORY_EXISTS: &str = "CATEGORY_EXISTS";
     pub const TAG_NOT_FOUND: &str = "TAG_NOT_FOUND";
     pub const NOT_READY: &str = "NOT_READY";
+    /// 远程查看模式（无本地库）访问库端点（400）
+    pub const NO_LIBRARY: &str = "NO_LIBRARY";
     pub const LOCKED: &str = "LOCKED";
     pub const LOCK_NOT_FOUND: &str = "LOCK_NOT_FOUND";
     pub const OLD_PASSWORD_REQUIRED: &str = "OLD_PASSWORD_REQUIRED";

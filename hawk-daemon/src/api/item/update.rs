@@ -30,7 +30,8 @@ pub(crate) async fn item_update(
     State(state): State<SharedState>,
     JsonBody(req): JsonBody<ItemUpdateRequest>,
 ) -> Result<Json<Envelope<ItemDto>>, ApiError> {
-    let loc = find_location(&state, &req.id, req.path.as_deref(), None)?;
+    let lib = state.require_library()?;
+    let loc = find_location(lib, &req.id, req.path.as_deref(), None)?;
 
     if loc.in_trash && (req.name.is_some() || req.folder_path.is_some()) {
         return Err(ApiError::invalid_param(
@@ -55,21 +56,20 @@ pub(crate) async fn item_update(
             format!("{dir}/{file_name}")
         };
         // 改名目标同样受入库策略约束（ignore 规则可命中新名字，如 *.tmp）
-        if state.config.is_ignored(&target_rel) {
+        if lib.config.is_ignored(&target_rel) {
             return Err(ApiError::invalid_param(format!(
                 "目标路径被 ignore 规则排除: {target_rel}"
             )));
         }
         if target_rel != loc.path {
-            let source_abs = state.paths.to_absolute(&loc.path).unwrap();
-            let target_abs = state.paths.to_absolute(&target_rel).unwrap();
+            let source_abs = lib.paths.to_absolute(&loc.path).unwrap();
+            let target_abs = lib.paths.to_absolute(&target_rel).unwrap();
             if std::path::Path::new(&target_abs).exists() {
                 return Err(ApiError::file_exists(&target_rel));
             }
             std::fs::rename(&source_abs, &target_abs)
                 .map_err(|e| ApiError::internal(format!("重命名失败: {e}")))?;
-            state
-                .pipeline
+            lib.pipeline
                 .submit_move(source_abs, target_abs)
                 .await
                 .map_err(ApiError::internal)?;
@@ -78,21 +78,21 @@ pub(crate) async fn item_update(
 
     if let Some(folder_path) = &req.folder_path {
         let folder_abs = if folder_path.is_empty() {
-            state.paths.root.clone()
+            lib.paths.root.clone()
         } else {
             if !LibraryPaths::is_valid_library_path(Some(folder_path)) {
                 return Err(ApiError::invalid_param(format!(
                     "非法文件夹路径: {folder_path}"
                 )));
             }
-            let abs = state.paths.to_absolute(folder_path).unwrap();
+            let abs = lib.paths.to_absolute(folder_path).unwrap();
             if !std::path::Path::new(&abs).is_dir() {
                 return Err(ApiError::folder_not_found(folder_path));
             }
             abs
         };
         // name 分支可能已移动过文件:按移动后的最新位置再移动(改名+移动同请求时基于新文件名计算目标)
-        let current = find_location(&state, &req.id, req.path.as_deref(), None)?;
+        let current = find_location(lib, &req.id, req.path.as_deref(), None)?;
         let file_name = current
             .path
             .rsplit('/')
@@ -106,12 +106,12 @@ pub(crate) async fn item_update(
             format!("{folder_path}/{file_name}")
         };
         // 移动目标同样受入库策略约束（目标文件夹可能被 ignore 命中）
-        if state.config.is_ignored(&target_rel) {
+        if lib.config.is_ignored(&target_rel) {
             return Err(ApiError::invalid_param(format!(
                 "目标路径被 ignore 规则排除: {target_rel}"
             )));
         }
-        let source_abs = state.paths.to_absolute(&current.path).unwrap();
+        let source_abs = lib.paths.to_absolute(&current.path).unwrap();
         if target_abs != source_abs {
             if std::path::Path::new(&target_abs).exists() {
                 let rel = if folder_path.is_empty() {
@@ -123,8 +123,7 @@ pub(crate) async fn item_update(
             }
             std::fs::rename(&source_abs, &target_abs)
                 .map_err(|e| ApiError::internal(format!("移动失败: {e}")))?;
-            state
-                .pipeline
+            lib.pipeline
                 .submit_move(source_abs, target_abs)
                 .await
                 .map_err(ApiError::internal)?;
@@ -148,8 +147,7 @@ pub(crate) async fn item_update(
         let star = req.star;
         let annotation = req.annotation.clone();
         let url = req.url.clone();
-        state
-            .pipeline
+        lib.pipeline
             .submit_metadata(req.id.clone(), move |meta| {
                 if let Some(tags) = tags {
                     meta.tags = tags;
@@ -171,7 +169,7 @@ pub(crate) async fn item_update(
             .map_err(ApiError::internal)?;
     }
 
-    let dto = state
+    let dto = lib
         .index
         .get_dto(&req.id)
         .ok_or_else(|| ApiError::item_not_found(&req.id))?;
@@ -239,6 +237,7 @@ pub(crate) async fn item_batch_update(
         }
     }
     let add_categories = normalize_categories(req.add_categories.as_deref())?;
+    let lib = state.require_library()?;
 
     let mut ids = req.ids.clone();
     ids.dedup();
@@ -249,14 +248,14 @@ pub(crate) async fn item_batch_update(
     // folder_path:逐个移动指定位置(库内;缺省主位置);已在目标处的跳过;无库内位置(全在回收站)的移动不适用,跳过
     if let Some(folder_path) = &req.folder_path {
         let folder_abs = if folder_path.is_empty() {
-            state.paths.root.clone()
+            lib.paths.root.clone()
         } else {
             if !LibraryPaths::is_valid_library_path(Some(folder_path)) {
                 return Err(ApiError::invalid_param(format!(
                     "非法文件夹路径: {folder_path}"
                 )));
             }
-            let abs = state.paths.to_absolute(folder_path).unwrap();
+            let abs = lib.paths.to_absolute(folder_path).unwrap();
             if !std::path::Path::new(&abs).is_dir() {
                 return Err(ApiError::folder_not_found(folder_path));
             }
@@ -268,11 +267,11 @@ pub(crate) async fn item_batch_update(
                 .as_ref()
                 .and_then(|ps| ps.get(i))
                 .and_then(|p| p.as_deref());
-            let Some(loc) = state.index.find_location(id, path, Some(false)) else {
+            let Some(loc) = lib.index.find_location(id, path, Some(false)) else {
                 continue;
             };
             let file_name = loc.path.rsplit('/').next().unwrap_or(&loc.path).to_string();
-            let source_abs = state.paths.to_absolute(&loc.path).unwrap();
+            let source_abs = lib.paths.to_absolute(&loc.path).unwrap();
             let target_abs = format!("{folder_abs}/{file_name}");
             if target_abs == source_abs {
                 continue;
@@ -286,8 +285,7 @@ pub(crate) async fn item_batch_update(
                 move_failed.push(id.clone());
                 continue;
             }
-            state
-                .pipeline
+            lib.pipeline
                 .submit_move(source_abs, target_abs)
                 .await
                 .map_err(ApiError::internal)?;
@@ -307,7 +305,7 @@ pub(crate) async fn item_batch_update(
         let remove_tags = req.remove_tags.clone();
         let remove_categories = req.remove_categories.clone();
         let star = req.star;
-        let result = state
+        let result = lib
             .pipeline
             .submit_batch_metadata(ids, move |meta| {
                 if let Some(tags) = &add_tags {
