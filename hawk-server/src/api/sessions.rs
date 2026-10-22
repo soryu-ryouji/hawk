@@ -255,9 +255,14 @@ fn respond(
             session.source_device_id.clone(),
             probe_message(&session.session_id, probe_port, &token_b),
         ));
+        // 候选明细进日志：与探测观测值对比可直接识别 CGNAT（UPnP 端口 ≠ 观测端口）
         tracing::info!(
-            "会话 {session_id} 打洞编排开始（直连候选 {} 个）",
-            candidates.len()
+            "会话 {session_id} 打洞编排开始（直连候选：{}）",
+            if candidates.is_empty() {
+                "无".to_string()
+            } else {
+                serde_json::to_string(&candidates).unwrap_or_default()
+            }
         );
         orchestrate = Some(!candidates.is_empty());
     } else {

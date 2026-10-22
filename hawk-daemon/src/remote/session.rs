@@ -470,11 +470,11 @@ async fn server_message(resp: reqwest::Response) -> String {
         .unwrap_or_else(|| format!("服务端返回 {status}"))
 }
 
-/// B 侧打洞预绑：ephemeral UDP socket（双栈优先回退 v4），已设非阻塞（connect 复用时交 quinn）
+/// B 侧打洞预绑：v4 原生 ephemeral socket，已设非阻塞（connect 复用时交 quinn）。
+/// 协议 P3 的探测/打洞目标恒为 v4（服务端探测口仅绑 IPv4，observed endpoint 必为 v4）；
+/// v4 原生同时绕开 Windows 双栈 socket 的语义差异（v6only 默认值的平台分歧）
 fn bind_ephemeral_udp() -> Result<std::net::UdpSocket, String> {
-    let v6 = SocketAddr::from(([0u16; 8], 0));
-    let socket = std::net::UdpSocket::bind(v6)
-        .or_else(|_| std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))))
+    let socket = std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
         .map_err(|e| format!("UDP socket 绑定失败: {e}"))?;
     socket
         .set_nonblocking(true)
