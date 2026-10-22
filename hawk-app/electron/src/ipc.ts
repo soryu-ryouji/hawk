@@ -186,7 +186,7 @@ export function registerIpc(): void {
     return remoteDeleteDevice(deviceId);
   });
   ipcMain.handle(IPC.remoteRotate, () => remoteRotate());
-  ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string, mode?: 'direct' | 'relay') => remoteConnect(targetDeviceId, mode));
+  ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string) => remoteConnect(targetDeviceId));
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
 
   // 访问密钥管理（透传 daemon；id 只接受字符串）

@@ -93,12 +93,11 @@ server {
 }
 ```
 
-防火墙只放行 443/80 与 **UDP 9101**（打洞探测口，P3：NAT 打洞需要它公网直达，UDP 不经反代；云服务器还需在**安全组**（阿里云/腾讯云控制台）显式放行 UDP 9101，仅改宿主机防火墙不够。未开放时打洞编排探测超时，自动退化为「无直连候选即 unreachable」，其余功能不受影响）；**9100 不要对公网开放**（明文 HTTP，密钥虽兜底但 TLS 是底线，且 X-Real-IP 头可信与 IP 风控生效的前提是流量必经反代）。管理面端口 9110 只绑环回（租户创建/查询/吊销），**不要经反代暴露也不要放防火墙**；远程管理用 `ssh -L 9110:127.0.0.1:9110 <服务器>` 端口转发。`X-Forwarded-Proto` 别删：查看器的 `hawk_bt` cookie 据此判断要不要加 `Secure`。用 Caddy 则只需 `reverse_proxy 127.0.0.1:9100`（WSS 透传与 `X-Forwarded-Proto` 都无需额外配置，同样建议补 `X-Real-IP` 头）。
+防火墙只放行 443/80；**9100 不要对公网开放**（明文 HTTP，密钥虽兜底但 TLS 是底线，且 X-Real-IP 头可信与 IP 风控生效的前提是流量必经反代）。**中继是可选组件**：配置 `--relay-url http://<主机>:9102`（或反代域名）即启用内嵌 iroh-relay（监听 9102，可用 `--relay-port` 改）；此时需放行该端口（云服务器在安全组放行；云安全组与宿主机防火墙是两层，别只改一层）。不配 `--relay-url` 即不提供中继——纯直连部署（无打洞协调，只有直连地址可达的会话能建立）。管理面端口 9110 只绑环回（租户创建/查询/吊销），**不要经反代暴露也不要放防火墙**；远程管理用 `ssh -L 9110:127.0.0.1:9110 <服务器>` 端口转发。`X-Forwarded-Proto` 别删：查看器的 `hawk_bt` cookie 据此判断要不要加 `Secure`。用 Caddy 则只需 `reverse_proxy 127.0.0.1:9100`（WSS 透传与 `X-Forwarded-Proto` 都无需额外配置，同样建议补 `X-Real-IP` 头）。
 
 ## 部署后验证
 
 1. `curl -s -H "Authorization: Bearer <service-key>" https://hawk.example.com/api/v1/devices` 返回 `{"status":"success",...}`
-1. `node tools/check-probe-port.mjs hawk.example.com` 返回「✓ 探测口可达」（打洞探测口 UDP 9101 连通性；无响应 = 安全组/防火墙未放行 UDP）
 2. 桌面端 hawk → 设置 → 远程填服务端地址与服务密钥（service-key），设备出现在列表中
 3. 桌面端设置 → 远程 →「访问密钥」签发一把只读 key；浏览器打开 `https://hawk.example.com`，先填 service-key 再填访问密钥，即可进入绑定素材库的查看器（查看器页面由目标设备的 daemon 经隧道提供，该设备需是带前端产物的桌面端）
 4. 插件设置选「远程」→ 填域名 + service-key + 带写权限的访问密钥 → 验证并查看素材库 → 保存。目标设备需在设置 → 远程中开启「允许广域网保存素材」

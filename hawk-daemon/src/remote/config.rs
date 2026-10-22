@@ -18,7 +18,7 @@ url = ""
 service_key = ""
 quic_port = 27373
 writable = false
-relay_fallback = false
+relay = false
 "#;
 
 /// 远程访问接入设置：自托管 hawk-server 的接入信息。
@@ -34,9 +34,9 @@ pub struct RemoteSettings {
     pub quic_port: u16,
     /// 允许广域网会话导入素材/新建文件夹（受限写，与 [web] 的局域网写权限独立）
     pub writable: bool,
-    /// 中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽）。
+    /// 使用中继（服务端内嵌 relay 提供时；消耗自建带宽，设备级开关，默认关闭）。
     /// 请求级热配置（同 writable，不触发信令重启）
-    pub relay_fallback: bool,
+    pub relay: bool,
 }
 
 impl Default for RemoteSettings {
@@ -47,7 +47,7 @@ impl Default for RemoteSettings {
             service_key: String::new(),
             quic_port: DEFAULT_QUIC_PORT,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         }
     }
 }
@@ -123,7 +123,7 @@ impl RemoteConfigStore {
         doc["service_key"] = toml_edit::value(settings.service_key.trim());
         doc["quic_port"] = toml_edit::value(i64::from(settings.quic_port));
         doc["writable"] = toml_edit::value(settings.writable);
-        doc["relay_fallback"] = toml_edit::value(settings.relay_fallback);
+        doc["relay"] = toml_edit::value(settings.relay);
         let tmp = file.with_extension("toml.tmp");
         std::fs::write(&tmp, doc.to_string())
             .map_err(|e| format!("远程配置写入失败 {}: {e}", tmp.display()))?;
@@ -181,8 +181,8 @@ impl RemoteConfigStore {
                 .get("writable")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            settings.relay_fallback = table
-                .get("relay_fallback")
+            settings.relay = table
+                .get("relay")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
         }
@@ -228,7 +228,7 @@ mod tests {
                 service_key: "secret".to_string(),
                 quic_port: 28000,
                 writable: true,
-                relay_fallback: true,
+                relay: true,
             })
             .unwrap();
 

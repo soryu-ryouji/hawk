@@ -123,11 +123,11 @@ export interface RemoteConfig {
   service_key: string;
   /** 允许广域网会话导入素材/新建文件夹（与 [web] 局域网写权限独立） */
   writable: boolean;
-  /** 中继回退（直连失败/UDP 静默时经服务端中继；消耗自己的服务器带宽） */
-  relay_fallback: boolean;
+  /** 使用中继（服务端提供时；消耗自建带宽，设备级开关，默认关闭） */
+  relay: boolean;
 }
 
-/** 信令运行状态（daemon /remote 的 status 子对象，含 relay_fallback 等运行配置回显） */
+/** 信令运行状态（daemon /remote 的 status 子对象，含 relay 等运行配置回显） */
 export interface RemoteStatus {
   state: 'disabled' | 'connecting' | 'online' | 'error';
   server_url?: string;
@@ -275,10 +275,10 @@ export interface HawkShell {
   /** 注销服务端设备记录（本机当前设备由 daemon 侧拒绝）；其会话与 key 映射一并清理 */
   remoteDeleteDevice(deviceId: string): Promise<void>;
   /** 证书轮换（旧证书会话失效） */
-  remoteRotate(): Promise<{ fingerprint: string }>;
+  remoteRotate(): Promise<{ endpoint_id: string }>;
   /** 建立远程会话并切换连接（返回新连接描述符）；失败抛错（message 直接展示）。
-   *  mode = direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用） */
-  remoteConnect(targetDeviceId: string, mode?: 'direct' | 'relay'): Promise<ConnectionDescriptor>;
+   *  传输路径（直连/打洞/中继）由 iroh 自治，两端静态开关决定中继可用性 */
+  remoteConnect(targetDeviceId: string): Promise<ConnectionDescriptor>;
   /** 断开远程会话并回切本地库（幂等） */
   remoteDisconnect(): Promise<ConnectionDescriptor | null>;
   /** 本机签发的访问密钥列表（不含明文） */

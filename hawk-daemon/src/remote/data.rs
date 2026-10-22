@@ -1,20 +1,21 @@
-//! QUIC 数据面：A 侧隧道端 + B 侧会话代理。
-//! A 侧：接受 QUIC 连接，每条双向流即一条 HTTP/1.1 连接（hyper 解析），进程内转发给
+//! 数据面（iroh 隧道）：A 侧隧道端 + B 侧会话代理。
+//! A 侧：接受 iroh 连接（对端身份 = EndpointId 公钥，握手即认证），按会话放行集合裁决
+//! 非放行对端即断开；每条双向流即一条 HTTP/1.1 连接（hyper 解析），进程内转发给
 //! API 路由并标记 TunneledPeer（按会话读写权限）；B 侧：环回 HTTP 代理（会话 token 门禁），
-//! 每个请求开一条 QUIC 流转发。HTTP 解析两端的流式语义（SSE/缩略图）由 hyper 原生承载。
+//! 每个请求开一条流转发。HTTP 解析两端的流式语义（SSE/缩略图）由 hyper 原生承载。
+//! 打洞/中继/路径迁移/映射保活全部是 iroh 内部事务，本模块不感知路径。
 
 use crate::remote::identity::Identity;
-use crate::remote::mux::MuxSocket;
-use crate::remote::tls::{self, PeerAllowlist};
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// 隧道 ALPN（协议常量；两侧零代码共享，各自硬编码同一值）
+pub const HAWK_ALPN: &[u8] = b"hawk/1";
 
 /// 隧道内会话标识头：B 侧代理写入，A 侧校验并剥离；公网 HTTP 客户端无法伪造进程内标记
 pub const SESSION_HEADER: &str = "x-hawk-session";
@@ -26,99 +27,62 @@ pub struct TunneledPeer {
     pub writable: bool,
 }
 
-/// 单候选连接超时（协议约定）
-pub const CANDIDATE_TIMEOUT: Duration = Duration::from_secs(5);
+/// B 侧拨号超时（协议约定 15s；iroh 内部竞速直连/中继，首字节不等打洞结果）
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// 打洞候选超时（P3）：开口依赖双方时序，QUIC Initial 自动重传覆盖洞口开启前的丢包
-pub const PUNCH_TIMEOUT: Duration = Duration::from_secs(15);
-/// A 侧开口窗口：覆盖 B 侧打洞候选超时 + ready 推送时序差
-pub const PUNCH_WINDOW: Duration = Duration::from_secs(20);
-/// 开口包间隔
-const PUNCH_INTERVAL: Duration = Duration::from_millis(500);
-/// 开口垃圾包：仅触发本端 NAT 开口，不承载语义（对端 quinn 收到无法解析的数据报自然丢弃）
-const PUNCH_PACKET: [u8; 16] = *b"HAWKPUNCH.......";
-
-pub(crate) fn runtime() -> Result<Arc<dyn quinn::Runtime>, String> {
-    quinn::default_runtime().ok_or_else(|| "tokio runtime 不可用".to_string())
-}
-
-/// 探测包（协议 P3：定长 64B = magic 5B + token 16B + 零填充）
-pub(crate) fn probe_packet(token: &[u8; 16]) -> [u8; 64] {
-    let mut packet = [0u8; 64];
-    packet[..5].copy_from_slice(b"HAWKP");
-    packet[5..21].copy_from_slice(token);
-    packet
-}
-
-/// 打洞/探测发送的目标地址换算：双栈 v6 socket 不能直接发 v4 地址（EINVAL），须转为
-/// v4-mapped；v4-only socket（v6 绑定失败的回退）保持原样
-pub(crate) fn punch_target(local: &std::net::UdpSocket, addr: SocketAddr) -> SocketAddr {
-    match (local.local_addr(), addr) {
-        (Ok(SocketAddr::V6(_)), SocketAddr::V4(v4)) => {
-            SocketAddr::from((v4.ip().to_ipv6_mapped(), v4.port()))
-        }
-        _ => addr,
-    }
-}
-
-/// 探测 3 连发（UDP 单包丢失容忍；服务端收到任一即记录 observed endpoint，响应不消费）
-pub(crate) async fn send_probe_packets(
-    socket: &std::net::UdpSocket,
-    probe_addr: SocketAddr,
-    token: [u8; 16],
-) {
-    let probe_addr = punch_target(socket, probe_addr);
-    for attempt in 0..3 {
-        let _ = socket.send_to(&probe_packet(&token), probe_addr);
-        if attempt < 2 {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-        }
-    }
-}
+type EndpointId = iroh::EndpointId;
 
 #[derive(Clone, Copy)]
 struct AcceptedSession {
-    fingerprint: [u8; 32],
+    peer: EndpointId,
     writable: bool,
 }
 
-/// 会话注册表：session_id → 权限，以及 QUIC 连接与会话的绑定。
-/// hawk-server 的网页版与插件共用同一个设备指纹，取消单个会话不能误伤其他会话。
+/// 会话注册表：session_id → 权限与对端身份，以及连接与会话的绑定。
+/// hawk-server 的网页版与插件共用同一个设备身份，取消单个会话不能误伤其他会话。
+/// （迁移 iroh 后 A 侧执法点在连接建立后：对端身份不在放行集合即断开——
+/// 与握手期拒绝语义等价，代价是多完成一次握手）
 #[derive(Clone, Default)]
 struct SessionRegistry {
     accepted: Arc<Mutex<HashMap<String, AcceptedSession>>>,
+    /// 放行中的对端身份集合（accepted 的索引；引用计数防同身份多会话误伤）
+    peers: Arc<Mutex<HashMap<EndpointId, usize>>>,
     conn_sessions: Arc<Mutex<HashMap<usize, String>>>,
     session_conns: Arc<Mutex<HashMap<String, Vec<usize>>>>,
     notify: Arc<Mutex<HashMap<String, Arc<tokio::sync::Notify>>>>,
 }
 
 impl SessionRegistry {
-    /// 登记会话；返回同一 session_id 的旧条目（重复推送时避免指纹放行计数泄漏）
-    fn allow(
-        &self,
-        session_id: &str,
-        fingerprint: [u8; 32],
-        writable: bool,
-    ) -> Option<AcceptedSession> {
-        let previous = self.accepted.lock().unwrap().insert(
-            session_id.to_string(),
-            AcceptedSession {
-                fingerprint,
-                writable,
-            },
-        );
+    /// 登记会话；返回同一 session_id 的旧条目（重复推送时避免放行计数泄漏）
+    fn allow(&self, session_id: &str, peer: EndpointId, writable: bool) {
+        let previous = self
+            .accepted
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), AcceptedSession { peer, writable });
+        if previous.map(|p| p.peer) != Some(peer) {
+            *self.peers.lock().unwrap().entry(peer).or_default() += 1;
+        }
         self.notify
             .lock()
             .unwrap()
             .entry(session_id.to_string())
             .or_default();
-        previous
     }
 
-    /// 移除会话及其连接，返回 (对端指纹, 连接 id 列表)
-    fn disallow(&self, session_id: &str) -> Option<([u8; 32], Vec<usize>)> {
+    /// 移除会话及其连接，返回 (对端身份, 连接 id 列表)
+    fn disallow(&self, session_id: &str) -> Option<(EndpointId, Vec<usize>)> {
         let session = self.accepted.lock().unwrap().remove(session_id)?;
         self.notify.lock().unwrap().remove(session_id);
+        {
+            let mut peers = self.peers.lock().unwrap();
+            if let Some(count) = peers.get_mut(&session.peer) {
+                *count -= 1;
+                if *count == 0 {
+                    peers.remove(&session.peer);
+                }
+            }
+        }
         let ids = self
             .session_conns
             .lock()
@@ -129,15 +93,19 @@ impl SessionRegistry {
         for id in &ids {
             conn_sessions.remove(id);
         }
-        Some((session.fingerprint, ids))
+        Some((session.peer, ids))
     }
 
-    /// 校验并绑定：连接首次请求的会话必须与 QUIC 对端指纹一致；一条连接只属于一个会话
+    fn is_allowed(&self, peer: EndpointId) -> bool {
+        self.peers.lock().unwrap().contains_key(&peer)
+    }
+
+    /// 校验并绑定：连接首次请求的会话必须与对端身份一致；一条连接只属于一个会话
     fn bind(
         &self,
         conn_id: usize,
         session_id: &str,
-        peer: Option<[u8; 32]>,
+        peer: Option<EndpointId>,
     ) -> Result<bool, StatusCode> {
         let session = self
             .accepted
@@ -146,7 +114,7 @@ impl SessionRegistry {
             .get(session_id)
             .copied()
             .ok_or(StatusCode::UNAUTHORIZED)?;
-        if peer != Some(session.fingerprint) {
+        if peer != Some(session.peer) {
             return Err(StatusCode::FORBIDDEN);
         }
         let mut conn_sessions = self.conn_sessions.lock().unwrap();
@@ -190,6 +158,7 @@ impl SessionRegistry {
 
     fn reset(&self) {
         self.accepted.lock().unwrap().clear();
+        self.peers.lock().unwrap().clear();
         self.conn_sessions.lock().unwrap().clear();
         self.session_conns.lock().unwrap().clear();
         self.notify.lock().unwrap().clear();
@@ -197,129 +166,102 @@ impl SessionRegistry {
 }
 
 pub struct DataPlane {
-    /// Option：热重启/停用时显式 take 并 drop，避免超时清理等任务持有 Arc 时端口不释放
-    endpoint: Mutex<Option<quinn::Endpoint>>,
-    /// 统一传输 socket（P4）：UDP 直连/打洞与中继 WS 路径合并为单一 endpoint，
-    /// 路径迁移对 QUIC 连接不可见（对端换路径由 quinn 被动迁移跟随）
-    mux: Mutex<Option<Arc<MuxSocket>>>,
-    /// 开口句柄（P3）：与 QUIC 端点同一 UDP socket 的克隆，只发不收（接收归 mux 泵）。
-    /// 探测/开口包必须与端点同端口——cone NAT 的映射按本地端口建立，换端口则服务端观测作废
-    punch_socket: Mutex<Option<Arc<std::net::UdpSocket>>>,
-    pub(crate) allowlist: Arc<PeerAllowlist>,
-    /// 连接唯一 id → 连接：直连与多条中继端点共用同一注册表，不能依赖 single-endpoint 的 stable_id
-    conn_by_id: Arc<Mutex<HashMap<usize, quinn::Connection>>>,
-    conn_seq: Arc<AtomicU64>,
+    endpoint: Mutex<Option<iroh::Endpoint>>,
     registry: SessionRegistry,
-    /// A 侧 accept 循环任务句柄（shutdown 时中止，否则它持有的端点会让端口永不释放）
+    /// 连接唯一 id → 连接（多条连接共用同一 endpoint，不能用 stable_id）
+    conn_by_id: Arc<Mutex<HashMap<usize, iroh::endpoint::Connection>>>,
+    conn_seq: Arc<std::sync::atomic::AtomicU64>,
+    /// A 侧 accept 循环任务句柄（shutdown 时中止）
     accept_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl DataPlane {
-    /// 绑定 QUIC UDP 端口并拉起 A 侧 accept 循环（router 为 daemon API 路由的克隆）
-    pub fn bind(
+    /// 绑定 iroh endpoint 并拉起 A 侧 accept 循环（router 为 daemon API 路由的克隆）。
+    /// relay：Some((url, token)) 使用服务端内嵌中继（打洞协调 + 兜底），None 纯直连
+    pub async fn bind(
         identity: &Identity,
         quic_port: u16,
+        relay: Option<(String, String)>,
         router: axum::Router,
     ) -> Result<Arc<DataPlane>, String> {
-        let allowlist = Arc::new(PeerAllowlist::default());
-        let server_config = tls::server_config(identity, allowlist.clone())?;
-        // 自建 socket + try_clone 开口句柄（P3），mux 托管读路径（P4）
-        let (socket, punch_socket) = bind_udp_socket(quic_port)?;
-        let mux = MuxSocket::new_server(socket);
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            quinn::EndpointConfig::default(),
-            Some(server_config),
-            mux.clone(),
-            runtime()?,
-        )
-        .map_err(|e| format!("QUIC 端点创建失败: {e}"))?;
+        let secret_key = identity.secret_key()?;
+        let relay_mode = match relay {
+            Some((url, token)) => {
+                let relay_url: iroh::RelayUrl = url.parse().map_err(|_| "relay url 非法")?;
+                let map = iroh::RelayMap::from(relay_url).with_auth_token(token);
+                iroh::RelayMode::Custom(map)
+            }
+            None => iroh::RelayMode::Disabled,
+        };
+        let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .alpns(vec![HAWK_ALPN.to_vec()])
+            .secret_key(secret_key)
+            .relay_mode(relay_mode);
+        if quic_port != 0 {
+            builder = builder
+                .bind_addr(std::net::SocketAddrV4::new(
+                    std::net::Ipv4Addr::UNSPECIFIED,
+                    quic_port,
+                ))
+                .map_err(|e| format!("隧道端口配置非法: {e}"))?;
+        }
+        let endpoint = builder
+            .bind()
+            .await
+            .map_err(|e| format!("隧道端口 {quic_port} 绑定失败: {e}"))?;
         let plane = Arc::new(DataPlane {
             endpoint: Mutex::new(Some(endpoint)),
-            mux: Mutex::new(Some(mux)),
-            punch_socket: Mutex::new(Some(punch_socket)),
-            allowlist,
-            conn_by_id: Arc::new(Mutex::new(HashMap::new())),
-            conn_seq: Arc::new(AtomicU64::new(1)),
             registry: SessionRegistry::default(),
+            conn_by_id: Arc::new(Mutex::new(HashMap::new())),
+            conn_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             accept_task: Mutex::new(None),
         });
         #[cfg(windows)]
-        tokio::spawn(crate::remote::reachability::ensure_firewall_rule_windows(
-            quic_port,
-        ));
+        tokio::spawn(ensure_firewall_rule_windows(quic_port));
         let accept_task = tokio::spawn(plane.clone().accept_loop(router));
         *plane.accept_task.lock().unwrap() = Some(accept_task);
         Ok(plane)
     }
 
-    /// 关停数据面：关闭端点（accept 循环随即退出）并中止循环任务，释放 QUIC UDP 端口。
-    /// 配置热重启/停用 remote 必须调用——否则同一进程内再次激活会因端口仍被自己占用
-    /// 而绑定失败（进程退出不需要，随进程释放）
+    /// 关停数据面（配置热重启/停用必须调用）：关 accept 循环并关闭 endpoint
     pub fn shutdown(&self) {
-        if let Some(endpoint) = self.endpoint.lock().unwrap().take() {
-            endpoint.close(0u32.into(), b"");
-        }
-        if let Some(mux) = self.mux.lock().unwrap().take() {
-            mux.close();
-        }
-        self.punch_socket.lock().unwrap().take();
         if let Some(task) = self.accept_task.lock().unwrap().take() {
             task.abort();
         }
-    }
-
-    /// 附加中继路径（P4）：中继 WS 并入 mux——A 侧接受 loop 无需感知路径来源
-    pub fn attach_relay(&self, ws: crate::remote::relay::RelayWs) {
-        if let Some(mux) = self.mux.lock().unwrap().clone() {
-            mux.add_relay_path(ws);
+        if let Some(endpoint) = self.endpoint.lock().unwrap().take() {
+            tokio::spawn(async move {
+                endpoint.close().await;
+            });
         }
     }
 
-    /// A 侧开口（P3）：向对端 observed 地址周期发垃圾包打通本端 NAT（endpoint-dependent
-    /// filtering 要求本端先向对端发包）；窗口长度覆盖 B 侧打洞候选超时与推送时序差
-    pub fn punch_to(&self, peer: SocketAddr, window: Duration) {
-        let Some(socket) = self.punch_socket.lock().unwrap().clone() else {
-            return;
-        };
-        tokio::spawn(async move {
-            let peer = punch_target(&socket, peer);
-            let deadline = std::time::Instant::now() + window;
-            while std::time::Instant::now() < deadline {
-                // 非阻塞 socket 的 WouldBlock（发送缓冲压力）直接丢弃：垃圾包无需可靠
-                let _ = socket.send_to(&PUNCH_PACKET, peer);
-                tokio::time::sleep(PUNCH_INTERVAL).await;
-            }
-        });
+    /// 本端 endpoint 克隆（B 侧拨号与心跳上报直连地址共用；endpoint 是句柄，克隆廉价）
+    pub fn endpoint(&self) -> Option<iroh::Endpoint> {
+        self.endpoint.lock().unwrap().clone()
     }
 
-    /// 向服务端探测口报到（P3）：从 QUIC 端点同端口发出，服务端据此观测本端 NAT 映射
-    pub fn send_probe(&self, probe_addr: SocketAddr, token: [u8; 16]) {
-        let Some(socket) = self.punch_socket.lock().unwrap().clone() else {
-            return;
-        };
-        tokio::spawn(async move { send_probe_packets(&socket, probe_addr, token).await });
-    }
-
-    /// 本端 QUIC 监听地址（测试与诊断）
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    /// 当前直连地址集（心跳上报；iroh 随网络环境刷新）
+    pub fn direct_addrs(&self) -> Vec<String> {
         self.endpoint
             .lock()
             .unwrap()
             .as_ref()
-            .map(|endpoint| endpoint.local_addr())
-            .unwrap_or_else(|| Err(std::io::Error::other("data plane is shut down")))
+            .map(|e| {
+                e.addr()
+                    .addrs
+                    .iter()
+                    .filter_map(|t| match t {
+                        iroh::TransportAddr::Ip(addr) => Some(addr.to_string()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
-    /// 放行会话对端指纹并登记读写权限（session.request 接受时调用）
-    pub fn allow_session(&self, session_id: &str, fingerprint: [u8; 32], writable: bool) {
-        match self.registry.allow(session_id, fingerprint, writable) {
-            Some(previous) if previous.fingerprint == fingerprint => {}
-            Some(previous) => {
-                self.allowlist.remove(&previous.fingerprint);
-                self.allowlist.add(fingerprint);
-            }
-            None => self.allowlist.add(fingerprint),
-        }
+    /// 放行会话对端身份并登记读写权限（session.request 接受时调用）
+    pub fn allow_session(&self, session_id: &str, peer: EndpointId, writable: bool) {
+        self.registry.allow(session_id, peer, writable);
     }
 
     /// 等待该会话的首个隧道请求（接受会话后的超时清理用）
@@ -329,16 +271,22 @@ impl DataPlane {
 
     /// 收回会话放行并断开其连接（session.cancelled / 会话结束）
     pub fn disallow_session(&self, session_id: &str) {
-        let Some((fingerprint, ids)) = self.registry.disallow(session_id) else {
+        let Some((_, ids)) = self.registry.disallow(session_id) else {
             return;
         };
-        self.allowlist.remove(&fingerprint);
-        self.close_connections(&ids);
+        if ids.is_empty() {
+            return;
+        }
+        let mut by_id = self.conn_by_id.lock().unwrap();
+        for id in ids {
+            if let Some(conn) = by_id.remove(&id) {
+                conn.close(0u32.into(), b"session ended");
+            }
+        }
     }
 
     /// 通道重连时重置：旧会话的放行与连接全部失效（B 侧会感知断开并自行收尾）
     pub fn reset_peers(&self) {
-        self.allowlist.clear();
         self.registry.reset();
         let by_id = std::mem::take(&mut *self.conn_by_id.lock().unwrap());
         for conn in by_id.into_values() {
@@ -346,121 +294,44 @@ impl DataPlane {
         }
     }
 
-    fn close_connections(&self, ids: &[usize]) {
-        if ids.is_empty() {
-            return;
-        }
-        let mut by_id = self.conn_by_id.lock().unwrap();
-        for id in ids {
-            if let Some(conn) = by_id.remove(id) {
-                conn.close(0u32.into(), b"session ended");
-            }
-        }
-    }
-
-    /// A 侧 accept 循环（直连 UDP 与中继 WS 路径经 mux 收口，共用同一逻辑）
+    /// A 侧 accept 循环：非放行对端建立连接后立即断开（执法点）
     async fn accept_loop(self: Arc<Self>, router: axum::Router) {
         let Some(endpoint) = self.endpoint.lock().unwrap().clone() else {
             return;
         };
-        accept_connections(
-            endpoint,
-            router,
-            self.conn_by_id.clone(),
-            self.conn_seq.clone(),
-            self.registry.clone(),
-        )
-        .await;
-    }
-}
-
-/// B 侧连接（P4 mux 客户端形态）：endpoint 建在调用方预建的 mux 上（候选洪泛/中继路径
-/// 由调用方在握手前配好；mux 内 socket 须已设非阻塞）；endpoint 与 mux 须随连接持有保活
-pub async fn connect_mux(
-    identity: &Identity,
-    mux: Arc<MuxSocket>,
-    expected: [u8; 32],
-    timeout: Duration,
-) -> Result<(quinn::Endpoint, quinn::Connection), String> {
-    let mut endpoint = quinn::Endpoint::new_with_abstract_socket(
-        quinn::EndpointConfig::default(),
-        None,
-        mux,
-        runtime()?,
-    )
-    .map_err(|e| format!("端点创建失败: {e}"))?;
-    endpoint.set_default_client_config(tls::client_config(identity, expected)?);
-    let connecting = endpoint
-        .connect(crate::remote::mux::MUX_PEER, "hawk-remote")
-        .map_err(|e| format!("隧道连接发起失败: {e}"))?;
-    let conn = tokio::time::timeout(timeout, connecting)
-        .await
-        .map_err(|_| format!("隧道握手超时（{timeout:?}）"))?
-        .map_err(|e| format!("隧道握手失败: {e}"))?;
-    Ok((endpoint, conn))
-}
-
-/// 自建 UDP socket（双栈优先回退 v4）+ try_clone 开口句柄；返回的端点 socket 已设非阻塞
-/// （quinn 要求），开口句柄与其共享同一底层端口（P3 打洞的 NAT 映射前提）
-fn bind_udp_socket(port: u16) -> Result<(std::net::UdpSocket, Arc<std::net::UdpSocket>), String> {
-    let v6 = SocketAddr::from(([0u16; 8], port));
-    let socket = std::net::UdpSocket::bind(v6)
-        .or_else(|_| std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port))))
-        .map_err(|e| format!("QUIC 端口 {port} 绑定失败: {e}"))?;
-    let punch = socket
-        .try_clone()
-        .map_err(|e| format!("QUIC socket 克隆失败: {e}"))?;
-    socket
-        .set_nonblocking(true)
-        .map_err(|e| format!("QUIC socket 非阻塞设置失败: {e}"))?;
-    Ok((socket, Arc::new(punch)))
-}
-
-/// A 侧 accept 循环：每条连接归档对端指纹，每条双向流按 HTTP/1.1 连接服务
-async fn accept_connections(
-    endpoint: quinn::Endpoint,
-    router: axum::Router,
-    conn_by_id: Arc<Mutex<HashMap<usize, quinn::Connection>>>,
-    conn_seq: Arc<AtomicU64>,
-    registry: SessionRegistry,
-) {
-    while let Some(incoming) = endpoint.accept().await {
-        let Ok(connecting) = incoming.accept() else {
-            continue;
-        };
-        let router = router.clone();
-        let conn_by_id = conn_by_id.clone();
-        let registry = registry.clone();
-        let conn_id = conn_seq.fetch_add(1, Ordering::Relaxed) as usize;
-        tokio::spawn(async move {
-            let Ok(conn) = connecting.await else {
-                return;
+        while let Some(incoming) = endpoint.accept().await {
+            let Ok(conn) = incoming.await else {
+                continue;
             };
-            let peer = peer_fingerprint(&conn);
-            conn_by_id.lock().unwrap().insert(conn_id, conn.clone());
-            while let Ok((send, recv)) = conn.accept_bi().await {
-                tokio::spawn(serve_http(
-                    router.clone(),
-                    peer,
-                    conn_id,
-                    registry.clone(),
-                    recv,
-                    send,
-                ));
+            let peer = conn.remote_id();
+            if !self.registry.is_allowed(peer) {
+                tracing::debug!("未放行对端 {peer} 的连接，断开");
+                conn.close(0u32.into(), b"not allowed");
+                continue;
             }
-            // 连接关闭：从会话绑定与连接表中移除
-            registry.forget_conn(conn_id);
-            conn_by_id.lock().unwrap().remove(&conn_id);
-        });
+            let router = router.clone();
+            let registry = self.registry.clone();
+            let conn_by_id = self.conn_by_id.clone();
+            let conn_id =
+                self.conn_seq
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed) as usize;
+            conn_by_id.lock().unwrap().insert(conn_id, conn.clone());
+            tokio::spawn(async move {
+                while let Ok((send, recv)) = conn.accept_bi().await {
+                    tokio::spawn(serve_http(
+                        router.clone(),
+                        Some(peer),
+                        conn_id,
+                        registry.clone(),
+                        recv,
+                        send,
+                    ));
+                }
+                registry.forget_conn(conn_id);
+                conn_by_id.lock().unwrap().remove(&conn_id);
+            });
+        }
     }
-}
-
-fn peer_fingerprint(conn: &quinn::Connection) -> Option<[u8; 32]> {
-    let certs = conn
-        .peer_identity()?
-        .downcast::<Vec<quinn::rustls::pki_types::CertificateDer<'static>>>()
-        .ok()?;
-    Some(tls::fingerprint_of(certs.first()?.as_ref()))
 }
 
 fn tunnel_response(status: StatusCode) -> axum::response::Response {
@@ -473,11 +344,11 @@ fn tunnel_response(status: StatusCode) -> axum::response::Response {
 /// A 侧隧道端：一条双向流 = 一条 HTTP/1.1 连接，进程内转发给 API 路由
 async fn serve_http(
     router: axum::Router,
-    peer: Option<[u8; 32]>,
+    peer: Option<EndpointId>,
     conn_id: usize,
     registry: SessionRegistry,
-    recv: quinn::RecvStream,
-    send: quinn::SendStream,
+    recv: iroh::endpoint::RecvStream,
+    send: iroh::endpoint::SendStream,
 ) {
     let io = TokioIo::new(tokio::io::join(recv, send));
     let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
@@ -523,14 +394,14 @@ async fn serve_http(
 // ---------- B 侧会话代理 ----------
 
 pub struct ProxyContext {
-    /// 当前隧道连接（P4：连接级重建会热替换；与 ActiveSession 共享单元格，读锁克隆开销可忽略）
-    pub conn: Arc<std::sync::RwLock<quinn::Connection>>,
+    /// 当前隧道连接（连接级重建会热替换；与 SessionManager 共享单元格）
+    pub conn: Arc<std::sync::RwLock<iroh::endpoint::Connection>>,
     pub token: String,
     /// 隧道会话 id：每个转发请求带上，A 侧据此判定读写权限
     pub session_id: String,
 }
 
-/// 启动会话代理：环回 HTTP 监听，token 门禁，逐请求开 QUIC 流转发。
+/// 启动会话代理：环回 HTTP 监听，token 门禁，逐请求开流转发。
 /// 代理响应剥掉 CORS 头（协议安全模型：远程查看不放开跨源）
 pub async fn serve_proxy(ctx: Arc<ProxyContext>, listener: tokio::net::TcpListener) {
     let app = axum::Router::new().fallback(proxy_handler).with_state(ctx);
@@ -604,4 +475,50 @@ fn token_valid(req: &axum::extract::Request, token: &str) -> bool {
                 .map(|(_, v)| v)
         })
         .is_some_and(|value| value == token)
+}
+
+/// Windows 防火墙入站规则（首次启用隧道监听时添加，幂等）：无规则时入站 UDP 会被静默丢弃。
+/// 规则名带端口（多库错开端口时各有一条）
+#[cfg(windows)]
+async fn ensure_firewall_rule_windows(quic_port: u16) {
+    let rule_name = format!("hawk-remote QUIC {quic_port}");
+    let rule = rule_name.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let exists = std::process::Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "show",
+                "rule",
+                &format!("name={rule}"),
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if exists {
+            return true;
+        }
+        std::process::Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                &format!("name={rule}"),
+                "dir=in",
+                "action=allow",
+                "protocol=UDP",
+                &format!("localport={quic_port}"),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+    .await;
+    match outcome {
+        Ok(true) => tracing::info!("Windows 防火墙入站规则就绪: {rule_name}"),
+        _ => tracing::warn!(
+            "Windows 防火墙入站规则添加失败（隧道入站可能被拦截，可手动放行 UDP {quic_port}）"
+        ),
+    }
 }

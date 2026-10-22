@@ -1,10 +1,8 @@
-//! 设备身份：`.hawk/remote/identity.json`（device_id + QUIC 自签证书与指纹）。
-//! 库级本地专用目录，不参与同步。证书指纹在服务端登记（TOFU 钉扎的锚点）；
-//! 轮换身份 = 删除该文件后重新注册。
+//! 设备身份：`remote/identity.json`（device_id + iroh 密钥对）。
+//! 库级本地专用目录，不参与同步。endpoint_id（Ed25519 公钥）在服务端登记
+//! （iroh 握手按公钥认证，无单独钉扎环节）；轮换身份 = 换钥后重新注册。
 
-use base64::Engine;
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -12,24 +10,26 @@ pub struct Identity {
     /// 服务端分配的设备 id（首次注册成功后回填）
     #[serde(default)]
     pub device_id: Option<String>,
-    /// 自签名证书 DER（base64）：数据面 QUIC 身份，指纹 = sha256(cert_der)
-    pub cert_der_b64: String,
-    /// 证书私钥 DER（base64，PKCS#8）
-    pub key_der_b64: String,
-    pub fingerprint: String,
+    /// iroh SecretKey（hex）
+    pub secret_key_hex: String,
+    /// iroh EndpointId（公钥 hex）
+    pub endpoint_id: String,
 }
 
 impl Identity {
-    /// 读取设备身份；不存在则生成自签证书并落盘（device_id 留空待注册）
+    /// 读取设备身份；不存在则生成密钥对并落盘（device_id 留空待注册）
     pub fn load_or_create(remote_dir: &str) -> Result<Identity, String> {
         let file = identity_file(remote_dir);
         match std::fs::read(&file) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|e| format!("设备身份文件解析失败 {}: {e}", file.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let identity = Identity::generate()?;
+                let identity = Identity::generate();
                 identity.persist(remote_dir)?;
-                tracing::info!("已生成远程访问设备身份（指纹 {}）", identity.fingerprint);
+                tracing::info!(
+                    "已生成远程访问设备身份（endpoint {}）",
+                    identity.endpoint_id
+                );
                 Ok(identity)
             }
             Err(e) => Err(format!("设备身份文件读取失败 {}: {e}", file.display())),
@@ -57,46 +57,48 @@ impl Identity {
             .map_err(|e| format!("设备身份替换失败 {}: {e}", file.display()))
     }
 
-    /// 证书轮换：重新生成自签证书与指纹，device_id 保持不变（调用方负责同步服务端并落盘）
-    pub fn rotate_cert(&mut self) -> Result<(), String> {
-        let (cert_der_b64, key_der_b64, fingerprint) = generate_cert()?;
-        self.cert_der_b64 = cert_der_b64;
-        self.key_der_b64 = key_der_b64;
-        self.fingerprint = fingerprint;
-        Ok(())
+    /// iroh SecretKey 还原
+    pub fn secret_key(&self) -> Result<iroh::SecretKey, String> {
+        let bytes = hex_decode(&self.secret_key_hex)?;
+        let bytes: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| "设备私钥长度非法".to_string())?;
+        Ok(iroh::SecretKey::from_bytes(&bytes))
     }
 
-    fn generate() -> Result<Identity, String> {
-        let (cert_der_b64, key_der_b64, fingerprint) = generate_cert()?;
-        Ok(Identity {
+    /// 身份轮换：重新生成密钥对，device_id 保持不变（调用方负责同步服务端并落盘）
+    pub fn rotate(&mut self) {
+        let secret_key = iroh::SecretKey::generate();
+        self.endpoint_id = secret_key.public().to_string();
+        self.secret_key_hex = hex_encode(&secret_key.to_bytes());
+    }
+
+    fn generate() -> Identity {
+        let secret_key = iroh::SecretKey::generate();
+        Identity {
             device_id: None,
-            cert_der_b64,
-            key_der_b64,
-            fingerprint,
-        })
+            endpoint_id: secret_key.public().to_string(),
+            secret_key_hex: hex_encode(&secret_key.to_bytes()),
+        }
     }
-}
-
-/// 生成自签证书材料：(证书 DER b64, 私钥 DER b64, 指纹 hex)
-fn generate_cert() -> Result<(String, String, String), String> {
-    let rcgen::CertifiedKey { cert, key_pair } =
-        rcgen::generate_simple_self_signed(vec!["hawk-remote".to_string()])
-            .map_err(|e| format!("设备证书生成失败: {e}"))?;
-    let cert_der = cert.der();
-    let fingerprint = hex(sha2::Sha256::digest(cert_der));
-    Ok((
-        base64::engine::general_purpose::STANDARD.encode(cert_der),
-        base64::engine::general_purpose::STANDARD.encode(key_pair.serialize_der()),
-        fingerprint,
-    ))
 }
 
 fn identity_file(remote_dir: &str) -> PathBuf {
     Path::new(remote_dir).join("identity.json")
 }
 
-fn hex(bytes: impl AsRef<[u8]>) -> String {
-    bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
+    if !s.len().is_multiple_of(2) {
+        return Err("hex 长度非法".to_string());
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| format!("hex 解码失败: {e}")))
+        .collect()
 }
 
 #[cfg(test)]
@@ -111,32 +113,31 @@ mod tests {
 
         let first = Identity::load_or_create(remote_dir).unwrap();
         assert!(first.device_id.is_none());
-        assert_eq!(first.fingerprint.len(), 64);
+        assert_eq!(first.endpoint_id.len(), 64);
 
-        // 注册回填 device_id 后落盘
         let mut registered = first.clone();
         registered.device_id = Some("d_test".to_string());
         registered.persist(remote_dir).unwrap();
 
         let loaded = Identity::load_or_create(remote_dir).unwrap();
         assert_eq!(loaded.device_id.as_deref(), Some("d_test"));
-        assert_eq!(loaded.fingerprint, first.fingerprint);
-        assert_eq!(loaded.cert_der_b64, first.cert_der_b64);
+        assert_eq!(loaded.endpoint_id, first.endpoint_id);
+        assert_eq!(loaded.secret_key_hex, first.secret_key_hex);
     }
 
     #[test]
-    fn rotate_cert_changes_fingerprint_keeps_device_id() {
+    fn rotate_changes_endpoint_id_keeps_device_id() {
         let dir = tempfile::tempdir().unwrap();
         let remote_dir = dir.path().join("remote");
         let mut identity = Identity::load_or_create(remote_dir.to_str().unwrap()).unwrap();
         identity.device_id = Some("d_keep".to_string());
-        let old_fingerprint = identity.fingerprint.clone();
-        let old_cert = identity.cert_der_b64.clone();
+        let old_id = identity.endpoint_id.clone();
+        let old_key = identity.secret_key_hex.clone();
 
-        identity.rotate_cert().unwrap();
+        identity.rotate();
         assert_eq!(identity.device_id.as_deref(), Some("d_keep"));
-        assert_ne!(identity.fingerprint, old_fingerprint);
-        assert_ne!(identity.cert_der_b64, old_cert);
-        assert_eq!(identity.fingerprint.len(), 64);
+        assert_ne!(identity.endpoint_id, old_id);
+        assert_ne!(identity.secret_key_hex, old_key);
+        assert_eq!(identity.endpoint_id.len(), 64);
     }
 }

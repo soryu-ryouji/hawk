@@ -113,8 +113,8 @@ export async function remoteDeleteDevice(deviceId: string): Promise<void> {
   await daemonCall('DELETE', `/api/v1/remote/devices/${encodeURIComponent(deviceId)}`);
 }
 
-export async function remoteRotate(): Promise<{ fingerprint: string }> {
-  return daemonCall<{ fingerprint: string }>('POST', '/api/v1/remote/device/rotate');
+export async function remoteRotate(): Promise<{ endpoint_id: string }> {
+  return daemonCall<{ endpoint_id: string }>('POST', '/api/v1/remote/device/rotate');
 }
 
 // ---------- 访问密钥（hawk-app key）管理：透传 daemon（admin token 不出主进程） ----------
@@ -138,11 +138,11 @@ export async function remoteDeleteKey(id: string): Promise<{ synced: boolean }> 
   return daemonCall<{ synced: boolean }>('DELETE', `/api/v1/remote/keys/${encodeURIComponent(id)}`);
 }
 
-/** 建立远程会话并切换连接描述符；失败抛错（message 直接展示） */
-export async function remoteConnect(targetDeviceId: string, mode: 'direct' | 'relay' = 'direct'): Promise<ConnectionDescriptor> {
+/** 建立远程会话并切换连接描述符；失败抛错（message 直接展示）。
+ *  直连/打洞/中继由传输层自治（是否用中继由两端静态开关决定，无逐次确认） */
+export async function remoteConnect(targetDeviceId: string): Promise<ConnectionDescriptor> {
   const session = await daemonCall<RemoteSessionDto>('POST', '/api/v1/remote/session', {
     target_device_id: targetDeviceId,
-    mode,
   });
   remoteConn = {
     api_base: `http://127.0.0.1:${session.proxy_port}`,

@@ -53,7 +53,8 @@ cargo run -- tenant add --label dev
 | ---- | -------- | ------ | ---- |
 | `--port` | `HAWK_SERVER_PORT` | `9100` | 监听端口，绑定 `0.0.0.0`。本进程只说明文 HTTP，TLS 由前置反代终结 |
 | `--admin-port` | `HAWK_SERVER_ADMIN_PORT` | `9110` | 管理面监听端口（租户管理），**只绑 `127.0.0.1`**，不鉴权；不得经反代/防火墙暴露 |
-| `--probe-port` | `HAWK_SERVER_PROBE_PORT` | `9101` | 打洞探测口（**UDP**，P3 NAT 打洞的 observed endpoint 观测），需公网直达；`0` = 关闭打洞编排（无直连候选的会话直接 unreachable）。绑定失败只降级不阻断启动 |
+| `--relay-port` | `HAWK_SERVER_RELAY_PORT` | `9102` | 内嵌中继监听端口（iroh-relay：打洞协调 + 数据兜底，TCP/WS） |
+| `--relay-url` | `HAWK_SERVER_RELAY_URL` | 空 | 内嵌中继的公网入口 URL（`http://<主机>:9102` 或反代域名）；**未配置即不提供中继**（纯直连部署：无打洞协调，只有直连地址可达的会话能建立）。准入 token 自动生成于数据目录 `relay_token`，经控制面下发 |
 | `--data-dir` | `HAWK_SERVER_DATA_DIR` | `~/.config/hawk-server` | 状态目录（全平台统一的家目录约定，与 hawk-app 的 `~/.config/hawk` 同族）；不存在则自动创建 |
 
 - 日志走 stdout，级别由 `RUST_LOG` 控制（默认 `info`）；排障时 `RUST_LOG=debug`，启动成功会打印 `hawk-server listening`。
@@ -266,8 +267,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 | 插件保存返回 413 | 反代请求体上限过小（nginx 默认 1MB）：配置 `client_max_body_size 256m` |
 | 插件保存返回 403 `目标设备未开启广域网写入` / `remote writer is limited...` | 目标设备未开启远程访问的 `writable`，或该 key 无写权限；按提示检查目标设备设置 |
 | 心跳返回 429 | 心跳间隔小于 10s，检查客户端配置 |
-| 日志「打洞探测未在 Xs 内到齐」 | 未到齐一侧的探测包没到服务器：该侧 daemon 过旧（v2.3.0 前不认识 `session.probe`）、探测口 UDP 被安全组/防火墙拦（用 `tools/check-probe-port.mjs` 验证）、或该侧网络拦出站 UDP |
-| 日志「打洞编排就绪」但客户端连接超时 | 至少一侧是对称型 NAT（观测端口随目的地址变化），打洞必然失败，属预期——客户端开「中继回退」走中继。蜂窝热点/移动数据几乎必为对称型 NAT 且常禁入站 UDP，是打洞成功率最低的测试环境，别用它下结论 |
+| 会话 `unreachable` | 本部署未提供中继且目标无直连地址（心跳 `addrs` 为空）；开中继（`--relay-url`）或换网络 |
+| 直连慢/一直停留在中继 | 打洞受 NAT 类型限制（对称型 NAT 打不通属预期，iroh 也同样）；`daemon.log` 看 iroh 日志 |
 | 服务端日志看会话细节 | `RUST_LOG=debug` 重启；systemd 部署用 `journalctl -u hawk-server -f` |
 
 ## 相关文档

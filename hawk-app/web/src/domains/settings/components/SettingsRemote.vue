@@ -86,7 +86,7 @@ async function save() {
     url: url.value.trim(),
     service_key: serviceKey.value.trim(),
     writable: writable.value,
-    relay_fallback: store.relayFallback,
+    relay: store.relayEnabled,
   });
   saving.value = false;
   if (!ok) {
@@ -341,11 +341,11 @@ async function removeDevice(deviceId: string, name: string) {
         </div>
         <div class="switch-row">
           <div>
-            <div class="switch-label">中继回退</div>
+            <div class="switch-label">使用中继</div>
             <p class="hint">直连失败时询问是否经服务端中继继续（素材流量经过你的服务器带宽，内容端到端加密）。</p>
           </div>
-          <label class="switch" title="直连失败时经服务端中继回退">
-            <input :checked="store.relayFallback" type="checkbox" @change="store.setRelayFallback(($event.target as HTMLInputElement).checked)" />
+          <label class="switch" title="直连失败时经服务端使用中继">
+            <input :checked="store.relayEnabled" type="checkbox" @change="store.setRelayEnabled(($event.target as HTMLInputElement).checked)" />
             <span class="track" />
           </label>
         </div>

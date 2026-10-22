@@ -31,8 +31,7 @@
   - [x] 实现 Chrome 浏览器插件
 - 2.0 版本
   - [x] 实现 hawk remote 协议，支持广域网素材库查看（自托管 hawk-server + QUIC 直连/中继 + 网页版）与插件远程保存（受限写）
-  - [x] NAT 穿透栈：LAN 候选 → UPnP/NAT-PMP 映射 → IPv6 → UDP 打洞，全候选握手层并行竞速，中继兜底
-  - [x] 统一传输 socket 与路径迁移（mux 单 endpoint：UDP 静默自动降级中继、断线原地重建，对标 iroh magicsock）
+  - [x] NAT 穿透栈：传输层为 iroh（打洞/中继/路径迁移/映射保活内建），中继为服务端可选组件（内嵌 iroh-relay，token 准入）
 - 3.0 版本
   - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
   - [ ] 实现 ios, android 等移动端 app

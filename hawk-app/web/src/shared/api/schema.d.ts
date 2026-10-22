@@ -1452,8 +1452,8 @@ export interface components {
         Envelope_RemoteDto: {
             data?: {
                 enabled: boolean;
-                /** @description 中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽） */
-                relay_fallback: boolean;
+                /** @description 使用中继（服务端提供时；消耗自建带宽，设备级开关） */
+                relay: boolean;
                 /** @description 服务端 service-key（池门禁凭证，hawk-server tenant add 生成） */
                 service_key: string;
                 /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
@@ -1475,7 +1475,7 @@ export interface components {
         Envelope_RotateDeviceDto: {
             data?: {
                 /** @description 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效） */
-                fingerprint: string;
+                endpoint_id: string;
             };
             status: string;
         };
@@ -1885,8 +1885,8 @@ export interface components {
         };
         PutRemoteBody: {
             enabled: boolean;
-            /** @description 中继回退（直连失败/UDP 静默时经服务端中继）；省略时保留现值 */
-            relay_fallback?: boolean | null;
+            /** @description 使用中继（服务端提供时）；省略时保留现值 */
+            relay?: boolean | null;
             /** @description 服务端 service-key */
             service_key: string;
             url: string;
@@ -1926,8 +1926,8 @@ export interface components {
         };
         RemoteDto: {
             enabled: boolean;
-            /** @description 中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽） */
-            relay_fallback: boolean;
+            /** @description 使用中继（服务端提供时；消耗自建带宽，设备级开关） */
+            relay: boolean;
             /** @description 服务端 service-key（池门禁凭证，hawk-server tenant add 生成） */
             service_key: string;
             /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
@@ -1969,7 +1969,7 @@ export interface components {
         };
         RotateDeviceDto: {
             /** @description 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效） */
-            fingerprint: string;
+            endpoint_id: string;
         };
         ScanInfo: {
             /**

@@ -6,12 +6,8 @@ pub mod config;
 pub mod data;
 pub mod identity;
 pub mod keys;
-pub mod mux;
-pub mod reachability;
-pub mod relay;
 pub mod session;
 pub mod signal;
-pub mod tls;
 
 use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
@@ -63,6 +59,9 @@ pub struct Supervisor {
     bus: EventBus,
     /// B 侧会话编排（单活动会话；生命周期事件经 SSE 推送）
     pub sessions: Arc<session::SessionManager>,
+    /// 数据面槽位：signal 任务持有 DataPlane 生命周期并在此发布，
+    /// SessionManager 经槽位取 endpoint 拨号（None = 未接入/未启用）
+    endpoint_slot: session::EndpointSlot,
     /// 访问密钥（hawk-app key）本地签发与保管（查看者会话的本地执法依据）
     pub keys: Arc<keys::KeyStore>,
     /// 应用级远程配置（接入参数跨素材库共享；身份目录由配置位置派生）
@@ -71,11 +70,17 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new(bus: EventBus, config: Arc<RemoteConfigStore>) -> Arc<Supervisor> {
+        let endpoint_slot = session::EndpointSlot::default();
         Arc::new(Supervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new(RemoteStatus::default()),
-            sessions: session::SessionManager::new(bus.clone(), config.clone()),
+            sessions: session::SessionManager::new(
+                bus.clone(),
+                config.clone(),
+                endpoint_slot.clone(),
+            ),
             keys: keys::KeyStore::open(config.identity_dir()),
+            endpoint_slot,
             bus,
             config,
         })
@@ -83,6 +88,11 @@ impl Supervisor {
 
     pub fn remote_config(&self) -> &Arc<RemoteConfigStore> {
         &self.config
+    }
+
+    /// 数据面槽位访问（signal 任务发布/清空，SessionManager 读取）
+    pub fn endpoint_slot(&self) -> &session::EndpointSlot {
+        &self.endpoint_slot
     }
 
     /// 唤醒收敛（watcher 配置变更回调同步调用；Notify 无等待者时记 permit，不丢事件）

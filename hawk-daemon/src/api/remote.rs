@@ -31,8 +31,8 @@ struct RemoteDto {
     service_key: String,
     /// 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）
     writable: bool,
-    /// 中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽）
-    relay_fallback: bool,
+    /// 使用中继（服务端提供时；消耗自建带宽，设备级开关）
+    relay: bool,
     /// 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因
     status: RemoteStatus,
 }
@@ -44,7 +44,7 @@ fn remote_dto(state: &SharedState) -> RemoteDto {
         url: cfg.url,
         service_key: cfg.service_key,
         writable: cfg.writable,
-        relay_fallback: cfg.relay_fallback,
+        relay: cfg.relay,
         status: state.remote.snapshot(),
     }
 }
@@ -73,9 +73,9 @@ struct PutRemoteBody {
     /// 允许广域网会话导入素材/新建文件夹；省略时按关闭处理
     #[serde(default)]
     writable: bool,
-    /// 中继回退（直连失败/UDP 静默时经服务端中继）；省略时保留现值
+    /// 使用中继（服务端提供时）；省略时保留现值
     #[serde(default)]
-    relay_fallback: Option<bool>,
+    relay: Option<bool>,
 }
 
 /// 写回应用级 remote.toml 并热重启信令（admin 限定）。
@@ -101,9 +101,9 @@ async fn put_remote(
         quic_port: state.remote.remote_config().current().quic_port,
         writable: body.writable,
         // 省略时保留现值（设置面板整体保存时会显式携带）
-        relay_fallback: body
-            .relay_fallback
-            .unwrap_or_else(|| state.remote.remote_config().current().relay_fallback),
+        relay: body
+            .relay
+            .unwrap_or_else(|| state.remote.remote_config().current().relay),
     };
     if new_remote.enabled {
         if new_remote.url.is_empty() || new_remote.service_key.is_empty() {
@@ -309,14 +309,7 @@ async fn create_session(
     let dto = state
         .remote
         .sessions
-        .connect(
-            &http,
-            &base,
-            &key,
-            &identity,
-            &body.target_device_id,
-            &body.mode,
-        )
+        .connect(&http, &base, &key, &identity, &body.target_device_id)
         .await
         .map_err(|e| {
             if e.is_server {
@@ -433,7 +426,7 @@ async fn patch_device(
 #[derive(Serialize, utoipa::ToSchema)]
 struct RotateDeviceDto {
     /// 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）
-    fingerprint: String,
+    endpoint_id: String,
 }
 
 /// 注销设备记录（admin 限定）：转发服务端 DELETE /devices/{id}（其进行中会话与 key 映射一并清理）。
@@ -506,19 +499,13 @@ async fn rotate_device(
             "设备未注册（先启用远程接入并完成注册）",
         ));
     }
-    identity.rotate_cert().map_err(|e| {
-        ApiError::new(
-            codes::INTERNAL,
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            e,
-        )
-    })?;
-    // 先同步服务端（新指纹生效），再落盘重启信令
+    identity.rotate();
+    // 先同步服务端（新身份生效），再落盘重启信令
     let device_id = identity.device_id.clone().unwrap();
     let resp = http
         .patch(format!("{base}/api/v1/devices/{device_id}"))
         .bearer_auth(&key)
-        .json(&serde_json::json!({ "fingerprint": identity.fingerprint }))
+        .json(&serde_json::json!({ "endpoint_id": identity.endpoint_id }))
         .send()
         .await
         .map_err(|e| bad_gateway(format!("服务端不可达: {e}")))?;
@@ -536,7 +523,7 @@ async fn rotate_device(
         })?;
     state.remote.wake();
     Ok(Json(Envelope::ok(RotateDeviceDto {
-        fingerprint: identity.fingerprint,
+        endpoint_id: identity.endpoint_id,
     })))
 }
 

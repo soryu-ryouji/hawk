@@ -7,6 +7,7 @@ description = "hawk 素材管理后端"
 license = "AGPL-3.0-only"
 
 [dependencies]
+iroh = { version = "1.4", features = ["tls-ring"] }
 axum = { version = "0.8", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
@@ -27,7 +28,6 @@ getrandom = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
-rcgen = "0.13"
 gethostname = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -38,11 +38,8 @@ filetime = "0.2.29"
 async-stream = "0.3.6"
 utoipa = { version = "5.5.0", features = ["axum_extras"] }
 utoipa-axum = "0.2.0"
-quinn = "0.11.12"
-igd-next = "0.18.0"
 hyper = { version = "1.12.0", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
-default-net = "0.22.0"
 
 [profile.release]
 lto = true
@@ -50,5 +47,6 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+iroh-relay = { version = "1.4", features = ["server"] }
 jsonschema = { version = "0.53.0", default-features = false }
 tempfile = "3"

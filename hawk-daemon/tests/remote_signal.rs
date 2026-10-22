@@ -24,9 +24,6 @@ const KEY: &str = "hs_test-service-key";
 /// 串行化数据面测试：hot_restart 使用固定 UDP 端口，并发测试的 quic_port=0 可能抢占它
 static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// 探测口收包记录（源端口, token）
-type ProbedPackets = Arc<Mutex<Vec<(u16, [u8; 16])>>>;
-
 #[derive(Clone, Default)]
 struct MockHub {
     heartbeats: Arc<AtomicU64>,
@@ -48,15 +45,9 @@ struct MockHub {
     kick: Arc<std::sync::atomic::AtomicBool>,
     /// 控制通道连接计数（静默看门狗重连回归用）
     ws_connects: Arc<AtomicU64>,
-    /// 打洞编排开关（P3）：accept 后推送 session.probe + session.update(ready, punch_peer)
-    punch: Arc<std::sync::atomic::AtomicBool>,
-    /// 探测口 / 开口 sink 端口（spawn 时绑定，收包记录到 probed/punched）
-    probe_port: Arc<std::sync::atomic::AtomicU16>,
-    punch_sink_port: Arc<std::sync::atomic::AtomicU16>,
-    /// 探测口收到的报到（源端口, token）
-    probed: ProbedPackets,
-    /// 开口 sink 收到的垃圾包源端口
-    punched: Arc<Mutex<Vec<u16>>>,
+    /// 「对端」设备的合法 endpoint_id（iroh 身份是 Ed25519 公钥，随机 hex 不一定是合法点——
+    /// 无效身份会落入「接受但不放行」分支，执法断言全失效）
+    peer_endpoint_id: String,
 }
 
 /// mock 心跳限速窗口（比协议的 10s 小，测试节奏用）
@@ -89,37 +80,10 @@ impl MockHub {
 }
 
 async fn spawn_mock_hub() -> (String, MockHub) {
-    let hub = MockHub::default();
-    // P3：探测口与开口 sink（仅 punch 开关开启的测试产生流量）
-    let probe_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    hub.probe_port
-        .store(probe_socket.local_addr().unwrap().port(), Ordering::Relaxed);
-    let punch_sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    hub.punch_sink_port
-        .store(punch_sink.local_addr().unwrap().port(), Ordering::Relaxed);
-    {
-        let hub = hub.clone();
-        tokio::spawn(async move {
-            let mut buf = [0u8; 128];
-            while let Ok((len, from)) = probe_socket.recv_from(&mut buf).await {
-                if len >= 21 && &buf[..5] == b"HAWKP" {
-                    let token: [u8; 16] = buf[5..21].try_into().unwrap();
-                    hub.probed.lock().unwrap().push((from.port(), token));
-                }
-            }
-        });
-    }
-    {
-        let hub = hub.clone();
-        tokio::spawn(async move {
-            let mut buf = [0u8; 128];
-            while let Ok((len, from)) = punch_sink.recv_from(&mut buf).await {
-                if len == 16 && &buf[..9] == b"HAWKPUNCH" {
-                    hub.punched.lock().unwrap().push(from.port());
-                }
-            }
-        });
-    }
+    let hub = MockHub {
+        peer_endpoint_id: iroh::SecretKey::generate().public().to_string(),
+        ..MockHub::default()
+    };
     let app = Router::new()
         .route("/api/v1/devices", post(register).get(devices))
         .route("/api/v1/devices/heartbeat", post(heartbeat))
@@ -159,7 +123,7 @@ async fn register(
             .into_response();
     }
     assert_eq!(body["status"], Value::Null); // 请求体不带信封
-    assert!(body["fingerprint"].as_str().unwrap().len() == 64);
+    assert!(body["endpoint_id"].as_str().unwrap().len() == 64);
     let n = hub.register_count.fetch_add(1, Ordering::Relaxed) + 1;
     Json(json!({"status":"success","data":{"device_id":format!("d_{n}")}})).into_response()
 }
@@ -204,10 +168,10 @@ async fn devices(headers: axum::http::HeaderMap) -> Response {
     if !authorized(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let fingerprint = "11".repeat(32);
+    let endpoint_id = "11".repeat(32); // 列表展示用（不走拨号，无需合法公钥）
     Json(json!({"status":"success","data":{"devices":[
         {"device_id":"d_other","name":"对方","platform":"macos","library_name":"库",
-         "online":true,"allow_remote":true,"allow_write":true,"fingerprint":fingerprint}
+         "online":true,"allow_remote":true,"allow_write":true,"endpoint_id":endpoint_id}
     ]}}))
     .into_response()
 }
@@ -274,7 +238,7 @@ async fn ws_channel(
         let request = json!({
             "type": "session.request",
             "session_id": "s_1",
-            "from": {"device_id":"d_other","name":"对方","library_name":"库","fingerprint":"11".repeat(32)},
+            "from": {"device_id":"d_other","name":"对方","library_name":"库","endpoint_id": hub.peer_endpoint_id},
             "mode": "direct",
             "access": if hub.write_request.load(Ordering::Relaxed) { "write" } else { "read" },
             "credential": *hub.credential.lock().unwrap(),
@@ -283,29 +247,6 @@ async fn ws_channel(
             .send(Message::Text(request.to_string().into()))
             .await
             .unwrap();
-        // P3 打洞编排：等 daemon 完成 accept（REST）后推探测邀约与 ready（含 punch_peer）
-        if hub.punch.load(Ordering::Relaxed) {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            let probe = json!({
-                "type": "session.probe",
-                "session_id": "s_1",
-                "probe_port": hub.probe_port.load(Ordering::Relaxed),
-                "token": "ab".repeat(16),
-            });
-            let _ = socket.send(Message::Text(probe.to_string().into())).await;
-            let update = json!({
-                "type": "session.update",
-                "session_id": "s_1",
-                "state": "ready",
-                "connect": {
-                    "mode": "direct",
-                    "candidates": [],
-                    "punch_peer": {"host": "127.0.0.1", "port": hub.punch_sink_port.load(Ordering::Relaxed)},
-                    "fingerprint": "11".repeat(32),
-                },
-            });
-            let _ = socket.send(Message::Text(update.to_string().into())).await;
-        }
         // 持有连接直至对端关闭（或模拟服务端丢设备/踢下线时主动断开）
         loop {
             tokio::select! {
@@ -383,7 +324,7 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
             service_key: KEY.to_string(),
             quic_port: 0, // OS 分配，避免测试间端口冲突
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -419,62 +360,6 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
     task.abort();
 }
 
-/// P3 打洞 A 侧链路：session.probe → 从 QUIC 端点同端口向探测口报到；
-/// session.update(ready, punch_peer) → 同端口向对端开口。同端口是 P3 的核心不变量
-///（cone NAT 的映射按本地端口建立），由两个 sink 观测到的源端口相等来验证
-#[tokio::test]
-async fn punch_probe_and_opening_share_quic_port() {
-    let _guard = TEST_LOCK.lock().await;
-    let (base, hub) = spawn_mock_hub().await;
-    hub.punch.store(true, Ordering::Relaxed);
-    let lib = test_library();
-    lib.remote
-        .update(&RemoteSettings {
-            enabled: true,
-            url: base,
-            service_key: KEY.to_string(),
-            quic_port: 0,
-            writable: false,
-            relay_fallback: false,
-        })
-        .unwrap();
-
-    let supervisor = Supervisor::new(
-        hawk_daemon::core::events::EventBus::new(),
-        lib.remote.clone(),
-    );
-    let task = tokio::spawn(supervisor.clone().run(
-        Some(hawk_daemon::remote::LibraryContext {
-            paths: lib.paths.clone(),
-            config: lib.config.clone(),
-        }),
-        axum::Router::new(),
-    ));
-
-    wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
-    // accept → mock 推送 session.probe + session.update(ready) → 报到与开口
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        let probed = !hub.probed.lock().unwrap().is_empty();
-        let punched = !hub.punched.lock().unwrap().is_empty();
-        if probed && punched {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "打洞报到/开口超时（probed={} punched={}）",
-            hub.probed.lock().unwrap().len(),
-            hub.punched.lock().unwrap().len()
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let probe_src = hub.probed.lock().unwrap()[0];
-    assert_eq!(probe_src.1, [0xab; 16]);
-    let punch_src = hub.punched.lock().unwrap()[0];
-    assert_eq!(probe_src.0, punch_src, "报到与开口必须与 QUIC 端点同端口");
-    task.abort();
-}
-
 #[tokio::test]
 async fn signal_reports_fatal_on_invalid_key() {
     let _guard = TEST_LOCK.lock().await;
@@ -487,7 +372,7 @@ async fn signal_reports_fatal_on_invalid_key() {
             service_key: "wrong-key".to_string(),
             quic_port: 0,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -528,7 +413,7 @@ async fn signal_re_registers_when_server_forgets_device() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -598,7 +483,7 @@ async fn hot_restart_rebinds_quic_port() {
         service_key: KEY.to_string(),
         quic_port: port,
         writable: false,
-        relay_fallback: false,
+        relay: false,
     };
     lib.remote.update(&remote(&base)).unwrap();
 
@@ -642,7 +527,7 @@ async fn hot_restart_rebinds_quic_port() {
             service_key: String::new(),
             quic_port: port,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
     supervisor.wake();
@@ -674,7 +559,7 @@ async fn ws_404_triggers_re_register() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -737,7 +622,7 @@ async fn write_session_rejected_when_writable_off() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -782,7 +667,7 @@ async fn write_session_rejected_without_credential() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: true,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -831,7 +716,7 @@ async fn heartbeat_429_does_not_break_channel() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -897,7 +782,7 @@ async fn viewer_session_rejected_with_unknown_credential() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: true,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -942,7 +827,7 @@ async fn write_session_accepted_when_writable_on() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: true,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 
@@ -991,7 +876,7 @@ async fn silent_channel_triggers_reconnect() {
             service_key: KEY.to_string(),
             quic_port: 0,
             writable: false,
-            relay_fallback: false,
+            relay: false,
         })
         .unwrap();
 

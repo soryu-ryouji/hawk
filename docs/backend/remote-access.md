@@ -15,7 +15,7 @@
 
 ## 总体架构
 
-两台设备各自的 hawk-daemon 内嵌 remote 模块，彼此之间建立端到端 QUIC 隧道，素材数据始终由「素材库所在机」的 daemon 产出。
+两台设备各自的 hawk-daemon 内嵌 remote 模块，彼此之间经 iroh 建立端到端加密隧道，素材数据始终由「素材库所在机」的 daemon 产出。
 
 ```text
         设备 A（素材库所在机）                      设备 B（查看方）
@@ -31,7 +31,7 @@
 │  ┌──────────────────────┐  │          │  ┌──────────────────────┐  │
 │  │ remote/ 模块          │  │          │  │ remote/ 模块          │  │
 │  │ 信令（注册/心跳/WSS）  │  │          │  │ 信令                  │  │
-│  │ A 侧隧道端 ◄───────────┼──┼─QUIC 隧道（端到端加密）──┤ B 侧会话代理 :p4 │  │
+│  │ A 侧隧道端 ◄───────────┼──┼─iroh 隧道（端到端加密）──┤ B 侧会话代理 :p4 │  │
 │  │ （进程内转发 viewer 级）│  │          │  │ 127.0.0.1，随机 token │  │
 │  └──────────────────────┘  │          │  └──────────────────────┘  │
 └───────────────┬────────────┘          └───────────────┬────────────┘
@@ -42,7 +42,7 @@
               中继为二期，见 remote-protocol.md）
 ```
 
-端口默认值：hawk-server 9100 / daemon API 27371 / LAN web 27372 / QUIC UDP 27373 / B 侧会话代理 27374。本地端口由 daemon 在会话建立时分配空闲端口（不固定绑定）。
+端口默认值：hawk-server 9100 / 内嵌中继 9102（可选组件）/ daemon API 27371 / LAN web 27372 / 远程隧道 UDP 27373。本地端口由 daemon 在会话建立时分配空闲端口（不固定绑定）。
 
 ## 组件职责
 
@@ -51,12 +51,7 @@
 素材库服务本体 + `remote/` 模块承载全部广域网能力：
 
 - 信令客户端：设备注册、周期心跳（30s，携带当前库名与可达性）、WSS 控制通道（自动重连）、设备列表、会话发起与响应
-- 可达性：UPnP/NAT-PMP 端口映射（igd 优先、失败回退 NAT-PMP（RFC 6886 极简客户端，default-net 查默认网关）；期望端口被占时退到网关分配的任意外部端口并上报实际值）、全局 IPv6 与 LAN IPv4 探测上报（均为 UDP connect 出接口，零流量）（阶段 1b/4）
-- 数据面（阶段 1b）：QUIC 隧道端与 B 侧会话代理
-  - A 侧隧道端：隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级或受限远程写权限标记（见安全模型）
-  - B 侧会话代理：环回监听器（supervisor 管理，同 LAN web 模型），每次会话随机 token，web 查看器以 `?token=` 携带，响应不带 CORS 头
-- 状态与事件：经 daemon 现有 REST（`/api/v1/remote/*`）与 SSE 事件暴露给 app 前端与主进程
-
+- 数据面：iroh endpoint（打洞/中继/路径迁移/映射保活全部由 iroh 自治）——A 侧 accept 循环按会话放行集合执法（连接建立后身份不符即断开），隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级或受限远程写权限标记（见安全模型）；B 侧会话代理：环回监听器（supervisor 管理，同 LAN web 模型），每次会话随机 token，web 查看器以 `?token=` 携带，响应不带 CORS 头；连接死亡在原会话内重拨热替换（前端无感）
 **可选子系统约束**：应用级 `remote.toml` 的 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——接入参数变化热重启信令，`writable` 变更热生效不重启；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。热重启时旧数据面（QUIC 端点 + A 侧 accept 循环）随任务一起关停，supervisor 等其结束再拉起新任务，并对端口绑定做短暂重试——避免新一轮绑定自己刚占用的端口；停用后端口立即释放。
 
 **应用级配置与设备身份**：接入配置存 `~/.config/hawk/remote.toml`（Electron 经 `--remote-config` 传入），设备身份存同级的 `remote/identity.json`。两者不再随素材库切换：同一台机器在服务端始终是一台设备，切换库后心跳把设备表的 `library_name` 收敛到当前库。独立运行 daemon 时不传 `--remote-config`，回退到库内 `.hawk/remote.toml` 与 `.hawk/remote/`（测试/单库脚本用）。手工修改 `remote.toml` 需重启 daemon；设置面板经 API 写入即时生效。
@@ -68,6 +63,7 @@ url = "https://hawk.example.com"
 service_key = "hs_<service-key>"
 quic_port = 27373
 writable = false
+relay = false
 ```
 
 访问密钥（hawk-app key）存同级 `remote/keys.json`（sha256 验证子 + 标签 + 权限，0600；明文不落盘）。签发/改权限/吊销走 daemon API（`remote/keys` 端点），变更与每次接入时全量推送 server 映射。
@@ -88,9 +84,9 @@ writable = false
 
 - 多租户准入：`tenant add/list/revoke` CLI 管理 service-key（程序生成 256-bit 随机、明文只打印一次、服务端只存 HMAC 哈希）；池间设备/会话/key 注册表完全隔离；无账号、会员、计费、额度概念；凭证验证面带 IP + 租户双维度风控（详见协议「凭证模型」）
 - 控制面（已实现）：设备注册/心跳/列表/更新/注销、WSS 控制通道、会话编排（直连候选组装、打洞编排、状态机）
-- 打洞探测口（已实现，P3）：UDP 9101 极简 STUN 式应答，观测会话双方的公网 endpoint（响应 ≤ 请求 + token 校验 + IP 限速，防反射放大）
-- 中继（已实现）：`GET /api/v1/relay` WS 配对转发，QUIC 端到端语义不变（只见密文）
-- **网页版宿主（已实现）**：服务端作为 B 侧（以「网页版」全局设备身份走既有协议发起 relay 会话、经进程内中继 socket 建立 QUIC 并终结隧道），任意浏览器经域名浏览素材库。浏览器令牌（bt）由两级登录换发（service-key → 门令牌 → hawk-app key → bt；bt 绑定唯一目标设备与 read/write 作用域，服务端只存哈希），查看面 API（`/api/v1/viewer/*`）+ 隧道代理 + 登录页；查看器前端产物不落服务端，`/app` 与 `/assets/*` 同样经隧道由目标设备 daemon 托管。部署见 [远程访问部署](remote-deployment.md)
+- 内嵌中继（可选组件）：iroh-relay 库形态（不另起进程），打洞协调 + 数据兜底；共享 token 准入（数据目录生成，经控制面下发），`--relay-url` 未配置即不提供
+- 中继（已实现，可选组件）：内嵌 iroh-relay（库形态），打洞协调 + 数据兜底；token 准入经控制面下发；端到端语义不变（只见密文）
+- **网页版宿主（已实现）**：服务端作为 B 侧（以「网页版」全局设备身份走既有协议发起会话、经长驻 iroh endpoint 拨号并终结隧道），任意浏览器经域名浏览素材库。浏览器令牌（bt）由两级登录换发（service-key → 门令牌 → hawk-app key → bt；bt 绑定唯一目标设备与 read/write 作用域，服务端只存哈希），查看面 API（`/api/v1/viewer/*`）+ 隧道代理 + 登录页；查看器前端产物不落服务端，`/app` 与 `/assets/*` 同样经隧道由目标设备 daemon 托管。部署见 [远程访问部署](remote-deployment.md)
 - 持久化：设备注册表/网页版身份/令牌 JSON 文件；部署：监听明文 HTTP（默认 9100），TLS/WSS 由前置反代终结
 
 ## 数据流：daemon 为何不需要理解「远程」语义
@@ -125,23 +121,22 @@ Connection {
 
 - 本地库：`api_base` 指向 daemon API 端口；远程库：指向 B 侧会话代理端口
 - 前端收到 `connection-changed` 后执行**统一的切换重置**：abort 进行中的请求与 SSE → 清空内存 store → `GET /app/info` → 按返回重新注水。该流程是启动注水的泛化，只写一次
-- **断线分级处理**：UDP 路径静默（12s 无入站）且中继回退开启时，mux 自动附加中继路径迁移连接（不断连）；连接真正死亡时原会话内原地重建（重建成功前端无感）；重建连续失败/对端离线才回切——主进程经 daemon SSE 的 remote 事件获知，自动把当前连接切回本地库再通知前端。用户看到的是无声回到自己的库，而非远程白屏报错
+- **断线分级处理**：路径级抖动（NAT 重绑定、网络切换）由 iroh 路径迁移自治（不断连）；连接真正死亡时 B 侧原会话内重拨并热替换（前端无感）；重拨连续失败/对端离线才回切——主进程经 daemon SSE 的 remote 事件获知，自动把当前连接切回本地库再通知前端。用户看到的是无声回到自己的库，而非远程白屏报错
 - **无感的边界**：只读降级与来源标识保留。桌面端远程浏览仍按 `app/info` 的 `access`（viewer 级）做只读降级，前端无专门分支；浏览器插件的广域网保存使用独立的写会话，不改变桌面端远程浏览的只读语义；窗口保留「当前浏览：家里台式机」轻标识——这是安全与认知底线，不是可省略的区分逻辑
 
 ## 关键设计决策
 
 **1. remote 是 daemon 内模块，不是独立进程**
 
-原方案（独立进程 hawk-remote）的两个动机在当前前提下已失效或可用更省的方式满足：闭源云端边界（社区构建物理剔除云端代码）随服务端开源自托管而消失；崩溃域隔离在 Rust 里可用 supervisor 任务级重启达到同等实效——daemon 已有先例：LAN web 就是 reconcile 模型的可选网络子系统，故障只写状态不崩进程。合并后省掉三块接线：第三进程的 spawn/传参/回收、受托 token 双进程注入机制、独立状态 API 端口（设备列表/会话事件走 daemon 现有 REST + SSE）。代价是 quinn/igd 等依赖进入 daemon 依赖树（未启用时运行成本为零），以及 WAN 代码与素材库服务同进程（以 supervisor + 应用级远程配置可关闭缓解）。
+原方案（独立进程 hawk-remote）的两个动机在当前前提下已失效或可用更省的方式满足：闭源云端边界（社区构建物理剔除云端代码）随服务端开源自托管而消失；崩溃域隔离在 Rust 里可用 supervisor 任务级重启达到同等实效——daemon 已有先例：LAN web 就是 reconcile 模型的可选网络子系统，故障只写状态不崩进程。合并后省掉三块接线：第三进程的 spawn/传参/回收、受托 token 双进程注入机制、独立状态 API 端口（设备列表/会话事件走 daemon 现有 REST + SSE）。代价是 iroh 等依赖进入 daemon 依赖树（未启用时运行成本为零），以及 WAN 代码与素材库服务同进程（以 supervisor + 应用级远程配置可关闭缓解）。
 
 **2. 直连优先，服务器只做撮合**
 
-素材浏览是重带宽场景，自托管服务器的带宽/流量有限，数据面默认不经过服务器：服务端只做注册、在线与候选撮合（控制面），素材数据走设备间 QUIC 直连。中继（P2）仅作为直连失败时经用户确认的兜底，消耗的是用户自己的服务器带宽。
+素材浏览是重带宽场景，自托管服务器的带宽/流量有限，数据面默认不经过服务器：服务端只做注册、在线与寻址撮合（控制面），素材数据走设备间直连（iroh 打洞自治）。中继是服务端可选组件（内嵌 iroh-relay），消耗的是用户自己的服务器带宽。
 
-**3. 数据面从第一天用 QUIC（quinn）**
+**3. 传输层用 iroh（QUIC/noq + magicsock），不自研穿透**
 
-QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P3 打洞（免端口映射 P2P）预留了传输基础——P3 已实现：Initial 自动重传天然覆盖洞口开启前的丢包，连接迁移容忍 NAT 重绑定。
-
+远程传输的全部难点——打洞、中继、路径迁移、NAT 映射保活、多路径竞速——由 iroh 的 magicsock 内建承担（多年打磨 + NAT 类型矩阵测试）。hawk 的控制面只做撮合与凭证（endpoint_id + 直连地址 + 可选中继的下发），传输语义不进协议。身份即 iroh EndpointId（Ed25519 公钥，握手按公钥认证），替代原自签证书指纹钉扎。中继为服务端可选组件（内嵌 iroh-relay，token 准入随心跳下发），无中继部署退化为纯直连（打洞协调依赖中继，文档写明）。
 **4. 协议契约先行，零代码共享**
 
 客户端（daemon remote 模块）与 hawk-server 之间的契约是 remote-protocol.md。hawk-server 保持独立 crate、不建 workspace 羁绊、不共享代码——它对 hawk 的全部知识就是协议文档；remote 模块对 daemon 本体的全部知识就是进程内路由 + viewer 权限标记。
@@ -150,9 +145,9 @@ QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P
 
 桌面端配置只有服务端地址 URL 与 service-key（应用级 `remote.toml`，跨素材库共享）。控制面无登录流程、无会话令牌；key 无效即 401，客户端直接展示服务端返回的 message。查看者凭证（hawk-app key）由目标设备 daemon 本地签发与保管（明文只在签发时出现一次，本地只存 sha256 验证子），server 经设备推送只存 HMAC 哈希映射；会话请求携带验证子，权限由目标 daemon 按本地映射执法（server 被攻破也无法放大权限）。
 
-**6. 会话认证在 QUIC 层，隧道内 HTTP 进程内授权**
+**6. 会话认证在 iroh 身份层，隧道内 HTTP 进程内授权**
 
-设备自签名证书指纹在服务端登记（TOFU），会话建立时经控制面随 `session.request` 下发对端指纹，QUIC 对端以指纹钉扎验证。隧道内 HTTP 由 A 侧隧道端在进程内标记权限：只读会话为 viewer 级；写会话需查看者 key 带写权限 + 目标设备 `remote.writable=true`，且仅开放导入素材/新建文件夹。查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到 daemon admin token。
+设备身份即 iroh EndpointId（Ed25519 公钥），注册时登记，握手按公钥认证（无单独钉扎环节）。隧道内 HTTP 由 A 侧隧道端在进程内标记权限：只读会话为 viewer 级；写会话需查看者 key 带写权限 + 目标设备 `remote.writable=true`，且仅开放导入素材/新建文件夹。查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到 daemon admin token。
 
 ### 广域网写权限分层
 
@@ -164,9 +159,9 @@ QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P
 
 局域网写权限 `[web]` 与以上链路完全独立：开启局域网写不会放开广域网写，反之亦然。
 
-**7. 中继需用户主动开启**
+**7. 中继由两个静态开关承载，无逐次确认**
 
-连接顺序：候选并行竞速（LAN → IPv4 映射 → IPv6 → 打洞的候选同时握手，首个胜者赢）→ 询问用户是否中继。中继消耗自己的服务器带宽，任何环节都不自动回落——「中继回退」是设备级设置项（daemon remote.toml，默认关闭），语义覆盖两处：建连失败时弹确认回落；会话中 UDP 路径静默超阈值（12s）时自动附加中继路径（mux 路径迁移，不断连）。用户同意/开启才消耗带宽。IPv6 直连是免映射、不经服务器的 P2P 路径；候选可达性由客户端实际连接尝试判定，服务端只负责收集上报、不下结论。
+「服务端是否提供（内嵌 relay 组件）× 客户端是否使用（设备级 `relay` 开关，默认关闭）」。传输层（iroh）按可用性自治：中继在场时首字节不等打洞（relay 先行、打洞成功自动升级）；任一端关闭即纯直连。自建带宽保护靠开关而不是弹窗——中继只在开关双方共识时消耗。
 
 ## 远程查看模式（没有本地素材库）
 
@@ -183,28 +178,21 @@ daemon 是双形态进程：`--library` 缺省即远程查看模式——不构�
 
 ## 连接建立流程
 
-### 直连模式（阶段 1）
+### 建连流程
 
 ```text
-B 配置接入（应用级 remote.toml url + key）→ 拉取设备列表（A 在线 + 心跳携带可达性信息）
-B 前端发起会话（mode=direct）→ 创建会话，经 WSS 推送给 A：session.request
-A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
-服务端进入打洞编排（P3，探测口启用时）：双方 WSS 收到 session.probe，
-  各自从 QUIC 端点同端口 socket 向服务端探测口报到
-  → 到齐（无候选等 8s / 有候选短等 2s）→ ready：候选列表 + 指纹，
-    A 另得 punch_peer（B 的 observed endpoint）
-  → B 对全部候选并行竞速（每候选独立 mux endpoint 同时握手，首个胜者赢；直连 5s / 含 punch 15s），
-    A 同时向 punch_peer 开口（500ms × 20s），任一成功即建立 QUIC 连接（指纹钉扎）
-  → 隧道就绪 → 主进程切换连接描述符 → B 前端无感重置为远端库
-探测口未启用：有候选直接 ready；无候选即 unreachable。
-候选全部失败（含对称型 NAT 打不通）→ 直连失败，走中继确认路径
+B 配置接入（应用级 remote.toml url + key）→ 拉取设备列表（A 在线 + 心跳携带直连地址）
+B 前端发起会话 → 服务端 WSS 推送给 A：session.request（含 B 的 endpoint_id 与凭证）
+A 侧自动接受（allow_remote 开关 + 查看者 key 本地执法）→ 回 accept
+服务端 ready：connect = A 的 endpoint_id + 直连地址（+ 服务端提供中继时的 relay url/token）
+B 拨号（iroh connect）：中继在场先经中继建连（首字节零等待），后台打洞成功自动升级直连；
+  打洞不成则留在中继；无中继部署只有直连地址可达才建得起来（否则 unreachable）
+隧道就绪 → 主进程切换连接描述符 → B 前端无感重置为远端库
 ```
 
-直连失败（候选全部超时或无候选）时不自动回落中继：「中继回退」开关（默认关闭）已开启时，弹窗询问用户是否经中继继续（消耗自己的服务器带宽），确认后转入中继流程；未开启则提示「当前网络无法直连；如需经中继访问，可在设置中开启」。
+### 中继（服务端可选组件）
 
-### 中继模式（阶段 2/4，已实现）
-
-直连失败（候选全部超时或无候选）时，「中继回退」开关已开启的用户经确认弹窗同意后，以 `mode=relay` 另建会话；会话进行中 UDP 路径静默超阈值时同开关授权自动附加中继路径（`POST /sessions/{id}/relay-path`，既有会话的路径迁移，不另建会话）。中继 WS 并入 mux（一帧 = 一个数据报），QUIC 在 A↔B 之间端到端——服务端只配对转发加密数据报，看不到素材内容。多租户方案下无票据/配额/用量上报，准入即本池 service-key。协议细节见 [remote-protocol.md](remote-protocol.md)「中继」一节。
+hawk-server 内嵌 iroh-relay（库形态，不另起进程），准入为共享 token（数据目录生成，随心跳/会话经控制面下发）。中继对协议无独立端点——`connect.relay` 字段即全部表达；客户端与 relay 之间是 iroh 内部事务。中继承载端到端加密的 QUIC 数据报，服务端只见密文。`--relay-url` 未配置即不提供中继（纯直连部署：无打洞协调，只有直连地址可达的会话能建立）。
 
 ## 安全模型
 
@@ -212,8 +200,8 @@ A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
 | -------- | ---- |
 | 控制面   | HTTPS/WSS（TLS 由前置反代终结）；service-key 程序生成 256-bit 随机（`tenant add`），服务端只存 HMAC-SHA256(pepper, key)，恒定时间比较；key 一律走 Authorization 头，不进 URL（防反代日志泄露） |
 | 凭证风控 | gate/login/控制面鉴权失败按来源 IP 计（10min/30 次 → 冷却 15min）；login 另按租户计（20 次 → 池冷却 15min 起指数增长封顶 24h，成功清零）；门令牌 5min TTL + 5 次尝试预算 |
-| 数据面   | QUIC TLS 1.3 端到端加密，证书指纹经控制面交换 + 钉扎；服务端接触不到素材内容（直连不过服务端，中继只搬运密文） |
-| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与 QUIC 对端指纹匹配的会话标识，且目标 `remote.writable=true`。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
+| 数据面   | iroh（QUIC/noq + TLS 1.3）端到端加密，endpoint_id 即公钥经控制面交换、握手认证；服务端接触不到素材内容（直连不过服务端，中继只见密文） |
+| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与对端身份（endpoint_id）匹配的会话标识，且目标 `remote.writable=true`。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
 | 本地防护 | B 侧会话代理：每次会话随机 token、响应无 CORS、环回监听 |
 | 凭据存储 | 接入配置（url + service_key）存应用级 `~/.config/hawk/remote.toml`（与壳偏好 `config.toml` 分开，daemon 权威写入；明文，权限 0600）；设备身份（device_id、自签证书私钥）存同级 `remote/identity.json`、访问密钥验证子存同级 `remote/keys.json`（均 0600）。浏览器插件的 service-key 与访问密钥存 `browser.storage.local`，与本地 daemon token 同级 |
 | 网页版   | **隧道在服务器终结**：素材明文过服务器（自托管信任前提，与「中继只见密文」刻意不同的取舍）。浏览器令牌 bt 随机换发、服务端存 sha256 哈希与授权（作用域 + 绑定设备 + 凭证）、可随时注销；service-key 与 hawk-app key 都只出现在登录请求体（服务端只见 service-key 与 key 的哈希输入，key 明文以哈希落盘验证后即弃） |
@@ -230,44 +218,36 @@ A 侧自动接受（设备级开关 allow_remote 控制）→ 回 accept
 | 位置                       | 改动 |
 | -------------------------- | ---- |
 | `hawk-server/`             | 远程访问服务端（多租户：租户注册表 + key 映射 + 门令牌两步登录 + 风控；P1 控制面 + P2 中继） |
-| `hawk-daemon/src/remote/`  | 新模块：信令客户端 / 可达性 / QUIC 隧道端 / B 侧会话代理 / 访问密钥保管（keys.rs），supervisor reconcile 管理 |
+| `hawk-daemon/src/remote/`  | 模块：信令客户端 / iroh 数据面 / B 侧会话代理 / 访问密钥保管（keys.rs），supervisor reconcile 管理 |
 | `hawk-daemon` config       | 应用级 `remote.toml`（enabled/url/service_key/writable），保存即热生效（写开关不重启信令）；设备身份与 keys.json 同级 `remote/` |
 | `hawk-daemon` 鉴权中间件   | 进程内 viewer / remote_writer 权限标记（供隧道转发请求使用），无 remote 语义、无门控 |
 | `hawk-daemon` API          | `/api/v1/remote/*` 状态端点 + 访问密钥管理端点 + SSE remote 会话生命周期事件 |
 | `hawk-app`（主进程 + 前端） | 远程 UI（接入配置/访问密钥管理/设备列表/会话流程）；连接描述符与 `connection-changed`；订阅 daemon SSE remote 事件驱动断线回切 |
 | `~/.config/hawk/remote/`   | 应用级设备身份目录（device_id、自签证书私钥）与访问密钥验证子（keys.json），不参与素材库同步 |
 
-## 分级落地计划
+## 落地记录
 
 | 阶段 | 内容 | 验收标准 |
 | ---- | ---- | -------- |
-| 1a   | ~~hawk-server P1 控制面 + daemon remote/ 信令~~（已完成）：应用级远程配置、设备身份、注册/心跳/WSS 自动重连、状态 API | 设备配置后可注册上线、维持在线、接收并自动响应会话请求 |
-| 1b   | ~~daemon 数据面~~（已完成：可达性 UPnP/IPv6、QUIC 双向指纹钉扎、A 侧隧道端进程内转发 TunneledPeer、B 侧会话代理、会话编排 API + SSE remote.session）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
-| 2    | ~~服务端中继 + 客户端中继逻辑 +「中继回退」开关与确认弹窗~~（已完成：relay WS 配对转发 + AsyncUdpSocket over WS + 回退确认） | 直连失败经用户确认走中继；QUIC 端到端语义不变（服务端只见密文） |
-| 3    | ~~QUIC 打洞（免端口映射 P2P）~~（已完成：服务端 UDP 探测口观测 observed endpoint + 会话时编排 + 双方同端口开口；对称型 NAT 打不通时落中继，不投 NAT 类型检测与端口预测） | 无直连候选的设备间可直连；探测口不可达自动退化为 unreachable |
-| 4    | ~~候选竞速 + NAT-PMP 补全 + LAN 候选~~（已完成：每候选独立 mux endpoint 握手层并行，首个胜者赢；UPnP 失败回退 NAT-PMP；同公网 IP 会话下发 LAN 地址内网直连） | 黑洞/失效候选不再拖慢建连（串行最坏 25s+ → 典型 ~1s）；Apple 系路由器可映射；同局域网零 NAT 依赖 |
-| 5    | ~~统一传输 socket 与路径迁移~~（已完成：mux 单 endpoint 合并 UDP/中继路径；B 侧入站归一伪地址（quinn 客户端丢未知来源包的硬约束），A 侧由 quinn 被动迁移跟随；UDP 静默 12s 降级中继；连接级原地重建兜底） | 网络切换/NAT 重绑定不再踢回本地库；relay/direct 不再有两套并行数据面管线 |
+| 1-3 | 控制面 + 数据面 + 中继 + 打洞（自研穿透栈，已完成） | 历史记录 |
+| 4 | ~~传输层迁移 iroh~~（已完成：magicsock 承担打洞/中继/迁移/保活；身份换 EndpointId；中继内嵌 hawk-server 可选组件；控制面只剩撮合与凭证） | 全部测试套件在 iroh 基座上全绿；真实双 NAT 手动验证 |
 
 ## remote/ 模块结构
 
 ```text
 hawk-daemon/src/remote/
-├── mod.rs          # supervisor（reconcile：remote.toml 变更 → 热重启信令）+ 状态快照
+├── mod.rs          # supervisor（reconcile：remote.toml 变更 → 热重启信令）+ 状态快照 + 数据面槽位发布
 ├── config.rs       # 应用级 remote.toml 读写（设备身份目录由配置位置派生）
-├── identity.rs     # remote/identity.json（device_id、rcgen 自签证书与指纹）
+├── identity.rs     # remote/identity.json（device_id、iroh 密钥对与 endpoint_id）
 ├── keys.rs         # remote/keys.json：访问密钥（hawk-app key）签发/保管/吊销 + server 映射推送
-├── signal.rs       # REST 客户端（注册/心跳/设备/会话/key 同步）+ WSS 通道 + 自动重连 + 查看者会话本地执法 + 中继路径附加
-├── tls.rs          # QUIC 双向指纹钉扎（rustls verifier：B 钉 A、A 放行已接受对端）
-├── reachability.rs # 全局 IPv6/LAN 探测（UDP connect 出接口）+ UPnP/NAT-PMP 映射维护（阻塞任务）
-├── mux.rs          # P4 统一传输 socket：UDP + 中继 WS 路径合并为单 endpoint；B 侧伪地址归一/洪泛/静默观察，A 侧被动迁移
-├── data.rs         # mux 上的 quinn 端点（自建 socket + try_clone 开口句柄，P3 同端口前提）、A 侧隧道端（hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理（连接可热替换）、打洞开口/探测
-├── relay.rs        # 中继 WS 通道建立辅助（请求构建 + 带超时连接；数据报传输归 mux）
-└── session.rs      # B 侧会话编排：发起 → 轮询 ready → mux 洪泛建连 → 代理；静默降级观察 + 原地重建；SSE remote.session
+├── signal.rs       # REST 客户端（注册/心跳/设备/会话/key 同步）+ WSS 通道 + 自动重连 + 查看者会话本地执法 + relay 下发驱动的数据面重建
+├── data.rs         # iroh endpoint、A 侧隧道端（accept 执法 + hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理（连接可热替换）
+└── session.rs      # B 侧会话编排：发起 → 轮询 ready → iroh 拨号 → 代理；断线重拨兜底；SSE remote.session
 ```
 
-新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、rcgen + sha2（自签证书与指纹）、quinn（QUIC）、igd-next（UPnP）、default-net（NAT-PMP 默认网关查询）、hyper + hyper-util（隧道内 HTTP/1.1 解析）。
+新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、iroh（传输层：打洞/中继/迁移/保活）、hyper + hyper-util（隧道内 HTTP/1.1 解析）。
 
-数据面传输模型：一条 QUIC 双向流即一条 HTTP/1.1 连接——B 侧会话代理逐请求开流原样转发，A 侧经 hyper 解析后进程内调 API 路由。SSE/缩略图等流式响应由 HTTP/1.1 语义原生承载，两端都不解析素材数据。
+数据面传输模型：一条 iroh 双向流即一条 HTTP/1.1 连接——B 侧会话代理逐请求开流原样转发，A 侧经 hyper 解析后进程内调 API 路由。SSE/缩略图等流式响应由 HTTP/1.1 语义原生承载，两端都不解析素材数据。
 
 ## 相关文档
 

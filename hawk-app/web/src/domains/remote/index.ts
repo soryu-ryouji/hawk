@@ -24,14 +24,14 @@ export const useRemoteStore = defineStore('remote', () => {
   /** 正在建立会话的设备 id（列表行内 spinner） */
   const connectingId = ref<string | null>(null);
   const error = ref<string | null>(null);
-  /** 「中继回退」开关（设备级，daemon 远程配置 relay_fallback；默认关闭：中继消耗自己的服务器带宽）。
-   *  开关语义覆盖两处：建连失败的回落确认（本 store）与会话中 UDP 静默降级（daemon 自治） */
-  const relayFallback = computed(() => dto.value?.relay_fallback ?? false);
+  /** 「使用中继」开关（设备级，daemon 远程配置 relay；默认关闭：中继消耗自己的服务器带宽）。
+   *  传输路径由 iroh 自治：开关只决定本机是否使用中继，无逐次确认 */
+  const relayEnabled = computed(() => dto.value?.relay ?? false);
 
   let pollTimer = 0;
 
   /** 开关随配置写回 daemon（dto 即回显；未拉到配置时不动作） */
-  async function setRelayFallback(on: boolean): Promise<void> {
+  async function setRelayEnabled(on: boolean): Promise<void> {
     const current = dto.value;
     if (!current) {
       return;
@@ -41,7 +41,7 @@ export const useRemoteStore = defineStore('remote', () => {
       url: current.url,
       service_key: current.service_key,
       writable: current.writable,
-      relay_fallback: on,
+      relay: on,
     });
   }
 
@@ -127,25 +127,16 @@ export const useRemoteStore = defineStore('remote', () => {
   }
 
   /** 建立到目标设备的远程会话（成功后主进程推 connection-changed，前端无感切换）。
-   *  直连失败且「中继回退」已开启时，弹窗询问用户是否经服务端中继继续（不自动回落） */
+   *  直连/打洞/中继由传输层自治；是否使用中继由两端静态开关决定（无逐次确认） */
   async function connect(deviceId: string): Promise<void> {
     connectingId.value = deviceId;
     error.value = null;
     try {
-      await shell.remoteConnect(deviceId, 'direct');
+      await shell.remoteConnect(deviceId);
     } catch (e) {
-      const directError = ipcMessage(e);
-      if (relayFallback.value && window.confirm(`直连失败：${directError}\n\n是否经服务端中继继续？（素材流量将经过你的服务器带宽，内容仍为端到端加密）`)) {
-        try {
-          await shell.remoteConnect(deviceId, 'relay');
-        } catch (e2) {
-          error.value = ipcMessage(e2);
-        }
-      } else if (!relayFallback.value) {
-        error.value = `${directError}（可在远程设置中开启「中继回退」）`;
-      } else {
-        error.value = directError;
-      }
+      const message = ipcMessage(e);
+      // 中继开关关闭时的不可达错误附带开启引导
+      error.value = relayEnabled.value ? message : `${message}（可在远程设置中开启「使用中继」）`;
     } finally {
       connectingId.value = null;
     }
@@ -213,8 +204,8 @@ export const useRemoteStore = defineStore('remote', () => {
     saving,
     connectingId,
     error,
-    relayFallback,
-    setRelayFallback,
+    relayEnabled,
+    setRelayEnabled,
     refresh,
     refreshDevices,
     refreshKeys,

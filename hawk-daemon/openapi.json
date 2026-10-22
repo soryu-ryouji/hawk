@@ -1185,8 +1185,8 @@
               "enabled": {
                 "type": "boolean"
               },
-              "relay_fallback": {
-                "description": "中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽）",
+              "relay": {
+                "description": "使用中继（服务端提供时；消耗自建带宽，设备级开关）",
                 "type": "boolean"
               },
               "service_key": {
@@ -1210,7 +1210,7 @@
               "url",
               "service_key",
               "writable",
-              "relay_fallback",
+              "relay",
               "status"
             ],
             "type": "object"
@@ -1255,13 +1255,13 @@
         "properties": {
           "data": {
             "properties": {
-              "fingerprint": {
+              "endpoint_id": {
                 "description": "轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）",
                 "type": "string"
               }
             },
             "required": [
-              "fingerprint"
+              "endpoint_id"
             ],
             "type": "object"
           },
@@ -2773,8 +2773,8 @@
           "enabled": {
             "type": "boolean"
           },
-          "relay_fallback": {
-            "description": "中继回退（直连失败/UDP 静默时经服务端中继）；省略时保留现值",
+          "relay": {
+            "description": "使用中继（服务端提供时）；省略时保留现值",
             "type": [
               "boolean",
               "null"
@@ -2906,8 +2906,8 @@
           "enabled": {
             "type": "boolean"
           },
-          "relay_fallback": {
-            "description": "中继回退：直连失败/UDP 路径静默时经服务端中继（消耗自己的服务器带宽）",
+          "relay": {
+            "description": "使用中继（服务端提供时；消耗自建带宽，设备级开关）",
             "type": "boolean"
           },
           "service_key": {
@@ -2931,7 +2931,7 @@
           "url",
           "service_key",
           "writable",
-          "relay_fallback",
+          "relay",
           "status"
         ],
         "type": "object"
@@ -3056,13 +3056,13 @@
       },
       "RotateDeviceDto": {
         "properties": {
-          "fingerprint": {
+          "endpoint_id": {
             "description": "轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）",
             "type": "string"
           }
         },
         "required": [
-          "fingerprint"
+          "endpoint_id"
         ],
         "type": "object"
       },

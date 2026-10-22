@@ -6,12 +6,10 @@
 use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
-use crate::remote::reachability::{self, MappingReport, SharedMappingReport};
 use crate::remote::{LibraryContext, RemoteState, RemoteStatus, Supervisor};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -52,6 +50,8 @@ enum SignalError {
     Transient(String),
     /// 服务端已不再认识本设备（设备表丢失/被注销）→ 清除 device_id 重注册
     Unregistered,
+    /// 服务端中继配置变化（心跳下发的 relay 字段变更）→ 重建数据面后重连通道
+    RelayChanged(Option<(String, String)>),
 }
 
 type Result<T> = std::result::Result<T, SignalError>;
@@ -94,15 +94,15 @@ async fn run_inner(
     let mut identity =
         Identity::load_or_create(remote.identity_dir()).map_err(SignalError::Fatal)?;
 
-    // 数据面：绑定 QUIC 端口（A 侧 accept 循环），拉起 UPnP 映射维护（重注册循环复用，不重复绑定）。
-    // 两者都装在守卫里：热重启（supervisor abort）或停用时必须随任务一起收尾，
-    // 否则 UDP 端口被本进程泄漏，下次激活直接绑定失败
-    let data_plane = PlaneGuard(bind_data_plane(&identity, cfg, router.clone()).await?);
-    let mapping_report: SharedMappingReport = Arc::new(RwLock::new(MappingReport::default()));
-    let _mapping = TaskGuard(tokio::spawn(reachability::maintain_mapping(
-        cfg.quic_port,
-        mapping_report.clone(),
-    )));
+    // 数据面：绑定 iroh endpoint（A 侧接受与 B 侧拨号共用）。装在守卫里：热重启
+    // （supervisor abort）或停用时必须随任务一起收尾并清出拨号槽位，
+    // 否则 UDP 端口被本进程泄漏，下次激活直接绑定失败。
+    // relay 配置来自服务端心跳下发；变化时经 RelayChanged 重建数据面
+    let mut current_relay: Option<(String, String)> = None;
+    let mut data_plane = PlaneGuard::new(
+        bind_data_plane(&identity, cfg, None, router.clone()).await?,
+        supervisor.endpoint_slot().clone(),
+    );
 
     let mut retry = RETRY_MIN;
     let mut chan_retry = CHANNEL_RETRY_MIN;
@@ -123,21 +123,20 @@ async fn run_inner(
                     tokio::time::sleep(retry).await;
                     retry = (retry * 2).min(RETRY_MAX);
                 }
-                Err(SignalError::Unregistered) => {
-                    unreachable!("注册阶段不产生 Unregistered")
+                Err(SignalError::Unregistered) | Err(SignalError::RelayChanged(_)) => {
+                    unreachable!("注册阶段不产生 Unregistered/RelayChanged")
                 }
             }
         }
         let device_id = identity.device_id.clone().unwrap();
 
         let ctx = ChannelContext {
+            current_relay: &mut current_relay,
             http: &http,
             base: &base,
             key: &cfg.service_key,
             device_id: &device_id,
-            data_plane: &data_plane.0,
-            mapping_report: &mapping_report,
-            quic_port: cfg.quic_port,
+            data_plane: &data_plane.plane,
             library,
             remote,
             keys: &supervisor.keys,
@@ -160,6 +159,16 @@ async fn run_inner(
                 continue;
             }
             Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
+            Err(SignalError::RelayChanged(relay)) => {
+                // 服务端中继配置变化：重建数据面（旧连接断开由 B 侧重拨兜底）后立刻重连
+                tracing::info!("服务端中继配置变化，重建数据面");
+                data_plane
+                    .rebuild(&identity, cfg, relay.clone(), router.clone())
+                    .await?;
+                current_relay = relay;
+                chan_retry = CHANNEL_RETRY_MIN;
+                continue;
+            }
             Err(SignalError::Transient(msg)) => {
                 tracing::warn!("控制通道断开（{chan_retry:?} 后重连）: {msg}");
                 // 「接入中」带上断开原因，设置面板可直接看到发生了什么
@@ -180,33 +189,52 @@ async fn run_inner(
 const BIND_ATTEMPTS: u32 = 100;
 const BIND_RETRY: Duration = Duration::from_millis(20);
 
-/// 数据面守卫：无论正常返回还是被 abort（配置变更热重启），都关停 QUIC 端点释放端口
-struct PlaneGuard(Arc<DataPlane>);
+/// 数据面守卫：随信令任务收尾（关停 endpoint 并清出拨号槽位），热重启 abort 同理
+struct PlaneGuard {
+    plane: Arc<DataPlane>,
+    slot: crate::remote::session::EndpointSlot,
+}
+
+impl PlaneGuard {
+    fn new(plane: Arc<DataPlane>, slot: crate::remote::session::EndpointSlot) -> PlaneGuard {
+        *slot.write().unwrap() = Some(plane.clone());
+        PlaneGuard { plane, slot }
+    }
+
+    /// 中继配置变化重建：关停旧数据面（旧连接断开由 B 侧重拨兜底），绑定新配置并重新发布槽位
+    async fn rebuild(
+        &mut self,
+        identity: &Identity,
+        cfg: &RemoteSettings,
+        relay: Option<(String, String)>,
+        router: axum::Router,
+    ) -> Result<()> {
+        self.plane.shutdown();
+        *self.slot.write().unwrap() = None;
+        self.plane = bind_data_plane(identity, cfg, relay, router).await?;
+        *self.slot.write().unwrap() = Some(self.plane.clone());
+        // 旧会话放行随数据面重建失效（进行中的对端连接死亡，B 侧重拨兜底）
+        Ok(())
+    }
+}
 
 impl Drop for PlaneGuard {
     fn drop(&mut self) {
-        self.0.shutdown();
+        self.plane.shutdown();
+        *self.slot.write().unwrap() = None;
     }
 }
 
-/// 附属任务守卫：随信令任务一起收尾（UPnP 维护循环是无限循环，不主动中止会随热重启累积）
-struct TaskGuard(tokio::task::JoinHandle<()>);
-
-impl Drop for TaskGuard {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-/// 绑定 QUIC 端口（带短暂重试）：端口可能刚由上一轮任务释放，立即重绑会瞬时 EADDRINUSE
+/// 绑定隧道端口（带短暂重试）：端口可能刚由上一轮任务释放，立即重绑会瞬时 EADDRINUSE
 async fn bind_data_plane(
     identity: &Identity,
     cfg: &RemoteSettings,
+    relay: Option<(String, String)>,
     router: axum::Router,
 ) -> Result<Arc<DataPlane>> {
     let mut last = String::new();
     for attempt in 0..BIND_ATTEMPTS {
-        match DataPlane::bind(identity, cfg.quic_port, router.clone()) {
+        match DataPlane::bind(identity, cfg.quic_port, relay.clone(), router.clone()).await {
             Ok(plane) => return Ok(plane),
             Err(e) => last = e,
         }
@@ -219,14 +247,14 @@ async fn bind_data_plane(
 
 /// 控制通道上下文（收敛 handler 参数）
 struct ChannelContext<'a> {
+    /// 当前生效的中继配置（心跳下发；变化触发 RelayChanged 重建数据面）
+    current_relay: &'a mut Option<(String, String)>,
     http: &'a reqwest::Client,
     base: &'a str,
     /// service-key（池门禁凭证）
     key: &'a str,
     device_id: &'a str,
     data_plane: &'a Arc<DataPlane>,
-    mapping_report: &'a SharedMappingReport,
-    quic_port: u16,
     /// 本地库上下文（None = 远程查看模式）
     library: &'a Option<LibraryContext>,
     remote: &'a Arc<RemoteConfigStore>,
@@ -287,7 +315,7 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
     // 通道（重）建立：上一轮会话的放行与连接全部失效（B 侧会感知断开自行收尾）
     ctx.data_plane.reset_peers();
     // 本会话周期内接受的对端：session_id → 对端指纹（cancelled 时收回放行）
-    let mut accepted_peers: std::collections::HashMap<String, [u8; 32]> =
+    let mut accepted_peers: std::collections::HashMap<String, iroh::EndpointId> =
         std::collections::HashMap::new();
 
     // 连接建立即心跳一次（让自己在线），随后按周期间隔
@@ -300,7 +328,11 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                send_heartbeat(ctx).await?;
+                if let HeartbeatReply::Ok(relay) = send_heartbeat(ctx).await? {
+                    if relay != *ctx.current_relay {
+                        return Err(SignalError::RelayChanged(relay));
+                    }
+                }
             }
             msg = ws.next() => {
                 match msg {
@@ -308,8 +340,7 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
                         last_recv = std::time::Instant::now();
                         match frame {
                             Message::Text(text) => {
-                                handle_message(&mut ws, ctx, supervisor, &mut accepted_peers, &text)
-                                    .await?;
+                                handle_message(&mut ws, ctx, &mut accepted_peers, &text).await?;
                             }
                             Message::Close(_) => return Ok(()),
                             _ => {}
@@ -332,14 +363,12 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
     }
 }
 
-/// 服务端推送处理：ping → pong；session.request → 放行对端指纹并自动接受
-/// （allow_remote 由服务端在登记时裁决）；session.probe → P3 打洞报到；session.update →
-/// A 侧打洞开口；session.cancelled → 收回放行；未知 type 忽略
+/// 服务端推送处理：ping → pong；session.request → 放行对端身份并自动接受
+/// （allow_remote 由服务端在登记时裁决）；session.cancelled → 收回放行；未知 type 忽略
 async fn handle_message(
     ws: &mut (impl SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
     ctx: &ChannelContext<'_>,
-    supervisor: &Arc<Supervisor>,
-    accepted_peers: &mut std::collections::HashMap<String, [u8; 32]>,
+    accepted_peers: &mut std::collections::HashMap<String, iroh::EndpointId>,
     text: &str,
 ) -> Result<()> {
     let Ok(value) = serde_json::from_str::<Value>(text) else {
@@ -354,13 +383,9 @@ async fn handle_message(
         Some("session.request") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
                 let requested_write = value.get("access").and_then(|a| a.as_str()) == Some("write");
-                // 时间线日志：与中继配对/查看方日志按 session_id 对齐
+                // 时间线日志：与查看方日志按 session_id 对齐
                 tracing::info!(
-                    "收到会话请求 {session_id}（mode={}，access={}）",
-                    value
-                        .get("mode")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or_default(),
+                    "收到会话请求 {session_id}（access={}）",
                     value
                         .get("access")
                         .and_then(|a| a.as_str())
@@ -408,16 +433,16 @@ async fn handle_message(
                     }
                 };
 
-                // 对端指纹随 session.request 下发（服务端持有双方设备记录），
+                // 对端身份（endpoint_id）随 session.request 下发（服务端持有双方设备记录），
                 // 先放行（B 在 ready 后可能立即连接）再回 accept
-                let fingerprint = value["from"]["fingerprint"]
+                let endpoint_id = value["from"]["endpoint_id"]
                     .as_str()
-                    .and_then(crate::remote::tls::parse_fingerprint);
-                match fingerprint {
-                    Some(fingerprint) => {
+                    .and_then(|s| s.parse::<iroh::EndpointId>().ok());
+                match endpoint_id {
+                    Some(endpoint_id) => {
                         ctx.data_plane
-                            .allow_session(session_id, fingerprint, writable);
-                        accepted_peers.insert(session_id.to_string(), fingerprint);
+                            .allow_session(session_id, endpoint_id, writable);
+                        accepted_peers.insert(session_id.to_string(), endpoint_id);
                         // 接受后超时清理：60s 内对端未连接 → 收回放行（幂等，
                         // cancelled/重连时的重复收回无害）
                         let plane = ctx.data_plane.clone();
@@ -437,8 +462,8 @@ async fn handle_message(
                                 .await?;
                             return Ok(());
                         }
-                        // 只读会话指纹缺失不阻断：接受后对端连不上会自行超时
-                        tracing::warn!("会话对端指纹缺失（接受但不放行）");
+                        // 只读会话身份缺失不阻断：接受后对端连不上会自行超时
+                        tracing::warn!("会话对端身份缺失（接受但不放行）");
                     }
                 }
                 if let Err(e) =
@@ -447,64 +472,6 @@ async fn handle_message(
                     ctx.data_plane.disallow_session(session_id);
                     accepted_peers.remove(session_id);
                     return Err(e);
-                }
-
-                // 中继模式：accept 后连服务端中继 WS 并入 mux（P4：A 侧单 endpoint，
-                // 中继只是 mux 的一条路径，不再有每会话独立中继端点）
-                if value.get("mode").and_then(|m| m.as_str()) == Some("relay") {
-                    spawn_relay_attach(ctx, supervisor, session_id, true, accepted_peers);
-                }
-            }
-        }
-        Some("session.relay_path") => {
-            // P4 中继路径附加（既有会话降级通道）：双方各连一条中继 WS 并入 mux
-            if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
-                spawn_relay_attach(ctx, supervisor, session_id, false, accepted_peers);
-            }
-        }
-        Some("session.probe") => {
-            // P3 打洞探测邀约：从自己 QUIC 端点同端口 socket 向服务端探测口报到
-            // （observed endpoint 的新鲜度要求会话时探测，协议「NAT 打洞」一节）
-            let session_id = value.get("session_id").and_then(|s| s.as_str());
-            let token = value
-                .get("token")
-                .and_then(|t| t.as_str())
-                .and_then(parse_probe_token);
-            let probe_port = value
-                .get("probe_port")
-                .and_then(|p| p.as_u64())
-                .map(|p| p as u16);
-            if let (Some(session_id), Some(token), Some(probe_port)) =
-                (session_id, token, probe_port)
-            {
-                match resolve_probe_addr(ctx.base, probe_port).await {
-                    Ok(addr) => {
-                        if accepted_peers.contains_key(session_id) {
-                            // A 侧：常驻 QUIC 端点的开口句柄报到
-                            tracing::info!("会话 {session_id} 打洞探测报到（目标侧）: {addr}");
-                            ctx.data_plane.send_probe(addr, token);
-                        } else {
-                            // B 侧：预绑 socket 报到并留存（connect 复用同端口）
-                            tracing::info!("会话 {session_id} 打洞探测报到（发起方）: {addr}");
-                            supervisor.sessions.prepare_punch(session_id, addr, token);
-                        }
-                    }
-                    Err(e) => tracing::warn!("探测口地址解析失败: {e}"),
-                }
-            }
-        }
-        Some("session.update") => {
-            // A 侧开口触发（P3）：ready 携带发起方 observed endpoint（punch_peer）时周期开口。
-            // 只处理本端作为目标接受过的会话（发起方身份收到的同名推送由轮询兜底消费）
-            let session_id = value.get("session_id").and_then(|s| s.as_str());
-            let ready = value.get("state").and_then(|s| s.as_str()) == Some("ready");
-            if let (Some(session_id), true) = (session_id, ready) {
-                if accepted_peers.contains_key(session_id) {
-                    if let Some(peer) = parse_punch_peer(&value["connect"]["punch_peer"]) {
-                        tracing::info!("会话 {session_id} 打洞开口：{peer}");
-                        ctx.data_plane
-                            .punch_to(peer, crate::remote::data::PUNCH_WINDOW);
-                    }
                 }
             }
         }
@@ -533,32 +500,24 @@ fn library_name(library: &Option<LibraryContext>) -> String {
     }
 }
 
-async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
-    // 可达性：端口映射（维护任务异步更新，UPnP/NAT-PMP）+ 全局 IPv6（每次心跳探测，零成本）。
+/// 心跳回执
+enum HeartbeatReply {
+    /// 心跳成功；内容为服务端下发的中继配置（url + token；None = 该部署不提供中继）
+    Ok(Option<(String, String)>),
+    /// 被限速跳过（本跳无下发，调用方保持现状）
+    Skipped,
+}
+
+async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<HeartbeatReply> {
+    // 寻址：iroh endpoint 自报的直连地址集（映射/外部地址由 iroh 自己维护刷新）。
     // public_ip 不自报——以服务端 public_ip_seen 为准
-    let (mapped_port, mapping_type) = {
-        let report = ctx.mapping_report.read().unwrap();
-        (report.mapped_port, report.mapping_type.unwrap_or("none"))
-    };
-    let (public_ipv6, ipv6_port) = reachability::probe_ipv6(ctx.quic_port)
-        .map(|(ip, port)| (Some(ip), Some(port)))
-        .unwrap_or((None, None));
     let body = json!({
         "device_id": ctx.device_id,
         // 设备身份应用级：切换素材库后靠心跳把服务端设备表的库名收敛到当前库
         "library_name": library_name(ctx.library),
         // 远程查看模式无本地库可供写入，不上报写权限
         "allow_write": ctx.library.is_some() && ctx.remote.current().writable,
-        "reachability": {
-            "public_ip": null,
-            "mapped_port": mapped_port,
-            "mapping_type": mapping_type,
-            "public_ipv6": public_ipv6,
-            "ipv6_port": ipv6_port,
-            // LAN 地址（每次心跳探测，零成本）：双方同公网 IP 时服务端下发为 LAN 候选
-            "lan_ipv4": reachability::probe_lan_ipv4(),
-            "nat_type": "unknown",
-        }
+        "addrs": ctx.data_plane.direct_addrs(),
     });
     let resp = ctx
         .http
@@ -569,93 +528,20 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
         .await
         .map_err(|e| SignalError::Transient(format!("心跳发送失败: {e}")))?;
     if resp.status().is_success() {
-        Ok(())
+        let body: Value = resp.json().await.unwrap_or_default();
+        let relay = body["data"]["relay"]["url"]
+            .as_str()
+            .map(str::to_string)
+            .zip(body["data"]["relay"]["token"].as_str().map(str::to_string));
+        Ok(HeartbeatReply::Ok(relay))
     } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        // 设备不存在：服务端设备表丢失/被注销 → 触发重注册
         Err(SignalError::Unregistered)
     } else if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        // 429 是良性竞态：重连后的即时心跳可能落在上一跳 10s 最小间隔内。
-        // 只记日志不拆通道——下一跳（30s 后）自然恢复，通道保持在线
         tracing::debug!("心跳被服务端限速（10s 最小间隔），跳过本跳");
-        Ok(())
+        Ok(HeartbeatReply::Skipped)
     } else {
         Err(response_error(resp, "心跳").await)
     }
-}
-
-/// 中继 WS 接入并入 mux（P4）：relay 模式会话的初始路径 / 既有会话的降级附加路径。
-/// 目标侧进 DataPlane mux，发起侧进会话 mux（attach_relay_to_active 判定会话仍在场）
-fn spawn_relay_attach(
-    ctx: &ChannelContext<'_>,
-    supervisor: &Arc<Supervisor>,
-    session_id: &str,
-    relay_session: bool,
-    accepted_peers: &std::collections::HashMap<String, [u8; 32]>,
-) {
-    // relay 模式会话的接受方必是目标侧；relay_path 推送按会话归属裁决角色
-    let is_target = relay_session || accepted_peers.contains_key(session_id);
-    let base = ctx.base.to_string();
-    let key = ctx.key.to_string();
-    let device_id = ctx.device_id.to_string();
-    let sid = session_id.to_string();
-    let plane = ctx.data_plane.clone();
-    let sessions = supervisor.sessions.clone();
-    tokio::spawn(async move {
-        let role = if is_target { "a" } else { "b" };
-        match crate::remote::relay::connect_relay_ws(&base, &key, &device_id, &sid, role).await {
-            Ok(ws) => {
-                if is_target {
-                    plane.attach_relay(ws);
-                    tracing::info!("会话 {sid} 中继路径已接入（目标侧）");
-                } else if sessions.attach_relay_to_active(&sid, ws) {
-                    tracing::info!("会话 {sid} 中继路径已接入（发起侧）");
-                } // 会话已更替：WS 随 drop 关闭，服务端侧摘除配对
-            }
-            Err(e) => tracing::warn!("会话 {sid} 中继通道连接失败: {e}"),
-        }
-    });
-}
-
-/// 探测口地址解析（P3）：主机名取接入配置 base URL（协议约定），IPv4 优先（探测口仅绑 v4）
-async fn resolve_probe_addr(
-    base: &str,
-    probe_port: u16,
-) -> std::result::Result<SocketAddr, String> {
-    let url = reqwest::Url::parse(base).map_err(|e| format!("remote url 解析失败: {e}"))?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| "remote url 无主机名".to_string())?;
-    let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, probe_port))
-        .await
-        .map_err(|e| format!("探测口域名解析失败: {e}"))?
-        .collect();
-    addrs.sort_by_key(|addr| if addr.is_ipv4() { 0 } else { 1 });
-    addrs
-        .into_iter()
-        .next()
-        .ok_or_else(|| "探测口地址解析为空".to_string())
-}
-
-/// session.probe 的 token（32 位 hex → 16 字节）
-fn parse_probe_token(hex_str: &str) -> Option<[u8; 16]> {
-    let bytes = hex_str.as_bytes();
-    if bytes.len() != 32 {
-        return None;
-    }
-    let mut token = [0u8; 16];
-    for (i, chunk) in bytes.as_chunks::<2>().0.iter().enumerate() {
-        let hi = (chunk[0] as char).to_digit(16)?;
-        let lo = (chunk[1] as char).to_digit(16)?;
-        token[i] = ((hi << 4) | lo) as u8;
-    }
-    Some(token)
-}
-
-/// connect.punch_peer（A 侧开口目标）：host + port → SocketAddr
-fn parse_punch_peer(value: &Value) -> Option<SocketAddr> {
-    let host = value.get("host")?.as_str()?;
-    let port = value.get("port")?.as_u64()? as u16;
-    Some(SocketAddr::new(host.parse().ok()?, port))
 }
 
 async fn accept_session(
@@ -727,7 +613,7 @@ async fn register(
     let body = json!({
         "name": name,
         "platform": std::env::consts::OS,
-        "fingerprint": identity.fingerprint,
+        "endpoint_id": identity.endpoint_id,
         "library_name": library_name(library),
         // 远程查看模式无本地库：可被发现但不接受会话（没有素材可服务）
         "allow_remote": library.is_some(),
