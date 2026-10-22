@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "hawk-daemon"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "async-stream",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "hawk-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "base64 0.23.1",

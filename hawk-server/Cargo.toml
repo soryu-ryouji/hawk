@@ -1,6 +1,6 @@
 [package]
 name = "hawk-server"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["soryu-ryouji <helloryouji@outlook.com>"]
 description = "hawk 远程访问服务端（单用户：设备注册/心跳/会话撮合/WSS 控制通道）"
