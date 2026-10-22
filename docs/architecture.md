@@ -71,7 +71,7 @@ Electron 壳与后端二进制一起打包发行（electron-builder 的 `extraRe
 Electron 启动
   → 预选空闲环回端口 + 生成随机 token
   → spawn hawk-daemon 子进程
-      - 参数 --library <path> --port <预选端口>，token 经环境变量传入
+      - 参数 --library <path> --port <预选端口>（远程查看模式不传 --library，daemon 无库形态运行），token 经环境变量传入
       - **先监听端口，初始索引后台构建**（先监听、后索引的启动模型）
   → 轮询 GET /api/v1/app/startup（200ms 间隔）：
       starting → 进度帧驱动启动进度页；ready → 加载主界面；error → 弹错误框
