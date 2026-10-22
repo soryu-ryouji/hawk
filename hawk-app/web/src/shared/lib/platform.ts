@@ -75,6 +75,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
     allow_write: false,
     reachable: undefined,
   }),
+  remoteDeleteDevice: async () => {},
   remoteRotate: async () => ({ fingerprint: '' }),
   remoteConnect: async () => ({ api_base: '', token: '', label: '', remote: false }),
   remoteDisconnect: async () => null,

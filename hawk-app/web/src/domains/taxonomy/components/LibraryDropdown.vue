@@ -9,16 +9,21 @@ import { shell } from '@/shared/lib/platform';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLibraryStore } from '@/domains/library';
 import { renameLibrary } from '@/domains/library';
+import { useConnectionLabel, useRemoteStore } from '@/domains/remote';
 import Icon from '@/shared/ui/Icon.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
-import type { LibraryHistoryItem, MenuItem } from '@/shared/types';
+import type { LibraryHistoryItem, MenuItem, RemoteDevice } from '@/shared/types';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
+const remoteStore = useRemoteStore();
+const connection = useConnectionLabel();
 
 const open = ref(false);
 const current = ref<string | null>(null);
 const libraries = ref<LibraryHistoryItem[]>([]);
+/** 远程素材库（服务端池内其他设备；仅远程接入在线时拉取） */
+const peers = ref<RemoteDevice[]>([]);
 const triggerRef = ref<HTMLElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
 const pos = ref({ x: 0, y: 0, width: 0 });
@@ -34,6 +39,18 @@ watch(open, async (visible) => {
   const res = await shell.listLibraries();
   current.value = res.current;
   libraries.value = res.libraries;
+  // 远程分区：接入在线才拉设备列表（离线/未配置不占用面板）；本机设备不在其列。
+  // 拉取失败（服务端不可达等）不拖垮本地库浮层——远程分区缺席即可
+  try {
+    const status = await shell.remoteStatus();
+    if (status.enabled && status.status.state === 'online') {
+      peers.value = (await shell.remoteDevices()).devices.filter((d) => d.device_id !== status.status.device_id);
+    } else {
+      peers.value = [];
+    }
+  } catch {
+    peers.value = [];
+  }
   const rect = triggerRef.value!.getBoundingClientRect();
   await nextTick();
   const panel = panelRef.value!;
@@ -82,13 +99,34 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-/** 切换素材库：仅对存在的非当前库生效（已删除项置灰） */
+/** 切换素材库：仅对存在的非当前库生效（已删除项置灰）；
+ *  远程浏览中点本地当前库 = 断开远程会话回切 */
 function switchTo(lib: LibraryHistoryItem): void {
-  if (!lib.exists || lib.path === current.value) {
+  if (!lib.exists) {
+    return;
+  }
+  if (lib.path === current.value) {
+    if (connection.isRemote.value) {
+      close();
+      void connection.disconnect();
+    }
     return;
   }
   close();
   void shell.openLibrary(lib.path);
+}
+
+/** 连接远程素材库（复用远程 store：直连失败按「中继回退」偏好询问）；失败 toast 展示 */
+async function connectRemote(device: RemoteDevice): Promise<void> {
+  if (!device.online || !device.allow_remote || device.device_id === connection.deviceId.value) {
+    return;
+  }
+  close();
+  await remoteStore.connect(device.device_id);
+  if (remoteStore.error) {
+    store.showToast(remoteStore.error);
+    remoteStore.error = null;
+  }
 }
 
 /** 从历史移除一条记录（只删记录不动目录；当前库不可移除），浮层原地刷新 */
@@ -169,14 +207,35 @@ onBeforeUnmount(() => {
           :key="lib.path"
           type="button"
           class="lib-item"
-          :class="{ selected: lib.path === current, disabled: !lib.exists }"
+          :class="{ selected: lib.path === current && !connection.isRemote.value, disabled: !lib.exists }"
           :title="lib.path"
           @click="switchTo(lib)"
         >
-          <span class="check">{{ lib.path === current ? '✓' : '' }}</span>
+          <span class="check">{{ lib.path === current && !connection.isRemote.value ? '✓' : '' }}</span>
           <span class="label">{{ lib.exists ? lib.name : `${lib.name}（已删除）` }}</span>
           <button type="button" class="more" title="更多操作" @click.stop="openItemMenu(lib, $event)">···</button>
         </button>
+        <!-- 远程素材库：池内其他设备，一键切换浏览（「远程」徽标区分本地历史） -->
+        <template v-if="peers.length > 0">
+          <div class="separator" />
+          <button
+            v-for="device in peers"
+            :key="device.device_id"
+            type="button"
+            class="lib-item"
+            :class="{
+              selected: device.device_id === connection.deviceId.value,
+              disabled: !device.online || !device.allow_remote || device.device_id === connection.deviceId.value,
+            }"
+            :title="`${device.name} · ${device.library_name} · ${device.platform}${device.online ? (device.allow_remote ? '' : ' · 已关闭访问') : ' · 离线'}`"
+            @click="connectRemote(device)"
+          >
+            <span class="check">{{ device.device_id === connection.deviceId.value ? '✓' : '' }}</span>
+            <span class="dot" :class="{ online: device.online }" />
+            <span class="label">{{ device.name }}（{{ device.library_name }}）{{ remoteStore.connectingId === device.device_id ? ' 连接中…' : '' }}</span>
+            <span class="badge">远程</span>
+          </button>
+        </template>
         <div class="separator" />
         <button type="button" class="lib-item" @click="pickFolder">
           <span class="check" />
@@ -292,5 +351,29 @@ onBeforeUnmount(() => {
   height: 1px;
   margin: 4px 8px;
   background: var(--border);
+}
+
+/* 远程设备行的在线点（与设置面板设备列表同款） */
+.lib-item .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary, #999);
+  flex: none;
+}
+
+.lib-item .dot.online {
+  background: #4caf50;
+}
+
+/* 「远程」徽标：与本地历史库区分 */
+.lib-item .badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 </style>
