@@ -53,6 +53,7 @@ cargo run -- tenant add --label dev
 | ---- | -------- | ------ | ---- |
 | `--port` | `HAWK_SERVER_PORT` | `9100` | 监听端口，绑定 `0.0.0.0`。本进程只说明文 HTTP，TLS 由前置反代终结 |
 | `--admin-port` | `HAWK_SERVER_ADMIN_PORT` | `9110` | 管理面监听端口（租户管理），**只绑 `127.0.0.1`**，不鉴权；不得经反代/防火墙暴露 |
+| `--probe-port` | `HAWK_SERVER_PROBE_PORT` | `9101` | 打洞探测口（**UDP**，P3 NAT 打洞的 observed endpoint 观测），需公网直达；`0` = 关闭打洞编排（无直连候选的会话直接 unreachable）。绑定失败只降级不阻断启动 |
 | `--data-dir` | `HAWK_SERVER_DATA_DIR` | `~/.config/hawk-server` | 状态目录（全平台统一的家目录约定，与 hawk-app 的 `~/.config/hawk` 同族）；不存在则自动创建 |
 
 - 日志走 stdout，级别由 `RUST_LOG` 控制（默认 `info`）；排障时 `RUST_LOG=debug`，启动成功会打印 `hawk-server listening`。

@@ -12,6 +12,7 @@ use hawk_daemon::remote::session::SessionManager;
 use hawk_daemon::remote::tls;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -484,6 +485,134 @@ async fn spawn_relay_hub(fp_a_hex: String) -> (String, RelayPairs) {
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{addr}"), pairs)
+}
+
+/// 打洞会话 mock hub：ready 候选为 punch（指向 A 侧数据面），携带 punch_peer（B 忽略）
+async fn spawn_punch_hub(port_a: u16, fp_a_hex: String) -> String {
+    let fp_devices = fp_a_hex.clone();
+    let fp_ready = fp_a_hex.clone();
+    let app = Router::new()
+        .route(
+            "/api/v1/devices",
+            axum::routing::get(move || {
+                let fp = fp_devices.clone();
+                async move {
+                    Json(json!({"status":"success","data":{"devices":[
+                        {"device_id":"d_a","name":"家里台式机","platform":"macos","library_name":"A 的库",
+                         "online":true,"allow_remote":true,"fingerprint":fp}
+                    ]}}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions",
+            axum::routing::post(|Json(_body): Json<Value>| async move {
+                Json(json!({"status":"success","data":{"session_id":"s_p","state":"pending"}}))
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_p",
+            axum::routing::get(move || {
+                let fp = fp_ready.clone();
+                async move {
+                    Json(json!({"status":"success","data":{
+                        "session_id":"s_p","state":"ready",
+                        "connect":{
+                            "mode":"direct",
+                            "candidates":[{"transport":"punch","host":"127.0.0.1","port":port_a}],
+                            "punch_peer":{"host":"127.0.0.1","port":27399},
+                            "fingerprint": fp,
+                        }
+                    }}))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/sessions/s_p/cancel",
+            axum::routing::post(|| async move { Json(json!({"status":"success"})) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+/// 探测口收包记录（源地址, 包原文）
+type ObservedPackets = Arc<Mutex<Vec<(SocketAddr, Vec<u8>)>>>;
+
+/// P3 打洞 B 侧端到端：session.probe 预绑报到 → punch 候选复用同 socket 建连。
+/// loopback 无 NAT，验证的是编排链路与 socket 复用路径（真 NAT 靠手动验证）
+#[tokio::test]
+async fn punch_session_end_to_end() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = new_identity(&dir_b, Some("d_b"));
+    let fp_b = tls::parse_fingerprint(&identity_b.fingerprint).unwrap();
+
+    let plane_a = DataPlane::bind(&identity_a, 0, test_router()).unwrap();
+    let port_a = plane_a.local_addr().unwrap().port();
+    plane_a.allow_session("s_p", fp_b, false);
+
+    // 探测口 sink：验证 prepare_punch 的报到包形状（协议 P3：定长 64B = magic + token）
+    let probe_sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let probe_port = probe_sink.local_addr().unwrap().port();
+    let observed: ObservedPackets = Arc::new(Mutex::new(vec![]));
+    let observed_sink = observed.clone();
+    tokio::spawn(async move {
+        let mut buf = [0u8; 128];
+        while let Ok((len, from)) = probe_sink.recv_from(&mut buf).await {
+            observed_sink
+                .lock()
+                .unwrap()
+                .push((from, buf[..len].to_vec()));
+        }
+    });
+
+    let base = spawn_punch_hub(port_a, fingerprint_hex(&identity_a)).await;
+    let http = reqwest::Client::new();
+    let manager = SessionManager::new(EventBus::new());
+
+    // 模拟 WSS session.probe 触发（协议 P3）：B 预绑 socket 并向探测口 3 连发报到
+    let token = [7u8; 16];
+    manager.prepare_punch("s_p", SocketAddr::from(([127, 0, 0, 1], probe_port)), token);
+
+    let dto = manager
+        .connect(&http, &base, "key", &identity_b, "d_a", "direct")
+        .await
+        .expect("打洞会话建立");
+
+    // 隧道功能与直连一致：经会话代理访问 A 的素材服务
+    let resp = http
+        .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
+        .bearer_auth(&dto.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "hi from A");
+
+    // 探测报到：3 连发、同一源端口（同 socket 复用）、包形状符合协议
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let count = observed.lock().unwrap().len();
+        if count >= 3 {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "探测报到超时");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let packets = observed.lock().unwrap().clone();
+    for (from, packet) in &packets {
+        assert_eq!(packet.len(), 64);
+        assert_eq!(&packet[..5], b"HAWKP");
+        assert_eq!(&packet[5..21], &token);
+        assert_eq!(*from, packets[0].0, "三次报到须同一源端口");
+    }
+
+    manager.disconnect(&http, &base, "key").await;
 }
 
 #[tokio::test]

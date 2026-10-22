@@ -2,7 +2,7 @@
 
 > hawk 客户端（hawk-daemon 的 remote 模块，见 [remote-access.md](remote-access.md)）与远程访问服务端（hawk-server，本仓库 `hawk-server/`）之间的接口契约。协议是两侧的唯一共享物，实现零代码共享。
 > 多租户方案：一台 hawk-server 可服务多个池（租户）。两级凭证——**service-key**（池门禁，程序生成，server 侧 `tenant add` 创建）与 **hawk-app key**（设备本地签发，逐把读/写权限，分发给网页版/插件等查看者）。协议无账号/会员/计费概念；账号系统后续接入时只替换 service-key 的签发水源，协议不动。访问被拒的语义为凭证无效（401）。
-> 总体架构见 [remote-access.md](remote-access.md)。标注 `[P1]` 为直连控制面（已实现）；`[P2]` 为中继（已实现，见「中继」一节）。
+> 总体架构见 [remote-access.md](remote-access.md)。标注 `[P1]` 为直连控制面（已实现）；`[P2]` 为中继（已实现，见「中继」一节）；`[P3]` 为 NAT 打洞（已实现，见「NAT 打洞」一节）。
 
 ## 凭证模型
 
@@ -228,6 +228,7 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 | `ping`              | `{}`（保活，30s 间隔，两次未回 pong 断开）                                              | P1   |
 | `session.request`   | `{ "session_id", "from": { "device_id", "name", "library_name", "fingerprint" }, "mode": "direct", "access": "read" \| "write", "credential": "<sha256-hex 或 null>" }` | P1   |
 | `session.update`    | `{ "session_id", "state", ... }`（状态变更推送双方；轮询为兜底）                         | P1   |
+| `session.probe`     | `{ "session_id", "probe_port", "token": "<32-hex>" }`（打洞探测邀约，见「NAT 打洞」一节） | P3   |
 | `session.cancelled` | `{ "session_id" }`                                                                     | P1   |
 
 `from.fingerprint`：发起方的 QUIC 证书指纹（服务端持有双方设备记录，随请求下发，省一次设备列表往返）。`credential`：查看者会话的 key 验证子（app 间会话为 null）；目标 daemon 据此比对本地 key 映射执法——未命中/权限不足/本机 writable 关闭即拒绝。
@@ -261,7 +262,7 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 1. 校验来源/目标设备存在且同池、目标设备在线（不在线返回 404）；`allow_remote=false` 直接置会话状态 `rejected`；`access=write` 且目标 `allow_write=false` 返回 403
 2. 经 WSS 向目标推送 `session.request`（含 `access`、查看者会话含 `credential`）
 3. 目标回 `POST /api/v1/sessions/{id}/accept`（service-key 鉴权），响应 `{ "status": "success" }`；拒绝则回 reject，会话状态变 `rejected`。目标 daemon 对查看者会话做本地执法（key 存在性/权限/writable 总开关），不通过即 reject
-4. 服务端取目标最近心跳的可达性组装候选列表（IPv4 映射优先、IPv6 次之；无任何候选则置 unreachable），经 WSS `session.update` 推送双方
+4. 服务端取目标最近心跳的可达性组装候选列表（IPv4 映射优先、IPv6 次之），经 WSS `session.update` 推送双方；无任何候选时进入打洞编排（服务端探测口可用则探测双方 observed endpoint，见「NAT 打洞」一节；不可用则置 unreachable）
 
 发起方以 WSS 推送为准（轮询 1s 间隔、上限 30s 为兜底；超时状态变 `expired`）：
 
@@ -281,19 +282,20 @@ wss://<base>/api/v1/ws?device_id=<device_id>
         { "transport": "ipv4", "host": "1.2.3.4", "port": 27373 },     // UPnP/NAT-PMP 映射候选
         { "transport": "ipv6", "host": "240e:xxxx::1", "port": 27373 } // 全局 IPv6 候选（无映射依赖）
       ],
-      "fingerprint": "<sha256-hex，TOFU 钉扎目标 QUIC 证书>"
+      "fingerprint": "<sha256-hex，TOFU 钉扎目标 QUIC 证书>",
+      "punch_peer": { "host": "5.6.7.8", "port": 40123 }              // [P3] 仅打洞编排时存在：发起方的 observed endpoint，目标设备开口用（发起方忽略）
     }
 } }
 ```
 
-候选列表由服务端按心跳上报组装（IPv4 映射在前、IPv6 在后，缺失项省略）；客户端依序尝试，单候选超时 5s，任一成功即建立 QUIC 连接（指纹钉扎对所有候选一致）。**全部候选失败不是会话状态**——那是客户端本地判定直连失败：中继开关开启时弹窗询问用户是否经中继继续，未开启则提示到设置中开启；会话本身保持 ready，由用户选择后取消或另建中继会话。
+候选列表由服务端按心跳上报组装（IPv4 映射在前、IPv6 在后，缺失项省略；打洞候选 `{ "transport": "punch", ... }` 排最后，见「NAT 打洞」一节）；客户端依序尝试，直连候选单候选超时 5s（punch 候选 15s），任一成功即建立 QUIC 连接（指纹钉扎对所有候选一致）。**全部候选失败不是会话状态**——那是客户端本地判定直连失败：中继开关开启时弹窗询问用户是否经中继继续，未开启则提示到设置中开启；会话本身保持 ready，由用户选择后取消或另建中继会话。
 
 | state         | 含义                                          | 客户端行为                                                 |
 | ------------- | --------------------------------------------- | ---------------------------------------------------------- |
 | `pending`     | 等待目标设备响应                              | 继续等待                                                   |
 | `ready`       | 连接信息已就绪                                | 建立 QUIC 隧道                                             |
 | `rejected`    | 目标设备拒绝（或 `allow_remote=false`，或查看者 key 未过本地执法） | 展示"对方拒绝"                                             |
-| `unreachable` | 目标无任何直连候选（无 v4 映射且无全局 IPv6） | 中继开关开启时询问用户是否走中继；未开启则提示到设置中开启 |
+| `unreachable` | 目标无任何可用直连路径（无 v4 映射、无全局 IPv6，且打洞编排不可用或探测失败） | 中继开关开启时询问用户是否走中继；未开启则提示到设置中开启 |
 | `expired`     | 建立超时（30s）                               | 提供重试                                                   |
 | `cancelled`   | 任一方取消（或设备注销）                      | 结束                                                       |
 
@@ -347,6 +349,51 @@ wss://<base>/api/v1/relay?device_id=<device_id>&session_id=<session_id>&role=a|b
 - 任一方断开 → 双方连接关闭，会话置 `cancelled`（双方控制通道收到 `session.cancelled`）
 - 客户端行为约定：直连失败（候选全部超时或无候选/unreachable）且「中继回退」开启时，经用户确认后以 `mode=relay` 另建会话；任何环节都不自动回落
 
+## NAT 打洞（P3）
+
+目标无任何直连候选（无 UPnP/NAT-PMP 映射且无全局 IPv6）时的直连补救：服务端撮合双方「被观测到的公网 endpoint」（observed endpoint），双方同时开口打通各自 NAT，QUIC 仍端到端建立（指纹钉扎语义不变——打洞只决定包能否到达）。
+
+**为什么不走心跳上报**：UDP NAT 映射生命周期短（常见 30~120s），且发起方的 QUIC socket 是会话时才建的——observed endpoint 必须在会话建立时新鲜探测，心跳周期上报的值不可信。
+
+### 打洞探测口（服务端 UDP，默认 9101）
+
+极简 STUN 式应答，只服务「观测会话参与者的公网 endpoint」一件事：
+
+```text
+请求（定长 64 字节）："HAWKP"（5B magic）+ token（16B）+ 零填充
+响应（≤64 字节）：   "HAWKR" + token + 地址族（1B：4/6）+ IP（4B/16B）+ 端口（2B，大端）
+```
+
+- token 由服务端按会话按角色签发（经 WSS `session.probe` 下发，32 位小写 hex），是探测包归属会话的唯一依据；无效 token **静默丢弃不回包**
+- 响应不大于请求 + 按来源 IP 限速（10s 窗口 30 包，超限丢弃），杜绝反射放大滥用
+- 回包仅作诊断（客户端可比对本地端口感知 NAT 存在性），客户端实现可以不消费
+- 探测口仅绑 IPv4：打洞发生在 v4 NAT 域；v6 无 NAT，可达性走心跳上报的直连候选
+- 部署：探测口需公网直达（--probe-port，0 = 关闭打洞编排）；反代只暴露 443 的部署探测不到，退化为「无直连候选即 unreachable」，不破坏既有行为
+
+### 编排时序
+
+```text
+B POST /sessions(direct) → A accept → 服务端组装直连候选为空且探测口已启用
+  → 会话保持 pending，服务端向双方各推 session.probe（token 各自独立）
+  → 双方各自用「自己 QUIC 端点的同一个 UDP socket」向 <服务端 host>:<probe_port>
+    发探测包（3 次，间隔 300ms，容忍单包丢失；host 即接入配置 base URL 的主机名）
+  → 服务端记录双方 observed endpoint（等待上限 8s）
+  → 到齐：会话 ready，经 WSS session.update 推送双方——
+       connect.candidates = [{ "transport": "punch", host, port }]   // A 的 observed endpoint，B 依序尝试（punch 排最后）
+       connect.punch_peer  = { host, port }                          // B 的 observed endpoint，仅 A 使用
+  → 任一方探测未到：会话置 unreachable（语义同「无直连路径」）
+```
+
+探测口不可达、token 丢失、UDP 被运营商拦截等失败形态统一收敛为「8s 超时 → unreachable」，客户端无需区分。
+
+### 开口与连接（客户端行为）
+
+- **A（目标设备）**：收到 ready 且 `connect.punch_peer` 存在 → 用 QUIC 端点同端口 socket 每 500ms 向 punch_peer 发开口包（16 字节垃圾数据；对端 quinn 收到无法解析的数据报自然丢弃），窗口 20s
+- **B（发起方）**：ready 的 candidates 含 punch 候选 → 用「探测时同一个 socket」建 QUIC endpoint 发起 connect（单候选超时 15s 而非 5s：开口依赖双方时序，QUIC Initial 自动重传覆盖洞口开启前的丢包）。探测与连接必须同端口——cone NAT 的映射按本地端口建立
+- 不需要时钟同步：双方以「收到 ready 即开打」为准，重传与窗口长度吸收时序差
+- 对称型 NAT（任一侧）观测端口随目的地址变化，打洞必然失败 → 15s 候选超时 → 按既有「直连失败」处理（中继回退开关开启时询问用户）
+- 心跳 `nat_type` 字段继续保留：当前客户端一律报 `unknown`，服务端不据此决策
+
 ## 数据面（QUIC 隧道）
 
 - 双方 QUIC 连接（quinn），自签名证书，对端身份 = 信令交换的指纹钉扎（TOFU）。证书轮换走 `PATCH /devices/{id}` 更新指纹：新指纹立即生效，旧证书会话失效
@@ -367,10 +414,14 @@ wss://<base>/api/v1/relay?device_id=<device_id>&session_id=<session_id>&role=a|b
 | 心跳最小间隔          | 10s（429）                                                                                      |
 | WSS 保活              | ping 30s 间隔，两次未回 pong 断开；客户端 90s 未收到服务端帧即主动断开重连                       |
 | 会话建立超时          | 30s                                                                                             |
-| 直连单候选超时        | 5s（客户端实现，全部候选失败即直连失败）                                                        |
+| 直连单候选超时        | 5s（客户端实现；punch 候选 15s；全部候选失败即直连失败）                                        |
+| 打洞编排等待上限      | 8s（超时置 unreachable）                                                                        |
+| 开口包间隔 / 窗口     | 500ms / 20s（A 侧客户端实现）                                                                   |
+| 探测包重发            | 3 次 × 300ms（客户端实现，容忍单包丢失）                                                        |
+| 探测口限速            | 单来源 IP 10s 窗口 30 包（超限静默丢弃）                                                        |
 | 门令牌 TTL / 尝试预算 | 5min / 5 次                                                                                     |
 | 风控                  | 单 IP 10min 内 30 次失败 → 冷却 15min；单租户 20 次登录失败 → 池冷却 15min 起指数增长（封顶 24h），成功清零 |
-| 端口默认值            | hawk-server 9100 / hawk API 27371 / LAN web 27372 / 远程 QUIC UDP 27373（本地端口由客户端在会话建立时分配） |
+| 端口默认值            | hawk-server 9100 / 打洞探测口 UDP 9101 / hawk API 27371 / LAN web 27372 / 远程 QUIC UDP 27373（本地端口由客户端在会话建立时分配） |
 
 ## 版本策略
 

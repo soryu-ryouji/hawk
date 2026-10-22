@@ -5,6 +5,7 @@ use axum::extract::ws::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -122,6 +123,28 @@ pub struct Session {
     pub created_at_ms: u64,
     /// ready 时组装的连接信息（direct: 候选列表 + 指纹；relay: 仅指纹）
     pub connect: Option<Value>,
+    /// 打洞编排状态（仅 direct 且目标无直连候选时创建；探测口记录 observed endpoint）
+    pub probe: Option<ProbeState>,
+}
+
+/// 打洞编排（P3）：双方探测 token 与探测口观测到的 observed endpoint。
+/// token 按角色签发并经 WSS session.probe 下发；探测包归属判定走 AppState.probe_index
+#[derive(Clone, Default)]
+pub struct ProbeState {
+    /// 目标设备（被连侧）探测 token
+    pub token_a: [u8; 16],
+    /// 发起方探测 token
+    pub token_b: [u8; 16],
+    pub addr_a: Option<SocketAddr>,
+    pub addr_b: Option<SocketAddr>,
+}
+
+/// 探测票据：token → 会话与角色（探测口收包时的归属判定）
+#[derive(Clone)]
+pub struct ProbeTicket {
+    pub session_id: String,
+    /// a = 目标设备（被连侧）/ b = 发起方
+    pub role: String,
 }
 
 /// 中继配对：会话双方各自的中继 WS 发送端（role=a 目标设备 / role=b 发起方）
@@ -184,6 +207,11 @@ pub struct AppState {
     pub relay_pairs: RwLock<HashMap<String, RelayPair>>,
     /// 配对表变更通知（进程内中继 socket 的 poller 等待源）
     pub relay_changed: Arc<tokio::sync::Notify>,
+    /// 打洞探测口端口（None = 打洞编排未启用：无直连候选的会话直接 unreachable）；
+    /// 由启动流程在绑定探测 socket 成功后写入
+    pub probe_port: Option<u16>,
+    /// 探测 token 索引（探测口收包 → 会话归属）；编排结束（到齐/超时/终态）即清除
+    pub probe_index: RwLock<HashMap<[u8; 16], ProbeTicket>>,
     conn_seq: AtomicU64,
 }
 
@@ -197,6 +225,8 @@ impl AppState {
             sessions: RwLock::new(HashMap::new()),
             relay_pairs: RwLock::new(HashMap::new()),
             relay_changed: Arc::new(tokio::sync::Notify::new()),
+            probe_port: None,
+            probe_index: RwLock::new(HashMap::new()),
             conn_seq: AtomicU64::new(1),
         }
     }
@@ -227,6 +257,27 @@ impl AppState {
                 let _ = sender.send(Message::Close(None));
             }
         }
+    }
+
+    /// 探测口收包归属：token 命中进行中会话的打洞编排则记录 observed endpoint；
+    /// 返回是否命中（未命中的包静默丢弃，不回包——防反射放大）
+    pub fn record_probe(&self, token: &[u8; 16], from: SocketAddr) -> bool {
+        let ticket = self.probe_index.read().unwrap().get(token).cloned();
+        let Some(ticket) = ticket else {
+            return false;
+        };
+        let mut sessions = self.sessions.write().unwrap();
+        let Some(session) = sessions.get_mut(&ticket.session_id) else {
+            return false;
+        };
+        let Some(probe) = &mut session.probe else {
+            return false;
+        };
+        match ticket.role.as_str() {
+            "a" => probe.addr_a = Some(from),
+            _ => probe.addr_b = Some(from),
+        }
+        true
     }
 
     /// 经 WSS 控制通道向设备推送消息；设备未连接时静默丢弃（推送是增强，轮询为兜底）

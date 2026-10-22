@@ -28,6 +28,53 @@ pub struct TunneledPeer {
 /// 单候选连接超时（协议约定）
 pub const CANDIDATE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 打洞候选超时（P3）：开口依赖双方时序，QUIC Initial 自动重传覆盖洞口开启前的丢包
+pub const PUNCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// A 侧开口窗口：覆盖 B 侧打洞候选超时 + ready 推送时序差
+pub const PUNCH_WINDOW: Duration = Duration::from_secs(20);
+/// 开口包间隔
+const PUNCH_INTERVAL: Duration = Duration::from_millis(500);
+/// 开口垃圾包：仅触发本端 NAT 开口，不承载语义（对端 quinn 收到无法解析的数据报自然丢弃）
+const PUNCH_PACKET: [u8; 16] = *b"HAWKPUNCH.......";
+
+pub(crate) fn runtime() -> Result<Arc<dyn quinn::Runtime>, String> {
+    quinn::default_runtime().ok_or_else(|| "tokio runtime 不可用".to_string())
+}
+
+/// 探测包（协议 P3：定长 64B = magic 5B + token 16B + 零填充）
+pub(crate) fn probe_packet(token: &[u8; 16]) -> [u8; 64] {
+    let mut packet = [0u8; 64];
+    packet[..5].copy_from_slice(b"HAWKP");
+    packet[5..21].copy_from_slice(token);
+    packet
+}
+
+/// 打洞/探测发送的目标地址换算：双栈 v6 socket 不能直接发 v4 地址（EINVAL），须转为
+/// v4-mapped；v4-only socket（v6 绑定失败的回退）保持原样
+pub(crate) fn punch_target(local: &std::net::UdpSocket, addr: SocketAddr) -> SocketAddr {
+    match (local.local_addr(), addr) {
+        (Ok(SocketAddr::V6(_)), SocketAddr::V4(v4)) => {
+            SocketAddr::from((v4.ip().to_ipv6_mapped(), v4.port()))
+        }
+        _ => addr,
+    }
+}
+
+/// 探测 3 连发（UDP 单包丢失容忍；服务端收到任一即记录 observed endpoint，响应不消费）
+pub(crate) async fn send_probe_packets(
+    socket: &std::net::UdpSocket,
+    probe_addr: SocketAddr,
+    token: [u8; 16],
+) {
+    let probe_addr = punch_target(socket, probe_addr);
+    for attempt in 0..3 {
+        let _ = socket.send_to(&probe_packet(&token), probe_addr);
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct AcceptedSession {
     fingerprint: [u8; 32],
@@ -151,6 +198,9 @@ impl SessionRegistry {
 pub struct DataPlane {
     /// Option：热重启/停用时显式 take 并 drop，避免超时清理等任务持有 Arc 时端口不释放
     endpoint: Mutex<Option<quinn::Endpoint>>,
+    /// 开口句柄（P3）：与 QUIC 端点同一 UDP socket 的克隆，只发不收（接收归 quinn）。
+    /// 探测/开口包必须与端点同端口——cone NAT 的映射按本地端口建立，换端口则服务端观测作废
+    punch_socket: Mutex<Option<Arc<std::net::UdpSocket>>>,
     pub(crate) allowlist: Arc<PeerAllowlist>,
     /// 连接唯一 id → 连接：直连与多条中继端点共用同一注册表，不能依赖 single-endpoint 的 stable_id
     conn_by_id: Arc<Mutex<HashMap<usize, quinn::Connection>>>,
@@ -169,12 +219,18 @@ impl DataPlane {
     ) -> Result<Arc<DataPlane>, String> {
         let allowlist = Arc::new(PeerAllowlist::default());
         let server_config = tls::server_config(identity, allowlist.clone())?;
-        let endpoint = bind_endpoint(
-            |addr| quinn::Endpoint::server(server_config.clone(), addr),
-            quic_port,
-        )?;
+        // 自建 socket + try_clone 开口句柄（P3），再交 quinn 托管
+        let (socket, punch_socket) = bind_udp_socket(quic_port)?;
+        let endpoint = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(server_config),
+            socket,
+            runtime()?,
+        )
+        .map_err(|e| format!("QUIC 端点创建失败: {e}"))?;
         let plane = Arc::new(DataPlane {
             endpoint: Mutex::new(Some(endpoint)),
+            punch_socket: Mutex::new(Some(punch_socket)),
             allowlist,
             conn_by_id: Arc::new(Mutex::new(HashMap::new())),
             conn_seq: Arc::new(AtomicU64::new(1)),
@@ -197,9 +253,35 @@ impl DataPlane {
         if let Some(endpoint) = self.endpoint.lock().unwrap().take() {
             endpoint.close(0u32.into(), b"");
         }
+        self.punch_socket.lock().unwrap().take();
         if let Some(task) = self.accept_task.lock().unwrap().take() {
             task.abort();
         }
+    }
+
+    /// A 侧开口（P3）：向对端 observed 地址周期发垃圾包打通本端 NAT（endpoint-dependent
+    /// filtering 要求本端先向对端发包）；窗口长度覆盖 B 侧打洞候选超时与推送时序差
+    pub fn punch_to(&self, peer: SocketAddr, window: Duration) {
+        let Some(socket) = self.punch_socket.lock().unwrap().clone() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let peer = punch_target(&socket, peer);
+            let deadline = std::time::Instant::now() + window;
+            while std::time::Instant::now() < deadline {
+                // 非阻塞 socket 的 WouldBlock（发送缓冲压力）直接丢弃：垃圾包无需可靠
+                let _ = socket.send_to(&PUNCH_PACKET, peer);
+                tokio::time::sleep(PUNCH_INTERVAL).await;
+            }
+        });
+    }
+
+    /// 向服务端探测口报到（P3）：从 QUIC 端点同端口发出，服务端据此观测本端 NAT 映射
+    pub fn send_probe(&self, probe_addr: SocketAddr, token: [u8; 16]) {
+        let Some(socket) = self.punch_socket.lock().unwrap().clone() else {
+            return;
+        };
+        tokio::spawn(async move { send_probe_packets(&socket, probe_addr, token).await });
     }
 
     /// 本端 QUIC 监听地址（测试与诊断）
@@ -315,6 +397,50 @@ fn bind_endpoint<T>(f: impl Fn(SocketAddr) -> std::io::Result<T>, port: u16) -> 
     f(v6)
         .or_else(|_| f(SocketAddr::from(([0, 0, 0, 0], port))))
         .map_err(|e| format!("QUIC 端口 {port} 绑定失败: {e}"))
+}
+
+/// 自建 UDP socket（双栈优先回退 v4）+ try_clone 开口句柄；返回的端点 socket 已设非阻塞
+/// （quinn 要求），开口句柄与其共享同一底层端口（P3 打洞的 NAT 映射前提）
+fn bind_udp_socket(port: u16) -> Result<(std::net::UdpSocket, Arc<std::net::UdpSocket>), String> {
+    let v6 = SocketAddr::from(([0u16; 8], port));
+    let socket = std::net::UdpSocket::bind(v6)
+        .or_else(|_| std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port))))
+        .map_err(|e| format!("QUIC 端口 {port} 绑定失败: {e}"))?;
+    let punch = socket
+        .try_clone()
+        .map_err(|e| format!("QUIC socket 克隆失败: {e}"))?;
+    socket
+        .set_nonblocking(true)
+        .map_err(|e| format!("QUIC socket 非阻塞设置失败: {e}"))?;
+    Ok((socket, Arc::new(punch)))
+}
+
+/// B 侧打洞连接（P3）：endpoint 建在探测时预绑的 socket 上——服务端观测的
+/// observed endpoint 与该端口的 NAT 映射绑定，换端口则观测作废。
+/// 候选超时 15s（协议约定；Initial 重传覆盖洞口开启窗口）
+pub async fn connect_punch(
+    identity: &Identity,
+    socket: std::net::UdpSocket,
+    host: &str,
+    port: u16,
+    expected: [u8; 32],
+) -> Result<(quinn::Endpoint, quinn::Connection), String> {
+    let ip: IpAddr = host.parse().map_err(|_| format!("候选地址非法: {host}"))?;
+    socket
+        .set_nonblocking(true)
+        .map_err(|e| format!("打洞 socket 非阻塞设置失败: {e}"))?;
+    let mut endpoint =
+        quinn::Endpoint::new(quinn::EndpointConfig::default(), None, socket, runtime()?)
+            .map_err(|e| format!("打洞端点创建失败: {e}"))?;
+    endpoint.set_default_client_config(tls::client_config(identity, expected)?);
+    let connecting = endpoint
+        .connect(SocketAddr::new(ip, port), "hawk-remote")
+        .map_err(|e| format!("隧道连接发起失败: {e}"))?;
+    let conn = tokio::time::timeout(PUNCH_TIMEOUT, connecting)
+        .await
+        .map_err(|_| format!("打洞候选 {host}:{port} 连接超时"))?
+        .map_err(|e| format!("打洞候选 {host}:{port} 连接失败: {e}"))?;
+    Ok((endpoint, conn))
 }
 
 /// A 侧 accept 循环：每条连接归档对端指纹，每条双向流按 HTTP/1.1 连接服务

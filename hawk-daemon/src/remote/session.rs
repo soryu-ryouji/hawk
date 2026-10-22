@@ -7,6 +7,8 @@ use crate::remote::data::{serve_proxy, ProxyContext};
 use crate::remote::identity::Identity;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -66,6 +68,9 @@ struct ActiveSession {
 
 pub struct SessionManager {
     active: Mutex<Option<ActiveSession>>,
+    /// 打洞预绑 socket（P3，session.probe 时创建并向服务端探测口报到，ready 后 connect
+    /// 复用——探测与连接同端口是 observed endpoint 有效的前提）；残留条目随下次准备/断开清理
+    pending_punch: Mutex<HashMap<String, std::net::UdpSocket>>,
     bus: EventBus,
 }
 
@@ -73,8 +78,31 @@ impl SessionManager {
     pub fn new(bus: EventBus) -> Arc<SessionManager> {
         Arc::new(SessionManager {
             active: Mutex::new(None),
+            pending_punch: Mutex::new(HashMap::new()),
             bus,
         })
+    }
+
+    /// B 侧打洞准备（WSS session.probe 触发，协议 P3）：预绑 ephemeral socket 并向
+    /// 服务端探测口报到，socket 留存至 connect 复用。准备失败仅降级（服务端探测超时
+    /// → unreachable），不影响后续会话
+    pub fn prepare_punch(&self, session_id: &str, probe_addr: SocketAddr, token: [u8; 16]) {
+        let socket = match bind_ephemeral_udp() {
+            Ok(socket) => socket,
+            Err(e) => {
+                tracing::warn!("打洞预绑 socket 失败: {e}");
+                return;
+            }
+        };
+        if let Ok(clone) = socket.try_clone() {
+            tokio::spawn(async move {
+                crate::remote::data::send_probe_packets(&clone, probe_addr, token).await;
+            });
+        }
+        let mut pending = self.pending_punch.lock().unwrap();
+        // 单活动会话模型：其余会话的残留条目随本次准备一并清理
+        pending.retain(|id, _| id == session_id);
+        pending.insert(session_id.to_string(), socket);
     }
 
     pub fn snapshot(&self) -> Option<ActiveSessionDto> {
@@ -137,8 +165,23 @@ impl SessionManager {
                 ) else {
                     continue;
                 };
-                match crate::remote::data::DataPlane::connect(identity, host, port, expected).await
-                {
+                let result = if candidate["transport"].as_str() == Some("punch") {
+                    // P3 打洞：复用 session.probe 时预绑的 socket（同端口前提）。
+                    // 锁 guard 不跨 await：先取出再连接
+                    let socket = self.pending_punch.lock().unwrap().remove(&session_id);
+                    match socket {
+                        Some(socket) => {
+                            crate::remote::data::connect_punch(
+                                identity, socket, host, port, expected,
+                            )
+                            .await
+                        }
+                        None => Err("打洞预绑 socket 缺失（session.probe 未收到）".to_string()),
+                    }
+                } else {
+                    crate::remote::data::DataPlane::connect(identity, host, port, expected).await
+                };
+                match result {
                     Ok((endpoint, conn)) => {
                         connected = Some((endpoint, conn));
                         break;
@@ -225,6 +268,7 @@ impl SessionManager {
 
     /// 断开当前会话（幂等）：通知服务端取消 + 本地收尾
     pub async fn disconnect(&self, http: &reqwest::Client, base: &str, key: &str) {
+        self.pending_punch.lock().unwrap().clear();
         let old = self.active.lock().unwrap().take();
         if let Some(old) = old {
             let session_id = old.dto.session_id.clone();
@@ -420,6 +464,18 @@ async fn server_message(resp: reqwest::Response) -> String {
         .ok()
         .and_then(|v| v["error"]["message"].as_str().map(String::from))
         .unwrap_or_else(|| format!("服务端返回 {status}"))
+}
+
+/// B 侧打洞预绑：ephemeral UDP socket（双栈优先回退 v4），已设非阻塞（connect 复用时交 quinn）
+fn bind_ephemeral_udp() -> Result<std::net::UdpSocket, String> {
+    let v6 = SocketAddr::from(([0u16; 8], 0));
+    let socket = std::net::UdpSocket::bind(v6)
+        .or_else(|_| std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))))
+        .map_err(|e| format!("UDP socket 绑定失败: {e}"))?;
+    socket
+        .set_nonblocking(true)
+        .map_err(|e| format!("UDP socket 非阻塞设置失败: {e}"))?;
+    Ok(socket)
 }
 
 fn random_token() -> String {

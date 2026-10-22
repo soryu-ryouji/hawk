@@ -22,11 +22,39 @@ async fn spawn_server(dir: &Path) -> (String, String) {
 
 /// 拉起服务并创建多个租户（同一运行实例，多池形态），返回（地址，各租户 service-key）
 async fn spawn_server_multi(dir: &Path, tenants: usize) -> (String, Vec<String>) {
+    let (base, keys, _) = spawn_server_full(dir, tenants, false).await;
+    (base, keys)
+}
+
+/// 拉起带打洞探测口（P3）的服务：返回（地址，service-key，探测口端口）
+async fn spawn_server_with_probe(dir: &Path) -> (String, String, u16) {
+    let (base, keys, probe_port) = spawn_server_full(dir, 1, true).await;
+    (base, keys.into_iter().next().unwrap(), probe_port.unwrap())
+}
+
+async fn spawn_server_full(
+    dir: &Path,
+    tenants: usize,
+    with_probe: bool,
+) -> (String, Vec<String>, Option<u16>) {
     let keys = KeyStore::open(dir).unwrap();
     let service_keys: Vec<String> = (0..tenants)
         .map(|i| keys.tenant_add(&format!("pool-{i}")).unwrap().1)
         .collect();
-    let state = Arc::new(AppState::new(Arc::new(keys), Store::load(dir).unwrap()));
+    let mut state = AppState::new(Arc::new(keys), Store::load(dir).unwrap());
+    // 打洞探测口：与生产一致的启动路径（绑定成功才启用编排）
+    let probe_socket = if with_probe {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        state.probe_port = Some(socket.local_addr().unwrap().port());
+        Some(socket)
+    } else {
+        None
+    };
+    let probe_port = state.probe_port;
+    let state = Arc::new(state);
+    if let Some(socket) = probe_socket {
+        tokio::spawn(hawk_server::probe::run(state.clone(), socket));
+    }
     let identity = hawk_server::identity::Identity::load_or_create(dir).unwrap();
     let device_id = hawk_server::viewer::ensure_viewer_device(&state, &identity).unwrap();
     let mut identity = identity;
@@ -45,7 +73,7 @@ async fn spawn_server_multi(dir: &Path, tenants: usize) -> (String, Vec<String>)
         .await
         .unwrap();
     });
-    (format!("127.0.0.1:{port}"), service_keys)
+    (format!("127.0.0.1:{port}"), service_keys, probe_port)
 }
 
 fn client() -> reqwest::Client {
@@ -128,6 +156,51 @@ async fn next_json(ws: &mut Ws) -> Value {
         .expect("ws 已关闭")
         .expect("ws 消息错误");
     serde_json::from_str(msg.to_text().unwrap()).unwrap()
+}
+
+/// 读到指定 type 为止（打洞编排会穿插 pending 的 session.update）
+async fn next_json_of(ws: &mut Ws, want: &str) -> Value {
+    for _ in 0..8 {
+        let msg = next_json(ws).await;
+        if msg["type"] == want {
+            return msg;
+        }
+    }
+    panic!("未等到 {want} 消息")
+}
+
+/// 向探测口报到（P3 客户端行为：HAWKP + token + 零填充定长 64B），返回响应原文
+async fn udp_probe(socket: &tokio::net::UdpSocket, probe_port: u16, token_hex: &str) -> Vec<u8> {
+    let token: Vec<u8> = (0..token_hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&token_hex[i..i + 2], 16).unwrap())
+        .collect();
+    assert_eq!(token.len(), 16);
+    let mut packet = [0u8; 64];
+    packet[..5].copy_from_slice(b"HAWKP");
+    packet[5..21].copy_from_slice(&token);
+    socket
+        .send_to(&packet, ("127.0.0.1", probe_port))
+        .await
+        .unwrap();
+    let mut buf = [0u8; 128];
+    let (len, _) = tokio::time::timeout(Duration::from_secs(2), socket.recv_from(&mut buf))
+        .await
+        .expect("探测响应超时")
+        .unwrap();
+    buf[..len].to_vec()
+}
+
+/// 轮询会话状态直到目标态（打洞编排水下 8s 上限，测试用短上限轮询）
+async fn wait_session_state(base: &str, key: &str, session_id: &str, want: &str) -> Value {
+    for _ in 0..50 {
+        let state = session_state(base, key, session_id).await;
+        if state["state"] == want {
+            return state;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("会话未在预期时间内进入 {want}")
 }
 
 async fn create_session(
@@ -592,6 +665,111 @@ async fn session_unreachable_when_no_candidates() {
         session_state(&base, &key, &session_id).await["state"],
         "unreachable"
     );
+}
+
+#[tokio::test]
+async fn punch_orchestration_ready_when_both_probe() {
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key, probe_port) = spawn_server_with_probe(dir.path()).await;
+    let target = register(&base, &key, "台式机", true).await;
+    let source = register(&base, &key, "笔记本", true).await;
+    assert_eq!(
+        heartbeat(&base, &key, &target, empty_reachability())
+            .await
+            .status(),
+        200
+    );
+    // session.probe 走 WSS 推送，双方控制通道都需在线
+    let mut target_ws = connect_ws(&base, &key, &target).await;
+    let mut source_ws = connect_ws(&base, &key, &source).await;
+    assert_eq!(next_json(&mut target_ws).await["type"], "hello");
+    assert_eq!(next_json(&mut source_ws).await["type"], "hello");
+
+    let (_, body) = create_session(&base, &key, &source, &target).await;
+    let session_id = body["data"]["session_id"].as_str().unwrap().to_string();
+    let request = next_json_of(&mut target_ws, "session.request").await;
+    assert_eq!(request["session_id"], session_id);
+
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(&key)
+        .json(&json!({ "device_id": target }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    // 打洞编排中：会话保持 pending，双方收到各自的 session.probe（token 按角色独立）
+    assert_eq!(
+        session_state(&base, &key, &session_id).await["state"],
+        "pending"
+    );
+    let probe_a = next_json_of(&mut target_ws, "session.probe").await;
+    let probe_b = next_json_of(&mut source_ws, "session.probe").await;
+    assert_eq!(probe_a["session_id"], session_id);
+    assert_eq!(probe_a["probe_port"], probe_port);
+    assert_eq!(probe_b["probe_port"], probe_port);
+    assert_ne!(probe_a["token"], probe_b["token"]);
+
+    // 双方从各自 socket 报到：响应回告 observed endpoint（loopback 上即本机端口）
+    let socket_a = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let socket_b = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let resp_a = udp_probe(&socket_a, probe_port, probe_a["token"].as_str().unwrap()).await;
+    assert_eq!(&resp_a[..5], b"HAWKR");
+    assert_eq!(resp_a[21], 4); // IPv4
+    assert_eq!(
+        u16::from_be_bytes([resp_a[26], resp_a[27]]),
+        socket_a.local_addr().unwrap().port()
+    );
+    let _ = udp_probe(&socket_b, probe_port, probe_b["token"].as_str().unwrap()).await;
+
+    // 到齐 → ready：punch 候选 = 目标 observed endpoint；punch_peer = 发起方 observed endpoint
+    let update = next_json_of(&mut target_ws, "session.update").await;
+    assert_eq!(update["state"], "ready");
+    let candidates = update["connect"]["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0]["transport"], "punch");
+    assert_eq!(candidates[0]["host"], "127.0.0.1");
+    assert_eq!(candidates[0]["port"], socket_a.local_addr().unwrap().port());
+    assert_eq!(
+        update["connect"]["punch_peer"]["port"],
+        socket_b.local_addr().unwrap().port()
+    );
+    assert_eq!(update["connect"]["fingerprint"], "fp-台式机");
+
+    // 轮询兜底看到同一状态
+    let state = session_state(&base, &key, &session_id).await;
+    assert_eq!(state["state"], "ready");
+    assert_eq!(state["connect"]["candidates"][0]["transport"], "punch");
+}
+
+#[tokio::test]
+async fn punch_orchestration_timeout_unreachable() {
+    // 探测永不到达（探测口被拦/UDP 丢失）：编排超时置 unreachable（与编排出现前同语义）
+    std::env::set_var("HAWK_SERVER_PROBE_WAIT_MS", "800");
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key, _probe_port) = spawn_server_with_probe(dir.path()).await;
+    let target = register(&base, &key, "台式机", true).await;
+    let source = register(&base, &key, "笔记本", true).await;
+    assert_eq!(
+        heartbeat(&base, &key, &target, empty_reachability())
+            .await
+            .status(),
+        200
+    );
+
+    let (_, body) = create_session(&base, &key, &source, &target).await;
+    let session_id = body["data"]["session_id"].as_str().unwrap().to_string();
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(&key)
+        .json(&json!({ "device_id": target }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    // 双方都不探测 → 超时置 unreachable
+    let state = wait_session_state(&base, &key, &session_id, "unreachable").await;
+    assert_eq!(state["state"], "unreachable");
 }
 
 #[tokio::test]

@@ -6,6 +6,7 @@ pub mod api;
 pub mod auth;
 pub mod identity;
 pub mod keystore;
+pub mod probe;
 pub mod ratelimit;
 pub mod relay_socket;
 pub mod settings;
@@ -24,7 +25,33 @@ pub async fn run(settings: &Cli) -> std::io::Result<()> {
     let data_dir = settings.data_dir();
     let keys = Arc::new(keystore::KeyStore::open(&data_dir)?);
     let store = store::Store::load(&data_dir)?;
-    let state = Arc::new(state::AppState::new(keys.clone(), store));
+    let mut state = state::AppState::new(keys.clone(), store);
+
+    // 打洞探测口（P3，UDP）：绑定失败只降级不阻断启动——打洞编排关闭，
+    // 无直连候选的会话退回 unreachable（同编排出现之前的行为）
+    let probe_socket = if settings.probe_port == 0 {
+        None
+    } else {
+        match tokio::net::UdpSocket::bind(("0.0.0.0", settings.probe_port)).await {
+            Ok(socket) => Some(socket),
+            Err(e) => {
+                tracing::error!(
+                    port = settings.probe_port,
+                    "打洞探测口绑定失败（打洞编排关闭）: {e}"
+                );
+                None
+            }
+        }
+    };
+    state.probe_port = probe_socket.as_ref().map(|_| settings.probe_port);
+    let state = Arc::new(state);
+    if let Some(socket) = probe_socket {
+        tracing::info!(
+            port = settings.probe_port,
+            "hawk-server probe listening (UDP)"
+        );
+        tokio::spawn(probe::run(state.clone(), socket));
+    }
 
     // 网页版宿主：服务端设备身份 + 「网页版」设备行 upsert + 查看会话管理
     let mut identity =

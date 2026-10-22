@@ -21,6 +21,16 @@ pub struct Cli {
     #[arg(long, env = "HAWK_SERVER_ADMIN_PORT", default_value_t = 9110)]
     pub admin_port: u16,
 
+    /// 打洞探测口（UDP，P3 NAT 打洞的 observed endpoint 观测，需公网直达；
+    /// 0 = 关闭打洞编排，无直连候选的会话直接 unreachable）
+    #[arg(
+        long,
+        env = "HAWK_SERVER_PROBE_PORT",
+        default_value_t = 9101,
+        global = true
+    )]
+    pub probe_port: u16,
+
     /// 数据目录（设备/租户/key 注册表、pepper、网页版身份与令牌）；
     /// 缺省 ~/.config/hawk-server（与 hawk-app 的 ~/.config/hawk 同族的全平台约定）
     #[arg(long, env = "HAWK_SERVER_DATA_DIR", global = true)]

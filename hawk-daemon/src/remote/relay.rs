@@ -63,9 +63,7 @@ pub fn relay_ws_request(
     Ok(request)
 }
 
-fn runtime() -> Result<Arc<dyn quinn::Runtime>, String> {
-    quinn::default_runtime().ok_or_else(|| "tokio runtime 不可用".to_string())
-}
+use crate::remote::data::runtime;
 
 /// 中继隧道 QUIC 握手超时：15s。中继比直连多一串串行链路（accept RTT → 对端经反代
 /// 连 relay WS → 配对 → WS 上的 QUIC 往返），直连候选的 5s 在跨网中继下过紧

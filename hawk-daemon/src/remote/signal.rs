@@ -10,6 +10,7 @@ use crate::remote::reachability::{self, SharedUpnpReport, UpnpReport};
 use crate::remote::{LibraryContext, RemoteState, RemoteStatus, Supervisor};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
@@ -311,7 +312,8 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
                         last_recv = std::time::Instant::now();
                         match frame {
                             Message::Text(text) => {
-                                handle_message(&mut ws, ctx, &mut accepted_peers, &text).await?;
+                                handle_message(&mut ws, ctx, supervisor, &mut accepted_peers, &text)
+                                    .await?;
                             }
                             Message::Close(_) => return Ok(()),
                             _ => {}
@@ -335,10 +337,12 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
 }
 
 /// 服务端推送处理：ping → pong；session.request → 放行对端指纹并自动接受
-/// （allow_remote 由服务端在登记时裁决）；session.cancelled → 收回放行；未知 type 忽略
+/// （allow_remote 由服务端在登记时裁决）；session.probe → P3 打洞报到；session.update →
+/// A 侧打洞开口；session.cancelled → 收回放行；未知 type 忽略
 async fn handle_message(
     ws: &mut (impl SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
     ctx: &ChannelContext<'_>,
+    supervisor: &Arc<Supervisor>,
     accepted_peers: &mut std::collections::HashMap<String, [u8; 32]>,
     text: &str,
 ) -> Result<()> {
@@ -500,6 +504,50 @@ async fn handle_message(
                 }
             }
         }
+        Some("session.probe") => {
+            // P3 打洞探测邀约：从自己 QUIC 端点同端口 socket 向服务端探测口报到
+            // （observed endpoint 的新鲜度要求会话时探测，协议「NAT 打洞」一节）
+            let session_id = value.get("session_id").and_then(|s| s.as_str());
+            let token = value
+                .get("token")
+                .and_then(|t| t.as_str())
+                .and_then(parse_probe_token);
+            let probe_port = value
+                .get("probe_port")
+                .and_then(|p| p.as_u64())
+                .map(|p| p as u16);
+            if let (Some(session_id), Some(token), Some(probe_port)) =
+                (session_id, token, probe_port)
+            {
+                match resolve_probe_addr(ctx.base, probe_port).await {
+                    Ok(addr) => {
+                        if accepted_peers.contains_key(session_id) {
+                            // A 侧：常驻 QUIC 端点的开口句柄报到
+                            ctx.data_plane.send_probe(addr, token);
+                        } else {
+                            // B 侧：预绑 socket 报到并留存（connect 复用同端口）
+                            supervisor.sessions.prepare_punch(session_id, addr, token);
+                        }
+                    }
+                    Err(e) => tracing::warn!("探测口地址解析失败: {e}"),
+                }
+            }
+        }
+        Some("session.update") => {
+            // A 侧开口触发（P3）：ready 携带发起方 observed endpoint（punch_peer）时周期开口。
+            // 只处理本端作为目标接受过的会话（发起方身份收到的同名推送由轮询兜底消费）
+            let session_id = value.get("session_id").and_then(|s| s.as_str());
+            let ready = value.get("state").and_then(|s| s.as_str()) == Some("ready");
+            if let (Some(session_id), true) = (session_id, ready) {
+                if accepted_peers.contains_key(session_id) {
+                    if let Some(peer) = parse_punch_peer(&value["connect"]["punch_peer"]) {
+                        tracing::info!("会话 {session_id} 打洞开口：{peer}");
+                        ctx.data_plane
+                            .punch_to(peer, crate::remote::data::PUNCH_WINDOW);
+                    }
+                }
+            }
+        }
         Some("session.cancelled") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
                 accepted_peers.remove(session_id);
@@ -568,6 +616,48 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<()> {
     } else {
         Err(response_error(resp, "心跳").await)
     }
+}
+
+/// 探测口地址解析（P3）：主机名取接入配置 base URL（协议约定），IPv4 优先（探测口仅绑 v4）
+async fn resolve_probe_addr(
+    base: &str,
+    probe_port: u16,
+) -> std::result::Result<SocketAddr, String> {
+    let url = reqwest::Url::parse(base).map_err(|e| format!("remote url 解析失败: {e}"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| "remote url 无主机名".to_string())?;
+    let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, probe_port))
+        .await
+        .map_err(|e| format!("探测口域名解析失败: {e}"))?
+        .collect();
+    addrs.sort_by_key(|addr| if addr.is_ipv4() { 0 } else { 1 });
+    addrs
+        .into_iter()
+        .next()
+        .ok_or_else(|| "探测口地址解析为空".to_string())
+}
+
+/// session.probe 的 token（32 位 hex → 16 字节）
+fn parse_probe_token(hex_str: &str) -> Option<[u8; 16]> {
+    let bytes = hex_str.as_bytes();
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut token = [0u8; 16];
+    for (i, chunk) in bytes.as_chunks::<2>().0.iter().enumerate() {
+        let hi = (chunk[0] as char).to_digit(16)?;
+        let lo = (chunk[1] as char).to_digit(16)?;
+        token[i] = ((hi << 4) | lo) as u8;
+    }
+    Some(token)
+}
+
+/// connect.punch_peer（A 侧开口目标）：host + port → SocketAddr
+fn parse_punch_peer(value: &Value) -> Option<SocketAddr> {
+    let host = value.get("host")?.as_str()?;
+    let port = value.get("port")?.as_u64()? as u16;
+    Some(SocketAddr::new(host.parse().ok()?, port))
 }
 
 async fn accept_session(

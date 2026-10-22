@@ -87,7 +87,8 @@ writable = false
 远程访问服务端，与 hawk-daemon **零代码共享**（独立 crate，协议契约是唯一共享物）：
 
 - 多租户准入：`tenant add/list/revoke` CLI 管理 service-key（程序生成 256-bit 随机、明文只打印一次、服务端只存 HMAC 哈希）；池间设备/会话/key 注册表完全隔离；无账号、会员、计费、额度概念；凭证验证面带 IP + 租户双维度风控（详见协议「凭证模型」）
-- 控制面（已实现）：设备注册/心跳/列表/更新/注销、WSS 控制通道、会话编排（直连候选组装、状态机）
+- 控制面（已实现）：设备注册/心跳/列表/更新/注销、WSS 控制通道、会话编排（直连候选组装、打洞编排、状态机）
+- 打洞探测口（已实现，P3）：UDP 9101 极简 STUN 式应答，观测会话双方的公网 endpoint（响应 ≤ 请求 + token 校验 + IP 限速，防反射放大）
 - 中继（已实现）：`GET /api/v1/relay` WS 配对转发，QUIC 端到端语义不变（只见密文）
 - **网页版宿主（已实现）**：服务端作为 B 侧（以「网页版」全局设备身份走既有协议发起 relay 会话、经进程内中继 socket 建立 QUIC 并终结隧道），任意浏览器经域名浏览素材库。浏览器令牌（bt）由两级登录换发（service-key → 门令牌 → hawk-app key → bt；bt 绑定唯一目标设备与 read/write 作用域，服务端只存哈希），查看面 API（`/api/v1/viewer/*`）+ 隧道代理 + 登录页；查看器前端产物不落服务端，`/app` 与 `/assets/*` 同样经隧道由目标设备 daemon 托管。部署见 [远程访问部署](remote-deployment.md)
 - 持久化：设备注册表/网页版身份/令牌 JSON 文件；部署：监听明文 HTTP（默认 9100），TLS/WSS 由前置反代终结
@@ -139,7 +140,7 @@ Connection {
 
 **3. 数据面从第一天用 QUIC（quinn）**
 
-QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P3 打洞（免端口映射 P2P）预留了传输基础。
+QUIC 自带多路复用、TLS 1.3 端到端加密、抗 NAT 重绑定，且为 P3 打洞（免端口映射 P2P）预留了传输基础——P3 已实现：Initial 自动重传天然覆盖洞口开启前的丢包，连接迁移容忍 NAT 重绑定。
 
 **4. 协议契约先行，零代码共享**
 
@@ -193,7 +194,12 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
   │        服务端向双方推送 session.update(ready)：候选列表（IPv4 映射优先、IPv6 次之）+ 指纹
   │        B 依序尝试候选（单候选超时 5s），任一成功即建立 QUIC 连接（指纹钉扎）
   │        隧道就绪 → 主进程切换连接描述符 → B 前端无感重置为远端库
-  └─ 无任何候选 → 会话状态 unreachable
+  └─ 无任何候选 → 打洞编排（P3，探测口启用时）：双方 WSS 收到 session.probe，
+                   各自从 QUIC 端点同端口 socket 向服务端探测口报到；
+                   到齐 → ready（B 得 punch 候选 = A 的 observed endpoint，
+                   A 得 punch_peer = B 的 observed endpoint）→ 双方同时开口，
+                   B 的 QUIC Initial 穿过洞口（单候选超时 15s）；
+                   探测超时（8s）或对称型 NAT 打不通 → unreachable / 直连失败
 ```
 
 直连失败（候选全部超时或无候选）时不自动回落中继：「中继回退」开关（默认关闭）已开启时，弹窗询问用户是否经中继继续（消耗自己的服务器带宽），确认后转入中继流程；未开启则提示「当前网络无法直连；如需经中继访问，可在设置中开启」。
@@ -240,7 +246,7 @@ hawk-server：A 心跳上报过可达候选（IPv4 UPnP 映射 / 全局 IPv6）�
 | 1a   | ~~hawk-server P1 控制面 + daemon remote/ 信令~~（已完成）：应用级远程配置、设备身份、注册/心跳/WSS 自动重连、状态 API | 设备配置后可注册上线、维持在线、接收并自动响应会话请求 |
 | 1b   | ~~daemon 数据面~~（已完成：可达性 UPnP/IPv6、QUIC 双向指纹钉扎、A 侧隧道端进程内转发 TunneledPeer、B 侧会话代理、会话编排 API + SSE remote.session）+ app 远程 UI 与连接描述符 | 有公网 IPv4（UPnP）或全局 IPv6 的设备端到端远程查看可用；切换本地/远端库无感；断线自动回切 |
 | 2    | ~~服务端中继 + 客户端中继逻辑 +「中继回退」开关与确认弹窗~~（已完成：relay WS 配对转发 + AsyncUdpSocket over WS + 回退确认） | 直连失败经用户确认走中继；QUIC 端到端语义不变（服务端只见密文） |
-| 3    | QUIC 打洞（免端口映射 P2P，心跳已预留 `nat_type`） | 视阶段 1 直连成功率数据决定是否投入 |
+| 3    | ~~QUIC 打洞（免端口映射 P2P）~~（已完成：服务端 UDP 探测口观测 observed endpoint + 会话时编排 + 双方同端口开口；对称型 NAT 打不通时落中继，不投 NAT 类型检测与端口预测） | 无直连候选的设备间可直连；探测口不可达自动退化为 unreachable |
 
 ## remote/ 模块结构
 
@@ -253,8 +259,8 @@ hawk-daemon/src/remote/
 ├── signal.rs       # REST 客户端（注册/心跳/设备/会话/key 同步）+ WSS 通道 + 自动重连 + 查看者会话本地执法
 ├── tls.rs          # QUIC 双向指纹钉扎（rustls verifier：B 钉 A、A 放行已接受对端）
 ├── reachability.rs # 全局 IPv6 探测（UDP connect 出接口）+ UPnP 映射维护（igd 阻塞任务）
-├── data.rs         # quinn 端点、A 侧隧道端（hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理
-└── session.rs      # B 侧会话编排：发起 → 轮询 ready → 候选依序尝试 → 代理；SSE remote.session
+├── data.rs         # quinn 端点（自建 socket + try_clone 开口句柄，P3 同端口前提）、A 侧隧道端（hyper-over-stream 进程内转发 TunneledPeer）、B 侧会话代理、打洞开口/探测
+└── session.rs      # B 侧会话编排：发起 → 轮询 ready → 候选依序尝试（含 punch）→ 代理；SSE remote.session
 ```
 
 新增依赖：tokio-tungstenite（WSS）、reqwest（REST，rustls）、rcgen + sha2（自签证书与指纹）、quinn（QUIC）、igd-next（UPnP）、hyper + hyper-util（隧道内 HTTP/1.1 解析）。

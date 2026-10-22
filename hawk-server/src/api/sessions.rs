@@ -4,13 +4,14 @@
 
 use super::{ok, success, ApiError, JsonBody};
 use crate::auth::ServiceKey;
-use crate::state::{now_ms, Access, AppState, Session, SessionState};
+use crate::state::{now_ms, Access, AppState, ProbeState, ProbeTicket, Session, SessionState};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct CreateRequest {
@@ -105,6 +106,7 @@ pub fn create_session_internal(
         state: initial,
         created_at_ms: now_ms(),
         connect: None,
+        probe: None,
     };
     let session_id = session.session_id.clone();
     let credential = session.credential.clone();
@@ -200,6 +202,8 @@ fn respond(
         return Err(ApiError::new(StatusCode::FORBIDDEN, "仅目标设备可响应会话"));
     }
 
+    // 打洞编排（P3）：无直连候选且探测口启用时，保持 pending 等双方探测到齐
+    let mut probe_pushes: Vec<(String, Value)> = Vec::new();
     if !accepted {
         session.state = SessionState::Rejected;
     } else if session.mode == "relay" {
@@ -214,7 +218,7 @@ fn respond(
         }));
         session.state = SessionState::Ready;
     } else {
-        // 取目标最近心跳的可达性组装候选；无任何候选置 unreachable（协议约定）
+        // 取目标最近心跳的可达性组装候选；无候选时打洞编排（P3），编排不可用才 unreachable
         let candidates = state
             .presence
             .read()
@@ -224,7 +228,43 @@ fn respond(
             .map(|r| r.candidates())
             .unwrap_or_default();
         if candidates.is_empty() {
-            session.state = SessionState::Unreachable;
+            if let Some(probe_port) = state.probe_port {
+                let token_a = rand::random::<u128>().to_be_bytes();
+                let token_b = rand::random::<u128>().to_be_bytes();
+                session.probe = Some(ProbeState {
+                    token_a,
+                    token_b,
+                    addr_a: None,
+                    addr_b: None,
+                });
+                {
+                    let mut index = state.probe_index.write().unwrap();
+                    index.insert(
+                        token_a,
+                        ProbeTicket {
+                            session_id: session_id.clone(),
+                            role: "a".to_string(),
+                        },
+                    );
+                    index.insert(
+                        token_b,
+                        ProbeTicket {
+                            session_id: session_id.clone(),
+                            role: "b".to_string(),
+                        },
+                    );
+                }
+                probe_pushes.push((
+                    session.target_device_id.clone(),
+                    probe_message(&session.session_id, probe_port, &token_a),
+                ));
+                probe_pushes.push((
+                    session.source_device_id.clone(),
+                    probe_message(&session.session_id, probe_port, &token_b),
+                ));
+            } else {
+                session.state = SessionState::Unreachable;
+            }
         } else {
             let fingerprint = state
                 .device(&session.target_device_id)
@@ -239,6 +279,7 @@ fn respond(
         }
     }
 
+    let probing = session.probe.is_some() && session.state == SessionState::Pending;
     let update = session_update(session);
     let source = session.source_device_id.clone();
     let target = session.target_device_id.clone();
@@ -246,7 +287,124 @@ fn respond(
     // 状态变更推送双方（协议约定；轮询为兜底）
     state.push_ws(&source, &update);
     state.push_ws(&target, &update);
+    // 打洞探测邀约（协议 P3：双方各自向探测口报到，结果由编排任务收敛）
+    for (device_id, message) in probe_pushes {
+        state.push_ws(&device_id, &message);
+    }
+    if probing {
+        tokio::spawn(orchestrate_punch(state.clone(), session_id.clone()));
+    }
     Ok(success())
+}
+
+/// 打洞探测等待上限（协议约定 8s，超时置 unreachable）
+const PROBE_WAIT: Duration = Duration::from_secs(8);
+
+/// 探测等待上限：测试可经 HAWK_SERVER_PROBE_WAIT_MS 覆盖（提速编排超时路径）
+fn probe_wait() -> Duration {
+    std::env::var("HAWK_SERVER_PROBE_WAIT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(PROBE_WAIT)
+}
+/// 探测到达轮询粒度
+const PROBE_POLL: Duration = Duration::from_millis(100);
+
+/// 打洞编排任务（P3）：等双方 observed endpoint 到齐 → ready（punch 候选 + punch_peer）；
+/// 超时/探测缺失 → unreachable；会话中途终态（取消/过期）→ 放弃编排。
+/// token 索引在每条收尾路径都清除（索引是编排期临时状态）
+async fn orchestrate_punch(state: Arc<AppState>, session_id: String) {
+    let deadline = std::time::Instant::now() + probe_wait();
+    let finalize = loop {
+        tokio::time::sleep(PROBE_POLL).await;
+        let sessions = state.sessions.read().unwrap();
+        match sessions.get(&session_id) {
+            Some(session) if session.state == SessionState::Pending => {
+                let arrived = session
+                    .probe
+                    .as_ref()
+                    .map(|p| (p.addr_a.is_some(), p.addr_b.is_some()))
+                    .unwrap_or_default();
+                if arrived == (true, true) || std::time::Instant::now() >= deadline {
+                    break true;
+                }
+            }
+            // 会话消失或已终态：放弃编排
+            _ => break false,
+        }
+    };
+    if !finalize {
+        cleanup_probe_index(&state, &session_id);
+        return;
+    }
+
+    let (update, source, target) = {
+        let mut sessions = state.sessions.write().unwrap();
+        let Some(session) = sessions.get_mut(&session_id) else {
+            cleanup_probe_index(&state, &session_id);
+            return;
+        };
+        // 写锁下复核：等待期间可能已被取消/过期
+        if session.state != SessionState::Pending {
+            cleanup_probe_index(&state, &session_id);
+            return;
+        }
+        let probe = session.probe.take().unwrap_or_default();
+        match (probe.addr_a, probe.addr_b) {
+            (Some(addr_a), Some(addr_b)) => {
+                let fingerprint = state
+                    .device(&session.target_device_id)
+                    .map(|d| d.fingerprint)
+                    .unwrap_or_default();
+                session.connect = Some(json!({
+                    "mode": "direct",
+                    "candidates": [
+                        { "transport": "punch", "host": addr_a.ip().to_string(), "port": addr_a.port() }
+                    ],
+                    // 发起方的 observed endpoint：仅目标设备开口用（协议约定发起方忽略）
+                    "punch_peer": { "host": addr_b.ip().to_string(), "port": addr_b.port() },
+                    "fingerprint": fingerprint,
+                }));
+                session.state = SessionState::Ready;
+                tracing::info!("打洞编排就绪 {session_id}：目标 {addr_a} / 发起方 {addr_b}");
+            }
+            _ => {
+                session.state = SessionState::Unreachable;
+                tracing::debug!("打洞探测未在 {:?} 内到齐: {session_id}", probe_wait());
+            }
+        }
+        (
+            session_update(session),
+            session.source_device_id.clone(),
+            session.target_device_id.clone(),
+        )
+    };
+    cleanup_probe_index(&state, &session_id);
+    state.push_ws(&source, &update);
+    state.push_ws(&target, &update);
+}
+
+fn cleanup_probe_index(state: &AppState, session_id: &str) {
+    state
+        .probe_index
+        .write()
+        .unwrap()
+        .retain(|_, ticket| ticket.session_id != session_id);
+}
+
+/// session.probe 消息（P3 探测邀约）：token 按角色独立，hex 编码下发
+fn probe_message(session_id: &str, probe_port: u16, token: &[u8; 16]) -> Value {
+    json!({
+        "type": "session.probe",
+        "session_id": session_id,
+        "probe_port": probe_port,
+        "token": hex_encode(token),
+    })
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// `POST /api/v1/sessions/{session_id}/cancel`：任一方取消会话
