@@ -98,6 +98,7 @@ server {
 ## 部署后验证
 
 1. `curl -s -H "Authorization: Bearer <service-key>" https://hawk.example.com/api/v1/devices` 返回 `{"status":"success",...}`
+1. `node tools/check-probe-port.mjs hawk.example.com` 返回「✓ 探测口可达」（打洞探测口 UDP 9101 连通性；无响应 = 安全组/防火墙未放行 UDP）
 2. 桌面端 hawk → 设置 → 远程填服务端地址与服务密钥（service-key），设备出现在列表中
 3. 桌面端设置 → 远程 →「访问密钥」签发一把只读 key；浏览器打开 `https://hawk.example.com`，先填 service-key 再填访问密钥，即可进入绑定素材库的查看器（查看器页面由目标设备的 daemon 经隧道提供，该设备需是带前端产物的桌面端）
 4. 插件设置选「远程」→ 填域名 + service-key + 带写权限的访问密钥 → 验证并查看素材库 → 保存。目标设备需在设置 → 远程中开启「允许广域网保存素材」

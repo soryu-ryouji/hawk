@@ -364,9 +364,10 @@ wss://<base>/api/v1/relay?device_id=<device_id>&session_id=<session_id>&role=a|b
 ```text
 请求（定长 64 字节）："HAWKP"（5B magic）+ token（16B）+ 零填充
 响应（≤64 字节）：   "HAWKR" + token + 地址族（1B：4/6）+ IP（4B/16B）+ 端口（2B，大端）
+否定应答（21 字节）： "HAWK?" + token（token 无效或编排已结束；不大于请求，无放大风险）
 ```
 
-- token 由服务端按会话按角色签发（经 WSS `session.probe` 下发，32 位小写 hex），是探测包归属会话的唯一依据；无效 token **静默丢弃不回包**
+- token 由服务端按会话按角色签发（经 WSS `session.probe` 下发，32 位小写 hex），是探测包归属会话的唯一依据；无效 token 回**否定应答**——运维可据此区分「探测口不可达」与「token 错误」（tools/check-probe-port.mjs 即以此原理做连通性检查）；形状非法（不足 64B / magic 不符）与超限流量的包才静默丢弃
 - 响应不大于请求 + 按来源 IP 限速（10s 窗口 30 包，超限丢弃），杜绝反射放大滥用
 - 回包仅作诊断（客户端可比对本地端口感知 NAT 存在性），客户端实现可以不消费
 - 探测口仅绑 IPv4：打洞发生在 v4 NAT 域；v6 无 NAT，可达性走心跳上报的直连候选
