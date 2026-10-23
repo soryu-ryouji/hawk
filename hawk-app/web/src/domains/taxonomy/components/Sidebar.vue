@@ -4,7 +4,7 @@ import { useLibraryStore } from '@/domains/library';
 import { addCategoryToSelected, addTagToSelected, refreshCache, rescanFiles } from '@/domains/library';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
-import { hasShell, shell } from '@/shared/lib/platform';
+import { hasShell, isMac, shell } from '@/shared/lib/platform';
 import { isItemsDrag, itemsDragOver, readItemsDrop, filesDragOver, droppedEntries } from '@/shared/lib/dnd';
 import Icon from '@/shared/ui/Icon.vue';
 import FolderTreeNode from './FolderTreeNode.vue';
@@ -19,6 +19,10 @@ const store = useLibraryStore();
 const taxonomy = useTaxonomyStore();
 const importer = useImporterStore();
 const menu = useContextMenu();
+
+/** 库名位置：macOS 壳层顶条左侧让给原生红绿灯，库名留在正文首行（触屏经 body.touch 上移，见样式）；
+ *  其余平台（Windows/Linux/浏览器）顶条没有窗口控件，库名占住左上角空位，正文整体上移 */
+const libInHead = !hasShell || !isMac;
 
 // 三个分区的折叠态（点分区标题收起/展开，v-show 保留树节点内部的展开/编辑状态）
 const collapsed = reactive({ folder: false, category: false, tag: false });
@@ -198,10 +202,10 @@ function onFolderTreeDrop(e: DragEvent) {
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" :class="{ 'lib-in-head': libInHead }">
     <!-- 顶部拖拽条：侧栏色块通高到窗口上沿；macOS 原生红绿灯压在本条左侧；右端为侧栏开关 -->
     <div class="sidebar-head" @dblclick="onHeadDblClick">
-      <!-- 触屏：库名上移到本条与开关同排，正文整体上移填充空位；桌面/macOS 保持库名在正文首行（避让红绿灯） -->
+      <!-- 库名：macOS 顶条左侧被红绿灯占用（name 留正文首行），其余平台与触屏上移到本条左上角 -->
       <LibraryDropdown v-if="hasShell" class="in-head" />
       <div v-else class="library-name in-head static">
         <Icon name="library" />
@@ -415,11 +419,13 @@ function onFolderTreeDrop(e: DragEvent) {
   -webkit-app-region: no-drag;
 }
 
-/* 顶条内实例默认隐藏；触屏显示并与开关同排（flex:1 吃掉中段空白，名称超长省略） */
+/* 顶条内实例默认隐藏（macOS 红绿灯占位）；非 macOS 平台与触屏显示并与开关同排
+   （flex:1 吃掉中段空白，名称超长省略） */
 .library-name.in-head {
   display: none;
 }
 
+.lib-in-head .library-name.in-head,
 body.touch .library-name.in-head {
   display: flex;
   flex: 1;
@@ -428,6 +434,7 @@ body.touch .library-name.in-head {
   padding: 4px 6px;
 }
 
+.lib-in-head .library-name.in-body,
 body.touch .library-name.in-body {
   display: none;
 }

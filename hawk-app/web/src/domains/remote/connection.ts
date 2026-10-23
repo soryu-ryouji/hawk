@@ -1,5 +1,5 @@
-// 当前活动连接的响应式展示态（单例）：顶栏「当前浏览：xxx」标识、换库下拉远程分区与
-// 远程设置面板的数据源。连接语义本身（api_base/token 驱动 boot 重注水）在 app/startup.ts。
+// 当前活动连接的响应式展示态（单例）：侧栏库名按钮的「远程」徽标（侧栏隐藏时为顶栏紧凑徽标）、
+// 换库下拉远程分区与远程设置面板的数据源。连接语义本身（api_base/token 驱动 boot 重注水）在 app/startup.ts。
 import { ref } from 'vue';
 import { shell } from '@/shared/lib/platform';
 
@@ -28,7 +28,7 @@ export function initConnectionLabel(): void {
   shell.onConnectionChanged(apply);
 }
 
-/** 顶栏、换库下拉与远程设置面板展示：当前浏览来源（「我的库」或远端设备名）、是否远程与远端设备 id */
+/** 侧栏库名按钮/顶栏徽标、换库下拉与远程设置面板展示：当前浏览来源（「我的库」或远端设备名）、是否远程与远端设备 id */
 export function useConnectionLabel() {
   async function disconnect(): Promise<void> {
     await shell.remoteDisconnect();

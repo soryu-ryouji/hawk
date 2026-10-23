@@ -4,7 +4,7 @@
 // 视觉与 SelectBox/ContextMenu 统一（底色/边框/阴影/勾选标记）。
 // 历史由主进程记录（最近在前），当前库打勾且不可移除；目录已删的置灰不可切换但可移除记录。
 // 换库就绪经 hawk:server-started 事件驱动 App 原地重启数据。
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, ref, watch, computed } from 'vue';
 import { shell } from '@/shared/lib/platform';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLibraryStore } from '@/domains/library';
@@ -113,6 +113,20 @@ function unbindOutside(): void {
   window.removeEventListener('scroll', onScroll, true);
   document.removeEventListener('mousedown', onOutside, true);
   document.removeEventListener('keydown', onKeydown, true);
+}
+
+/** 当前远程浏览的写能力（徽标悬停提示；只读/仅导入/可读写对应 store 的两道门禁） */
+const remoteMode = computed(() => (store.viewerMode ? '只读' : store.limitedWrite ? '仅导入' : '可读写'));
+
+/** 触发器悬停提示：远程浏览时给设备名与写能力（顶栏标识移除后，来源区分落在本按钮上） */
+const triggerTitle = computed(() =>
+  connection.isRemote.value ? `远程浏览：${connection.label.value}（${remoteMode.value}）· 点击切换素材库` : `${store.library?.path ?? ''}（点击切换素材库）`,
+);
+
+/** 断开远程会话回本地库：徽标取代了原顶栏标识，断开入口收进浮层顶部（同点当前本地库的效果） */
+async function disconnectRemote(): Promise<void> {
+  close();
+  await connection.disconnect();
 }
 
 /** 侧栏滚动时浮层不跟随，直接关闭（浮层自身滚动除外：scroll 捕获阶段也会经过 window） */
@@ -236,12 +250,23 @@ onBeforeUnmount(() => {
 <template>
   <!-- 单根 button：父 scoped 的 .library-name 规则与 in-head/in-body 显隐类均依赖根元素继承；
        Teleport 置于 button 内（不产生实际 DOM），仅为保住单根结构 -->
-  <button ref="triggerRef" class="library-name" :class="{ open }" :title="store.library?.path + '（点击切换素材库）'" @click="open = !open" @dblclick.stop>
+  <button ref="triggerRef" class="library-name" :class="{ open }" :title="triggerTitle" @click="open = !open" @dblclick.stop>
     <Icon name="library" />
     <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
+    <!-- 远程浏览标识：远端库与本地库在视觉上必须可区分（安全与认知底线），悬停提示带写能力 -->
+    <span v-if="connection.isRemote.value" class="badge">远程</span>
     <Icon name="chevronDown" :size="12" class="lib-chev" />
     <Teleport to="body">
       <div v-if="open" ref="panelRef" class="lib-panel" :style="{ left: pos.x + 'px', top: pos.y + 'px', width: pos.width + 'px' }">
+        <!-- 远程浏览中：显式断开入口（回到本地库，徽标随之消失） -->
+        <template v-if="connection.isRemote.value">
+          <button type="button" class="lib-item" :title="`当前浏览：${connection.label.value}（${remoteMode}）`" @click="disconnectRemote">
+            <span class="check" />
+            <span class="label">断开远程 · 回到我的库</span>
+            <Icon name="close" :size="12" />
+          </button>
+          <div class="separator" />
+        </template>
         <button
           v-for="lib in libraries"
           :key="lib.path"
@@ -297,6 +322,17 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 「远程」徽标：面板内远程设备行与触发按钮共用（触发按钮上标明当前浏览的是远端库） */
+.badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
 /* 触发按钮的尺寸/间距由 Sidebar 的 .library-name 规则承担（父 scoped 可作用到子组件根元素）；
    本文件只补下拉态与浮层 */
 .library-name.open {
@@ -404,16 +440,5 @@ onBeforeUnmount(() => {
 
 .lib-item .dot.online {
   background: #4caf50;
-}
-
-/* 「远程」徽标：与本地历史库区分 */
-.lib-item .badge {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--accent);
-  border: 1px solid var(--accent);
 }
 </style>
