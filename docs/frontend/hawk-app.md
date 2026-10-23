@@ -41,7 +41,7 @@ Eagle 主窗口的关键特征：
 
 严格遵循 architecture.md 的 sidecar 模式：前端不依赖 Electron IPC 做业务通信，主进程只管窗口、拉起/回收后端、注入 token。
 
-远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话/访问密钥）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。凭证模型为两级：service-key（池门禁，接入配置）+ hawk-app key（访问密钥，本机签发逐把读/写权限，分发给网页版/插件）。远端会话的写能力**由目标设备的「允许广域网保存素材」决定**：开启时本机以同租户设备身份拿到 `remote_writer`（仅导入素材与新建文件夹，编辑类写入口仍隐藏），关闭时自动降级只读；前端三态经 `app/info` 的 `access`/`writable` 驱动（`store.viewerMode` 只读 / `store.limitedWrite` 仅导入 / 其余可读写），顶栏「当前浏览」标识带状态后缀。
+远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话/访问密钥）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。凭证模型为两级：service-key（池门禁，接入配置）+ hawk-app key（访问密钥，本机签发逐把读/写权限，分发给网页版/插件）。远端会话的写能力**由目标设备的「允许广域网保存素材」决定**：开启时本机以同租户设备身份拿到 `remote_writer`（仅导入素材与新建文件夹，编辑类写入口仍隐藏），关闭时自动降级只读；前端三态经 `app/info` 的 `access`/`writable` 驱动（`store.viewerMode` 只读 / `store.limitedWrite` 仅导入 / 其余可读写）。来源标识在侧栏左上角库名按钮（「库名 [远程]」，悬停提示带写能力；侧栏隐藏时为顶栏左组紧凑徽标），不在顶栏中段占位。
 
 ```text
 Electron 主进程启动
@@ -63,7 +63,9 @@ Electron 主进程启动
        启发式缓存旧 HTML 引用已失效的旧 bundle，重建后手机端拿到构建前版本）
   → 轮询 GET /api/v1/app/startup（200ms，Bearer token；server 先监听、索引后台构建），事件推送页面：
       starting → hawk:server-progress（phase/processed/total，应用内启动屏呈现）
-      ready    → hawk:server-started（含 address/token）→ 渲染进程重配 API（restart 会换端口）并 boot 数据
+      ready    → （上次浏览的是远端库时：先尝试恢复该远程会话，启动屏显示「正在恢复远程素材库…」，
+                 成功则直接推 connection-changed——渲染进程首个注水即远端库，不先闪本地库）
+                 → hawk:server-started（含 address/token）→ 渲染进程重配 API（restart 会换端口）并 boot 数据
       error    → hawk:server-error（message 为后端给出的失败原因，页面内错误屏 + 退出入口；
                  code=PORT_IN_USE 时启动屏给出「自动选可用端口（27371–27400）/ 手输端口重试」）
     子进程异常退出 / spawn 失败 / 启动无响应(HTTP 不可达 120s,能应答 startup 即视为活着——缓存重建可达数分钟) → hawk:server-error（stderr 尾部；有意 stopServer 除外）
@@ -72,6 +74,8 @@ Electron 主进程启动
 ```
 
 启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。**错误态分两支**：`code=PORT_IN_USE` 显示端口冲突处理（「自动选择可用端口」按钮 + 端口输入框「用该端口重试」+ 退出），其余失败只给原因与退出；自动选择限定 `27371–27400`（浏览器插件按同一段自动发现本机 hawk），手输允许任意 1024–65535。换库（引导页选库、侧栏库名下拉选历史库）与应用设置重启 server 不再重载页面——主进程停旧 server 的同时发 `hawk:server-restarting`，渲染进程立即切启动屏（旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效，必须此时就切）；`hawk:server-started` 带新地址/token 到达后原地重配 API、重启数据（store.init 会清掉上一库的会话状态：查询条件/选择/预览/进度指示；视图经 restoreView 恢复或回退全部素材，+SSE 重连）。历史库由主进程记录（`~/.config/hawk/config.toml` 的 `libraryHistory`，最近使用在前、去重、上限 10），侧栏库名下拉列出（当前库打勾、已删除的置灰），底部「打开文件夹…」弹系统目录选择框。
+
+**远端库冷启动恢复**（`config.toml` 的 `remoteTarget`）：远程会话建立成功即记住目标设备 id，显式断开（侧栏下拉「断开远程 · 回到我的库」）或切到本地库时清除。daemon 就绪后、通知渲染进程之前先尝试恢复：信令未 online（接入中，最多等 5s）/目标离线或关闭远程访问/会话建不起来 → 回退本地库（记录保留，下次启动再试）。恢复成功时主进程只推 `connection-changed` 不推 `server-started`——渲染进程只注水一次（直接是远端库）；恢复期间 `remoteGetConnection` 不外泄本地库描述符，页面晚挂载不会被先注水成本地库。
 
 握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程按用户配置决定、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。**端口严格绑定，不静默漂移**：daemon 绑不上以退出码 4 + `PORT_IN_USE <port>` 退出，主进程据此让启动屏询问换端口（自动只在 27371–27400 段内挑，手输允许任意 1024–65535）——端口所有权只在壳层一处，生态客户端（浏览器插件）才能按固定段零配置探活；顺带消掉了「app 预探测端口 → daemon 再绑」的竞态与两处回退逻辑。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。daemon 的 stdout（tracing 日志）由主进程落盘到 `~/.config/hawk/daemon.log`（每次拉起截断重写）——远程打洞/中继排障的 info 级日志都在这里。
 
@@ -141,8 +145,8 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 ```text
 ┌────────────┬──────────────────────────────────┬─────────────────────┐
 │ Sidebar    │ TitleBar                         │ Inspector           │
-│  拖拽条¹[开关]│  [侧栏²][‹][›] 面包屑·已选N        │  拖拽条¹            │
-│  库名 ⌄    │  [漏斗][排序][🔍搜索]              │  预览图(格式角标)    │
+│  拖拽条¹ [库名³ ⌄][开关]│  [侧栏²][‹][›] 面包屑·已选N        │  拖拽条¹            │
+│            │  [漏斗][排序][🔍搜索]              │  预览图(格式角标)    │
 │  全部素材 N ├──────────────────────────────────┤  名称(可改)          │
 │  ───────── │  FilterBar（条件激活/漏斗展开）      │  注释(可改)          │
 │  ˅文件夹树  │   评分 chip（弹星级菜单）· 颜色 chip │  URL(可改)          │
@@ -162,6 +166,8 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 ¹ 侧栏/检查器顶部各 40px 纯拖拽条（双击切换最大化）；macOS 原生红绿灯压在侧栏条左侧，
   Windows/Linux 自绘窗口控制 fixed 于窗口右上角（不随侧栏显隐移动）
 ² 侧栏开关：可见时在侧栏顶条右端；隐藏时挪到顶栏左上角
+³ 库名（库切换下拉）：macOS 顶条左侧让给原生红绿灯，库名藏在正文首行；Windows/Linux 与浏览器
+  顶条没有窗口控件，库名占住左上角（触屏同为顶条内变体），正文整体上移填充空位
   文件夹/分类/标签三个分区标题可点击折叠/展开（v-show 保留树节点状态）
 ```
 
@@ -171,7 +177,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 网格为**齐行布局**（justified layout，与 Eagle 一致）：贪心装行，非末行按容器宽精确反推行高，单元格与图片同宽高比——图片完整显示不裁切。由 ItemGrid 按宽高比计算 flex 行（ResizeObserver 驱动），非 CSS grid。**虚拟渲染（Eagle 式滚动条）**：store 持当前视图全量骨架（`skeleton`：id/path/width/height/star/size，经 `item/skeleton` 一次性取回，与 `item/list` 同查询同排序且主键同值时按 (id, path) 字典序打破平局——两次查询次序逐位一致），ItemGrid 用骨架算出全部行的 y 偏移，容器总高即时确定，滚动条可自由拖动跳转；只渲染视口 ±4 行（绝对定位 + translateY），行内详情未拉取的单元格只留宽高的占位块（不渲染图片），进入视口时按骨架索引区间经 `ensureWindow` 用 `item/list` 补数据。多选面板（Inspector）提供批量添加标签/分类/移动文件夹、批量评分、总大小与堆叠预览。
 
-**触屏横屏适配**（wide + touch，如 iPad 横屏；纯 CSS（`body.touch .app:not(.mobile)`），与 narrow 互斥、桌面鼠标布局不变）：横向空间宝贵而检查器可见——搜索框从顶栏挪进检查器顶部条（`SearchBox` 双实例按布局切换可见性；浏览器端该 40px 条本是无拖拽需求的空条），顶栏空间留给筛选/排序按钮；侧栏库名上移到顶部拖拽条与侧栏开关同排（`in-head` 变体），正文整体上移填充空位。窄屏（手机）检查器隐藏，搜索框留在顶栏退化为搜索按钮（点开浮层），排序/筛选按钮维持隐藏（选项收进「排序与筛选」溢出菜单）。
+**触屏横屏适配**（wide + touch，如 iPad 横屏；纯 CSS（`body.touch .app:not(.mobile)`），与 narrow 互斥、桌面鼠标布局不变）：横向空间宝贵而检查器可见——搜索框从顶栏挪进检查器顶部条（`SearchBox` 双实例按布局切换可见性；浏览器端该 40px 条本是无拖拽需求的空条），顶栏空间留给筛选/排序按钮；侧栏库名在顶部拖拽条与侧栏开关同排（`in-head` 变体，与 Windows/Linux 桌面同一处；macOS 鼠标/触控板才留在正文首行），正文整体上移填充空位。窄屏（手机）检查器隐藏，搜索框留在顶栏退化为搜索按钮（点开浮层），排序/筛选按钮维持隐藏（选项收进「排序与筛选」溢出菜单）。
 
 当前位置体现在侧栏选中态与标题栏：文件夹视图渲染可点击面包屑（根 = 全部素材，逐级跳转），其余视图为固定标题；标题栏前进/后退在会话内浏览历史（`setView` 压栈，重命名跟随/删除回退就地修正当前条目）中移动。回收站视图下右键菜单变为「恢复 / 彻底删除（清空回收站，二次确认）」。文件夹树节点计数由后端 `folder/list` 的 `count` 字段提供（含子级、不含回收站、按 item 去重）；分类/标签计数由 `category/list`、`tag/list` 提供（精确匹配、不含回收站）。
 
@@ -442,7 +448,7 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
 | `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/remote/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——先查 appInfo，`has_library=false`（远程查看模式，本地无库）分流 remote 相位（RemoteScreen），否则 store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（`code=PORT_IN_USE` 时给端口冲突处理：自动换端口 / 手输端口 / 退出，其余只给原因与退出）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；watch store.library 同步页面标题 `hawk | 素材库名`（浏览器标签页，Electron 下同为窗口/任务栏标题，未加载时纯 hawk）；主界面就绪后延迟 8s 静默检查应用更新一次（useUpdater.startupAutoCheck，仅 Electron）；挂载 PreviewOverlay/ImageEditDialog（preview.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，importer.importProgress 驱动，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
-| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右组首为上传按钮（`!viewerMode` 时显示：隐藏 file input 多选 → `importer.importFiles` multipart 上传，手机端无拖拽的主导入入口）；右端设置齿轮（所有客户端常显，打开 SettingsDialog；web 端含连接分区/token 注销）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
+| `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右组首为上传按钮（`!viewerMode` 时显示：隐藏 file input 多选 → `importer.importFiles` multipart 上传，手机端无拖拽的主导入入口）；右端设置齿轮（所有客户端常显，打开 SettingsDialog；web 端含连接分区/token 注销）；当前浏览远端库且侧栏隐藏时，左组（侧栏开关之后）补一枚紧凑「远程」徽标——库名按钮不在视野时保留来源标识（常规布局的来源标识在侧栏库名按钮上），悬停显示设备名与写能力；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `TaxonomyRow.vue` | `kind: 'category' \| 'tag'`、`name`、`count`、`active`、`dropTarget` | `rename(name)` | 侧栏分类/标签共用的行：图标/名称/计数/点击切视图/右键菜单（重命名 emit 给 Sidebar 弹输入框；刷新缓存与删除按 kind 调 store）；dragenter/leave/drop 由 Sidebar 容器级委托（`.tax-row` + `data-name`） |
 | `SearchBox.vue` | — | — | 搜索框（store.searchText 草稿 + 回车 submitSearch）：TitleBar 与 Inspector 顶部共用同一实例模板；styles.css 按布局切换可见性——桌面在顶栏，触屏横屏（wide+touch，检查器可见）挪到 Inspector 顶（把顶栏空间留给筛选/排序按钮），窄屏隐藏、由 TitleBar 的搜索按钮 + 顶部搜索浮层替代（Enter 提交并关闭，Esc/点遮罩/× 关闭） |
 | `FilterBar.vue` | — | — | 筛选工具列（TitleBar 下方一行 chip，App.vue 以 `filterBarVisible || hasActiveFilters` 控制显隐）：评分 chip（点击弹星级单选菜单：全部/0–5 星，激活时显示当前值并高亮）+ 颜色 chip（条件激活时显示色块与 hex，× 就地清除）+ 尺寸 chip（SizeMenu：区间 + 档位 + 模式切换，激活时显示如 ≥ 1080p 或 1280–1920 × 720–1080，× 就地清除） |
@@ -462,8 +468,8 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：**周期兜底重扫开关**（库级 `[scan]` 设置，写 `.hawk/config.toml` 保存即热生效；文案说明实时监听仍是主路径、关闭后仅漏事件需手动重扫）+ 元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
 | `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读 / 仅导入 / 可读写，store.viewerMode / limitedWrite）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
-| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；LibraryDropdown 组件：历史库下拉——最近使用在前、当前库打勾、已删除置灰、条目 ··· 菜单（打开目录/当前库重命名/移除记录）、底部「打开文件夹…」选新库）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为筛选框（按小写子串过滤文件夹树/分类/标签，不随列表滚动；设置入口在 TitleBar 齿轮）；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签）；文件夹树容器接受外部文件/文件夹拖入（空白处 drop → 结构化导入到库根，目录树重建） |
-| `LibraryDropdown.vue` | — | — | 侧栏素材库下拉：库名触发按钮 + 历史库浮层（Teleport fixed，侧栏 overflow 不裁剪）；当前库打勾，目录已删的置灰；条目 ··· 菜单——打开素材库文件夹/当前库重命名（daemon `PATCH /library/info`）/从列表移除（仅删记录不动目录）；远程接入在线时浮层含「远程素材库」分区（池内其他设备，带在线点与「远程」徽标，点击即连接切换——复用 remote store 的中继回退询问；当前浏览的远程库打勾，远程浏览中点本地当前库 = 断开回切）；重命名/移除经 IPC，换库就绪经 `hawk:server-started` 驱动 App 原地重启数据 |
+| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（macOS 因红绿灯占位留在正文首行；Windows/Linux 与浏览器占顶条左上角 `in-head` 变体，正文整体上移填充空位；触屏同为 `in-head`（`body.touch` 命中，macOS 触屏也走此分支）；LibraryDropdown 组件：历史库下拉——最近使用在前、当前库打勾、已删除置灰、条目 ··· 菜单（打开目录/当前库重命名/移除记录）、底部「打开文件夹…」选新库）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为筛选框（按小写子串过滤文件夹树/分类/标签，不随列表滚动；设置入口在 TitleBar 齿轮）；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签）；文件夹树容器接受外部文件/文件夹拖入（空白处 drop → 结构化导入到库根，目录树重建） |
+| `LibraryDropdown.vue` | — | — | 侧栏素材库下拉：库名触发按钮 + 历史库浮层（Teleport fixed，侧栏 overflow 不裁剪）；触发按钮在库名后带「远程」徽标（当前浏览远端库时，来源区分落在按钮上；悬停提示为设备名 + 写能力），浮层顶部为「断开远程 · 回到我的库」；定位与数据加载解耦（打开前同步写入锚点，面板挂载后按实际高度决定是否上翻；远程设备列表异步补入，服务端不可达不拖住面板，快速开关也不会错位）；当前库打勾，目录已删的置灰；条目 ··· 菜单——打开素材库文件夹/当前库重命名（daemon `PATCH /library/info`）/从列表移除（仅删记录不动目录）；远程接入在线时浮层含「远程素材库」分区（池内其他设备，带在线点与「远程」徽标，点击即连接切换——复用 remote store 的中继回退询问；当前浏览的远程库打勾，远程浏览中点本地当前库 = 断开回切）；重命名/移除经 IPC，换库就绪经 `hawk:server-started` 驱动 App 原地重启数据 |
 | `SelectBox.vue` | `modelValue: string`、`options: {value,label}[]`、`placeholder?`、`disabled?` | `update:modelValue` | 自绘下拉选择（原生 select 展开列表由 OS 绘制，暗色主题不协调）：触发框 + Teleport fixed 浮层（视觉与 ContextMenu 一致），键盘导航与外部点击关闭；设置面板/文件夹选择/库切换共用 |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input，提交守卫：进入即捕获类型并同步摘除编辑态，await 窗口内的重复 Enter/blur 不会二次提交）、dropDepth（素材/外部文件拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/在文件管理器中打开（仅 Electron）/全局列表隐藏切换/重新扫描（强制遍历该文件夹及子目录，拾取监听漏掉的新增/删除）/刷新缓存（补该文件夹及子目录缺失的宽高/缩略图/调色板）/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮）；**接受外部文件/文件夹拖入**（整行可放置，drop → `importer.importEntries(entries, node.path, files)` 结构化导入：拖入目录在本节点下重建目录树，阻断 document 级平铺导入；entries 不可用时退回 files 直落本节点） |
 | `FolderTreePicker.vue` | `current: string`、`trigger: HTMLElement \| null` | `pick(path)`、`close` | Eagle 式文件夹树选择弹出层（检查器「文件夹」用，Teleport body 定位到触发按钮；**视口锚点含高度预估与翻转判定由弹层挂载时自测触发按钮**，使用方只管开/关）：点击当前值弹出/再点收起（trigger 列为 outside 忽略，否则 pointerdown 先关、click 后开关不上），**点击文件夹行即选中移动**（无确认，与 Eagle 一致；点当前行=取消）；展开态默认沿当前路径、▸ 折叠箭头、当前行高亮；下方空间不足向上翻转；点外部/Esc 关闭，面板内按键拦截（Delete/Backspace 不误删素材）；空库提示先到侧栏新建 |
@@ -533,7 +539,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 ## 功能清单 v1（验收标准）
 
-1. 启动选库：首次启动弹目录选择，或选「仅浏览远程素材库」直接进远程查看模式（无库 daemon，不选目录也不建目录；冷启动经 config.toml 的 remoteViewer 记忆）；记住上次素材库与上次浏览的文件夹视图（按库路径存 localStorage，文件夹已删则回退全部素材）；菜单可更换库
+1. 启动选库：首次启动弹目录选择，或选「仅浏览远程素材库」直接进远程查看模式（无库 daemon，不选目录也不建目录；冷启动经 config.toml 的 remoteViewer 记忆）；上次浏览的是远端库时冷启动自动恢复该会话（remoteTarget 记忆，失败/离线静默回退本地库）；记住上次素材库与上次浏览的文件夹视图（按库路径存 localStorage，文件夹已删则回退全部素材）；菜单可更换库
 2. 侧栏：智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站）/ 文件夹树 / 分类列表 / 标签列表（三分区均支持「＋」新建与右键重命名/删除；**接受素材拖入**：拖到文件夹=移动，拖到分类/标签=添加；右键可设「不在全局列表显示」——隐藏维度（文件夹含子树）下的素材从全部素材/根目录/未分类/未标签列表排除，行尾显示眼睛划线标记，设置面板「隐藏项」分区可查看清单并逐条取消）
 3. 网格：缩略图懒加载、虚拟渲染（打开即知总高、滚动条自由拖动、离屏不渲染）、单选/Shift 连选/Cmd 点选、双击预览浮层
 4. 搜索与筛选：关键词（命中名称/备注）、star 精确筛选、四种排序双向
