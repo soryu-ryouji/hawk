@@ -8,9 +8,9 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { APP_DIR, DAEMON_LOG_FILE, REMOTE_CONFIG_FILE } from './paths';
 import { getMainWindow } from './window';
-import { API_PORT_RANGE, getApiPort, getLibraryRoot, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
+import { API_PORT_RANGE, getApiPort, getLibraryRoot, getRemoteTarget, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
 import { IPC, PORT_IN_USE, type ServerConn, type ServerFailure } from './ipc-contract';
-import { onServerReady, onServerStopped } from './remote';
+import { onServerReady, onServerStopped, restoreRemoteSession } from './remote';
 
 const isDev = !app.isPackaged;
 
@@ -115,6 +115,30 @@ function webDistDir(): string {
     }
   }
   return dist;
+}
+
+/**
+ * 就绪通知（每次 server 就绪一次）：上次浏览的是远端库时先尝试恢复会话，再通知渲染进程。
+ * 恢复成功时 connection-changed 已把 API 指向会话代理，渲染进程首个注水即远端库（不先闪本地库）；
+ * 失败/无记录则按本地库通知。恢复期间停服/换库时用 startedConn 身份比对废弃本次通知。
+ */
+async function notifyReady(): Promise<void> {
+  const conn = startedConn;
+  if (!conn) {
+    return;
+  }
+  if (getRemoteTarget()) {
+    // 启动屏先切文案：恢复可能耗时（信令接入/拨号），期间没有索引进度可报，
+    // 不能停在上一轮的扫描文案上
+    getMainWindow()?.webContents.send(IPC.serverProgress, { phase: 'restore-remote', processed: 0, total: 0 });
+    if (await restoreRemoteSession()) {
+      return;
+    }
+    if (startedConn !== conn) {
+      return;
+    }
+  }
+  getMainWindow()?.webContents.send(IPC.serverStarted, conn);
 }
 
 /**
@@ -234,9 +258,9 @@ function startServer(libPath: string | null, address: string, token: string): Se
       if (state.status === 'ready') {
         lastFailure = null;
         startedConn = { address, token };
-        getMainWindow()?.webContents.send(IPC.serverStarted, startedConn);
         // remote SSE 订阅重建（remote.session 断线回切依赖；见 remote.ts）
         onServerReady();
+        void notifyReady();
       } else {
         fail(state.message || 'hawk-daemon 初始索引构建失败');
       }

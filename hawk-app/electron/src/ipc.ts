@@ -4,7 +4,7 @@ import { app, clipboard, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
-import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction } from './app-config';
+import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction, setRemoteTarget } from './app-config';
 import { openLibraryAt, startRemoteViewer, pickLibrary, getStartedConn, getServerFailure, restartCurrent, retryServerPort } from './server';
 import { API_PORT_RANGE, getApiPort, setApiPort } from './app-config';
 import {
@@ -64,6 +64,8 @@ export function registerIpc(): void {
     if (!selected) {
       return false;
     }
+    // 用户显式选本地库：忘记上次的远端目标，下次启动不再自动恢复远程会话
+    setRemoteTarget(null);
     try {
       // 端口/token 即选即生成；页面切应用内启动屏，就绪经 hawk:server-started 通知
       await openLibraryAt(selected);
@@ -93,6 +95,8 @@ export function registerIpc(): void {
     if (typeof libPath !== 'string' || !listLibraries().libraries.some((l) => l.path === libPath)) {
       return false;
     }
+    // 同 selectLibrary：切到本地库即忘记上次的远端目标
+    setRemoteTarget(null);
     try {
       await openLibraryAt(libPath);
       return true;

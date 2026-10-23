@@ -11,6 +11,8 @@ interface AppConfig {
   libraryHistory?: string[];
   /** 冷启动模式记忆：true = 远程查看模式（无本地库，daemon 以无库形态启动）；开本地库时复位 */
   remoteViewer?: boolean;
+  /** 上次浏览的远端设备 id：冷启动 daemon 就绪后尝试恢复会话；显式断开/切回本地库时清除 */
+  remoteTarget?: string;
   /** 全局缓存父目录（所有库共用，子目录按库名+哈希区分）；未设置时用系统缓存目录 */
   cacheParent?: string;
   /** 应用更新通道；未设置时视为 stable */
@@ -117,6 +119,16 @@ export function getApiPort(): number {
 
 export function setApiPort(port: number): void {
   writeConfig({ apiPort: port });
+}
+
+/** 上次浏览的远端设备 id（null = 上次浏览的是本地库）；恢复失败不清除，下次启动再试 */
+export function getRemoteTarget(): string | null {
+  return readConfig().remoteTarget ?? null;
+}
+
+/** 记住/忘记上次浏览的远端设备：建立会话成功时记住，用户显式断开或切回本地库时忘记 */
+export function setRemoteTarget(deviceId: string | null): void {
+  writeConfig({ remoteTarget: deviceId ?? undefined });
 }
 
 /** 库显示名：优先读库内 .hawk/config.toml 的 name（与 daemon library/info 同源），缺失/异常回退目录名 */

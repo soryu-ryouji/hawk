@@ -3,6 +3,7 @@
 // 主进程始终持有本地 daemon 的地址与 admin token，经正规 REST 调用（不经 IPC 传业务数据之外的状态）。
 import { getStartedConn } from './server';
 import { getMainWindow } from './window';
+import { getRemoteTarget, setRemoteTarget } from './app-config';
 import {
   IPC,
   type ConnectionDescriptor,
@@ -16,6 +17,9 @@ import {
 
 /** 当前远程连接（null = 本地库）。渲染进程拿到的是完整描述符（api_base + token + label） */
 let remoteConn: ConnectionDescriptor | null = null;
+/** 冷启动恢复远端库进行中：期间不外泄本地库描述符（渲染进程挂载时的拉取兜底
+ *  不得先注水本地库，否则会闪一下本地库再切远端） */
+let restoring = false;
 /** SSE 订阅的中止开关（daemon 重启/换库时废弃重连） */
 let sseAbort: AbortController | null = null;
 
@@ -27,7 +31,7 @@ function localDescriptor(): ConnectionDescriptor | null {
 
 /** 当前活动连接描述符：远程会话代理优先，其次本地库 */
 export function currentDescriptor(): ConnectionDescriptor | null {
-  return remoteConn ?? localDescriptor();
+  return remoteConn ?? (restoring ? null : localDescriptor());
 }
 
 /** 推送连接变更：渲染进程统一执行切换重置（abort 请求/SSE → 清 store → 重新注水） */
@@ -151,18 +155,87 @@ export async function remoteConnect(targetDeviceId: string): Promise<ConnectionD
     remote: true,
     device_id: session.target_device_id,
   };
+  // 记住远端目标：下次启动（daemon 就绪后）直接尝试恢复同一远端库
+  setRemoteTarget(session.target_device_id);
   emitConnection(remoteConn);
   return remoteConn;
 }
 
-/** 断开远程会话并回切本地库（幂等） */
+/** 断开远程会话并回切本地库（幂等）。用户显式断开即忘记远端目标，下次启动不再自动恢复 */
 export async function remoteDisconnect(): Promise<ConnectionDescriptor | null> {
   try {
     await daemonCall('DELETE', '/api/v1/remote/session');
   } finally {
+    setRemoteTarget(null);
     switchToLocal();
   }
   return currentDescriptor();
+}
+
+// ---------- 冷启动恢复上次浏览的远端库 ----------
+
+/** 等信令 online 的预算：库就绪瞬间远程接入可能还在建数据面，此时发起会话必然失败 */
+const RESTORE_ONLINE_WAIT_MS = 5000;
+const RESTORE_ONLINE_POLL_MS = 250;
+
+/** 信令是否已 online（接入是异步过程：connecting → online/error；未启用直接放弃） */
+async function waitRemoteOnline(): Promise<boolean> {
+  const deadline = Date.now() + RESTORE_ONLINE_WAIT_MS;
+  for (;;) {
+    let dto: RemoteDto;
+    try {
+      dto = await remoteStatus();
+    } catch {
+      return false; // daemon 未就绪/本地异常：不恢复
+    }
+    if (!dto.enabled) {
+      return false;
+    }
+    if (dto.status.state === 'online') {
+      return true;
+    }
+    if (dto.status.state === 'error' || Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, RESTORE_ONLINE_POLL_MS));
+  }
+}
+
+/**
+ * 冷启动恢复上次浏览的远端库（daemon 就绪后、通知渲染进程之前调用）：成功后当前连接描述符
+ * 已是远端（connection-changed 由 remoteConnect 推送），渲染进程首个注水即远端库。
+ * 无记录/接入未启用/目标离线或关闭访问/会话建不起来一律返回 null（调用方回退本地库）；
+ * 目标记录不清除——设备暂时离线不代表用户不再看这个库，下次启动继续尝试。
+ */
+export async function restoreRemoteSession(): Promise<ConnectionDescriptor | null> {
+  const target = getRemoteTarget();
+  if (!target) {
+    return null;
+  }
+  restoring = true;
+  try {
+    if (!(await waitRemoteOnline())) {
+      return null;
+    }
+    // 目标离线/关闭远程访问：不必发起会话（服务端也只会等到超时）
+    try {
+      const { devices } = await remoteDevices();
+      const device = devices.find((d) => d.device_id === target);
+      if (!device?.online || !device.allow_remote) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    try {
+      return await remoteConnect(target);
+    } catch {
+      // 隧道/服务端失败：回退本地库，记录保留（下次启动再试）
+      return null;
+    }
+  } finally {
+    restoring = false;
+  }
 }
 
 // ---------- SSE：remote.session 断线回切 ----------
