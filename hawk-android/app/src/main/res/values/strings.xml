@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">hawk</string>
+    <string name="camera_permission_denied">没有相机权限，请在系统设置中允许 hawk 使用相机</string>
+    <string name="save_permission_denied">没有相册写入权限，请在系统设置中允许 hawk 添加照片</string>
+</resources>
