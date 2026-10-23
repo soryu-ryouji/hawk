@@ -1,25 +1,26 @@
-/* 弹窗（popup）样式：深色简约，扁平单列。
-   尺寸：宽度由内容决定（min-width 300px），高度自适应；html 也铺底色——body 比视口小时
-   浏览器默认白底会从边缘透出来（扩展 popup 的 html 背景默认是白的）。 */
+/* 弹窗（popup）样式：浅色简约，扁平单列。
+   底色用白色是有意的：浏览器弹窗在 Windows 上由系统绘制 1px 边框与圆角阴影，
+   页面盖不住那圈边线——深色内容会在四周留下一条白缝，白底让边线与页面同色即不可见。
+   html 与 body 都要铺底色（内容比视口短时露出的是画布颜色）。 */
 html {
-  color-scheme: dark;
-  background: #16181d;
+  color-scheme: light;
+  background: #fff;
 }
 
 body {
   margin: 0;
   min-width: 300px;
-  background: #16181d;
-  color: #d6d9de;
+  background: #fff;
+  color: #1f2328;
   font: 13px/1.5 system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   overflow-x: hidden;
 }
 
 main {
-  padding: 12px 14px 10px;
+  padding: 12px 14px 12px;
 }
 
-/* ---- 头部：品牌 + 状态（状态以圆点 + 短文案，不占整行） ---- */
+/* ---- 头部：品牌 + 状态（圆点 + 短文案，超长省略） ---- */
 .head {
   display: flex;
   align-items: baseline;
@@ -41,14 +42,8 @@ main {
   min-width: 0;
   overflow: hidden;
   font-size: 12px;
-  color: #8a8f98;
+  color: #6b7280;
   white-space: nowrap;
-}
-
-/* 状态文本超出时省略（设备 · 库名等长标签不换行、不顶破弹窗宽度） */
-.status-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .status::before {
@@ -60,21 +55,26 @@ main {
   background: currentColor;
 }
 
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status[data-kind='ok'] {
-  color: #5fbf6f;
+  color: #1a7f37;
 }
 
 .status[data-kind='err'] {
-  color: #e06c75;
-}
-
-.status[data-kind='wait'] {
-  color: #8a8f98;
+  color: #cf222e;
 }
 
 /* 只读（跟随的远端库未开启写入）：警告色，不是错误 */
 .status[data-kind='warn'] {
-  color: #d9a441;
+  color: #9a6700;
+}
+
+.status[data-kind='wait'] {
+  color: #6b7280;
 }
 
 /* ---- 表单 ---- */
@@ -82,7 +82,7 @@ label {
   display: block;
   margin-bottom: 8px;
   font-size: 12px;
-  color: #8a8f98;
+  color: #6b7280;
 }
 
 input,
@@ -93,11 +93,15 @@ select {
   max-width: 100%;
   margin-top: 4px;
   padding: 6px 8px;
-  border: 1px solid #2c313a;
-  border-radius: 5px;
-  background: #1d2026;
-  color: #d6d9de;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2328;
   font-size: 13px;
+}
+
+input::placeholder {
+  color: #9aa2ad;
 }
 
 input:focus,
@@ -125,7 +129,7 @@ select:focus {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #8a8f98;
+  color: #6b7280;
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -146,7 +150,7 @@ select:focus {
 }
 
 .advanced summary:hover {
-  color: #c6cbd2;
+  color: #1f2328;
 }
 
 .advanced[open] summary {
@@ -161,17 +165,17 @@ select:focus {
 .actions {
   display: flex;
   gap: 8px;
-  margin: 2px 0 8px;
+  margin: 2px 0 0;
 }
 
 button {
   box-sizing: border-box;
   max-width: 100%;
   padding: 6px 12px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: #262b33;
-  color: #d6d9de;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #f6f7f9;
+  color: #1f2328;
   font-size: 13px;
   cursor: pointer;
 }
@@ -181,31 +185,33 @@ button {
 }
 
 button:hover {
-  background: #30363f;
+  background: #eceef1;
 }
 
 .secondary {
-  background: transparent;
-  border-color: #2c313a;
-  color: #b9bfc7;
+  background: #fff;
+  border-color: #d0d7de;
+  color: #3f4650;
 }
 
 .secondary:hover {
-  background: #23272f;
+  background: #f6f7f9;
 }
 
 #save {
   background: #4a7dff;
+  border-color: #4a7dff;
   color: #fff;
 }
 
 #save:hover {
-  background: #5d8bff;
+  background: #3f74f0;
+  border-color: #3f74f0;
 }
 
 .hint {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #6b7078;
+  color: #6b7280;
 }
