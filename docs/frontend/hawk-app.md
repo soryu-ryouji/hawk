@@ -50,13 +50,13 @@ Electron 主进程启动
         - 打开资源文件夹 → 系统目录选择框 → 本地库
         - 仅浏览远程素材库 → 拉起无库形态 daemon（远程查看模式，不创建任何本地目录）
           → 前端经 app/info.has_library=false 进远程查看屏（接入配置与设备身份在应用级，跨库共享）
-  → 预选空闲环回端口（net.listen(0)）+ 生成随机 token，创建 BrowserWindow（show:false）
+  → 读配置里的本地 API 端口（config.toml 的 apiPort，默认 27371）+ 生成随机 token，创建 BrowserWindow（show:false）
   → 立即加载应用页并注入 hash（开发：localhost:5173/#api=...&token=...；打包：file://index.html#...）——
     端口/token 先生成、页面先行，server 后台拉起；窗口内容单页生命周期，无二次导航，杜绝切换白屏
   → 首帧渲染完成后 ready-to-show 才 show 窗口（GPU 驱动不认可 backgroundColor、合成器首帧延迟时
     提前 show 会把空白/白窗暴露给用户）
   → spawn hawk-daemon（开发：hawk-daemon/target 下的 Rust 构建产物；打包：process.resourcesPath 内二进制）
-      环境变量传入 HAWK_TOKEN，参数 --library <path>（远程查看模式省略，无库形态）--port <预选端口> --web-dist <web/dist>
+      环境变量传入 HAWK_TOKEN，参数 --library <path>（远程查看模式省略，无库形态）--port <配置端口> --web-dist <web/dist>
       --remote-config ~/.config/hawk/remote.toml（应用级远程配置；身份目录 ~/.config/hawk/remote/）
       （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录；
        缓存头：/assets/ 内容哈希资源 immutable 长缓存，index.html no-cache——防手机浏览器
@@ -64,15 +64,16 @@ Electron 主进程启动
   → 轮询 GET /api/v1/app/startup（200ms，Bearer token；server 先监听、索引后台构建），事件推送页面：
       starting → hawk:server-progress（phase/processed/total，应用内启动屏呈现）
       ready    → hawk:server-started（含 address/token）→ 渲染进程重配 API（restart 会换端口）并 boot 数据
-      error    → hawk:server-error（message 为后端给出的失败原因，页面内错误屏 + 退出入口）
+      error    → hawk:server-error（message 为后端给出的失败原因，页面内错误屏 + 退出入口；
+                 code=PORT_IN_USE 时启动屏给出「自动选可用端口（27371–27400）/ 手输端口重试」）
     子进程异常退出 / spawn 失败 / 启动无响应(HTTP 不可达 120s,能应答 startup 即视为活着——缓存重建可达数分钟) → hawk:server-error（stderr 尾部；有意 stopServer 除外）
 退出
   → 杀掉子进程（含异常退出路径，防止孤儿进程）
 ```
 
-启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。换库（引导页选库、侧栏库名下拉选历史库）与应用设置重启 server 不再重载页面——主进程停旧 server 的同时发 `hawk:server-restarting`，渲染进程立即切启动屏（旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效，必须此时就切）；`hawk:server-started` 带新地址/token 到达后原地重配 API、重启数据（store.init 会清掉上一库的会话状态：查询条件/选择/预览/进度指示；视图经 restoreView 恢复或回退全部素材，+SSE 重连）。历史库由主进程记录（`~/.config/hawk/config.toml` 的 `libraryHistory`，最近使用在前、去重、上限 10），侧栏库名下拉列出（当前库打勾、已删除的置灰），底部「打开文件夹…」弹系统目录选择框。
+启动/进度/错误全在单页内呈现（`useStartup` + `StartingScreen.vue`）：Electron 由主进程 IPC 推送，纯浏览器（局域网查看）无 IPC 则自行轮询 `/app/startup`（401 → ConnectScreen 门页）。**错误态分两支**：`code=PORT_IN_USE` 显示端口冲突处理（「自动选择可用端口」按钮 + 端口输入框「用该端口重试」+ 退出），其余失败只给原因与退出；自动选择限定 `27371–27400`（浏览器插件按同一段自动发现本机 hawk），手输允许任意 1024–65535。换库（引导页选库、侧栏库名下拉选历史库）与应用设置重启 server 不再重载页面——主进程停旧 server 的同时发 `hawk:server-restarting`，渲染进程立即切启动屏（旧 server 已停、新 server 未 ready 的窗口期主界面 API 全失效，必须此时就切）；`hawk:server-started` 带新地址/token 到达后原地重配 API、重启数据（store.init 会清掉上一库的会话状态：查询条件/选择/预览/进度指示；视图经 restoreView 恢复或回退全部素材，+SSE 重连）。历史库由主进程记录（`~/.config/hawk/config.toml` 的 `libraryHistory`，最近使用在前、去重、上限 10），侧栏库名下拉列出（当前库打勾、已删除的置灰），底部「打开文件夹…」弹系统目录选择框。
 
-握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程预选、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。daemon 的 stdout（tracing 日志）由主进程落盘到 `~/.config/hawk/daemon.log`（每次拉起截断重写）——远程打洞/中继排障的 info 级日志都在这里。
+握手全程走正规 HTTP（无任何 stdout 私有协议）：端口由主进程按用户配置决定、token 由主进程生成，server 只负责绑定与构建索引；进度与就绪语义见 server-rest-api-v1.md「app/startup」。**端口严格绑定，不静默漂移**：daemon 绑不上以退出码 4 + `PORT_IN_USE <port>` 退出，主进程据此让启动屏询问换端口（自动只在 27371–27400 段内挑，手输允许任意 1024–65535）——端口所有权只在壳层一处，生态客户端（浏览器插件）才能按固定段零配置探活；顺带消掉了「app 预探测端口 → daemon 再绑」的竞态与两处回退逻辑。初始索引期间 `/api/*` 返回 503 `NOT_READY`（`app/startup` 除外），主界面只在 ready 后加载，因此前端无感。daemon 的 stdout（tracing 日志）由主进程落盘到 `~/.config/hawk/daemon.log`（每次拉起截断重写）——远程打洞/中继排障的 info 级日志都在这里。
 
 关窗行为可配（`config.toml` 的 `closeAction`，设置面板「外观」分区可改，即改即生效）：
 `exit`（默认）关窗直接退出——close 不拦截，窗口销毁后经 `window-all-closed` 走 `app.quit()`；
@@ -80,7 +81,8 @@ Electron 主进程启动
 不间断）。托盘左键单击或菜单「打开 hawk」唤起主窗口，菜单「退出」才是真正退出（`before-quit` 置
 `isQuitting` 放行 close 拦截，经 `will-quit` 回收 server）。再次启动应用由单实例锁
 （`requestSingleInstanceLock`）转到已有实例——否则第二个实例的 hawk-daemon
-会因 27371 端口占用直接启动失败。macOS 关窗后点 Dock 图标经 `activate` 唤起。
+会因 27371 端口占用直接启动失败（端口被其他程序占用时启动屏询问换端口，不会静默改端口）。
+macOS 关窗后点 Dock 图标经 `activate` 唤起。
 托盘为纯主进程行为，不新增 preload IPC 通道；自绘标题栏的关闭按钮与系统关窗
 行为一致（同一 `close` 事件分流）。托盘图标复用 `build/icon.png`（512px 源图运行时按平台
 重采样：Windows/Linux 32px、macOS 18px），该文件已列入 electron-builder `files`，
@@ -98,7 +100,9 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `openLibrary(path)` | 打开历史素材库（仅接受历史记录内的路径），换库就绪经 `onServerStarted` 通知 |
 | `openLibraryFolder(path)` | 在系统文件管理器中打开素材库目录（历史库条目 `···` 菜单） |
 | `removeLibrary(path)` | 从历史记录移除一条素材库（只删记录不动目录），返回移除后的列表 |
-| `restartServer()` | 重启当前库的 server（存储方案迁移等需要进程级重启的设置变更；主进程切启动屏并重建连接） |
+| `restartServer()` | 按当前模式重启 server（本地库 → 同库；远程查看 → 无库形态）：存储方案/端口等需要进程级重启的设置变更用；主进程切启动屏并重建连接 |
+| `getApiPort()` / `setApiPort(port)` | 本地 API 端口的读写：`{ port, range: [27371, 27400] }` / 校验 1024–65535 后写 `config.toml` 的 `apiPort`（不重启，前端随后调 `restartServer`）；返回错误文案或 null |
+| `retryServerPort({ mode: 'auto' } \| { port })` | 端口被占用的重试：`auto` 在候选段内挑空闲端口、`port` 用手输端口（主进程做占用预检），写配置后按当前模式重启；返回错误文案或 null。启动屏端口冲突界面用 |
 | `showInFinder(path)` | 右键「在 Finder 中显示」，主进程 `shell.showItemInFolder` |
 | `openFolder(path)` | 在文件管理器中打开库内文件夹本身（区别 showInFinder 的「定位到父级并选中」） |
 | `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
@@ -110,9 +114,10 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `onWindowMaximized(cb)` | 订阅最大化状态变化（含 Aero Snap 等系统途径），标题栏据此切换 最大化/还原 图标；返回退订函数 |
 | `onServerProgress(cb)` | 订阅后端扫描进度（`{ phase, processed, total }`，`total=0` 为不定态），应用内启动屏用；返回退订函数 |
 | `onServerRestarting(cb)` | 订阅 server 即将重启（换库/应用设置重启）：主进程停旧 server 时即发，前端应立即切启动屏（早于 ready 的 `onServerStarted`）；返回退订函数 |
-| `onServerStarted(cb)` | 订阅 server 就绪：`{ address, token }`（冷启动/换库/应用设置重启都会到达；restart 会换端口，渲染进程须先重配 API 再重启数据）；返回退订函数 |
+| `onServerStarted(cb)` | 订阅 server 就绪：`{ address, token }`（冷启动/换库/应用设置重启都会到达；restart 可能换端口，渲染进程须先重配 API 再重启数据）；返回退订函数 |
 | `getServerConn()` | 拉取当前已就绪的 server 连接（未就绪返回 null）：页面加载晚于 server 就绪的竞态兜底 |
-| `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message }`（页面内错误屏呈现）；返回退订函数 |
+| `getServerError()` | 拉取最近一次启动/运行失败（未失败 null）：daemon 端口占用会在页面订阅 IPC 之前就退出（推送会丢事件），挂载时拉一次兜底；每次新拉起尝试时清空 |
+| `onServerError(cb)` | 订阅 server 启动/运行失败：`{ message, code?, port? }`（页面内错误屏呈现；`code=PORT_IN_USE` 时启动屏给端口冲突处理）；返回退订函数 |
 | `quitApp()` | 真正退出应用（启动错误屏用；区别于 `closeWindow` 的按关窗行为分流） |
 | `getCloseAction()` / `setCloseAction(action)` | 关窗行为偏好的读写：`'exit'`（默认，关窗直接退出）\| `'tray'`（关窗隐藏到托盘驻留），主进程持久化到 `~/.config/hawk/config.toml`（唯一事实源，未设置回退默认值）；即改即生效，无需重启 |
 | `getAppVersion()` | 当前应用版本与构建 sha（`{ version, sha }`；sha 来自打包时写入的 `build-info.json`，开发态为 `'dev'`） |
@@ -436,7 +441,7 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 
 | 组件 | props | emits | 职责与内部状态 |
 | ---- | ----- | ----- | -------------- |
-| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/remote/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——先查 appInfo，`has_library=false`（远程查看模式，本地无库）分流 remote 相位（RemoteScreen），否则 store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（退出入口）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；watch store.library 同步页面标题 `hawk | 素材库名`（浏览器标签页，Electron 下同为窗口/任务栏标题，未加载时纯 hawk）；主界面就绪后延迟 8s 静默检查应用更新一次（useUpdater.startupAutoCheck，仅 Electron）；挂载 PreviewOverlay/ImageEditDialog（preview.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，importer.importProgress 驱动，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
+| `App.vue` | — | — | 布局骨架（侧栏/检查器通高两行、顶栏只占中栏；`no-panels` 时左右两栏同时归零，Eagle 式侧栏开关；栏宽拖拽手柄，内联 style 控制 grid 列宽，宽度持久化 `hawk:panelWidths`；WindowControls fixed 于窗口右上角）；**启动阶段状态机**（`phase`: starting/ready/setup/remote/connect/error）：starting 显示应用内启动屏，`useStartup` 就绪计数（Electron 经 `server-started` IPC 且先重配 API；浏览器轮询 /app/startup）触发 runBoot——先查 appInfo，`has_library=false`（远程查看模式，本地无库）分流 remote 相位（RemoteScreen），否则 store.init（401 → 清残留 token 进门页）+ connectEvents（SSE 先断后连，restart 换地址后重挂）；server-error 进错误屏（`code=PORT_IN_USE` 时给端口冲突处理：自动换端口 / 手输端口 / 退出，其余只给原因与退出）；setup=引导页选库（选定转 starting）、connect=浏览器 token 门页；窗口内容单页生命周期，无 hashchange/二次导航；挂载全局快捷键/拖拽 composable；watch store.library 同步页面标题 `hawk | 素材库名`（浏览器标签页，Electron 下同为窗口/任务栏标题，未加载时纯 hawk）；主界面就绪后延迟 8s 静默检查应用更新一次（useUpdater.startupAutoCheck，仅 Electron）；挂载 PreviewOverlay/ImageEditDialog（preview.editorTarget 驱动）/SettingsDialog/ContextMenu/toast/导入进度浮层（底部居中，收集文件不定态 → 逐项推进，importer.importProgress 驱动，与 toast 同层叠放并避让）；前置阶段（启动/引导/门页/错误）带拖拽条与窗口控制 |
 | `TitleBar.vue` | — | `open-settings` | Eagle 式中栏顶栏（只覆盖内容区，窗口拖拽区，双击空白切换最大化）：侧栏开关（仅侧栏隐藏时在本栏左上角；可见时开关在侧栏顶条右端）、前进/后退、位置面包屑（文件夹/分类逐级跳转）+ 选中计数；SearchBox（触屏横屏时被 CSS 隐藏；窄屏被 CSS 隐藏、同位退化为搜索按钮 + 搜索浮层）；排序按钮（弹二级菜单单选 字段×方向 8 项）与筛选按钮（toggle store.filterBarVisible，条件激活时高亮）；narrow 时两按钮隐藏，收敛为右端「排序与筛选」溢出菜单（筛选工具列开关 + 全部排序项 + 重置项，与宽屏排序菜单共用同一组菜单项）；面包屑 narrow 分支只渲染当前层级（ancestor 经抽屉导航）；右组首为上传按钮（`!viewerMode` 时显示：隐藏 file input 多选 → `importer.importFiles` multipart 上传，手机端无拖拽的主导入入口）；右端设置齿轮（所有客户端常显，打开 SettingsDialog；web 端含连接分区/token 注销）；侧栏隐藏时通栏，macOS 左端预留避让原生红绿灯、Windows/Linux 右端预留避让 fixed 窗口控制 |
 | `TaxonomyRow.vue` | `kind: 'category' \| 'tag'`、`name`、`count`、`active`、`dropTarget` | `rename(name)` | 侧栏分类/标签共用的行：图标/名称/计数/点击切视图/右键菜单（重命名 emit 给 Sidebar 弹输入框；刷新缓存与删除按 kind 调 store）；dragenter/leave/drop 由 Sidebar 容器级委托（`.tax-row` + `data-name`） |
 | `SearchBox.vue` | — | — | 搜索框（store.searchText 草稿 + 回车 submitSearch）：TitleBar 与 Inspector 顶部共用同一实例模板；styles.css 按布局切换可见性——桌面在顶栏，触屏横屏（wide+touch，检查器可见）挪到 Inspector 顶（把顶栏空间留给筛选/排序按钮），窄屏隐藏、由 TitleBar 的搜索按钮 + 顶部搜索浮层替代（Enter 提交并关闭，Esc/点遮罩/× 关闭） |
@@ -447,12 +452,13 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示。两个入口：「打开资源文件夹」经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server）；「仅浏览远程素材库」经 `openRemoteViewer()` 拉起无库 daemon（不创建本地目录），不弹目录选择框。两者返回 true 都发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面（无库则 runBoot 分流到远程查看屏）；spawn 失败主进程弹系统框并留本页 |
 | `RemoteScreen.vue` | — | — | 远程查看模式主屏（phase=remote，本地无库）：复用 SettingsRemote 面板（libraryless 形态）配置服务端/选设备连接，连上远程库后经连接描述符切换自动进主界面；底部「打开本地素材库…」弹系统目录选择框离开远程查看模式 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/隐藏项/局域网/远程/存储/更新；局域网 web 端：外观/隐藏项/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（LAN 字段编辑与更新下载进度切分区不丢），web 端不挂载局域网/远程/存储/更新分区；非 admin 连接（远程浏览/局域网 viewer）不挂载局域网分区（footer 保存同隐），存储分区仅保留本机缓存目录行——admin 限定端点经 app/info.access 门禁，避免只读 token 403；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截；`body.pairing-open` 时让路）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（保存按钮委托 `SettingsLan` 的 save，校验失败自动切到局域网分区） |
+| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/隐藏项/网络/存储/更新；局域网 web 端：外观/隐藏项/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（网络分区的字段编辑与更新下载进度切分区不丢），web 端不挂载网络/存储/更新分区；「网络」分区把三块收在一处（本地服务端口 / 局域网 / 远程，子组件带 `embedded` 只渲染内容、不自带滚动容器）；非 admin 连接（远程浏览/局域网 viewer）不挂载局域网块（footer 保存同隐），存储分区仅保留本机缓存目录行——admin 限定端点经 app/info.access 门禁，避免只读 token 403；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截；`body.pairing-open` 时让路）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（保存按钮委托 `SettingsLan` 的 save，校验失败自动切到网络分区；本地端口块自带「应用并重启」不经 footer） |
 | `SettingsAppearance.vue` | — | — | 外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，均经 store.setUserThumbSize——web 端由此记住偏好并停止跟随动态默认）+ 预览关闭按钮开关（preview.setHidePreviewClose 即时生效并 localStorage 记忆，全端持久）；无保存语义 |
 | `SettingsHiding.vue` | — | — | 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签，数据源为 taxonomy.globalFilter，SSE 实时对齐），逐条取消隐藏；回收站中的隐藏文件夹剥前缀加注；viewer 只读时只展示不操作 |
 | `PairingQrDialog.vue` | `title, payload, details, note, warning?` | `close` | 配对二维码弹层（局域网/广域网共用）：`qrcode` 把 JSON 载荷渲染成 480px PNG（白底留白，errorCorrectionLevel M），附手动输入字段明细与逐项复制、复制完整载荷、保存图片；`body.pairing-open` 让设置面板的 Esc 处理让路，z-index 190 高于设置面板；二维码含访问凭证，界面明示勿外传 |
-| `SettingsRemote.vue` | `libraryless?` | — | 远程分区（仅 Electron；RemoteScreen 复用同组件，libraryless 形态隐藏 writable/allow_remote 两个分享向开关）：启用远程访问 + hawk-server 地址/服务密钥（service-key，池门禁）+ 「允许广域网保存素材」（应用级远程配置的 `writable`，与局域网写权限独立）+ **访问密钥管理**（签发 hawk-app key：默认程序生成 128 位随机、可自定义（带写权限 ≥12 字符）、逐把读/写权限开关与吊销；明文只在签发响应展示一次，提供复制密钥/分享串；签发与变更经 daemon 推送到 server 映射）+ **iOS 配对入口**（保存配置 → 现签只读 key → 二维码含 service-key + key；密钥未同步/信令未在线时给出警告）+ 本机设备改名/allow_remote/证书轮换 + 设备列表（可移除他机记录，daemon 转发服务端注销；本机当前设备不可移除）与会话入口/中继回退；配置读写经主进程 IPC 转发本地 daemon `/api/v1/remote*`，写开关随配置保存热生效；接入配置与设备身份跨素材库共享 |
-| `SettingsLan.vue` | — | — | 局域网分区（仅 Electron）：开关 + 「允许修改素材库」+ token 拆分开关（separate_write_token + write_token，开启且为空时自动签发）+ 端口（纯文本输入，实时校验红框 + 提示，未启用时收起字段）+ token（monospace + 复制/重新生成）+ 本机地址列表（链接 + 逐行复制）；状态自管（打开时 `api.appLan()` 加载），读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启、SSE 不断），PUT 内置收敛等待，绑定失败自动回滚并报错；本机地址经 `shell.lanAddresses()`；另有「保存并生成配对二维码」（保存当前配置 → 选网卡 → 二维码含 `http://<ip>:<port>` 与访问 token，写权限未拆分时警告）；经 `defineExpose({ save, busy })` 供壳的 footer 委托 |
+| `SettingsLocalService.vue` | — | — | 本地服务块（仅 Electron，「网络」分区首块）：本地 daemon 的 API 端口（`getApiPort`/`setApiPort`/`restartServer` IPC）——端口输入 + 「应用并重启」（改端口后按当前模式重启 daemon，前端切启动屏），提示自动发现区间 `27371–27400` 与「填到段外插件需在高级选项指定端口」，正在远程浏览时改端口会断开当前会话；端口的所有权在壳层（daemon 严格绑定，不静默漂移），浏览器插件按同一段探活 |
+| `SettingsLan.vue` | `embedded?` | — | 局域网块（仅 Electron，嵌在设置面板「网络」分区内；`embedded` 时不带滚动容器）：开关 + 「允许修改素材库」+ token 拆分开关（separate_write_token + write_token，开启且为空时自动签发）+ 端口（纯文本输入，实时校验红框 + 提示，未启用时收起字段）+ token（monospace + 复制/重新生成）+ 本机地址列表（链接 + 逐行复制）；状态自管（打开时 `api.appLan()` 加载），读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启、SSE 不断），PUT 内置收敛等待，绑定失败自动回滚并报错；本机地址经 `shell.lanAddresses()`；另有「保存并生成配对二维码」（保存当前配置 → 选网卡 → 二维码含 `http://<ip>:<port>` 与访问 token，写权限未拆分时警告）；经 `defineExpose({ save, busy })` 供壳的 footer 委托 |
+| `SettingsRemote.vue` | `libraryless?`、`embedded?` | — | 远程块（仅 Electron，嵌在设置面板「网络」分区内；`embedded` 时不带滚动容器。RemoteScreen 复用同组件，libraryless 形态隐藏 writable/allow_remote 两个分享向开关）：启用远程访问 + hawk-server 地址/服务密钥（service-key，池门禁）+ 「允许广域网保存素材」（应用级远程配置的 `writable`，与局域网写权限独立）+ **访问密钥管理**（签发 hawk-app key：默认程序生成 128 位随机、可自定义（带写权限 ≥12 字符）、逐把读/写权限开关与吊销；明文只在签发响应展示一次，提供复制密钥/分享串；签发与变更经 daemon 推送到 server 映射）+ **iOS 配对入口**（保存配置 → 现签只读 key → 二维码含 service-key + key；密钥未同步/信令未在线时给出警告）+ 本机设备改名/allow_remote/证书轮换 + 设备列表（可移除他机记录，daemon 转发服务端注销；本机当前设备不可移除）与会话入口/中继回退；配置读写经主进程 IPC 转发本地 daemon `/api/v1/remote*`，写开关随配置保存热生效；接入配置与设备身份跨素材库共享 |
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：**周期兜底重扫开关**（库级 `[scan]` 设置，写 `.hawk/config.toml` 保存即热生效；文案说明实时监听仍是主路径、关闭后仅漏事件需手动重扫）+ 元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
 | `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读 / 仅导入 / 可读写，store.viewerMode / limitedWrite）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
@@ -583,7 +589,7 @@ hawk-app/
 ├── electron/
 │   ├── src/                # 主进程/preload 的 TS 源码（esbuild 打包到 out/，见 scripts/build-electron.mjs）
 │   │   ├── main.ts         # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
-│   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、空闲端口预选、拉起/就绪轮询/回收、换库
+│   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、端口取自配置（严格绑定，不静默漂移）、拉起/就绪轮询/回收、换库、端口冲突重试
 │   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、可配关窗行为（默认退出/托盘驻留） + 系统托盘、退出标志
 │   │   ├── app-config.ts   # 用户配置（~/.config/hawk/config.toml，全平台统一，TOML 格式；Electron 会话数据在平台默认 userData，两目录分离）：最近素材库与历史记录、缓存父目录、当前库根会话状态
 │   │   ├── paths.ts        # 路径单一来源：应用配置目录、远程访问应用级配置 remote.toml（daemon --remote-config）

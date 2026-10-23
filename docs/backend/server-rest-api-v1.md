@@ -33,7 +33,7 @@
 
 - 时间戳均为 Unix 毫秒
 - 分页参数：`offset`（默认 0）、`limit`（默认 50）
-- 桌面版默认监听 `27371` 端口（被占用时回退为动态分配），所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 与 `<img>` 直链（thumbnail、file）无法设置请求头，改用查询参数 `?token=`
+- 桌面版默认监听 `27371` 端口（用户可在设置面板「网络 → 本地服务」配置；端口被占用时**不会**静默换端口——daemon 以退出码 4 + `PORT_IN_USE <port>` 退出，app 在启动屏询问换端口），所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 与 `<img>` 直链（thumbnail、file）无法设置请求头，改用查询参数 `?token=`
 
 ## app
 

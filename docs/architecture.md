@@ -80,7 +80,7 @@ Electron 退出
   → 回收 hawk-daemon 子进程（防止孤儿进程残留）
 ```
 
-**本地 API 安全**：localhost 端口任何本机进程都能访问，因此所有请求必须携带启动时生成的随机 token。token 只存在于进程环境变量中，不落盘。防护对象是浏览器里的恶意网页（CSRF 直写素材库）——本机同权限进程可直接读写素材目录，等价绕过，不在防护范围。生态客户端（浏览器插件等）通过默认端口 27371 连接。为免配置，提供免鉴权的 token 发现端点 `GET /api/v1/app/token`：响应不带 CORS 头（跨源网页 JS 读不到，持 host_permissions 的扩展可读）且 Host 限定环回地址（防 DNS rebinding 同源绕过），插件零配置即可接入，等价 Eagle 的无鉴权体验但不牺牲防护。
+**本地 API 安全**：localhost 端口任何本机进程都能访问，因此所有请求必须携带启动时生成的随机 token。token 只存在于进程环境变量中，不落盘。防护对象是浏览器里的恶意网页（CSRF 直写素材库）——本机同权限进程可直接读写素材目录，等价绕过，不在防护范围。生态客户端（浏览器插件等）通过本地 API 端口接入：**端口由用户配置决定**（`~/.config/hawk/config.toml` 的 `apiPort`，默认 27371），daemon 严格绑定、绑不上就报错退出（不静默漂移），app 在启动屏询问用户换端口（自动选择限 27371–27400 段，手输允许任意）。为免配置，提供免鉴权的 token 发现端点 `GET /api/v1/app/token`：响应不带 CORS 头（跨源网页 JS 读不到，持 host_permissions 的扩展可读）且 Host 限定环回地址（防 DNS rebinding 同源绕过）；浏览器插件按同一端口段顺序探活该端点即零配置接入（手填端口仅作覆盖，见 hawk-browser-extension / lib/local-discovery.ts），等价 Eagle 的无鉴权体验但不牺牲防护。
 
 ### 服务器版（未来）
 

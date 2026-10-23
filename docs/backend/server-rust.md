@@ -49,6 +49,9 @@ cargo test                     # 单元测试（纯函数）+ 流水线行为测
 HAWK_TOKEN=<token> hawk-daemon --library <素材库路径> --port 27371 [--web-dist <dir>]
 ```
 
+`--port` 严格绑定（被占用即以退出码 4 + `PORT_IN_USE <port>` 退出，不自动换端口）；`--port 0`
+由系统分配空闲端口（仅供测试/脚本）。桌面端总是传用户配置的端口（见 docs/architecture.md 的本地 API 安全）。
+
 ## 测试
 
 ```bash
