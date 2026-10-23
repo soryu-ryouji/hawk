@@ -66,20 +66,27 @@ function resolveServerCommand(): { command: string; args: string[] } {
   return { command: path.join(process.resourcesPath, 'hawk-daemon', bin), args: [] };
 }
 
-/** 预选一个空闲环回端口：server 绑定它，token 由本进程生成——端口与 token 都不再需要子进程回传 */
+/** 本机 daemon 的首选端口：浏览器插件等生态客户端按这个固定端口零配置接入
+ *  （docs/architecture.md「本地 API 安全」约定）；被占用时回退系统端口 */
+const PREFERRED_PORT = 27371;
+
+/** 预选一个空闲环回端口：server 绑定它，token 由本进程生成——端口与 token 都不再需要子进程回传。
+ *  先试 27371，占用才退回随机端口（插件默认地址即 27371，固定端口是零配置接入的前提） */
 function probeFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.once('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      if (typeof address !== 'object' || address === null) {
-        probe.close(() => reject(new Error('预选端口失败')));
-        return;
-      }
-      probe.close(() => resolve(address.port));
+  const listen = (port: number): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const probe = net.createServer();
+      probe.once('error', reject);
+      probe.listen(port, '127.0.0.1', () => {
+        const address = probe.address();
+        if (typeof address !== 'object' || address === null) {
+          probe.close(() => reject(new Error('预选端口失败')));
+          return;
+        }
+        probe.close(() => resolve(address.port));
+      });
     });
-  });
+  return listen(PREFERRED_PORT).catch(() => listen(0));
 }
 
 /** LAN web 查看托管的前端产物：与 loadMainPage 同一目录（dev 与打包形态路径一致）。
