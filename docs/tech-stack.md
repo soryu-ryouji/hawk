@@ -6,7 +6,7 @@
 后端：Rust
 前端：Vue 3 + TypeScript (Vite)，只走 HTTP
 桌面壳：Electron，sidecar 拉起后端
-移动端：Swift + SwiftUI（iOS 26+，原生，复用同一套 HTTP 契约）
+移动端：Swift + SwiftUI（iOS 26+）/ Kotlin + Jetpack Compose（Android 8+），原生，复用同一套 HTTP 契约
 契约：OpenAPI
 ```
 
@@ -41,6 +41,16 @@ Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），�
 - iOS 当前无第三方依赖：网络用 URLSession，图片降采样用 ImageIO，凭证存 Keychain；GRDB（本地索引，M2）与 iroh-ffi（设备内直连，M4 视需要）按里程碑引入
 - AI 能力：App Intents（Spotlight 语义索引，全机型）、Foundation Models（本地推理，iOS 26+ 且需支持 Apple Intelligence）、Vision（OCR/分类，全机型）
 - M1 交付范围：局域网直连、广域网查看面（gate/login/session）、扫码配对、齐行网格、首屏分页先出、预览/保存、搜索/筛选、文件夹树；离线与 AI 属后续里程碑
+
+## 移动端：hawk-android/（M1 只读浏览已实现）
+
+原生 Android 客户端，设计见 [Android 客户端设计](frontend/android-app.md)。约束：
+
+- Kotlin 2.4 + Jetpack Compose（Material 3），单模块 `app`，minSdk 26 / targetSdk 37；不使用 XML 布局、Fragment、Navigation Compose
+- 只走 HTTP 契约：与 iOS 相同的局域网直连与 hawk-server 查看面链路，不链接 AGPL 代码
+- 依赖：OkHttp 5（HTTP）、kotlinx.serialization（信封/DTO）、Coil 3（缩略图/原图与磁盘缓存）、CameraX + ZXing（扫码）；无 GMS 依赖
+- 凭证存应用私有 SharedPreferences，备份通道关闭；暂不引入 EncryptedSharedPreferences（库已废弃）
+- M1 交付范围与 iOS 对齐：连接管理、扫码配对、在线首屏、齐行网格、窗口分页、预览/保存、搜索筛选、自适应侧栏
 
 ## 契约：OpenAPI
 

@@ -36,6 +36,12 @@
   4. `xcodebuild test -scheme hawk-ios -destination 'platform=iOS Simulator,name=iPhone 17'`（测试 target 就位后）
   5. 涉及连接/网络时补真机冒烟：局域网直连 + 广域网查看各跑通一次（模拟器无法验证本地网络权限与后台恢复）
   iOS 构建暂不进 CI（需 macOS runner 与签名），但本地必须全绿再提交
+- 改动 `hawk-android`（Android 原生客户端，在 `hawk-android` 目录执行，`JAVA_HOME` 指向 Android Studio 自带 JBR）：
+  1. `./gradlew :app:assembleDebug`
+  2. `./gradlew :app:lintDebug`（0 error）
+  3. `./gradlew :app:testDebugUnitTest`
+  4. 涉及连接/网络时补模拟器或真机冒烟：局域网直连 + 广域网查看各跑通一次（模拟器可验证局域网；广域网需 hawk-server）
+  Android 构建暂不进 CI（需 Android SDK 与签名），但本地必须全绿再提交
 - 改动 `README.md` / `docs/` / `AGENTS.md`：仓库根 `python3 tools/check-docs.py`（相对链接检查）
 - 涉及 API 契约（含只改注释）：另执行上文三段式生成链，重新固化两份产物
 

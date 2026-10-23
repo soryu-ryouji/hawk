@@ -35,7 +35,7 @@
 - 3.0 版本
   - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
   - [ ] 实现 iOS 原生客户端（iPhone / iPad 查看，局域网直连 + 广域网查看，接入 Apple 智能生态），见 [iOS 客户端设计](docs/frontend/ios-app.md)。只读浏览（M1）已可用，离线索引与 Apple 智能待补
-  - [ ] 实现 Android 客户端（iOS 稳定后评估跨平台共享层）
+  - [x] 实现 Android 原生客户端（手机 / 平板查看，局域网直连 + 广域网查看），见 [Android 客户端设计](docs/frontend/android-app.md)。只读浏览（M1）已可用，离线索引与端上 AI 待补
 
 ## 核心特性
 
@@ -74,7 +74,7 @@ POST http://localhost:27371/api/v1/item/update
 
 ## 构建与安装
 
-工具链：安装最新的 [Node.js](https://nodejs.org/) 与 [Rust](https://rustup.rs/) 即可。
+工具链：桌面端/插件需要最新的 [Node.js](https://nodejs.org/) 与 [Rust](https://rustup.rs/)；Android 客户端需要 Android Studio（SDK Platform 37）与 JDK 21+。
 
 ```bash
 git clone https://github.com/soryu-ryouji/hawk.git
@@ -85,10 +85,12 @@ cd hawk
 ./tools/install.ps1 -Path D:/Tools/hawk   # Windows → 指定目录
 ./tools/install.sh               # macOS → /Applications/hawk.app；Linux → ~/.local/bin/hawk + 桌面启动器
 
-# 发包：产出分发包到 out/（统一入口 --platform 选目标，--path 指定输出目录；也可直接调 build-app / build-extension）
+# 发包：产出分发包到 out/（统一入口 --platform 选目标，--path 指定输出目录；也可直接调 build-app / build-extension / build-android）
 ./tools/build.ps1 --platform app           # Windows：桌面应用 → out/hawk-windows-x64.zip
 ./tools/build.sh --platform app            # macOS → out/hawk-mac-<arch>.zip；Linux → out/hawk-linux-x64.AppImage
 ./tools/build.ps1 --platform extension     # 浏览器插件 → out/hawk-extension-chrome|firefox/（加载已解压扩展即用）
+./tools/build-android.ps1                  # Android debug APK → out/hawk-android-debug.apk（可直接 adb install）
+./tools/build-android.sh --release         # Android release APK → out/hawk-android-release-unsigned.apk（未签名）
 ```
 
 首次运行自动安装 npm 依赖并完成全量构建（前端 + Rust 后端 + electron-builder，约几分钟）。
@@ -107,6 +109,7 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 
 - [hawk-app 设计](docs/frontend/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
 - [iOS 客户端设计](docs/frontend/ios-app.md)：iPhone / iPad 原生端的连接形态、本地索引、AI 分层与路线图
+- [Android 客户端设计](docs/frontend/android-app.md)：Android 手机 / 平板的连接形态、首屏策略、实现进度与路线图
 
 **后端（hawk-daemon/）**
 
