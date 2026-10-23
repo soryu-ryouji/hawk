@@ -23,18 +23,22 @@ use crate::core::thumbnail_worker::ThumbnailWorker;
 use crate::core::view_prefs::ViewPreferences;
 use crate::core::watcher::{LibraryWatcher, WatcherEvent};
 use crate::settings::Settings;
-use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
 
-/// 进程入口：组装组件图 → 先监听（startup 端点可答 starting）→ 装配索引流水线 → 就绪 → 保活至退出信号
+/// 进程入口：先监听（startup 端点可答 starting）→ 组装组件图 → 装配索引流水线 → 就绪 → 保活至退出信号
+///
+/// 端口严格按 `--port` 绑定，绑不上就报错退出（不静默换端口）：端口的唯一所有权在壳层（Electron
+/// 读取用户配置后传入），生态客户端（浏览器插件）据此按固定段探活；daemon 自行漂移会让客户端追不上。
 pub async fn run(settings: Settings) {
-    let port = resolve_port(settings.port);
-    let state = build_state(settings);
+    let port = settings.port;
 
     // ---------- 先监听 ----------
-    let local_listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .expect("绑定本地端口失败");
+    // 先绑端口再建索引：端口冲突要在秒级失败（否则被占时仍要白跑一遍索引）
+    let local_listener = match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+        Ok(listener) => listener,
+        Err(e) => bind_failed(port, e),
+    };
+    let state = build_state(settings);
 
     let app = api::build_router(state.clone());
     // remote 数据面转发目标：同一套路由的克隆（A 侧隧道端进程内转发，标记 TunneledPeer）
@@ -292,14 +296,13 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-/// 默认端口被占用时回退为动态分配
-fn resolve_port(preferred: u16) -> u16 {
-    match StdTcpListener::bind(("127.0.0.1", preferred)) {
-        Ok(listener) => {
-            let port = listener.local_addr().map(|a| a.port()).unwrap_or(preferred);
-            drop(listener);
-            port
-        }
-        Err(_) => 0,
+/// 端口绑定失败：端口占用以固定文案 + 退出码 4 上报（壳层据此弹「端口被占用」的处理界面），
+/// 其他绑定错误退出码 5。不用 panic——stderr 尾部是壳层错误屏的数据源，需要可解析的稳定格式
+fn bind_failed(port: u16, error: std::io::Error) -> ! {
+    if error.kind() == std::io::ErrorKind::AddrInUse {
+        eprintln!("PORT_IN_USE {port}");
+        std::process::exit(4);
     }
+    eprintln!("PORT_BIND_FAILED {port}: {error}");
+    std::process::exit(5);
 }

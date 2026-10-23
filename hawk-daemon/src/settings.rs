@@ -18,7 +18,8 @@ pub struct Cli {
     #[arg(long, env = "HAWK_LIBRARY")]
     pub library: Option<String>,
 
-    /// 本地监听端口（被占用时回退动态分配）
+    /// 本地监听端口：严格绑定，被占用即用固定文案报错退出（不自动换端口）。
+    /// 0 = 由系统分配空闲端口（仅供测试/脚本，桌面端总是传显式端口）
     #[arg(long, env = "HAWK_PORT", default_value_t = DEFAULT_PORT)]
     pub port: u16,
 
