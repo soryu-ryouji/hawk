@@ -268,14 +268,20 @@ export const useLibraryStore = defineStore('library', () => {
   /** 局域网 web 查看（viewer token）：默认只读（全部写入口隐藏，服务端 403 为最终防线）；
    * [web] writable 开启后解除只读（app/info.writable 驱动，web 端可上传/删除/修改） */
   const viewerMode = ref(false);
-  /** 当前连接的访问级别（app/info.access）：admin=本地库全权限；viewer=局域网/远程只读查看。
-   *  设置面板的 admin 限定分区（局域网/存储的库侧部分）据此门禁 */
+  /** 远端受限写（app/info.access=remote_writer）：只允许导入与新建文件夹，
+   *  标签/评分/备注/移动/回收站等编辑类写入口仍按只读隐藏（服务端 403 为最终防线） */
+  const limitedWrite = ref(false);
+  /** 编辑类写入口是否禁用：只读 viewer 与远端受限写都禁用；导入入口只看 viewerMode */
+  const editLocked = computed(() => viewerMode.value || limitedWrite.value);
+  /** 当前连接的访问级别（app/info.access）：admin=本地库全权限；viewer=局域网/远程只读查看；
+   *  remote_writer=远端受限写（导入 + 新建文件夹）。设置面板的 admin 限定分区据此门禁 */
   const access = ref<'admin' | 'viewer' | 'remote_writer'>('admin');
 
   async function init(validators: ViewValidators) {
     const info = await api.appInfo();
     access.value = info.access;
     viewerMode.value = info.access === 'viewer' && !info.writable;
+    limitedWrite.value = info.access === 'remote_writer';
     library.value = await api.libraryInfo();
 
     // 换库/应用设置重启复用本入口：清掉上一库的会话状态，避免视图/预览/进度指示残留。
@@ -300,7 +306,7 @@ export const useLibraryStore = defineStore('library', () => {
     view,
     query,
     viewPrefs,
-    viewerMode,
+    editLocked,
     library,
     clearSelection,
     resetList: () => void resetList(),
@@ -674,6 +680,8 @@ export const useLibraryStore = defineStore('library', () => {
     sidebarVisible,
     filterBarVisible,
     viewerMode,
+    limitedWrite,
+    editLocked,
     access,
     viewPrefs,
     lockedView,

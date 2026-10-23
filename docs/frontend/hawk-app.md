@@ -41,7 +41,7 @@ Eagle 主窗口的关键特征：
 
 严格遵循 architecture.md 的 sidecar 模式：前端不依赖 Electron IPC 做业务通信，主进程只管窗口、拉起/回收后端、注入 token。
 
-远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话/访问密钥）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。凭证模型为两级：service-key（池门禁，接入配置）+ hawk-app key（访问密钥，本机签发逐把读/写权限，分发给网页版/插件）。
+远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话/访问密钥）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。凭证模型为两级：service-key（池门禁，接入配置）+ hawk-app key（访问密钥，本机签发逐把读/写权限，分发给网页版/插件）。远端会话的写能力**由目标设备的「允许广域网保存素材」决定**：开启时本机以同租户设备身份拿到 `remote_writer`（仅导入素材与新建文件夹，编辑类写入口仍隐藏），关闭时自动降级只读；前端三态经 `app/info` 的 `access`/`writable` 驱动（`store.viewerMode` 只读 / `store.limitedWrite` 仅导入 / 其余可读写），顶栏「当前浏览」标识带状态后缀。
 
 ```text
 Electron 主进程启动
@@ -408,7 +408,9 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 **导入子 store `useImporterStore`（domains/import/store.ts）**：批量导入域。状态 `importProgress`
 （null 无任务；total=0 收集文件阶段不定态）、`dupPrompt`（重复策略弹窗挂起态）；action `importBegin()`、
 `importEntries(entries, targetFolder?, fallbackFiles?)`（拖拽统一入口：targetFolder 缺省平铺导入，指定为侧栏
-结构化导入——目录树重建、文件按映射路径入库）、`importFiles(files)`（浏览器 multipart 上传主入口）。共享
+结构化导入——目录树重建、文件按映射路径入库）、`importFiles(files)`（浏览器 multipart 上传主入口）。
+入库通道按连接选：`hasShell && access==='admin'`（本地库）走 `item/add` 路径导入（保留时间戳），
+远端库会话（`remote_writer`）与浏览器走 `item/upload` multipart——远端读不到本机路径语义。共享
 `logic/importBatch.runImportBatch` 状态机（重复策略 ask→首问整批生效、计数、进度推进，依赖注入可单测）。
 
 **预览子 store `usePreviewStore`（domains/preview/store.ts）**：预览浮层与图片编辑域。状态 `previewId`、
@@ -453,7 +455,7 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | `SettingsLan.vue` | — | — | 局域网分区（仅 Electron）：开关 + 「允许修改素材库」+ token 拆分开关（separate_write_token + write_token，开启且为空时自动签发）+ 端口（纯文本输入，实时校验红框 + 提示，未启用时收起字段）+ token（monospace + 复制/重新生成）+ 本机地址列表（链接 + 逐行复制）；状态自管（打开时 `api.appLan()` 加载），读写直连 daemon REST（`GET/PUT /api/v1/app/lan`，admin 限定）——daemon 权威写配置（toml_edit 保留注释）并热重绑监听（不重启、SSE 不断），PUT 内置收敛等待，绑定失败自动回滚并报错；本机地址经 `shell.lanAddresses()`；另有「保存并生成配对二维码」（保存当前配置 → 选网卡 → 二维码含 `http://<ip>:<port>` 与访问 token，写权限未拆分时警告）；经 `defineExpose({ save, busy })` 供壳的 footer 委托 |
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：**周期兜底重扫开关**（库级 `[scan]` 设置，写 `.hawk/config.toml` 保存即热生效；文案说明实时监听仍是主路径、关闭后仅漏事件需手动重扫）+ 元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |
-| `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读/可读写，store.viewerMode）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
+| `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读 / 仅导入 / 可读写，store.viewerMode / limitedWrite）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
 | `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（桌面/macOS 在正文首行避让红绿灯；触屏经 `body.touch` CSS 上移到顶条与开关同排 `in-head` 变体，正文整体上移填充空位；LibraryDropdown 组件：历史库下拉——最近使用在前、当前库打勾、已删除置灰、条目 ··· 菜单（打开目录/当前库重命名/移除记录）、底部「打开文件夹…」选新库）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为筛选框（按小写子串过滤文件夹树/分类/标签，不随列表滚动；设置入口在 TitleBar 齿轮）；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签）；文件夹树容器接受外部文件/文件夹拖入（空白处 drop → 结构化导入到库根，目录树重建） |
 | `LibraryDropdown.vue` | — | — | 侧栏素材库下拉：库名触发按钮 + 历史库浮层（Teleport fixed，侧栏 overflow 不裁剪）；当前库打勾，目录已删的置灰；条目 ··· 菜单——打开素材库文件夹/当前库重命名（daemon `PATCH /library/info`）/从列表移除（仅删记录不动目录）；远程接入在线时浮层含「远程素材库」分区（池内其他设备，带在线点与「远程」徽标，点击即连接切换——复用 remote store 的中继回退询问；当前浏览的远程库打勾，远程浏览中点本地当前库 = 断开回切）；重命名/移除经 IPC，换库就绪经 `hawk:server-started` 驱动 App 原地重启数据 |
 | `SelectBox.vue` | `modelValue: string`、`options: {value,label}[]`、`placeholder?`、`disabled?` | `update:modelValue` | 自绘下拉选择（原生 select 展开列表由 OS 绘制，暗色主题不协调）：触发框 + Teleport fixed 浮层（视觉与 ContextMenu 一致），键盘导航与外部点击关闭；设置面板/文件夹选择/库切换共用 |

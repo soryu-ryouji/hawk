@@ -105,7 +105,7 @@ function applyStarToAll(value: number) {
       已选 <b>{{ store.selection.length }}</b> 个文件
     </p>
 
-    <template v-if="!store.viewerMode">
+    <template v-if="!store.editLocked">
       <section>
         <div class="section-title">标签</div>
         <div class="chips">

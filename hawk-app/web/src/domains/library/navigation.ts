@@ -20,7 +20,8 @@ export interface ViewNavigationDeps {
   view: Ref<ViewState>;
   query: Ref<QueryState>;
   viewPrefs: Ref<ViewPrefs>;
-  viewerMode: Ref<boolean>;
+  /** 编辑类写入口禁用（只读 viewer / 远端受限写）：排序偏好写入随之一并禁用 */
+  editLocked: Ref<boolean>;
   library: Ref<LibraryInfo | null>;
   clearSelection: () => void;
   resetList: () => void;
@@ -28,7 +29,7 @@ export interface ViewNavigationDeps {
 }
 
 export function createViewNavigation(deps: ViewNavigationDeps) {
-  const { view, query, viewPrefs, viewerMode, library, clearSelection, resetList, showToast } = deps;
+  const { view, query, viewPrefs, editLocked, library, clearSelection, resetList, showToast } = deps;
 
   /** 浏览历史（会话内）：setView 压入，前进/后退在栈内移动 */
   const viewHistory = ref<ViewState[]>([]);
@@ -138,7 +139,7 @@ export function createViewNavigation(deps: ViewNavigationDeps) {
   /** 排序变更持久化到当前视图作用域（fire-and-forget；无记忆语义或 viewer 只读时不写） */
   function persistSortForCurrentView() {
     const scope = sortScopeOf(view.value);
-    if (scope === null || viewerMode.value) return;
+    if (scope === null || editLocked.value) return;
     const entry = { order_by: query.value.orderBy, order: query.value.order };
     viewPrefs.value = { ...viewPrefs.value, [scope]: entry };
     void api.viewPreferenceSet(scope, entry.order_by, entry.order).catch(() => {
@@ -150,7 +151,7 @@ export function createViewNavigation(deps: ViewNavigationDeps) {
   /** 排序菜单「跟随父级设置/恢复默认排序」：删除当前视图的自有偏好，回到继承/默认 */
   function resetSort() {
     const scope = sortScopeOf(view.value);
-    if (scope === null || viewerMode.value || !(scope in viewPrefs.value)) return;
+    if (scope === null || editLocked.value || !(scope in viewPrefs.value)) return;
     const next = { ...viewPrefs.value };
     delete next[scope];
     viewPrefs.value = next;

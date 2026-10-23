@@ -179,10 +179,16 @@ function onDblClick(e: MouseEvent) {
 
       <span v-if="store.selection.length" class="selected-count">已选 {{ store.selection.length }} 项</span>
 
-      <!-- 远程浏览标识：安全与认知底线（不可省略的来源区分）；点击断开回切本地库 -->
-      <button v-if="connection.isRemote.value" class="remote-chip" :title="`断开并回到我的库`" @click="connection.disconnect()">
+      <!-- 远程浏览标识：安全与认知底线（不可省略的来源区分）；点击断开回切本地库。
+           后缀标明写能力：远端库是否可写由目标设备的「允许广域网保存素材」决定 -->
+      <button
+        v-if="connection.isRemote.value"
+        class="remote-chip"
+        :title="`断开并回到我的库（当前${store.viewerMode ? '只读' : store.limitedWrite ? '仅可导入' : '可读写'}）`"
+        @click="connection.disconnect()"
+      >
         <Icon name="globe" :size="12" />
-        <span>当前浏览：{{ connection.label.value }}</span>
+        <span>当前浏览：{{ connection.label.value }}{{ store.viewerMode ? '（只读）' : store.limitedWrite ? '（仅导入）' : '' }}</span>
         <Icon name="close" :size="12" />
       </button>
     </div>

@@ -246,8 +246,8 @@ function confirmClearTrash() {
 }
 
 function onMenu(item: Item, e: MouseEvent) {
-  // 只读查看（局域网 viewer）：写入口整体隐藏,不出右键菜单
-  if (store.viewerMode) {
+  // 只读查看（局域网 viewer）与远端受限写：编辑类入口隐藏，不出右键菜单
+  if (store.editLocked) {
     return;
   }
   // 右键未选中项时先选中它

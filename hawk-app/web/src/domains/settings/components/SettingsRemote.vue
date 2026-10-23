@@ -7,6 +7,7 @@
 // 错误条在主组件（v-model:error）；分区切换 v-show 保活（编辑中的字段不丢）。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRemoteStore, useConnectionLabel } from '@/domains/remote';
+import { useLibraryStore } from '@/domains/library';
 import PairingQrDialog from './PairingQrDialog.vue';
 import { encodePairingPayload, remotePairingPayload } from '../pairing';
 import type { RemoteKeyCreated } from '@/shared/types';
@@ -17,6 +18,8 @@ const props = defineProps<{ libraryless?: boolean }>();
 const error = defineModel<string | null>('error', { default: null });
 const store = useRemoteStore();
 const connection = useConnectionLabel();
+/** 远端会话的写能力（只读 / 仅导入 / 可读写）来自目标库的 app/info */
+const library = useLibraryStore();
 
 const enabled = ref(false);
 const url = ref('');
@@ -395,7 +398,10 @@ async function removeDevice(deviceId: string, name: string) {
 
         <!-- 设备列表与会话入口 -->
         <div v-if="connection.isRemote.value" class="actions-left current-remote">
-          <span class="hint">当前浏览：{{ connection.label.value }}</span>
+          <span class="hint">
+            当前浏览：{{ connection.label.value
+            }}{{ library.viewerMode ? '（只读：目标未开启广域网保存素材）' : library.limitedWrite ? '（仅导入）' : '（可读写）' }}
+          </span>
           <button @click="disconnect">断开并回到我的库</button>
         </div>
         <div class="switch-row">

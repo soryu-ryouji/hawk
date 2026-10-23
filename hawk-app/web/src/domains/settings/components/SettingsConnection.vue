@@ -10,7 +10,7 @@ const emit = defineEmits<{ logout: [] }>();
   <div class="pane">
     <div class="field">
       <span class="field-label">访问级别</span>
-      <span>{{ store.viewerMode ? '只读' : '可读写' }}</span>
+      <span>{{ store.viewerMode ? '只读' : store.limitedWrite ? '仅导入（远端受限写）' : '可读写' }}</span>
     </div>
     <p class="hint">本浏览器已记住当前 token；切换只读/可写身份时注销后重新输入另一个 token 即可。</p>
     <div class="actions-left">

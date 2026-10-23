@@ -17,7 +17,7 @@ const store = useLibraryStore();
 const { touch } = useLayout();
 // 只读态：触屏（iPad/手机网页，实际生效于 wide 布局的 iPad 横屏；narrow 下检查器隐藏）或
 // 只读查看（viewer token）——信息结构与桌面版一致但全部静态展示，无编辑控件
-const readOnly = computed(() => touch.value || store.viewerMode);
+const readOnly = computed(() => touch.value || store.editLocked);
 const showCategoryPicker = ref(false);
 
 // 编辑字段为本地副本，切换选中项时重置；失焦/回车提交
@@ -244,7 +244,7 @@ function searchColor(color: string) {
       </section>
     </div>
 
-    <div v-else-if="!store.viewerMode" class="fields">
+    <div v-else-if="!store.editLocked" class="fields">
       <textarea
         ref="nameArea"
         v-model="name"

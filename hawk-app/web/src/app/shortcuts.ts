@@ -47,8 +47,8 @@ export function useShortcuts() {
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      // 只读查看（局域网 viewer）：写操作快捷键禁用
-      if (store.viewerMode) {
+      // 只读查看（局域网 viewer）与远端受限写：编辑类快捷键禁用
+      if (store.editLocked) {
         return;
       }
       if (store.selection.length > 0) {

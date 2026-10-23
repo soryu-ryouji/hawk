@@ -51,7 +51,7 @@ const KIND_LABEL: Record<HiddenRow['kind'], string> = { folder: '文件夹', cat
       <Icon :name="row.icon" :size="13" />
       <span class="hiding-kind">{{ KIND_LABEL[row.kind] }}</span>
       <span class="hiding-name" :title="row.label">{{ row.label }}</span>
-      <button v-if="!store.viewerMode" class="icon-btn" title="恢复在全局列表显示" @click="void taxonomy.setHidden(row.kind, row.name, false)">
+      <button v-if="!store.editLocked" class="icon-btn" title="恢复在全局列表显示" @click="void taxonomy.setHidden(row.kind, row.name, false)">
         <Icon name="close" :size="12" />
       </button>
     </div>
