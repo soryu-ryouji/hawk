@@ -1,16 +1,20 @@
 # 发布流程
 
-hawk 的桌面端发布全部由 CI（[ci.yml](../.github/workflows/ci.yml)）驱动，双通道分发：**stable**（正式 `v*` Release）与 **nightly**（main 分支滚动预发布）。门禁（`rust` / `app`）与三平台构建在流水线里**并行**跑，由 `publish` 汇流 job 统一收口：任何一项失败都不发布，发布物永远来自通过测试的代码。客户端内置自动更新（见 [hawk-app 设计 → 应用自动更新](frontend/hawk-app.md)），发布即对存量用户可见。
+hawk 的桌面端发布全部由 CI（[ci.yml](../.github/workflows/ci.yml)）驱动，双通道分发：**stable**（正式 `v*` Release）与 **nightly**（main 分支滚动预发布）。门禁（`rust` / `app`）与三平台构建在流水线里**并行**跑（`classify` 先花几秒判定本次要不要出产物、走哪条通道），由 `publish` 汇流 job 统一收口：任何一项失败都不发布，发布物永远来自通过测试的代码。客户端内置自动更新（见 [hawk-app 设计 → 应用自动更新](frontend/hawk-app.md)），发布即对存量用户可见。
 
 ## 触发条件一览
 
 | 事件 | 动作 |
 | ---- | ---- |
-| push main 且提交信息以 `release` 开头 | 构建全平台产物（Windows / macOS arm64 / Linux）+ sha256 边车，创建 tag + **正式 Release**（tag 版本号取自 `hawk-app/package.json`；发布动作 = 一次 push） |
-| push main 且提交信息以 `feat` / `fix` 开头 | 删除并重建 `nightly` Release（prerelease），滚动覆盖 |
+| push main 且提交首行以 `release` 开头 | 构建全平台产物（Windows / macOS arm64 / Linux）+ sha256 边车，创建 tag + **正式 Release**（tag 版本号取自 `hawk-app/package.json`；发布动作 = 一次 push） |
+| push main 且提交首行是 conventional 的 `feat` / `fix`（`feat:` / `feat(app):` / `fix!:` 等；`feature:` / `fixup!` 不算） | 删除并重建 `nightly` Release（prerelease），滚动覆盖 |
+| push main 且提交首行是其他前缀（`docs` / `chore` / `refactor` / `test` / `ci` …） | 只跑门禁（`rust` / `app` + `linux` 全链复现），不上传 Artifacts、不建/改 Release |
+| PR（任意分支） | 只跑门禁，不产出发版产物 |
 | `workflow_dispatch`，`publish=none`（默认） | 只构建上传 Artifacts，**不**创建/修改任何 Release |
 | `workflow_dispatch`，`publish=nightly` / `stable` | 等价于对应的 push 触发（补发、重跑用） |
 | 只改文档（`**.md` / `docs/**` / `.assets/**`） | 不进 ci 流水线，只跑 [docs.yml](../.github/workflows/docs.yml) 的相对链接检查 |
+
+通道判定集中在 ci.yml 的 `classify` job（**唯一来源**）：它看事件类型与提交首行，输出 `channel`（`none` / `nightly` / `stable`）与 `build`（本次是否出产物），下游 job 一律读这两个值，不再各自解析提交信息。`linux` job 的打包步骤在任何 run 都跑（打包配置的回归冒烟），但只有 `build` 为真时才上传产物。
 
 手动推 `v*` tag **不再触发**任何构建（tag 触发已移除）——不要用 `git push origin v0.x.0` 或 `gh release create` 发版，会产生无资产的空 Release 并占住版本号（后续同名发版会被守卫拦下；处理见文末常见问题）
 
@@ -61,7 +65,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 
 ## nightly（全自动，无需操作）
 
-main 分支出现 `feat` / `fix` 开头的提交即触发（同分支 `concurrency` 互斥，新推送会取消在跑的旧 run，nightly 永远取最新 commit）。
+main 分支出现 conventional 的 `feat` / `fix` 开头的提交即触发（其他前缀的提交只跑门禁、不出 nightly；同分支 `concurrency` 互斥，新推送会取消在跑的旧 run，nightly 永远取最新 commit）。
 
 门禁与三平台构建并行产出 Artifacts，publish 汇流 job 删除旧 `nightly` Release 与 tag → 重建（name = `Nightly <sha7>`，body = 触发提交信息 + 末尾注入完整 sha 注释，prerelease）→ 附全部平台产物
 
@@ -84,4 +88,5 @@ main 分支出现 `feat` / `fix` 开头的提交即触发（同分支 `concurren
 - **release 提交被守卫拦下（tag 已存在）**：说明版本号没 bump，`node tools/bump.mjs <新版本>` 后重新提交
 - **误推了 `v*` tag / 用了 `gh release create`**：产生空 Release 且阻塞同名正式版发版，删除该 Release + tag 即可恢复；构建不受影响（tag 触发已移除）
 - **手动 dispatch 的 Artifacts 是什么**：各平台产物的未发布副本（含边车），用于调试打包配置，不会进入任何 Release（`publish=none` 时）
+- **推了 `feat`/`fix` 提交却没出 nightly**：前缀判定看**提交首行**且必须是 conventional 形式（`feat:` / `feat(app):` / `fix!:`）；`feature:`、`fixup!`、`修改 xxx` 都不算，squash merge 时以 PR 标题为准（带 `(#12)` 不影响）
 - **客户端检查更新失败提示限速**：GitHub API 未认证限速 60 次/时/IP，仅影响极端频繁的手动检查；默认启动后静默检查一次 + 手动按钮的频率远低于限额

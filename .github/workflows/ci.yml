@@ -9,13 +9,16 @@
 # OpenAPI 类型同步校验 → UI 端到端自检 → 打真实 AppImage。原 desktop job 在同一个 ubuntu/x64
 # 上又单独编了一遍输入完全相同的 daemon，已合并进这里。
 #
-# 触发与行为：
-# - push(main) / PR：rust + app 门禁 ∥ linux 全链复现，约 4 分钟
-#   （纯文档/元数据改动不进本流水线，见 docs.yml）
-# - push(main) 且提交信息以 release 开头：正式 Release。版本号唯一来源是 hawk-app/package.json，
-#   提交信息只当开关用；tag 已存在则失败（= 忘了 bump 版本），详见 docs/release.md
-# - push(main) 且提交信息以 feat/fix 开头：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
-# - workflow_dispatch：inputs.publish 选 none（只构建上传 Artifacts，不动 Release）/ nightly / stable
+# 触发与行为（通道判定集中在 jobs.classify，其余 job 只读它的 outputs，不各写一份前缀判断）：
+# - 门禁每次 push(main) / PR 都跑：rust + app ∥ linux 全链复现（build → OpenAPI 同步校验 → UI 自检），
+#   约 4 分钟（纯文档/元数据改动不进本流水线，见 docs.yml）
+# - 出产物（classify.build=true）只有三种情况：
+#   push(main) 且提交首行以 release 开头 → 正式 Release（版本号唯一来源是 hawk-app/package.json，
+#     提交信息只当开关；tag 已存在则失败 = 忘了 bump 版本，详见 docs/release.md）
+#   push(main) 且提交首行是 conventional 的 feat/fix（feat: / feat(app): / fix!: …）→ 滚动 nightly
+#     预发布（固定 tag=nightly，prerelease）
+#   workflow_dispatch（publish=none 只出 Artifacts 不动 Release / nightly / stable）
+# - 其余前缀（docs/chore/refactor/test/ci…）的 push 与 PR 只跑门禁：不传 Artifacts、不动 Release
 #
 # 压缩级别：全通道统一 mx=5（pack.mjs 默认值）。曾经正式版用 mx=9 换最小体积，实测 Windows 上
 # 打包 46s → 199s，只省 ~10-20MB；下载走 GitHub CDN，这 2.5 分钟不值得。需要最小体积时本地用
@@ -60,6 +63,53 @@ concurrency:
   cancel-in-progress: ${{ !(startsWith(github.event.head_commit.message, 'release') || github.event.inputs.publish == 'stable') }}
 
 jobs:
+  # ---- 触发分类：唯一决定「本次 run 出不出产物、走哪条发布通道」的地方 ----
+  # 只读事件上下文（不 checkout，几秒），下游引用 needs.classify.outputs.{channel,build}。
+  # - push main：提交首行以 release 开头 → stable；是 conventional 的 feat/fix 前缀 → nightly；
+  #   其余前缀（docs/chore/refactor/test/ci…）→ none：只跑门禁，不打包不发布
+  # - pull_request：none（PR 只跑门禁）
+  # - workflow_dispatch：build 恒为 true（手动触发就是要产物，publish=none 只跳过发布不跳过构建），
+  #   channel 取 inputs.publish（none / nightly / stable）
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      channel: ${{ steps.ch.outputs.channel }}
+      build: ${{ steps.ch.outputs.build }}
+    steps:
+      - name: Resolve channel
+        id: ch
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ github.event.inputs.publish }}
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          subject="${MSG%%$'\n'*}"
+          channel=none
+          build=false
+          case "$EVENT" in
+            workflow_dispatch)
+              # 手动触发就是要产物：publish=none 只跳过发布，不跳过构建
+              build=true
+              case "$INPUT" in
+                nightly|stable) channel="$INPUT" ;;
+              esac
+              ;;
+            push)
+              # conventional 前缀判定：release → 正式版；feat/fix（含 scope 与 !）→ nightly；其余不发布
+              case "$subject" in
+                release*) channel=stable; build=true ;;
+                feat:*|feat!*|feat\(*|fix:*|fix!*|fix\(*) channel=nightly; build=true ;;
+              esac
+              ;;
+          esac
+          echo "channel=$channel build=$build subject=$subject"
+          {
+            echo "channel=$channel"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+
   # ---- 质量门禁（不挡构建，由 publish 兜底）----
 
   rust:
@@ -127,6 +177,8 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # 门禁每次事件都跑；产物（Artifacts）只在 classify.build 为真时上传
+    needs: classify
     defaults:
       run:
         working-directory: hawk-app
@@ -162,9 +214,7 @@ jobs:
       # nightly 版本覆写：0.0.0-nightly.<sha7>（元数据不冒充稳定版；stable 通道检查时 0.0.0 低于任何正式版，
       # nightly 用户可随时切回稳定版）。更新判定不走版本号，走 Release body 的 hawk-nightly-sha 注释
       - name: Nightly version
-        if: >-
-          (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')) ||
-          github.event.inputs.publish == 'nightly'
+        if: needs.classify.outputs.channel == 'nightly'
         id: nightly_ver
         shell: bash
         run: echo "flag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
@@ -224,8 +274,8 @@ jobs:
           sha256sum "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
 
       - uses: actions/upload-artifact@v7
-        # PR 不发布，产物没有消费者；省一次 ~90MB 上传
-        if: github.event_name != 'pull_request'
+        # 只有要发布的 run 才传产物（PR 与非 feat/fix/release 前缀的 push 没有消费者，省一次 ~90MB 上传）
+        if: needs.classify.outputs.build == 'true'
         with:
           name: hawk-linux-appimage
           path: |
@@ -236,15 +286,12 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
-    # 手动 / main 上 release、feat、fix 开头的提交
+    # 只在 classify 判定「本次要出产物」时跑（release / feat / fix 前缀，或手动触发）
+    needs: classify
     outputs:
       release_tag: ${{ steps.release.outputs.tag }}
       release_body: ${{ steps.release.outputs.body }}
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.event.head_commit.message, 'release') ||
-      startsWith(github.event.head_commit.message, 'feat') ||
-      startsWith(github.event.head_commit.message, 'fix')
+    if: needs.classify.outputs.build == 'true'
     defaults:
       run:
         working-directory: hawk-app
@@ -293,9 +340,7 @@ jobs:
       # 正式版守卫：版本号唯一来源是 package.json（提交信息只是开关，不再重复写版本号），
       # 同名 tag 已存在则失败——这是「忘了 bump 版本」的唯一拦点；发布说明 = 提交信息去掉首行
       - name: Resolve release
-        if: >-
-          (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release')) ||
-          github.event.inputs.publish == 'stable'
+        if: needs.classify.outputs.channel == 'stable'
         id: release
         shell: bash
         run: |
@@ -313,9 +358,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Nightly version
-        if: >-
-          (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')) ||
-          github.event.inputs.publish == 'nightly'
+        if: needs.classify.outputs.channel == 'nightly'
         id: nightly_ver
         shell: bash
         run: echo "flag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
@@ -385,11 +428,9 @@ jobs:
   macos:
     runs-on: macos-latest
     timeout-minutes: 30
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.event.head_commit.message, 'release') ||
-      startsWith(github.event.head_commit.message, 'feat') ||
-      startsWith(github.event.head_commit.message, 'fix')
+    # 只在 classify 判定「本次要出产物」时跑（release / feat / fix 前缀，或手动触发）
+    needs: classify
+    if: needs.classify.outputs.build == 'true'
     defaults:
       run:
         working-directory: hawk-app
@@ -420,9 +461,7 @@ jobs:
       - run: npm ci
 
       - name: Nightly version
-        if: >-
-          (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')) ||
-          github.event.inputs.publish == 'nightly'
+        if: needs.classify.outputs.channel == 'nightly'
         id: nightly_ver
         shell: bash
         run: echo "flag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
@@ -464,44 +503,29 @@ jobs:
   # 「建 Release」只有一个执行者，无并发竞争；失败语义是全有或全无（任一检查/构建失败都不发布，
   # 不会出现只有部分平台产物的半成品 Release）
   publish:
-    needs: [rust, app, linux, windows, macos]
+    needs: [classify, rust, app, linux, windows, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
-    if: >-
-      (github.event_name == 'push' &&
-       (startsWith(github.event.head_commit.message, 'release') ||
-        startsWith(github.event.head_commit.message, 'feat') ||
-        startsWith(github.event.head_commit.message, 'fix'))) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'none')
+    # channel=none = 本次 run 不发布（非 release/feat/fix 前缀的 push、PR、dispatch publish=none）
+    if: needs.classify.outputs.channel != 'none'
     steps:
       # nightly 轮转要删远端 tag（checkout 默认持久化 token）；发布说明/守卫产物经 job outputs 传递
       - uses: actions/checkout@v7
 
-      # 决定发布通道：push 看提交前缀，手动触发看 inputs.publish（none 已被 job 级 if 挡在外面）。
-      # 发布说明/ nightly body 一律用当前 commit 的完整信息（dispatch 时没有 head_commit，走 git log）
-      - name: Resolve channel
-        id: ch
+      # 发布说明 / nightly body 一律用当前 commit 的完整信息（dispatch 时没有 head_commit，走 git log）。
+      # 通道不在这里重算——统一由 classify job 判定，前缀规则只有一份
+      - name: Resolve body
+        id: body
         shell: bash
         env:
-          EVENT: ${{ github.event_name }}
-          INPUT: ${{ github.event.inputs.publish }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            kind="$INPUT"
-          else
-            case "$MSG" in
-              release*) kind=stable ;;
-              *) kind=nightly ;;
-            esac
-          fi
-          body="${MSG:-$(git log -1 --pretty=%B)}"
+          msg="${MSG:-$(git log -1 --pretty=%B)}"
           {
-            echo "kind=$kind"
             echo "msg<<MSG_EOF"
-            printf '%s\n' "$body"
+            printf '%s\n' "$msg"
             echo "MSG_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -514,7 +538,7 @@ jobs:
           merge-multiple: true
 
       - name: Nightly meta
-        if: steps.ch.outputs.kind == 'nightly'
+        if: needs.classify.outputs.channel == 'nightly'
         id: nightly
         shell: bash
         run: echo "sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
@@ -522,7 +546,7 @@ jobs:
       # ---- 正式版：tag+Release 由 action-gh-release 的 tag_name 在当前 commit 创建 ----
 
       - name: Create Release
-        if: steps.ch.outputs.kind == 'stable'
+        if: needs.classify.outputs.channel == 'stable'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.windows.outputs.release_tag }}
@@ -539,7 +563,7 @@ jobs:
       # ---- nightly：main 分支 feat/fix 提交（滚动覆盖）----
 
       - name: Rotate nightly release
-        if: steps.ch.outputs.kind == 'nightly'
+        if: needs.classify.outputs.channel == 'nightly'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -548,7 +572,7 @@ jobs:
           git push origin --delete refs/tags/nightly || true
 
       - name: Create Nightly Release
-        if: steps.ch.outputs.kind == 'nightly'
+        if: needs.classify.outputs.channel == 'nightly'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
@@ -556,7 +580,7 @@ jobs:
           # body 末尾注入完整 sha（HTML 注释，用户不可见）：客户端自动更新比较 nightly 新旧用
           # （release 的 target_commitish 是分支名不是 sha，不能用作比较）
           body: |
-            ${{ steps.ch.outputs.msg }}
+            ${{ steps.body.outputs.msg }}
 
             <!-- hawk-nightly-sha: ${{ github.sha }} -->
           prerelease: true

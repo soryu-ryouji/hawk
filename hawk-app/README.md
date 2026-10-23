@@ -51,5 +51,7 @@ export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-b
 `.github/workflows/ci.yml`（门禁与三平台构建并行起跑，`publish` 汇流 job 全部成功后发布；打包统一 mx=5 压缩）：
 
 - main 分支提交信息以 `release` 开头：正式 Release（版本号取自 package.json，同名 tag 已存在则失败）
-- main 分支提交信息以 `feat`/`fix` 开头（conventional commits）：滚动覆盖 `nightly` 预发布（PR 合并想触发请用 squash merge）
+- main 分支提交首行以 `release` 开头：正式 Release（版本号取自 package.json，同名 tag 已存在则失败）
+- main 分支提交首行是 conventional 的 `feat`/`fix`（`feat:` / `feat(app):` / `fix!:`）：滚动覆盖 `nightly` 预发布（PR 合并想触发请用 squash merge）
+- main 分支其他前缀（`docs`/`chore`/`refactor`/`test`/`ci`…）与 PR：只跑门禁，不上传产物、不动 Release
 - Actions 页手动触发：`publish=none` 只传 Artifacts，`nightly`/`stable` 等价于对应 push 触发
