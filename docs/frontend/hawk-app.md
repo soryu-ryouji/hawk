@@ -548,9 +548,9 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 
 - `electron-builder.yml`：`extraResources` 按平台携带 hawk-daemon 单文件（`cargo build --release` 产物，见 `scripts/build-server.mjs`），Windows 额外携带更新辅助程序 hawk-update.exe（`win.extraResources` 与顶层追加合并非覆盖，hawk-update 只写在平台级条目里、mac/linux 产物不带；`npm run test:resources` 回归验证，见 `scripts/build-update.mjs`）；`files` 含 `build-info.json`（打包前由 `scripts/stamp-build.mjs` 写入 git sha，CI 注入 `HAWK_SHA`；自动更新比较 nightly 新旧用）
 - 前端 `vite build` 产物进 `app.asar`；file:// 加载
-- 产物名统一「产品-平台-架构」，不带版本号：Windows `hawk-windows-x64.zip`（绿色解压即用）/ macOS `hawk.app` 目录（CI 双架构打包为 `hawk-mac-<arch>.zip` 发布，不做 dmg）/ Linux `hawk-linux-x64.AppImage`
+- 产物名统一「产品-平台-架构」，不带版本号：Windows `hawk-windows-x64.zip`（绿色解压即用）/ macOS `hawk.app` 目录（只产 Apple Silicon，CI 打包为 `hawk-mac-arm64.zip` 发布，不做 dmg、不做 Intel 版）/ Linux `hawk-linux-x64.AppImage`
 - AppImage 用静态运行时（`toolsets.appimage: "1.0.3"`，Runtime 20251108）：默认工具集（`0.0.0`）的 runtime 动态链接 `libfuse.so.2`，Fedora 44 / Ubuntu 24.04+ 等只带 libfuse3 的发行版启动即报 `dlopen(): error loading libfuse.so.2`；静态 runtime 不依赖该库（仍走内核 FUSE 挂载，`unshare -Ur` 探测失败时 AppRun 自动补 `--no-sandbox`）。上游修复见 electron-builder#9598
-- CI（后续）：server 的 OpenAPI schema 与前端生成类型的一致性校验，防止契约漂移
+- CI（[ci.yml](../../.github/workflows/ci.yml)）：门禁（rust 两腿 + app 静态检查/单测）∥ linux 全链复现（daemon 构建 → OpenAPI 类型同步校验 → UI 端到端自检 → 打真实 AppImage）∥ windows ∥ macos，`publish` 汇流收口；详见 [docs/release.md](../release.md)
 
 ## 应用自动更新
 
@@ -559,7 +559,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 版本号规则（唯一来源、nightly 覆写、开发态识别）与发版步骤、CI 行为、验证清单的完整说明见 **[docs/release.md](../release.md)**。要点：
 
 - **版本唯一来源**：`hawk-app/package.json` 的 `version`（electron-builder 打进 app，`app.getVersion()` 读取；设置面板「更新」分区显示）。首版 0.1.0，遵循 semver
-- **发正式版**：bump `version` → `release: v<version>` 提交 push（发布说明 = 提交信息正文）→ CI 校验后建 tag + Release + 全平台产物；完整流程见 **[docs/release.md](../release.md)**
+- **发正式版**：`node tools/bump.mjs <version>` → `release: v<version>` 提交 push（发布说明 = 提交信息正文）→ CI 建 tag + Release + 全平台产物；完整流程见 **[docs/release.md](../release.md)**
 - **nightly**：CI 覆写构建版本为 `0.0.0-nightly.<sha7>`（仅 asar 内，不改仓库）；更新判定走 Release body 的 `hawk-nightly-sha` 注释
 - **开发态**：不追加 dev 后缀，`build-info.json` sha=`'dev'` 识别，设置面板显示「开发版」
 

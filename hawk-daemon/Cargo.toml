@@ -41,9 +41,11 @@ utoipa-axum = "0.2.0"
 hyper = { version = "1.12.0", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 
+# thin LTO（不用 fat + codegen-units=1）：fat 下每次改源码都要做一次全程序单线程重链接，
+# 实测改一行 main.rs 后重链接 90s（10 核 M4，CI 4 核 runner 更久），是发布构建最大的单项开销；
+# thin 并行分片链接只要 40s。代价是产物 13.4MB → 25.3MB，相对 ~250MB 的安装包可忽略。
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"
 strip = true
 
 [dev-dependencies]

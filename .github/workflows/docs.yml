@@ -1,0 +1,35 @@
+# 文档改动单独成线：ci.yml 用 paths-ignore 跳过了纯文档/元数据提交（否则每次改 md 都要
+# 跑一遍完整的 rust 门禁 + 桌面全链，白等 5 分钟），链接检查不能跟着丢。
+# 与 ci.yml 的 paths-ignore 列表保持一致：只改 md 时本流水线跑、ci 不跑；只改代码时相反；
+# 两者都改则一起跑（链接检查只要 1 秒）。
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - '.assets/**'
+  pull_request:
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - '.assets/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # 相对链接检查：docs/README 间的路径必须存在（不校验外链，外链会随网络与对方站点漂移）
+      - run: python3 tools/check-docs.py

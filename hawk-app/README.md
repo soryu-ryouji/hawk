@@ -35,7 +35,7 @@ npm run pack      # 一条命令：build 前端 + cargo build 当前平台 hawk-
 npm run pack:dir  # 同上但 --dir：只出未打包目录（win-unpacked / hawk.app），跳过 zip 压缩（install 脚本与本地快速验证用）
 ```
 
-交叉编译其他平台的 server：`node scripts/build-server.mjs <RID>`（win-x64 / osx-arm64 / osx-x64 / linux-x64，别名映射 rust target），再单独执行 `node scripts/pack.mjs`。
+交叉编译其他平台的 server：`node scripts/build-server.mjs <RID>`（win-x64 / osx-arm64 / linux-x64，别名映射 rust target），再单独执行 `node scripts/pack.mjs`。（macOS 只发布 Apple Silicon，不做 Intel 包。）
 
 国内网络首次 npm install（electron 包二进制）与 pack（electron-builder 下载）需镜像；install.sh/install.ps1 已内置默认，手动构建时自行设置（下载过的会进缓存，之后不再需要）：
 
@@ -48,8 +48,8 @@ export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-b
 
 ## CI 发版
 
-`.github/workflows/ci.yml`（质量门禁全绿后才构建发布；正式版 mx=9 压缩，nightly/手动 mx=5）：
+`.github/workflows/ci.yml`（门禁与三平台构建并行起跑，`publish` 汇流 job 全部成功后发布；正式版 mx=9 压缩，nightly/手动 mx=5）：
 
-- main 分支提交信息以 `release` 开头：正式 Release（首行版本号须与 package.json 一致，CI 守卫校验）
+- main 分支提交信息以 `release` 开头：正式 Release（版本号取自 package.json，同名 tag 已存在则失败）
 - main 分支提交信息以 `feat`/`fix` 开头（conventional commits）：滚动覆盖 `nightly` 预发布（PR 合并想触发请用 squash merge）
-- Actions 页手动触发：只传 Artifacts，用于验证流程
+- Actions 页手动触发：`publish=none` 只传 Artifacts，`nightly`/`stable` 等价于对应 push 触发

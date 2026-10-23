@@ -1,42 +1,76 @@
-# 单流水线：质量门禁 + 发版。检查（rust/desktop）与构建/发布经 needs 串联——
-# 检查全绿后才进入构建，任一检查失败则发布整链跳过，nightly/stable 永远来自通过测试的代码。
+# 单流水线：质量门禁 + 构建 + 发版。门禁与构建解耦，全部 t=0 并行起跑：
+# - 门禁 = rust（daemon/server 两腿 matrix）∥ app（lint/格式/单测）
+# - 构建 = linux ∥ windows ∥ macos（各自产出本平台产物）
+# - publish 汇流 job 统一 needs 门禁与全部构建：门禁失败或任一平台失败都不发布，
+#   「发布物永远来自通过测试的代码」的语义不变，但不再用串行等待换语义
+#   （此前 desktop 门禁挡在三个构建前面，白等 5 分钟）
+#
+# linux job 是唯一在每个事件（push/PR/manual）都跑的「全链复现」：daemon release 构建 →
+# OpenAPI 类型同步校验 → UI 端到端自检 → 打真实 AppImage。原 desktop job 在同一个 ubuntu/x64
+# 上又单独编了一遍输入完全相同的 daemon，已合并进这里。
 #
 # 触发与行为：
-# - push(main) / PR：rust daemon 单测 + desktop 完整复现本机构建链
-#   （web/主进程/后端构建 → 双 tsc → vitest → 打包冒烟 → UI 端到端自检）
-# - push(main) 且提交信息以 release 开头：正式 Release（版本号取自提交首行并与 package.json 校验，
-#   tag+Release 由 action-gh-release 的 tag_name 直接创建——GITHUB_TOKEN 创建的 tag 不会触发
-#   其他 workflow，不能用「先建 tag 再触发构建」的链式设计）
-# - push(main) 且提交信息以 feat/fix 开头（conventional commits）：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
-# - workflow_dispatch：只构建上传 Artifacts，不创建 Release
+# - push(main) / PR：rust + app 门禁 ∥ linux 全链复现，约 4 分钟
+#   （纯文档/元数据改动不进本流水线，见 docs.yml）
+# - push(main) 且提交信息以 release 开头：正式 Release。版本号唯一来源是 hawk-app/package.json，
+#   提交信息只当开关用；tag 已存在则失败（= 忘了 bump 版本），详见 docs/release.md
+# - push(main) 且提交信息以 feat/fix 开头：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
+# - workflow_dispatch：inputs.publish 选 none（只构建上传 Artifacts，不动 Release）/ nightly / stable
 #
-# 压缩级别按构建类型分流：正式版（release 提交）mx=9 最小体积；nightly/手动 mx=5 快速出包
-# （mx=9 压缩耗时翻倍只换 ~10-20MB 体积；下载走 GitHub CDN，仅正式版在意最小体积）
-# Windows 产物为 zip（解压即用，全 64 位，无 NSIS 启动壳）；mac 双架构 matrix 并行构建。
+# 压缩级别按构建类型分流：正式版 mx=9 最小体积；nightly/手动 mx=5 快速出包
+# （mx=9 压缩耗时翻倍只换 ~10-20MB 体积；下载走 GitHub CDN，仅正式版在意最小体积）。
+# Windows 产物为 zip（解压即用，全 64 位，无 NSIS 启动壳）；macOS 只产 Apple Silicon（arm64）。
 name: ci
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.assets/**'
+      - 'LICENSE'
+      - '.editorconfig'
+      - 'TODO.stanza'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.assets/**'
+      - 'LICENSE'
+      - '.editorconfig'
+      - 'TODO.stanza'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 发布通道（none = 只构建上传 Artifacts）
+        type: choice
+        options: [none, nightly, stable]
+        default: none
 
 # GITHUB_TOKEN 最小权限：检查/构建 job 只需读；建 Release、删 nightly tag 由 publish job 单独提权
 permissions:
   contents: read
 
 # 同分支（PR 同号）新推送取消在跑的旧 run：nightly 只关心最新 commit，过期 run 纯属浪费。
-# release 提交例外：发版构建不被后续推送打断（tag 守卫已保证幂等，中途取消只会白跑一次全量构建）
+# 发版 run 例外：release 提交与手动 stable 发布不被后续推送打断（tag 守卫已保证幂等）
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.event.head_commit.message, 'release') }}
+  cancel-in-progress: ${{ !(startsWith(github.event.head_commit.message, 'release') || github.event.inputs.publish == 'stable') }}
 
 jobs:
-  # ---- 质量门禁 ----
+  # ---- 质量门禁（不挡构建，由 publish 兜底）----
 
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # daemon 与 server 各有独立 target 目录（server 的互操作测试把 daemon 当 dev-dep 又编一遍），
+        # 拆两腿并行：门禁墙钟 2.8 → ~1.8 min，缓存也从一份 2.4GB 拆成两份 ~1.2GB，
+        # 更不容易撞 GitHub 10GB 仓库缓存限额（超限会 LRU 淘汰，导致缓存反复失效）
+        crate: [hawk-daemon, hawk-server]
     steps:
       - uses: actions/checkout@v7
 
@@ -44,34 +78,54 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            hawk-daemon
-            hawk-server
-
-      # 静态门禁先行：格式/文档链接/lint 不过就不必跑测试（省 CI 时间）
-      - run: python3 tools/check-docs.py
+          workspaces: ${{ matrix.crate }}
+          # 默认缓存 key 只含 job id，matrix 两腿会互相覆盖成同一个 key（各自存自己的 target，
+          # 每次落盘都让对方失效）——shared-key 把 crate 名拼进 key
+          shared-key: ${{ matrix.crate }}
 
       - run: cargo fmt --check
-        working-directory: hawk-daemon
-
-      - run: cargo fmt --check
-        working-directory: hawk-server
+        working-directory: ${{ matrix.crate }}
 
       - run: cargo clippy --all-targets -- -D warnings
-        working-directory: hawk-daemon
-
-      - run: cargo clippy --all-targets -- -D warnings
-        working-directory: hawk-server
+        working-directory: ${{ matrix.crate }}
 
       - run: cargo test
-        working-directory: hawk-daemon
+        working-directory: ${{ matrix.crate }}
 
-      - run: cargo test
-        working-directory: hawk-server
-
-  desktop:
+  app:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: hawk-app
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: hawk-app/package-lock.json
+
+      - run: npm ci
+
+      # 文档相对链接检查：docs-only 提交由 docs.yml 覆盖，这里兜住「代码与文档一起改」
+      # 以及 check-docs.py 自身的改动（1 秒成本）
+      - run: python3 tools/check-docs.py
+        working-directory: .
+
+      # 类型检查（vue-tsc + tsc）由 linux job 的 npm run build 覆盖，这里只跑静态检查与单测
+      - run: npm run lint
+
+      - run: npm run format:check
+
+      - run: npm run test:unit
+
+  # ---- 构建（各平台产物；linux 兼作全链复现门禁）----
+
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: hawk-app
@@ -92,8 +146,9 @@ jobs:
 
       - run: npm ci
 
-      # electron 发行包与 electron-builder 工具（7zip、AppImage runtime 等）缓存：免每次 ~100MB 下载
-      # key 含 electron-builder.yml：打包工具集（如 AppImage 静态 runtime）变化时自动失效重建
+      # electron 发行包与 electron-builder 工具（7zip、AppImage runtime 等）缓存：免每次 ~100MB 下载。
+      # key 表达式三个平台 job 保持一致（含 electron-builder.yml：打包工具集变化时自动失效），
+      # restore-keys 兜住依赖升级导致的 hash 变化——旧工具集仍可用，不必从零下载
       - name: Cache electron & builder tools
         uses: actions/cache@v6
         with:
@@ -101,29 +156,40 @@ jobs:
             ~/.cache/electron
             ~/.cache/electron-builder
           key: tools-linux-x64-${{ hashFiles('hawk-app/package-lock.json', 'hawk-app/electron-builder.yml') }}
+          restore-keys: tools-linux-x64-
 
-      # web 构建（vue-tsc + 主进程 tsc + vite）与单元测试
-      - run: npm run build
-      - run: npm run lint
+      # nightly 版本覆写：0.0.0-nightly.<sha7>（元数据不冒充稳定版；stable 通道检查时 0.0.0 低于任何正式版，
+      # nightly 用户可随时切回稳定版）。更新判定不走版本号，走 Release body 的 hawk-nightly-sha 注释
+      - name: Nightly version
+        if: >-
+          (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')) ||
+          github.event.inputs.publish == 'nightly'
+        id: nightly_ver
+        shell: bash
+        run: echo "flag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
-      - run: npm run format:check
+      # 构建标识（自动更新比较 nightly 新旧用，见 scripts/stamp-build.mjs；pack.mjs 亦会重写，此处 CI 注入为准）
+      - name: Stamp build info
+        run: node scripts/stamp-build.mjs
+        env:
+          HAWK_SHA: ${{ github.sha }}
 
-      - run: npm run test:unit
-
-      # 主进程/preload 与 daemon 构建（pack 与 ui-check 的产物来源）
-      - run: node scripts/build-electron.mjs
-      - run: node scripts/build-server.mjs
+      # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
+      - name: Build web & daemon (parallel)
+        run: |
+          node scripts/build-server.mjs & p1=$!
+          npm run build & p2=$!
+          node scripts/build-electron.mjs & p3=$!
+          wait $p1
+          wait $p2
+          wait $p3
 
       # OpenAPI → TS 类型同步校验：openapi.json 变更必须重新生成 schema.d.ts 一并提交，
-      # 否则前端类型与契约静默漂移（gen-types 依赖上一步的 daemon 产物）
+      # 否则前端类型与契约静默漂移（gen-types 直接用上一步的 daemon 产物拉起服务）
       - name: Check generated types in sync
         run: |
           node scripts/gen-types.mjs
           git diff --exit-code web/src/shared/api/schema.d.ts
-
-      # 打包完整性冒烟：--dir 产出未压缩目录即可验证 files/extraResources 齐全（含 electron/out 主进程）
-      - name: Pack smoke (dir)
-        run: node scripts/pack.mjs --dir --publish never
 
       # UI 端到端自检（真实启动 vite + electron + daemon，CDP 断言；ubuntu 无显示器走 xvfb）
       - name: UI check (xvfb)
@@ -138,12 +204,34 @@ jobs:
           path: hawk-app/tools/.tmp
           if-no-files-found: ignore
 
-  # ---- 发布构建（检查全绿 + 发布条件满足才跑；手动触发不受提交前缀限制）----
+      # 真实产物冒烟（替代原 desktop job 的 pack --dir）：AppImage 打得出来即证明
+      # files/extraResources 配置完整；--publish never 禁用 electron-builder 隐式发布
+      - name: Pack
+        run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.flag }}
+
+      # 回归守卫（对应 windows job 的 zip 内容断言）：daemon 二进制必须真进了产物
+      - name: Verify packaged daemon
+        run: test -x dist/linux-unpacked/resources/hawk-daemon/hawk-daemon
+
+      # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
+      - name: Generate checksum
+        run: |
+          f=dist/hawk-linux-x64.AppImage
+          sha256sum "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
+
+      - uses: actions/upload-artifact@v7
+        # PR 不发布，产物没有消费者；省一次 ~90MB 上传
+        if: github.event_name != 'pull_request'
+        with:
+          name: hawk-linux-appimage
+          path: |
+            hawk-app/dist/hawk-linux-x64.AppImage
+            hawk-app/dist/hawk-linux-x64.AppImage.sha256
+          if-no-files-found: error
 
   windows:
-    needs: [rust, desktop]
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     # 手动 / main 上 release、feat、fix 开头的提交
     outputs:
       release_tag: ${{ steps.release.outputs.tag }}
@@ -176,56 +264,45 @@ jobs:
 
       - run: npm ci
 
-      # electron 发行包与 electron-builder 工具（7zip 等）缓存：免每次 ~100MB 下载
       - name: Cache electron & builder tools
         uses: actions/cache@v6
         with:
           path: |
             ~\AppData\Local\electron\Cache
             ~\AppData\Local\electron-builder\Cache
-          key: tools-win-x64-${{ hashFiles('hawk-app/package-lock.json') }}
+          key: tools-win-x64-${{ hashFiles('hawk-app/package-lock.json', 'hawk-app/electron-builder.yml') }}
+          restore-keys: tools-win-x64-
 
-      # 正式版守卫：release 提交首行需含版本号且与 package.json 一致（版本唯一来源），
-      # 同名 tag 已存在则失败（防重复发版）；发布说明 = 提交信息去掉首行
+      # 正式版守卫：版本号唯一来源是 package.json（提交信息只是开关，不再重复写版本号），
+      # 同名 tag 已存在则失败——这是「忘了 bump 版本」的唯一拦点；发布说明 = 提交信息去掉首行
       - name: Resolve release
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release')
+        if: >-
+          (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release')) ||
+          github.event.inputs.publish == 'stable'
         id: release
         shell: bash
-        env:
-          MSG: ${{ github.event.head_commit.message }}
         run: |
-          FIRST=$(printf '%s\n' "$MSG" | head -n1)
-          VERSION=$(printf '%s\n' "$FIRST" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([-._+0-9A-Za-z]*)' | head -n1)
-          PKG=$(node -p "require('./package.json').version")
-          if [ -z "$VERSION" ]; then
-            echo "release 提交首行需含版本号，如：release: v0.2.0" >&2
-            exit 1
-          fi
-          if [ "$VERSION" != "$PKG" ]; then
-            echo "提交信息版本 $VERSION 与 package.json $PKG 不一致（先 bump 再提交）" >&2
-            exit 1
-          fi
+          VERSION=$(node -p "require('./package.json').version")
           if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null 2>&1; then
-            echo "tag v$VERSION 已存在，请 bump 到新版本后再发" >&2
+            echo "tag v$VERSION 已存在：先 bump hawk-app/package.json 的 version（node tools/bump.mjs <version>）再发版" >&2
             exit 1
           fi
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          BODY=$(printf '%s\n' "$MSG" | tail -n +2 | sed -e '/./,$!d')
+          BODY=$(git log -1 --pretty=%B | tail -n +2 | sed -e '/./,$!d')
           {
             echo "body<<REL_EOF"
             printf '%s\n' "$BODY"
             echo "REL_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # nightly 版本覆写：0.0.0-nightly.<sha7>（元数据不冒充稳定版；stable 通道检查时 0.0.0 低于任何正式版，
-      # nightly 用户可随时切回稳定版）。更新判定不走版本号，走 Release body 的 hawk-nightly-sha 注释
       - name: Nightly version
-        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
+        if: >-
+          (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')) ||
+          github.event.inputs.publish == 'nightly'
         id: nightly_ver
         shell: bash
-        run: echo "verflag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        run: echo "flag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
-      # 构建标识（自动更新比较 nightly 新旧用，见 scripts/stamp-build.mjs；pack.mjs 亦会重写，此处 CI 注入为准）
       - name: Stamp build info
         run: node scripts/stamp-build.mjs
         env:
@@ -250,10 +327,10 @@ jobs:
       - name: Pack
         # --publish never：禁用 electron-builder 自带发布（CI 下会隐式触发并索要 GH_TOKEN；
         # 配置文件里写 never 会被当成自定义 publisher 模块名，只能走 CLI）——发布统一由 publish job 负责
-        run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.verflag }}
+        run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.flag }}
         env:
-          # 正式版（release 提交）mx=9 最小体积；nightly/手动 mx=5 快速出包（高频构建在意时间不在意 +10-20MB）
-          ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ startsWith(github.event.head_commit.message, 'release') && '9' || '5' }}
+          # 正式版（release 守卫产出 tag）mx=9 最小体积；nightly/手动 mx=5 快速出包
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ steps.release.outputs.tag && '9' || '5' }}
 
       # 回归守卫：Windows 构建曾因 daemon 编译失败静默产出无 daemon 的 zip（并行 wait 吞错误），
       # 旧 daemon 会被沿用到运行时，表现为新 app 传 --remote-config 报错
@@ -284,101 +361,13 @@ jobs:
             hawk-app/dist/hawk-windows-x64.zip.sha256
           if-no-files-found: error
 
-      # Release 创建/轮转统一由 publish 汇流 job 负责（三个构建 job 全并行，见文末）
+      # Release 创建/轮转统一由 publish 汇流 job 负责
 
-  # Linux AppImage：与 windows job 同构（构建 + Artifacts，发布统一走 publish 汇流）；
-  # ubuntu-latest 即 x64，cargo/electron 均原生目标无需交叉
-  linux:
-    needs: [rust, desktop]
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.event.head_commit.message, 'release') ||
-      startsWith(github.event.head_commit.message, 'feat') ||
-      startsWith(github.event.head_commit.message, 'fix')
-    defaults:
-      run:
-        working-directory: hawk-app
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: hawk-daemon
-
-      # electron 发行包与 electron-builder 工具（appimage 打包器等）缓存
-      - name: Cache electron & builder tools
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-          key: tools-linux-x64-${{ hashFiles('hawk-app/package-lock.json') }}
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '26'
-          cache: npm
-          cache-dependency-path: hawk-app/package-lock.json
-
-      - run: npm ci
-
-      # nightly 版本覆写（同 windows job；release 提交留空用 package.json version）
-      - name: Nightly version
-        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
-        id: nightly_ver
-        shell: bash
-        run: echo "verflag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
-
-      # 构建标识（自动更新比较 nightly 新旧用，见 scripts/stamp-build.mjs；pack.mjs 亦会重写，此处 CI 注入为准）
-      - name: Stamp build info
-        run: node scripts/stamp-build.mjs
-        env:
-          HAWK_SHA: ${{ github.sha }}
-
-      # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
-      - name: Build web & daemon (parallel)
-        run: |
-          node scripts/build-server.mjs & p1=$!
-          npm run build & p2=$!
-          node scripts/build-electron.mjs & p3=$!
-          wait $p1
-          wait $p2
-          wait $p3
-
-      - name: Pack
-        # --publish never 同 windows job（禁用隐式发布）
-        run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.verflag }}
-
-      # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
-      - name: Generate checksum
-        run: |
-          f=dist/hawk-linux-x64.AppImage
-          sha256sum "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: hawk-linux-appimage
-          path: |
-            hawk-app/dist/hawk-linux-x64.AppImage
-            hawk-app/dist/hawk-linux-x64.AppImage.sha256
-          if-no-files-found: error
-
-  # macOS app：标准 runner 已是 arm64（macos-latest），x64 由交叉打包产出；双架构 matrix 并行
+  # macOS app：只产 Apple Silicon（arm64，macos-latest 原生架构，不做交叉编译）；
   # GitHub 只能上传单文件，因此 .app 目录打 zip 发布（VS Code/Slack 同款方式）
   macos:
-    needs: [rust, desktop]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: arm64, rid: osx-arm64, rust-target: aarch64-apple-darwin, outdir: mac-arm64 }
-          - { arch: x64, rid: osx-x64, rust-target: x86_64-apple-darwin, outdir: mac }
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     if: >-
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.event.head_commit.message, 'release') ||
@@ -390,23 +379,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # mac 同机双架构：rust target 分别为 aarch64/x86_64-apple-darwin（C 依赖 sqlite/libwebp 由 cc 按 -arch 编译）
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust-target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: hawk-daemon
 
-      # electron 发行包与 electron-builder 工具缓存（两腿 arch 不同，key 带 arch）
       - name: Cache electron & builder tools
         uses: actions/cache@v6
         with:
           path: |
             ~/Library/Caches/electron
             ~/Library/Caches/electron-builder
-          key: tools-macos-${{ matrix.arch }}-${{ hashFiles('hawk-app/package-lock.json') }}
+          key: tools-macos-arm64-${{ hashFiles('hawk-app/package-lock.json', 'hawk-app/electron-builder.yml') }}
+          restore-keys: tools-macos-arm64-
 
       - uses: actions/setup-node@v7
         with:
@@ -416,12 +402,13 @@ jobs:
 
       - run: npm ci
 
-      # nightly 版本覆写（同 windows job；release 提交留空用 package.json version）
       - name: Nightly version
-        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
+        if: >-
+          (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')) ||
+          github.event.inputs.publish == 'nightly'
         id: nightly_ver
         shell: bash
-        run: echo "version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        run: echo "flag=--config.extraMetadata.version=0.0.0-nightly.${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
       # 构建标识（自动更新比较 nightly 新旧用，mac 不走 pack.mjs，直接执行 stamp 脚本）
       - name: Stamp build info
@@ -434,51 +421,72 @@ jobs:
           npm run build
           node scripts/build-electron.mjs
 
-      # 前后端都构建到目标架构（electron-builder 直接下载对应 electron 产物；rust 同机跨 target 编译）
-      # 输出目录：arm64 → dist/mac-arm64；x64 是 mac 默认架构 → dist/mac（无后缀）
+      # 前后端都构建到本机架构（electron-builder 直接下载对应 electron 产物）
+      # 输出目录：arm64 → dist/mac-arm64
       - name: Pack app
         run: |
-          node scripts/build-server.mjs ${{ matrix.rid }}
-          # set -e 下不能用 [ -n "" ] && 赋值的短 circuit 写法（空值路径非零退出），显式 if
-          VER_ARGS=""
-          if [ -n "${{ steps.nightly_ver.outputs.version }}" ]; then
-            VER_ARGS="--config.extraMetadata.version=${{ steps.nightly_ver.outputs.version }}"
-          fi
-          npx electron-builder --dir --${{ matrix.arch }} --publish never $VER_ARGS
-          ditto -c -k --keepParent dist/${{ matrix.outdir }}/hawk.app dist/hawk-mac-${{ matrix.arch }}.zip
+          node scripts/build-server.mjs
+          npx electron-builder --dir --arm64 --publish never ${{ steps.nightly_ver.outputs.flag }}
+          ditto -c -k --keepParent dist/mac-arm64/hawk.app dist/hawk-mac-arm64.zip
 
       # 自动更新校验：产物 sha256 边车（<artifact>.sha256），随 Release 上传
       - name: Generate checksum
         run: |
-          f=dist/hawk-mac-${{ matrix.arch }}.zip
+          f=dist/hawk-mac-arm64.zip
           shasum -a 256 "$f" | cut -d' ' -f1 | tr -d '\n' > "$f.sha256"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: hawk-macos-${{ matrix.arch }}
+          name: hawk-macos-arm64
           path: |
-            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip
-            hawk-app/dist/hawk-mac-${{ matrix.arch }}.zip.sha256
+            hawk-app/dist/hawk-mac-arm64.zip
+            hawk-app/dist/hawk-mac-arm64.zip.sha256
           if-no-files-found: error
 
-  # 发布汇流：windows + linux + mac 双架构四个构建 job 全并行，各自上传 Artifacts；
-  # 全部成功后由本 job 统一创建/轮转 Release 并附全部资产——「建 Release」只有一个执行者，
-  # 无并发竞争（此前 mac 附资产需要 needs: windows 串行等待 mac 排队；且失败语义变为全有或全无：
-  # 任一构建失败则不发布，不会出现只有部分平台产物的半成品 Release）。手动触发只出 Artifacts，本 job 不跑
+  # 发布汇流：门禁 + 三平台构建全成功后才跑，统一创建/轮转 Release 并附全部资产——
+  # 「建 Release」只有一个执行者，无并发竞争；失败语义是全有或全无（任一检查/构建失败都不发布，
+  # 不会出现只有部分平台产物的半成品 Release）
   publish:
-    needs: [windows, linux, macos]
+    needs: [rust, app, linux, windows, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
     if: >-
-      github.event_name == 'push' &&
-      (startsWith(github.event.head_commit.message, 'release') ||
-       startsWith(github.event.head_commit.message, 'feat') ||
-       startsWith(github.event.head_commit.message, 'fix'))
+      (github.event_name == 'push' &&
+       (startsWith(github.event.head_commit.message, 'release') ||
+        startsWith(github.event.head_commit.message, 'feat') ||
+        startsWith(github.event.head_commit.message, 'fix'))) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'none')
     steps:
       # nightly 轮转要删远端 tag（checkout 默认持久化 token）；发布说明/守卫产物经 job outputs 传递
       - uses: actions/checkout@v7
+
+      # 决定发布通道：push 看提交前缀，手动触发看 inputs.publish（none 已被 job 级 if 挡在外面）。
+      # 发布说明/ nightly body 一律用当前 commit 的完整信息（dispatch 时没有 head_commit，走 git log）
+      - name: Resolve channel
+        id: ch
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ github.event.inputs.publish }}
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            kind="$INPUT"
+          else
+            case "$MSG" in
+              release*) kind=stable ;;
+              *) kind=nightly ;;
+            esac
+          fi
+          body="${MSG:-$(git log -1 --pretty=%B)}"
+          {
+            echo "kind=$kind"
+            echo "msg<<MSG_EOF"
+            printf '%s\n' "$body"
+            echo "MSG_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # 三个构建 job 的产物拉平到 dist/（merge-multiple 展平各 artifact 子目录）
       - name: Download artifacts
@@ -489,15 +497,15 @@ jobs:
           merge-multiple: true
 
       - name: Nightly meta
-        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
+        if: steps.ch.outputs.kind == 'nightly'
         id: nightly
         shell: bash
         run: echo "sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
-      # ---- 正式版：release 提交（tag+Release 由 action-gh-release 的 tag_name 在当前 commit 创建）----
+      # ---- 正式版：tag+Release 由 action-gh-release 的 tag_name 在当前 commit 创建 ----
 
       - name: Create Release
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release')
+        if: steps.ch.outputs.kind == 'stable'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.windows.outputs.release_tag }}
@@ -508,15 +516,13 @@ jobs:
             dist/hawk-windows-x64.zip.sha256
             dist/hawk-mac-arm64.zip
             dist/hawk-mac-arm64.zip.sha256
-            dist/hawk-mac-x64.zip
-            dist/hawk-mac-x64.zip.sha256
             dist/hawk-linux-x64.AppImage
             dist/hawk-linux-x64.AppImage.sha256
 
       # ---- nightly：main 分支 feat/fix 提交（滚动覆盖）----
 
       - name: Rotate nightly release
-        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
+        if: steps.ch.outputs.kind == 'nightly'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -525,7 +531,7 @@ jobs:
           git push origin --delete refs/tags/nightly || true
 
       - name: Create Nightly Release
-        if: github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release')
+        if: steps.ch.outputs.kind == 'nightly'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
@@ -533,7 +539,7 @@ jobs:
           # body 末尾注入完整 sha（HTML 注释，用户不可见）：客户端自动更新比较 nightly 新旧用
           # （release 的 target_commitish 是分支名不是 sha，不能用作比较）
           body: |
-            ${{ github.event.head_commit.message }}
+            ${{ steps.ch.outputs.msg }}
 
             <!-- hawk-nightly-sha: ${{ github.sha }} -->
           prerelease: true
@@ -542,7 +548,5 @@ jobs:
             dist/hawk-windows-x64.zip.sha256
             dist/hawk-mac-arm64.zip
             dist/hawk-mac-arm64.zip.sha256
-            dist/hawk-mac-x64.zip
-            dist/hawk-mac-x64.zip.sha256
             dist/hawk-linux-x64.AppImage
             dist/hawk-linux-x64.AppImage.sha256
