@@ -92,7 +92,7 @@ lib/
   local-discovery.ts # 本地模式端口自动发现（27371–27400 探活 /api/v1/app/token，手填端口优先）
   settings.ts      # 插件设置（browser.storage.local）
   notify.ts        # 系统通知
-public/icons/      # 扩展图标（由 hawk-app/build/icon.png 生成）
+public/icons/      # 扩展图标（透明底、鸟形放大；tools/gen-extension-icons.py 从 hawk-app/build/icon.png 生成）
 wxt.config.ts      # 跨浏览器清单（WXT 自动处理 Firefox/Safari 差异）
 ```
 
