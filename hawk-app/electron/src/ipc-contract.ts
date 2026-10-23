@@ -28,6 +28,9 @@ export const IPC = {
   cacheDirGet: 'hawk:cache-dir-get',
   cacheDirPick: 'hawk:cache-dir-pick',
   cacheDirChange: 'hawk:cache-dir-change',
+  apiPortGet: 'hawk:api-port-get',
+  apiPortSet: 'hawk:api-port-set',
+  serverRetryPort: 'hawk:server-retry-port',
   winMinimize: 'hawk:win-minimize',
   winMaximizeToggle: 'hawk:win-maximize-toggle',
   winClose: 'hawk:win-close',
@@ -50,6 +53,7 @@ export const IPC = {
   serverRestarting: 'hawk:server-restarting',
   serverStarted: 'hawk:server-started',
   serverConn: 'hawk:server-conn',
+  serverErrorGet: 'hawk:server-error-get',
   serverError: 'hawk:server-error',
   updateProgress: 'hawk:update-progress',
   connectionChanged: 'hawk:connection-changed',
@@ -102,6 +106,24 @@ export type UpdateProgress = { phase: 'downloading'; received: number; total: nu
 export interface ServerConn {
   address: string;
   token: string;
+}
+
+/** 端口被占用的错误码（daemon 退出码 4 / stderr PORT_IN_USE，见 hawk-daemon/src/bootstrap.rs） */
+export const PORT_IN_USE = 'PORT_IN_USE';
+
+/** server 启动/运行失败负载：code=PORT_IN_USE 时启动屏显示端口冲突处理（自动换端口/手输端口） */
+export interface ServerFailure {
+  message: string;
+  code?: typeof PORT_IN_USE;
+  /** 绑定失败的端口（code=PORT_IN_USE 时存在） */
+  port?: number;
+}
+
+/** 本地 API 端口信息（设置面板展示当前值 + 候选段提示） */
+export interface ApiPortInfo {
+  port: number;
+  /** 自动选择可用的候选段（跨仓库契约，见 app-config.ts 的 API_PORT_RANGE） */
+  range: readonly [number, number];
 }
 
 /** 连接描述符：前端唯一面对的连接语义（api_base + token + 展示名），本地库/远程库同构 */
@@ -207,8 +229,16 @@ export interface HawkShell {
   removeLibrary(path: string): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 复制库内文件的绝对路径到剪贴板 */
   copyPath(relPath: string): Promise<void>;
-  /** 重启当前库的 server（存储方案迁移等需要进程级重启的设置变更；主进程切启动屏并重建连接） */
+  /** 重启当前 server（存储方案迁移等需要进程级重启的设置变更；主进程切启动屏并重建连接）。
+   *  本地库重启同库，远程查看模式重启无库 daemon */
   restartServer(): Promise<void>;
+  /** 本地 API 端口当前值与候选段（设置面板「网络 → 本地服务」） */
+  getApiPort(): Promise<ApiPortInfo>;
+  /** 写入本地 API 端口配置（不重启；前端随后调 restartServer 生效）。返回错误文案或 null */
+  setApiPort(port: number): Promise<string | null>;
+  /** 端口冲突时重试：auto=在候选段内自动挑空闲端口，port=用户手输的端口（任意 1024–65535）。
+   *  写入配置后按当前模式重启 daemon。返回错误文案或 null */
+  retryServerPort(request: { mode: 'auto' } | { port: number }): Promise<string | null>;
   /** 本机局域网 IPv4 地址列表（设置面板展示用；LAN 配置读写走 REST app/lan） */
   lanAddresses(): Promise<string[]>;
   /** 在系统文件管理器中显示库内文件（相对路径） */
@@ -254,8 +284,11 @@ export interface HawkShell {
   onServerStarted(cb: (conn: ServerConn) => void): () => void;
   /** 拉取当前已就绪的 server 连接（未就绪返回 null）：页面加载晚于 server 就绪的竞态兜底 */
   getServerConn(): Promise<ServerConn | null>;
-  /** 订阅 server 启动/运行失败，返回退订函数 */
-  onServerError(cb: (error: { message: string }) => void): () => void;
+  /** 拉取最近一次启动/运行失败（未失败返回 null）：daemon 端口占用在页面订阅 IPC 之前就退出，
+   *  推送会丢事件，挂载时必须拉一次兜底 */
+  getServerError(): Promise<ServerFailure | null>;
+  /** 订阅 server 启动/运行失败（code=PORT_IN_USE 时带端口冲突信息），返回退订函数 */
+  onServerError(cb: (error: ServerFailure) => void): () => void;
   /** 订阅 server 即将重启（旧 server 已停，应立即切启动屏），返回退订函数 */
   onServerRestarting(cb: () => void): () => void;
   /** 订阅 server 扫描进度（应用内启动屏用），返回退订函数 */

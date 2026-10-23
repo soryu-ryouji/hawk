@@ -31,7 +31,7 @@ const store = useLibraryStore();
 const importer = useImporterStore();
 const preview = usePreviewStore();
 const { narrow, touch } = useLayout();
-const { phase, bootError, progress, runBoot } = useBoot();
+const { phase, bootError, bootFailure, progress, runBoot } = useBoot();
 const { sidebarWidth, inspectorWidth, dragSide, startResize } = usePanelResize();
 initConnectionLabel();
 // 窄屏下侧栏为抽屉式：进入窄屏默认收起（抽屉关闭），回宽屏恢复双栏
@@ -103,7 +103,13 @@ useDragImport();
   <!-- 启动/引导/门页/错误：单页内的前置阶段；无边框窗口下仍需拖拽区与窗口控制按钮 -->
   <div v-if="phase !== 'ready'" class="standalone">
     <div class="drag-bar"><WindowControls /></div>
-    <StartingScreen v-if="phase === 'starting' || phase === 'error'" :progress="progress" :error="phase === 'error' ? bootError : null" @quit="quitApp" />
+    <StartingScreen
+      v-if="phase === 'starting' || phase === 'error'"
+      :progress="progress"
+      :error="phase === 'error' ? bootError : null"
+      :failure="phase === 'error' ? bootFailure : null"
+      @quit="quitApp"
+    />
     <SetupScreen v-else-if="phase === 'setup'" @selected="phase = 'starting'" />
     <RemoteScreen v-else-if="phase === 'remote'" />
     <ConnectScreen v-else-if="phase === 'connect'" @connect="onConnected" />

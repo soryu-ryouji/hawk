@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
 import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction } from './app-config';
-import { openLibraryAt, startRemoteViewer, pickLibrary, getStartedConn } from './server';
+import { openLibraryAt, startRemoteViewer, pickLibrary, getStartedConn, getServerFailure, restartCurrent, retryServerPort } from './server';
+import { API_PORT_RANGE, getApiPort, setApiPort } from './app-config';
 import {
   currentDescriptor,
   remoteConnect,
@@ -142,6 +143,9 @@ export function registerIpc(): void {
   // 当前已就绪的 server 连接（未就绪 null）：页面（重）加载晚于 server-started 事件时的竞态兜底
   ipcMain.handle(IPC.serverConn, () => getStartedConn());
 
+  // 最近一次启动失败：daemon 端口占用会在页面订阅 IPC 之前退出，只靠推送会丢事件
+  ipcMain.handle(IPC.serverErrorGet, () => getServerFailure());
+
   ipcMain.handle(IPC.showInFinder, (_event, relPath: unknown) => {
     const abs = resolveLibraryPath(relPath);
     if (abs) {
@@ -157,12 +161,27 @@ export function registerIpc(): void {
     }
   });
 
-  // 重启当前库的 server（存储方案迁移等设置变更后调用；switchLibrary 会先切启动屏再重建）
-  ipcMain.handle(IPC.restartServer, async () => {
-    const libRoot = getLibraryRoot();
-    if (libRoot) {
-      await openLibraryAt(libRoot);
+  // 重启当前 server（存储方案/端口等设置变更后调用；restartCurrent 先切启动屏再重建）
+  ipcMain.handle(IPC.restartServer, () => restartCurrent());
+
+  // 本地 API 端口（设置面板「网络 → 本地服务」；启动屏端口冲突界面）
+  ipcMain.handle(IPC.apiPortGet, () => ({ port: getApiPort(), range: API_PORT_RANGE }));
+  ipcMain.handle(IPC.apiPortSet, (_event, port: unknown) => {
+    if (typeof port !== 'number' || !Number.isInteger(port) || port < 1024 || port > 65535) {
+      return '端口须为 1024–65535 之间的整数';
     }
+    setApiPort(port);
+    return null;
+  });
+  ipcMain.handle(IPC.serverRetryPort, (_event, request: unknown) => {
+    const req = request as { mode?: unknown; port?: unknown } | null;
+    if (req && req.mode === 'auto') {
+      return retryServerPort({ mode: 'auto' });
+    }
+    if (req && typeof req.port === 'number') {
+      return retryServerPort({ port: req.port });
+    }
+    return '非法端口参数';
   });
 
   // 复制文件路径到剪贴板（预览右键菜单；复制图片在渲染进程经 Web Clipboard API 完成，无 IPC）

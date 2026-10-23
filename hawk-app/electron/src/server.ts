@@ -8,11 +8,14 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { APP_DIR, DAEMON_LOG_FILE, REMOTE_CONFIG_FILE } from './paths';
 import { getMainWindow } from './window';
-import { readConfig, setLibraryRoot, writeConfig } from './app-config';
-import { IPC, type ServerConn } from './ipc-contract';
+import { API_PORT_RANGE, getApiPort, getLibraryRoot, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
+import { IPC, PORT_IN_USE, type ServerConn, type ServerFailure } from './ipc-contract';
 import { onServerReady, onServerStopped } from './remote';
 
 const isDev = !app.isPackaged;
+
+/** daemon 端口占用退出码（与 hawk-daemon/src/bootstrap.rs 的 bind_failed 对齐） */
+const PORT_IN_USE_EXIT_CODE = 4;
 
 export interface ServerHandle {
   child: ChildProcess;
@@ -25,6 +28,15 @@ let server: ServerHandle | null = null;
 /** 已就绪 server 的连接参数（ready 时写入，停服/换库时清空）；页面加载晚于就绪时事件会丢，
  *  渲染进程经 hawk:server-conn / remoteGetConnection 主动拉取兜底 */
 let startedConn: ServerConn | null = null;
+
+/** 最近一次启动/运行失败（拉取兜底：daemon 端口占用会在页面订阅 IPC 之前就退出，
+ *  只靠推送会丢事件——渲染进程挂载时经 getServerFailure 主动拉一次）。
+ *  每次新拉起尝试开始时清空，避免展示上次的旧错误 */
+let lastFailure: ServerFailure | null = null;
+
+export function getServerFailure(): ServerFailure | null {
+  return lastFailure;
+}
 
 export function getStartedConn(): ServerConn | null {
   return startedConn;
@@ -66,27 +78,30 @@ function resolveServerCommand(): { command: string; args: string[] } {
   return { command: path.join(process.resourcesPath, 'hawk-daemon', bin), args: [] };
 }
 
-/** 本机 daemon 的首选端口：浏览器插件等生态客户端按这个固定端口零配置接入
- *  （docs/architecture.md「本地 API 安全」约定）；被占用时回退系统端口 */
-const PREFERRED_PORT = 27371;
+/** 本机 daemon 的监听地址：端口取自用户配置（config.toml apiPort，默认 27371）。
+ *  端口所有权只在本文件：daemon 严格绑定这个端口，绑不上就报错退出（不静默漂移），
+ *  浏览器插件等生态客户端才能按固定段探活 */
+function apiAddress(): string {
+  return `http://127.0.0.1:${getApiPort()}`;
+}
 
-/** 预选一个空闲环回端口：server 绑定它，token 由本进程生成——端口与 token 都不再需要子进程回传。
- *  先试 27371，占用才退回随机端口（插件默认地址即 27371，固定端口是零配置接入的前提） */
-function probeFreePort(): Promise<number> {
-  const listen = (port: number): Promise<number> =>
-    new Promise((resolve, reject) => {
-      const probe = net.createServer();
-      probe.once('error', reject);
-      probe.listen(port, '127.0.0.1', () => {
-        const address = probe.address();
-        if (typeof address !== 'object' || address === null) {
-          probe.close(() => reject(new Error('预选端口失败')));
-          return;
-        }
-        probe.close(() => resolve(address.port));
-      });
-    });
-  return listen(PREFERRED_PORT).catch(() => listen(0));
+/** 端口能否绑定（环回）：换端口前的预检，真正的裁决在 daemon 的严格绑定 */
+function tryListen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+  });
+}
+
+/** 在候选段内挑第一个空闲端口；全占返回 null */
+async function findFreePortInRange(): Promise<number | null> {
+  for (let port = API_PORT_RANGE[0]; port <= API_PORT_RANGE[1]; port += 1) {
+    if (await tryListen(port)) {
+      return port;
+    }
+  }
+  return null;
 }
 
 /** LAN web 查看托管的前端产物：与 loadMainPage 同一目录（dev 与打包形态路径一致）。
@@ -110,6 +125,7 @@ function webDistDir(): string {
  * spawn 失败、异常退出（stopServer 除外）、停滞 120s 超时就 hawk:server-error。
  */
 function startServer(libPath: string | null, address: string, token: string): ServerHandle {
+  lastFailure = null; // 新的一次拉起：清掉上一轮失败（页面挂载时的拉取兜底不应看到旧错）
   const { command, args } = resolveServerCommand();
   // 全局缓存父目录（设置面板「存储」配置；未配置用系统默认）
   const cacheParent = readConfig().cacheParent;
@@ -155,11 +171,13 @@ function startServer(libPath: string | null, address: string, token: string): Se
   let poll: ReturnType<typeof setInterval> | undefined;
   let watchdog: ReturnType<typeof setInterval> | undefined;
   let lastProgressAt = Date.now();
-  /** 失败统一出口：通知渲染进程（一次性） */
-  const fail = (message: string): void => {
+  /** 失败统一出口：通知渲染进程（一次性）；带 code 时前端据此分流（端口冲突 → 换端口界面） */
+  const fail = (message: string, failure?: Omit<ServerFailure, 'message'>): void => {
     clearInterval(poll);
     clearInterval(watchdog);
-    getMainWindow()?.webContents.send(IPC.serverError, { message });
+    const payload: ServerFailure = { message, ...failure };
+    lastFailure = payload;
+    getMainWindow()?.webContents.send(IPC.serverError, payload);
   };
 
   // 留 stderr 尾部用于报错；开发态同时转发到终端
@@ -176,6 +194,13 @@ function startServer(libPath: string | null, address: string, token: string): Se
   child.on('exit', (code) => {
     logStream?.end();
     if (!intentionalExit) {
+      // 端口占用（daemon 退出码 4 / 固定文案）：交给渲染进程的端口冲突界面处理，
+      // 不要甩 stderr 给用户也不自动换端口（端口的唯一所有者是壳层，见上）
+      const port = getApiPort();
+      if (code === PORT_IN_USE_EXIT_CODE || stderrTail.includes(PORT_IN_USE)) {
+        fail(`本地端口 ${port} 已被占用，本地服务无法启动`, { code: PORT_IN_USE, port });
+        return;
+      }
       // 旧 daemon 不认识新参数：提示版本不匹配，而不是只甩 clap 用法
       const stale = stderrTail.includes("unexpected argument '--remote-config'")
         ? '\n\nhawk-daemon 版本过旧或安装包不完整：请完全退出 hawk 后重新安装，或重新构建 hawk-daemon。'
@@ -207,6 +232,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
       clearInterval(poll);
       clearInterval(watchdog);
       if (state.status === 'ready') {
+        lastFailure = null;
         startedConn = { address, token };
         getMainWindow()?.webContents.send(IPC.serverStarted, startedConn);
         // remote SSE 订阅重建（remote.session 断线回切依赖；见 remote.ts）
@@ -268,11 +294,10 @@ async function switchLibrary(libPath: string, address: string, token: string): P
   return startServer(libPath, address, token);
 }
 
-/** 拉起指定素材库的 server（选新目录/历史库/冷启动共用）：端口/token 即选即生成 */
+/** 拉起指定素材库的 server（选新目录/历史库/冷启动共用）：端口取自用户配置，token 即选即生成 */
 export async function openLibraryAt(libPath: string): Promise<ServerHandle> {
   const token = crypto.randomBytes(32).toString('hex');
-  const port = await probeFreePort();
-  server = await switchLibrary(libPath, `http://127.0.0.1:${port}`, token);
+  server = await switchLibrary(libPath, apiAddress(), token);
   return server;
 }
 
@@ -280,12 +305,45 @@ export async function openLibraryAt(libPath: string): Promise<ServerHandle> {
  *  就绪后前端进远程查看屏（配置服务端/选设备）；冷启动模式记忆为 remoteViewer */
 export async function startRemoteViewer(): Promise<ServerHandle> {
   const token = crypto.randomBytes(32).toString('hex');
-  const port = await probeFreePort();
   getMainWindow()?.webContents.send(IPC.serverRestarting);
   startedConn = null;
   stopServer();
   writeConfig({ remoteViewer: true });
   setLibraryRoot(null);
-  server = startServer(null, `http://127.0.0.1:${port}`, token);
+  server = startServer(null, apiAddress(), token);
   return server;
+}
+
+/** 按当前模式重启 daemon（本地库 → 同库；远程查看 → 无库形态）。设置面板与端口重试共用 */
+export async function restartCurrent(): Promise<void> {
+  const libRoot = getLibraryRoot();
+  if (libRoot) {
+    await openLibraryAt(libRoot);
+  } else {
+    await startRemoteViewer();
+  }
+}
+
+/** 端口冲突后的重试：auto 在候选段内挑空闲端口，port 用用户手输（任意 1024–65535）；
+ *  写入配置后按当前模式重启。返回错误文案或 null（null = 已重启，就绪经 onServerStarted 通知） */
+export async function retryServerPort(request: { mode: 'auto' } | { port: number }): Promise<string | null> {
+  let port: number;
+  if ('mode' in request) {
+    const free = await findFreePortInRange();
+    if (free === null) {
+      return `端口 ${API_PORT_RANGE[0]}–${API_PORT_RANGE[1]} 都已占用，请手动指定其他端口`;
+    }
+    port = free;
+  } else {
+    port = request.port;
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      return '端口须为 1024–65535 之间的整数';
+    }
+    if (!(await tryListen(port))) {
+      return `端口 ${port} 已被占用，换一个试试`;
+    }
+  }
+  setApiPort(port);
+  await restartCurrent();
+  return null;
 }

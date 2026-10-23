@@ -10,6 +10,8 @@ const env = vi.hoisted(() => ({
   hasShell: true,
   initOk: true,
   restartCb: null as null | (() => void),
+  errorCb: null as null | ((e: { message: string; code?: string; port?: number }) => void),
+  pullError: null as null | { message: string; code?: string; port?: number },
   clearStoredToken: vi.fn(),
   connectEvents: vi.fn(() => vi.fn()),
 }));
@@ -51,9 +53,13 @@ vi.mock('@/shared/lib/platform', () => ({
       return () => {};
     },
     onServerProgress: () => () => {},
-    onServerError: () => () => {},
+    onServerError: (cb: (e: { message: string; code?: string; port?: number }) => void) => {
+      env.errorCb = cb;
+      return () => {};
+    },
     onServerStarted: () => () => {},
     getServerConn: () => Promise.resolve(null),
+    getServerError: () => Promise.resolve(env.pullError),
     remoteGetConnection: () => Promise.resolve(null),
     onConnectionChanged: () => () => {},
     quitApp: () => {},
@@ -88,6 +94,8 @@ beforeEach(() => {
   env.hasShell = true;
   env.initOk = true;
   env.restartCb = null;
+  env.errorCb = null;
+  env.pullError = null;
   env.clearStoredToken.mockClear();
   env.connectEvents.mockClear();
   for (const fn of Object.values(apiMocks)) fn.mockClear();
@@ -119,6 +127,23 @@ describe('启动相位机', () => {
 
     expect(boot.phase.value).toBe('connect');
     expect(env.clearStoredToken).toHaveBeenCalledWith('http://127.0.0.1:1');
+  });
+
+  it('端口被占用（推送）：错误屏带 code/port，供启动屏显示换端口界面', async () => {
+    const boot = mountBoot();
+    env.errorCb?.({ message: '本地端口 27371 已被占用，本地服务无法启动', code: 'PORT_IN_USE', port: 27371 });
+    await flush();
+    expect(boot.phase.value).toBe('error');
+    expect(boot.bootFailure.value?.code).toBe('PORT_IN_USE');
+    expect(boot.bootFailure.value?.port).toBe(27371);
+  });
+
+  it('端口被占用（页面订阅晚于失败）：挂载时拉取兜底同样进错误屏', async () => {
+    env.pullError = { message: '本地端口 27371 已被占用，本地服务无法启动', code: 'PORT_IN_USE', port: 27371 };
+    const boot = mountBoot();
+    await flush();
+    expect(boot.phase.value).toBe('error');
+    expect(boot.bootFailure.value?.code).toBe('PORT_IN_USE');
   });
 
   it('runBoot 一般失败：进错误屏并保留原因', async () => {

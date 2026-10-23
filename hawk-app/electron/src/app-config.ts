@@ -17,6 +17,8 @@ interface AppConfig {
   updateChannel?: UpdateChannel;
   /** 关窗行为：exit=直接退出（默认），tray=隐藏到托盘驻留后台 */
   closeAction?: CloseAction;
+  /** 本地 daemon 的 API 端口（默认 27371）：严格绑定，被占用由壳层询问用户换端口 */
+  apiPort?: number;
 }
 
 export interface LibraryList {
@@ -25,6 +27,12 @@ export interface LibraryList {
 }
 
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.toml');
+
+/** 本地 daemon 的 API 端口默认值与候选段。
+ *  候选段是**跨仓库契约**：浏览器插件的本地模式按这一段顺序探活（`hawk-browser-extension/lib/api.ts`
+ *  的 `LOCAL_PORT_RANGE`），「自动选择可用端口」只在这一段内挑，用户手动填到段外时插件需在高级选项里指定端口 */
+export const DEFAULT_API_PORT = 27371;
+export const API_PORT_RANGE: readonly [number, number] = [27371, 27400];
 
 /** 配置默认值（唯一事实源：文件缺失落盘从这里序列化，读取回退也从这里兜底；
  *  有默认值的字段在此声明为必填，新增/调整字段只改 AppConfig 与此处，无独立模板文本可漂移） */
@@ -99,6 +107,16 @@ export function getCloseAction(): CloseAction {
 
 export function setCloseAction(action: CloseAction): void {
   writeConfig({ closeAction: action });
+}
+
+/** 本地 API 端口：配置值合法则用之，否则回退默认端口（手改成非法值时不让 app 起不来） */
+export function getApiPort(): number {
+  const port = readConfig().apiPort;
+  return typeof port === 'number' && Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : DEFAULT_API_PORT;
+}
+
+export function setApiPort(port: number): void {
+  writeConfig({ apiPort: port });
 }
 
 /** 库显示名：优先读库内 .hawk/config.toml 的 name（与 daemon library/info 同源），缺失/异常回退目录名 */

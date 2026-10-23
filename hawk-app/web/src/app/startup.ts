@@ -5,6 +5,7 @@ import { onMounted, onUnmounted, ref } from 'vue';
 import { api } from '@/shared/api/endpoints';
 import { ApiError, configureApi } from '@/shared/api/client';
 import { hasShell, shell } from '@/shared/lib/platform';
+import type { ServerFailure } from '@/shared/types';
 
 export interface ServerProgress {
   phase: string;
@@ -12,11 +13,15 @@ export interface ServerProgress {
   total: number;
 }
 
+export type { ServerFailure };
+
 export function useStartup() {
   /** 每次 server 就绪 +1（冷启动、换库、应用设置重启都会触发）；App 据它 (re)boot */
   const readyCount = ref(0);
   /** 启动/运行失败原因；'UNAUTHORIZED' 为哨兵值（浏览器 token 失效 → ConnectScreen） */
   const failed = ref<string | null>(null);
+  /** 失败详情（Electron）：带 code 时可分流（PORT_IN_USE → 启动屏端口冲突界面） */
+  const failure = ref<ServerFailure | null>(null);
   const progress = ref<ServerProgress | null>(null);
 
   let pollTimer = 0;
@@ -44,6 +49,7 @@ export function useStartup() {
         if (s.status === 'error') {
           stopPolling();
           failed.value = s.message ?? '初始索引构建失败';
+          failure.value = { message: failed.value };
           return;
         }
         progress.value = {
@@ -71,9 +77,12 @@ export function useStartup() {
     }
     shell.onServerProgress((p) => {
       progress.value = p;
+      // 新一轮启动在推进：清掉上一轮的失败详情（含端口冲突态），否则重试后旧错误会残留
+      failure.value = null;
     });
-    shell.onServerError(({ message }) => {
-      failed.value = message;
+    shell.onServerError((e) => {
+      failure.value = e;
+      failed.value = e.message;
     });
     // server 重启会换新地址/token（轮询端口即变）：先重配连接再计就绪。
     // 事件与拉取双通道去重：onServerStarted 只发一次，页面（重）加载晚于就绪时会丢，
@@ -95,6 +104,13 @@ export function useStartup() {
     };
     shell.onServerStarted(onConn);
     shell.onConnectionChanged(onConn);
+    // 故障拉取兜底：daemon 端口占用会在页面订阅 IPC 之前就退出，只靠 onServerError 推送会丢事件
+    void shell.getServerError().then((e) => {
+      if (e) {
+        failure.value = e;
+        failed.value = e.message;
+      }
+    });
     void shell.remoteGetConnection().then((conn) => {
       if (conn) {
         onConn(conn);
@@ -103,5 +119,5 @@ export function useStartup() {
   });
   onUnmounted(() => stopPolling());
 
-  return { readyCount, failed, progress, poll };
+  return { readyCount, failed, failure, progress, poll };
 }

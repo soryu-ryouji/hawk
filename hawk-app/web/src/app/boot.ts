@@ -7,7 +7,7 @@ import { initApi, apiConfig, clearStoredToken, ApiError } from '@/shared/api/cli
 import { api } from '@/shared/api/endpoints';
 import { connectEvents } from '@/shared/api/events';
 import { hasShell, shell } from '@/shared/lib/platform';
-import { useStartup } from './startup';
+import { useStartup, type ServerFailure } from './startup';
 import { useLibraryStore } from '@/domains/library';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import { usePreviewStore } from '@/domains/preview';
@@ -17,7 +17,9 @@ export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'remote' | 
 export function useBoot() {
   const phase = ref<BootPhase>('starting');
   const bootError = ref<string | null>(null);
-  const { readyCount, failed, progress, poll } = useStartup();
+  /** 失败详情（Electron：code=PORT_IN_USE 时启动屏显示端口冲突处理），浏览器路径为 null */
+  const bootFailure = ref<ServerFailure | null>(null);
+  const { readyCount, failed, failure, progress, poll } = useStartup();
   let disconnectEvents: (() => void) | null = null;
 
   // 连接就绪（冷启动/换库/应用设置重启都会触发）：拉取数据 + 重连 SSE，成功后进入主界面。
@@ -97,6 +99,7 @@ export function useBoot() {
       phase.value = 'connect';
     } else {
       bootError.value = message;
+      bootFailure.value = failure.value;
       phase.value = 'error';
     }
   });
@@ -134,5 +137,5 @@ export function useBoot() {
     disconnectEvents?.();
   });
 
-  return { phase, bootError, progress, runBoot };
+  return { phase, bootError, bootFailure, progress, runBoot };
 }
