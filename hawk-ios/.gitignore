@@ -1,0 +1,14 @@
+# Xcode 派生数据与用户态配置（共享 scheme 与 project.pbxproj 入库，xcuserdata 不入库）
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# SwiftPM
+.swiftpm/
+
+# 构建产物
+*.ipa
+*.dSYM.zip

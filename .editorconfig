@@ -7,3 +7,16 @@ trim_trailing_whitespace=true
 [*.md]
 indent_style = space
 indent_size = 2
+
+# Swift（hawk-ios/）：4 空格缩进，行长上限与 hawk-ios/.swift-format 一致
+[*.swift]
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+# Xcode 生成物：保持 Xcode 自己的缩进风格，避免编辑器与 Xcode 互相改写
+[*.pbxproj]
+indent_style = tab
+[{*.xcscheme,*.xcworkspacedata,*.storyboard,*.xib}]
+indent_style = space
+indent_size = 3
