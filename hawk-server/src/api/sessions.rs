@@ -16,6 +16,10 @@ use std::sync::Arc;
 pub struct CreateRequest {
     source_device_id: String,
     target_device_id: String,
+    /// 请求的会话权限：read（缺省）/ write。app 间会话的写权限由目标设备的
+    /// 「允许广域网保存素材」决定（单用户租户内设备互信），目标 daemon 会再本地执法一次
+    #[serde(default)]
+    access: Option<Access>,
 }
 
 #[derive(Deserialize)]
@@ -43,7 +47,7 @@ pub async fn create(
         &state,
         &req.source_device_id,
         &req.target_device_id,
-        Access::Read,
+        req.access.unwrap_or(Access::Read),
         None,
     )?;
     Ok(ok(
