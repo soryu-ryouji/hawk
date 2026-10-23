@@ -27,49 +27,92 @@ const peers = ref<RemoteDevice[]>([]);
 const triggerRef = ref<HTMLElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
 const pos = ref({ x: 0, y: 0, width: 0 });
+/** 浮层与触发按钮的间距 */
+const PANEL_GAP = 4;
+/** 每次打开递增：快速开关时旧请求的结果直接丢弃，不覆盖新一轮的数据 */
+let loadSeq = 0;
 
-watch(open, async (visible) => {
+watch(open, (visible) => {
   if (!visible) {
-    window.removeEventListener('resize', close);
-    window.removeEventListener('scroll', onScroll, true);
-    document.removeEventListener('mousedown', onOutside, true);
-    document.removeEventListener('keydown', onKeydown, true);
+    unbindOutside();
     return;
   }
-  const res = await shell.listLibraries();
-  current.value = res.current;
-  libraries.value = res.libraries;
-  // 远程分区：接入在线才拉设备列表（离线/未配置不占用面板）；本机设备不在其列。
-  // 拉取失败（服务端不可达等）不拖垮本地库浮层——远程分区缺席即可
-  try {
-    const status = await shell.remoteStatus();
-    if (status.enabled && status.status.state === 'online') {
-      peers.value = (await shell.remoteDevices()).devices.filter((d) => d.device_id !== status.status.device_id);
-    } else {
-      peers.value = [];
-    }
-  } catch {
-    peers.value = [];
-  }
-  const rect = triggerRef.value!.getBoundingClientRect();
-  await nextTick();
-  const panel = panelRef.value!;
-  const gap = 4;
-  // 下方放不下且上方空间足够时向上翻转
-  const up = rect.bottom + gap + panel.offsetHeight > window.innerHeight && rect.top - gap - panel.offsetHeight > 0;
-  pos.value = {
-    x: rect.left,
-    y: up ? rect.top - gap - panel.offsetHeight : rect.bottom + gap,
-    width: rect.width,
-  };
-  window.addEventListener('resize', close);
-  window.addEventListener('scroll', onScroll, true);
-  document.addEventListener('mousedown', onOutside, true);
-  document.addEventListener('keydown', onKeydown, true);
+  bindOutside();
+  // 定位与数据加载解耦：先挂出面板再去拉数据——远程设备列表要绕 hawk-server 一圈（服务端
+  // 不可达时能磨到超时），等它回来再定位会让浮层先在旧坐标/零尺寸上错位一下
+  void placePanel();
+  void loadPanelData();
 });
 
 function close(): void {
   open.value = false;
+}
+
+/** 浮层数据：历史库（IPC，快）+ 远程分区（需拉服务端设备列表，慢）。任一步失败不拖塌浮层，
+ *  远程分区缺席即可（接入未启用/离线也不占面板） */
+async function loadPanelData(): Promise<void> {
+  const seq = ++loadSeq;
+  try {
+    const res = await shell.listLibraries();
+    if (seq !== loadSeq) {
+      return;
+    }
+    current.value = res.current;
+    libraries.value = res.libraries;
+    const status = await shell.remoteStatus();
+    if (seq !== loadSeq) {
+      return;
+    }
+    if (!status.enabled || status.status.state !== 'online') {
+      peers.value = [];
+      return;
+    }
+    // 本机设备不在其列
+    const { devices } = await shell.remoteDevices();
+    if (seq !== loadSeq) {
+      return;
+    }
+    peers.value = devices.filter((d) => d.device_id !== status.status.device_id);
+  } catch {
+    if (seq === loadSeq) {
+      peers.value = [];
+    }
+  }
+}
+
+/** 锚点定位：位置在面板挂载前同步写入（下方展开），挂载后按实际高度决定是否向上翻转。
+ *  期间关闭过就直接放弃——面板已卸载，不碰 null 引用 */
+async function placePanel(): Promise<void> {
+  const trigger = triggerRef.value;
+  if (!trigger) {
+    return;
+  }
+  const rect = trigger.getBoundingClientRect();
+  pos.value = { x: rect.left, y: rect.bottom + PANEL_GAP, width: rect.width };
+  await nextTick();
+  const panel = panelRef.value;
+  if (!panel || !open.value) {
+    return;
+  }
+  const height = panel.offsetHeight;
+  if (rect.bottom + PANEL_GAP + height > window.innerHeight && rect.top - PANEL_GAP - height > 0) {
+    pos.value = { x: rect.left, y: rect.top - PANEL_GAP - height, width: rect.width };
+  }
+}
+
+/** 面板开着才应答的外界事件：改窗/侧栏滚动关闭，Esc 关闭，点外部关闭 */
+function bindOutside(): void {
+  window.addEventListener('resize', close);
+  window.addEventListener('scroll', onScroll, true);
+  document.addEventListener('mousedown', onOutside, true);
+  document.addEventListener('keydown', onKeydown, true);
+}
+
+function unbindOutside(): void {
+  window.removeEventListener('resize', close);
+  window.removeEventListener('scroll', onScroll, true);
+  document.removeEventListener('mousedown', onOutside, true);
+  document.removeEventListener('keydown', onKeydown, true);
 }
 
 /** 侧栏滚动时浮层不跟随，直接关闭（浮层自身滚动除外：scroll 捕获阶段也会经过 window） */
@@ -186,10 +229,7 @@ function pickFolder(): void {
 }
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', close);
-  window.removeEventListener('scroll', onScroll, true);
-  document.removeEventListener('mousedown', onOutside, true);
-  document.removeEventListener('keydown', onKeydown, true);
+  unbindOutside();
 });
 </script>
 
