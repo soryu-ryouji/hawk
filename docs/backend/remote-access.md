@@ -8,7 +8,7 @@
 
 **非目标**（v1 不做）：
 
-- 广域网完整库管理（删除、改标签/评分、管理设置等）——v1 只开放插件保存所需的 `item/add` 与 `folder/create`
+- 广域网完整库管理（删除、改标签/评分、管理设置等）——v1 只开放导入所需的 `item/add`（base64）/`item/upload`（multipart）与 `folder/create`
 - 账号 / 会员体系——服务端为多租户自托管方案，准入即租户 service-key（后续可接账号系统，届时 service-key 下沉为内部凭证，协议不动）
 - 共享库给他人——设备只属于同一套接入凭据
 - 移动端查看器——后续迭代，协议不为此预留特殊设计
@@ -122,7 +122,7 @@ Connection {
 - 本地库：`api_base` 指向 daemon API 端口；远程库：指向 B 侧会话代理端口
 - 前端收到 `connection-changed` 后执行**统一的切换重置**：abort 进行中的请求与 SSE → 清空内存 store → `GET /app/info` → 按返回重新注水。该流程是启动注水的泛化，只写一次
 - **断线分级处理**：路径级抖动（NAT 重绑定、网络切换）由 iroh 路径迁移自治（不断连）；连接真正死亡时 B 侧原会话内重拨并热替换（前端无感）；重拨连续失败/对端离线才回切——主进程经 daemon SSE 的 remote 事件获知，自动把当前连接切回本地库再通知前端。用户看到的是无声回到自己的库，而非远程白屏报错
-- **无感的边界**：只读降级与来源标识保留。桌面端远程浏览仍按 `app/info` 的 `access`（viewer 级）做只读降级，前端无专门分支；浏览器插件的广域网保存使用独立的写会话，不改变桌面端远程浏览的只读语义；窗口保留「当前浏览：家里台式机」轻标识——这是安全与认知底线，不是可省略的区分逻辑
+- **无感的边界**：写能力降级与来源标识保留。桌面端远程浏览先争取写会话：目标开启「允许广域网保存素材」即得 `remote_writer`（**仅导入素材与新建文件夹**，其余写端点 403），否则自动降级只读；前端按 `app/info.access` 区分三态（`viewer` 只读 / `remote_writer` 仅导入 / admin 可读写），窗口保留「当前浏览：家里台式机（可读写 / 仅导入 / 只读）」标识——这是安全与认知底线，不是可省略的区分逻辑。浏览器插件本地模式跟随当前连接（`GET /api/v1/app/connection` 拿会话代理地址与令牌），远端库可写时拖拽直接入库，与桌面端同一条会话通道
 
 ## 关键设计决策
 
@@ -154,8 +154,8 @@ Connection {
 | 层 | 控制项 | 作用 |
 | -- | ------ | ---- |
 | hawk-server | hawk-app key 映射（HMAC 哈希） | 只有映射中带写权限的 key 能换发写作用域 bt；key 由目标设备 daemon 推送，吊销即失效 |
-| 目标设备 | `remote.writable` | 允许广域网写会话导入素材/新建文件夹；默认关闭，每请求校验，关闭立即失效 |
-| 目标 daemon | 本地 key 映射执法 + `AccessLevel::RemoteWriter` 端点白名单 | 会话请求携带 key 验证子，本地裁决存在性与权限（server 声称的 access 不采信）；只放行 GET、查询类 POST、`item/add`（禁止 `path`）与 `folder/create`；其余写端点 403 |
+| 目标设备 | `remote.writable` | 允许广域网写会话导入素材/新建文件夹（查看者 key 会话与同租户设备会话同受此开关约束）；默认关闭，每请求校验，关闭立即失效 |
+| 目标 daemon | 本地 key 映射执法 + `AccessLevel::RemoteWriter` 端点白名单 | 查看者会话按 key 验证子裁决；app 间会话（同租户设备）按本机 `remote.writable` 裁决（server 声称的 access 不采信）。只放行 GET、查询类 POST、`item/add`（禁止 `path`）、`item/upload` 与 `folder/create`；其余写端点 403 |
 
 局域网写权限 `[web]` 与以上链路完全独立：开启局域网写不会放开广域网写，反之亦然。
 
@@ -201,7 +201,7 @@ hawk-server 内嵌 iroh-relay（库形态，不另起进程），准入为共享
 | 控制面   | HTTPS/WSS（TLS 由前置反代终结）；service-key 程序生成 256-bit 随机（`tenant add`），服务端只存 HMAC-SHA256(pepper, key)，恒定时间比较；key 一律走 Authorization 头，不进 URL（防反代日志泄露） |
 | 凭证风控 | gate/login/控制面鉴权失败按来源 IP 计（10min/30 次 → 冷却 15min）；login 另按租户计（20 次 → 池冷却 15min 起指数增长封顶 24h，成功清零）；门令牌 5min TTL + 5 次尝试预算 |
 | 数据面   | iroh（QUIC/noq + TLS 1.3）端到端加密，endpoint_id 即公钥经控制面交换、握手认证；服务端接触不到素材内容（直连不过服务端，中继只见密文） |
-| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与对端身份（endpoint_id）匹配的会话标识，且目标 `remote.writable=true`。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
+| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与对端身份（endpoint_id）匹配的会话标识，且目标 `remote.writable=true`（查看者会话另需 key 带写权限）。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
 | 本地防护 | B 侧会话代理：每次会话随机 token、响应无 CORS、环回监听 |
 | 凭据存储 | 接入配置（url + service_key）存应用级 `~/.config/hawk/remote.toml`（与壳偏好 `config.toml` 分开，daemon 权威写入；明文，权限 0600）；设备身份（device_id、自签证书私钥）存同级 `remote/identity.json`、访问密钥验证子存同级 `remote/keys.json`（均 0600）。浏览器插件的 service-key 与访问密钥存 `browser.storage.local`，与本地 daemon token 同级 |
 | 网页版   | **隧道在服务器终结**：素材明文过服务器（自托管信任前提，与「中继只见密文」刻意不同的取舍）。浏览器令牌 bt 随机换发、服务端存 sha256 哈希与授权（作用域 + 绑定设备 + 凭证）、可随时注销；service-key 与 hawk-app key 都只出现在登录请求体（服务端只见 service-key 与 key 的哈希输入，key 明文以哈希落盘验证后即弃） |

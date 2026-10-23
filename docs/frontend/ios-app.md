@@ -121,7 +121,7 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 现状（不改动即成立）：
 
 - 局域网 write token：可走 `item/update` 等全部写端点
-- 广域网：`hawk-daemon/src/api/mod.rs` 的 `is_remote_writer_allowed` 仅放行 `item/add`（禁 `path`）与 `folder/create`，其余写端点 403 `READ_ONLY`
+- 广域网：`hawk-daemon/src/api/mod.rs` 的 `is_remote_writer_allowed` 仅放行 `item/add`（禁 `path`）、`item/upload` 与 `folder/create`，其余写端点 403 `READ_ONLY`
 
 决策：
 

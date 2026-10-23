@@ -20,10 +20,12 @@ const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 /// SSE 事件名（remote.session 载荷即 SessionEventPayload）
 pub const REMOTE_SESSION_EVENT: &str = "remote.session";
 
-/// 连接失败分类：Server = 服务端不可达/被拒（502）；Session = 会话状态语义（409）
+/// 连接失败分类：Server = 服务端不可达/被拒（502）；Session = 会话状态语义（409）；
+/// write_denied = 可写会话被拒（目标未开启广域网写入），调用方降级只读重试
 #[derive(Debug)]
 pub struct ConnectError {
     pub is_server: bool,
+    pub write_denied: bool,
     pub message: String,
 }
 
@@ -31,6 +33,7 @@ impl ConnectError {
     fn server(message: impl Into<String>) -> ConnectError {
         ConnectError {
             is_server: true,
+            write_denied: false,
             message: message.into(),
         }
     }
@@ -38,6 +41,15 @@ impl ConnectError {
     fn session(message: impl Into<String>) -> ConnectError {
         ConnectError {
             is_server: false,
+            write_denied: false,
+            message: message.into(),
+        }
+    }
+
+    fn write_denied(message: impl Into<String>) -> ConnectError {
+        ConnectError {
+            is_server: false,
+            write_denied: true,
             message: message.into(),
         }
     }
@@ -55,6 +67,9 @@ pub struct ActiveSessionDto {
     pub proxy_port: u16,
     /// 会话代理 token：web 查看器以 ?token= 携带
     pub token: String,
+    /// 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
+    /// 只读会话的代理拒绝写请求，app 的写入口依此隐藏
+    pub writable: bool,
 }
 
 struct ActiveSession {
@@ -116,6 +131,8 @@ impl SessionManager {
     }
 
     /// 建立到目标设备的远程会话：成功返回代理连接信息（app 据此切换连接描述符）。
+    /// 可写优先：目标开启「允许广域网保存素材」时争取写会话，被拒则降级只读
+    /// （浏览本身不该因为不能写而失败）。
     pub async fn connect(
         self: &Arc<SessionManager>,
         http: &reqwest::Client,
@@ -124,16 +141,39 @@ impl SessionManager {
         identity: &Identity,
         target_device_id: &str,
     ) -> ConnectResult<ActiveSessionDto> {
+        match self
+            .connect_once(http, base, key, identity, target_device_id, true)
+            .await
+        {
+            Err(e) if e.write_denied => {
+                tracing::info!("可写会话被拒（{}），降级只读重连", e.message);
+                self.connect_once(http, base, key, identity, target_device_id, false)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn connect_once(
+        self: &Arc<SessionManager>,
+        http: &reqwest::Client,
+        base: &str,
+        key: &str,
+        identity: &Identity,
+        target_device_id: &str,
+        writable: bool,
+    ) -> ConnectResult<ActiveSessionDto> {
         let self_device_id = identity
             .device_id
             .clone()
             .ok_or_else(|| ConnectError::session("设备未注册（先启用远程接入并完成注册）"))?;
 
         // ---- 发起会话 ----
-        let session_id = create_session(http, base, key, &self_device_id, target_device_id).await?;
+        let session_id =
+            create_session(http, base, key, &self_device_id, target_device_id, writable).await?;
 
         // ---- 轮询 ready（WSS 推送为增强，轮询为协议兜底线） ----
-        let connect_info = poll_ready(http, base, key, &session_id).await?;
+        let connect_info = poll_ready(http, base, key, &session_id, writable).await?;
 
         // ---- 建立数据面：组装 EndpointAddr 并拨号 ----
         let conn = match self.dial(identity, &connect_info).await {
@@ -163,6 +203,7 @@ impl SessionManager {
             conn: conn_cell.clone(),
             token: token.clone(),
             session_id: session_id.clone(),
+            writable,
         });
         tokio::spawn(async move {
             tokio::select! {
@@ -178,6 +219,7 @@ impl SessionManager {
             target_library_name,
             proxy_port,
             token,
+            writable,
         };
 
         // ---- 顶替旧会话（断开并尽力取消）。锁 guard 不跨 await：先取出再处理 ----
@@ -410,6 +452,7 @@ async fn create_session(
     key: &str,
     self_device_id: &str,
     target_device_id: &str,
+    writable: bool,
 ) -> ConnectResult<String> {
     let resp = http
         .post(format!("{base}/api/v1/sessions"))
@@ -417,19 +460,32 @@ async fn create_session(
         .json(&json!({
             "source_device_id": self_device_id,
             "target_device_id": target_device_id,
+            "access": if writable { "write" } else { "read" },
         }))
         .send()
         .await
         .map_err(|e| ConnectError::server(format!("会话发起失败: {e}")))?;
     if !resp.status().is_success() {
-        return Err(ConnectError::server(server_message(resp).await));
+        // 目标未开启「允许广域网保存素材」时服务端返 403：降级只读，而不是直接失败
+        let denied = writable && resp.status() == reqwest::StatusCode::FORBIDDEN;
+        let message = server_message(resp).await;
+        return Err(if denied {
+            ConnectError::write_denied(message)
+        } else {
+            ConnectError::server(message)
+        });
     }
     let body: Value = resp
         .json()
         .await
         .map_err(|e| ConnectError::server(format!("会话响应解析失败: {e}")))?;
     if body["data"]["state"] == "rejected" {
-        return Err(ConnectError::session("对方设备已关闭远程访问"));
+        // 写请求被目标拒（本机开关与心跳上报存在窗口差）同样降级重试；只读请求被拒是真拒绝
+        return Err(if writable {
+            ConnectError::write_denied("对方设备未开启远程写入")
+        } else {
+            ConnectError::session("对方设备已关闭远程访问")
+        });
     }
     body["data"]["session_id"]
         .as_str()
@@ -443,6 +499,7 @@ async fn poll_ready(
     base: &str,
     key: &str,
     session_id: &str,
+    writable: bool,
 ) -> ConnectResult<Value> {
     let deadline = tokio::time::Instant::now() + POLL_TIMEOUT;
     loop {
@@ -461,7 +518,13 @@ async fn poll_ready(
             .map_err(|e| ConnectError::server(format!("会话状态解析失败: {e}")))?;
         match body["data"]["state"].as_str().unwrap_or_default() {
             "ready" => return Ok(body["data"]["connect"].clone()),
-            "rejected" => return Err(ConnectError::session("对方拒绝")),
+            "rejected" => {
+                return Err(if writable {
+                    ConnectError::write_denied("对方未开启远程写入")
+                } else {
+                    ConnectError::session("对方拒绝")
+                })
+            }
             "unreachable" => {
                 return Err(ConnectError::session(
                     "目标网络不可达：服务端未提供中继且目标无直连地址",

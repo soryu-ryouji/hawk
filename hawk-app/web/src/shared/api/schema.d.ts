@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/app/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前连接（远程查看模式下同样可用：无库 daemon 只暴露远程管理面与会话代理） */
+        get: operations["connection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/info": {
         parameters: {
             query?: never;
@@ -1098,6 +1115,27 @@ export interface components {
             target_name: string;
             /** @description 会话代理 token：web 查看器以 ?token= 携带 */
             token: string;
+            /**
+             * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
+             *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
+             */
+            writable: boolean;
+        };
+        /**
+         * @description 当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。
+         *     本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。
+         */
+        AppConnectionDto: {
+            /** @description 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>） */
+            api_base?: string | null;
+            device_id?: string | null;
+            label?: string | null;
+            /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
+            mode: string;
+            /** @description 仅 remote 有值：会话令牌 */
+            token?: string | null;
+            /** @description 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限） */
+            writable: boolean;
         };
         AppInfo: {
             access: string;
@@ -1173,6 +1211,31 @@ export interface components {
                 target_name: string;
                 /** @description 会话代理 token：web 查看器以 ?token= 携带 */
                 token: string;
+                /**
+                 * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
+                 *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
+                 */
+                writable: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_AppConnectionDto: {
+            /**
+             * @description 当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。
+             *     本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。
+             */
+            data?: {
+                /** @description 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>） */
+                api_base?: string | null;
+                device_id?: string | null;
+                label?: string | null;
+                /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
+                mode: string;
+                /** @description 仅 remote 有值：会话令牌 */
+                token?: string | null;
+                /** @description 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限） */
+                writable: boolean;
             };
             status: string;
         };
@@ -1400,6 +1463,11 @@ export interface components {
                 target_name: string;
                 /** @description 会话代理 token：web 查看器以 ?token= 携带 */
                 token: string;
+                /**
+                 * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
+                 *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
+                 */
+                writable: boolean;
             };
             status: string;
         };
@@ -2128,6 +2196,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    connection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_AppConnectionDto"];
+                };
+            };
+        };
+    };
     info: {
         parameters: {
             query?: never;

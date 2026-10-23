@@ -4,7 +4,7 @@
 
 use axum::extract::Request;
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use hawk_daemon::core::events::EventBus;
 use hawk_daemon::remote::config::RemoteConfigStore;
@@ -48,6 +48,15 @@ fn test_router() -> Router {
                 }
             }),
         )
+        .route(
+            "/write",
+            post(|req: Request| async move {
+                match req.extensions().get::<TunneledPeer>() {
+                    Some(peer) if peer.writable => "write ok",
+                    _ => "read only",
+                }
+            }),
+        )
         .fallback(|_req: Request| async move { Response::new("reached router".to_string()) })
 }
 
@@ -65,11 +74,13 @@ fn test_proxy_ctx(
     conn: iroh::endpoint::Connection,
     token: &str,
     session_id: &str,
+    writable: bool,
 ) -> Arc<ProxyContext> {
     Arc::new(ProxyContext {
         conn: Arc::new(std::sync::RwLock::new(conn)),
         token: token.to_string(),
         session_id: session_id.to_string(),
+        writable,
     })
 }
 
@@ -114,7 +125,7 @@ async fn tunnel_carries_http_with_viewer_marker() {
         .await
         .expect("隧道连接");
 
-    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_tunnel")).await;
+    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_tunnel", false)).await;
 
     let client = reqwest::Client::new();
     // 正向：代理 → 隧道 → A 路由（携带 viewer 标记）
@@ -159,6 +170,72 @@ async fn tunnel_carries_http_with_viewer_marker() {
     }
 }
 
+/// 写会话：可写代理把 POST 送进隧道（目标侧看到 writable 标记）；只读代理在本地就拦掉写请求，
+/// 读请求照常放行（纵深防御，目标侧仍会二次执法）
+#[tokio::test]
+async fn writable_session_forwards_writes_and_read_only_proxy_rejects() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let identity_a = new_identity(&dir_a, Some("d_a"));
+    let identity_b = Identity::load_or_create(
+        tempfile::tempdir()
+            .unwrap()
+            .path()
+            .join("remote")
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let id_a: iroh::EndpointId = identity_a.endpoint_id.parse().unwrap();
+    let id_b: iroh::EndpointId = identity_b.endpoint_id.parse().unwrap();
+
+    let plane_a = DataPlane::bind(&identity_a, 0, None, test_router())
+        .await
+        .unwrap();
+    plane_a.allow_session("s_write", id_b, true);
+
+    let plane_b = bind_b(&identity_b).await;
+    let addr_b =
+        iroh::EndpointAddr::new(id_a).with_addrs(plane_a.endpoint().unwrap().addr().addrs.clone());
+    let conn = plane_b
+        .endpoint()
+        .unwrap()
+        .connect(addr_b, hawk_daemon::remote::data::HAWK_ALPN)
+        .await
+        .expect("隧道连接");
+
+    let writable_port = free_proxy(test_proxy_ctx(conn.clone(), "tok", "s_write", true)).await;
+    let read_only_port = free_proxy(test_proxy_ctx(conn, "tok", "s_write", false)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("http://127.0.0.1:{writable_port}/write"))
+        .bearer_auth("tok")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "write ok");
+
+    // 只读代理：写被本地拦截（隧道会话本身可写，证明拦截发生在代理层）
+    let resp = client
+        .post(format!("http://127.0.0.1:{read_only_port}/write"))
+        .bearer_auth("tok")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // 只读代理：读请求照常放行
+    let resp = client
+        .get(format!("http://127.0.0.1:{read_only_port}/hello"))
+        .bearer_auth("tok")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "write from A");
+}
+
 #[tokio::test]
 async fn await_first_conn_times_out_and_succeeds() {
     let dir_a = tempfile::tempdir().unwrap();
@@ -197,7 +274,7 @@ async fn await_first_conn_times_out_and_succeeds() {
         .connect(addr, hawk_daemon::remote::data::HAWK_ALPN)
         .await
         .expect("隧道连接");
-    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_first")).await;
+    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_first", false)).await;
     let waiter = {
         let plane = plane_a.clone();
         tokio::spawn(async move {
@@ -252,8 +329,8 @@ async fn sessions_with_same_identity_are_isolated() {
         .connect(addr(), hawk_daemon::remote::data::HAWK_ALPN)
         .await
         .expect("会话 B 隧道连接");
-    let proxy_a = free_proxy(test_proxy_ctx(conn_a, "token-a", "s_a")).await;
-    let proxy_b = free_proxy(test_proxy_ctx(conn_b, "token-b", "s_b")).await;
+    let proxy_a = free_proxy(test_proxy_ctx(conn_a, "token-a", "s_a", false)).await;
+    let proxy_b = free_proxy(test_proxy_ctx(conn_b, "token-b", "s_b", false)).await;
 
     let client = reqwest::Client::new();
     for (port, token) in [(proxy_a, "token-a"), (proxy_b, "token-b")] {
@@ -325,7 +402,7 @@ async fn tunnel_rejects_unknown_identity() {
         .connect(addr, hawk_daemon::remote::data::HAWK_ALPN)
         .await
         .expect("握手本身不校验放行（执法点在连接建立后）");
-    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_wrong")).await;
+    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_wrong", false)).await;
     // A 侧随即断开（close 帧传播有竞态，轮询至生效）：隧道请求必须失败
     let client = reqwest::Client::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
@@ -551,7 +628,7 @@ async fn relay_session_end_to_end() {
     .await
     .expect("中继握手超时")
     .expect("中继握手");
-    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_1")).await;
+    let proxy_port = free_proxy(test_proxy_ctx(conn, "session-token", "s_1", false)).await;
     let resp = reqwest::Client::new()
         .get(format!("http://127.0.0.1:{proxy_port}/hello"))
         .bearer_auth("session-token")

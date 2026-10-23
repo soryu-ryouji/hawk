@@ -39,6 +39,7 @@ const TOKEN: &str = "contract-test-token";
 /// 响应体若声明了 200 schema 则校验结构
 const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("GET", "/health", None),
+    ("GET", "/api/v1/app/connection", None),
     ("GET", "/api/v1/app/info", None),
     ("GET", "/api/v1/app/lan", None),
     ("GET", "/api/v1/app/startup", None),
@@ -427,6 +428,43 @@ async fn expect_ok(app: &TestApp, spec: &Value, method: &str, uri: &str, body: O
         "响应不符合契约 {method} {uri}:\n{}\n响应体: {body_json}",
         errors.join("\n")
     );
+}
+
+/// 无库（远程查看模式）：app/connection 报 none，不谎报可写——
+/// 浏览器插件据此提示「本地 hawk 未连接素材库」而不是发一个必然失败的保存
+#[tokio::test]
+async fn app_connection_reports_none_without_library() {
+    let dir = tempfile::tempdir().unwrap();
+    let remote_config = crate::remote::config::RemoteConfigStore::open(
+        Some(dir.path().join("remote.toml").to_str().unwrap()),
+        None,
+    );
+    let bus = EventBus::new();
+    let state: SharedState = Arc::new(AppState {
+        settings: Settings {
+            library_root: None,
+            port: 0,
+            token: TOKEN.to_string(),
+            reconcile_interval_seconds: 0,
+            cache_parent: None,
+            web_dist: None,
+            remote_config: None,
+        },
+        startup: Arc::new(StartupState::default()),
+        bus: bus.clone(),
+        sse_lagged: std::sync::atomic::AtomicU64::new(0),
+        lan: LanSupervisor::new(),
+        remote: crate::remote::Supervisor::new(bus, remote_config),
+        library: None,
+    });
+    state.startup.mark_ready();
+    let router = build_router(state);
+
+    let (status, body) = call_json(&router, "GET", "/api/v1/app/connection", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["data"]["mode"], "none");
+    assert_eq!(body["data"]["writable"], false);
 }
 
 /// 固化产物同步：openapi.json 与代码生成语义相等（Value 比较，免疫键序/空白差异）
@@ -1603,8 +1641,8 @@ async fn aggregate_and_batch_remove() {
     assert_eq!(body["data"]["tags"], json!(["仅A"]));
 }
 
-/// 广域网受限写：只放行 item/add（禁 path）与 folder/create，其余写端点 403；
-/// 只读隧道流量保持 viewer 只读。
+/// 广域网受限写：只放行导入（item/add base64、item/upload multipart，path 导入被 handler 拒）与
+/// folder/create，其余写端点 403；只读隧道流量保持 viewer 只读。
 #[tokio::test]
 async fn remote_writer_is_limited_to_import_and_folder_create() {
     let app = test_app("remote-writer");
@@ -1651,6 +1689,19 @@ async fn remote_writer_is_limited_to_import_and_folder_create() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // multipart 上传属于导入（客户端无本机路径语义）：过门禁（缺文件由 handler 报错，不是 403）
+    let resp = app
+        .router
+        .clone()
+        .oneshot(tunnel_req("POST", "/api/v1/item/upload", json!({}), true))
+        .await
+        .unwrap();
+    assert_ne!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "item/upload 应放行给受限写会话"
+    );
 
     // 新建文件夹放行
     let resp = app

@@ -423,13 +423,28 @@ async fn handle_message(
                         }
                     },
                     None => {
+                        // app 间会话（同租户设备互信）：写权限只看本机「允许广域网保存素材」总开关。
+                        // 访问密钥是给第三方、可逐把吊销的访问用的，自己的设备走设备身份，两者不混用；
+                        // 写端点仍受 is_remote_writer_allowed 白名单限制（仅导入与新建文件夹）
                         if requested_write {
-                            tracing::info!("拒绝广域网写会话 {session_id}：写会话必须携带访问密钥");
-                            reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id)
+                            if !ctx.remote.current().writable {
+                                tracing::info!("拒绝写会话 {session_id}：本机未开启广域网写入");
+                                reject_session(
+                                    ctx.http,
+                                    ctx.base,
+                                    ctx.key,
+                                    session_id,
+                                    ctx.device_id,
+                                )
                                 .await?;
-                            return Ok(());
+                                return Ok(());
+                            }
+                            tracing::info!(
+                                "放行同租户设备写会话 {session_id}（来源 {}）",
+                                value["from"]["device_id"].as_str().unwrap_or_default()
+                            );
                         }
-                        false
+                        requested_write
                     }
                 };
 

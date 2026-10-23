@@ -397,8 +397,9 @@ fn viewer_access(state: &AppState, token: &str) -> Option<AccessLevel> {
 }
 
 /// viewer（局域网 web 查看）默认只读：仅放行 GET 与查询类 POST；
-/// 可写 token（[web] writable，拆分时为 write_token）解除限制（每请求经 current() 校验，保存即热生效）
-fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
+/// 可写 token（[web] writable，拆分时为 write_token）解除限制（每请求经 current() 校验，保存即热生效）。
+/// 会话代理的只读纵深防御复用同一白名单（remote/data.rs）。
+pub(crate) fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
     if req.method() == axum::http::Method::GET {
         return true;
     }
@@ -410,7 +411,8 @@ fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
 }
 
 /// 广域网受限写：只开放导入素材与新建文件夹；其余写端点仍按只读处理。
-/// item/add 的 path 导入由 handler 再拦（防止远端读本机文件入库）。
+/// 导入两条通道：`item/add` 的 base64（插件）与 `item/upload` 的 multipart（客户端 / app 浏览远端库时
+/// 读不到本机路径，只能传内容）；path 导入由 handler 再拦（防止远端读本机文件入库）。
 fn is_remote_writer_allowed(req: &axum::extract::Request) -> bool {
     if req.method() == axum::http::Method::GET {
         return true;
@@ -421,6 +423,7 @@ fn is_remote_writer_allowed(req: &axum::extract::Request) -> bool {
             | "/api/v1/item/skeleton"
             | "/api/v1/item/aggregate"
             | "/api/v1/item/add"
+            | "/api/v1/item/upload"
             | "/api/v1/folder/create"
     )
 }

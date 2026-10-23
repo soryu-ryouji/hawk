@@ -24,6 +24,10 @@
           "token": {
             "description": "会话代理 token：web 查看器以 ?token= 携带",
             "type": "string"
+          },
+          "writable": {
+            "description": "会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：\n只读会话的代理拒绝写请求，app 的写入口依此隐藏",
+            "type": "boolean"
           }
         },
         "required": [
@@ -32,7 +36,52 @@
           "target_name",
           "target_library_name",
           "proxy_port",
-          "token"
+          "token",
+          "writable"
+        ],
+        "type": "object"
+      },
+      "AppConnectionDto": {
+        "description": "当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。\n本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。",
+        "properties": {
+          "api_base": {
+            "description": "仅 remote 有值：会话代理地址（http://127.0.0.1:<port>）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
+            "type": "string"
+          },
+          "token": {
+            "description": "仅 remote 有值：会话令牌",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "writable": {
+            "description": "当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "writable"
         ],
         "type": "object"
       },
@@ -249,6 +298,10 @@
               "token": {
                 "description": "会话代理 token：web 查看器以 ?token= 携带",
                 "type": "string"
+              },
+              "writable": {
+                "description": "会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：\n只读会话的代理拒绝写请求，app 的写入口依此隐藏",
+                "type": "boolean"
               }
             },
             "required": [
@@ -257,7 +310,64 @@
               "target_name",
               "target_library_name",
               "proxy_port",
-              "token"
+              "token",
+              "writable"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_AppConnectionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。\n本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。",
+            "properties": {
+              "api_base": {
+                "description": "仅 remote 有值：会话代理地址（http://127.0.0.1:<port>）",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "device_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mode": {
+                "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
+                "type": "string"
+              },
+              "token": {
+                "description": "仅 remote 有值：会话令牌",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "writable": {
+                "description": "当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "mode",
+              "writable"
             ],
             "type": "object"
           },
@@ -1008,6 +1118,10 @@
                   "token": {
                     "description": "会话代理 token：web 查看器以 ?token= 携带",
                     "type": "string"
+                  },
+                  "writable": {
+                    "description": "会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：\n只读会话的代理拒绝写请求，app 的写入口依此隐藏",
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -1016,7 +1130,8 @@
                   "target_name",
                   "target_library_name",
                   "proxy_port",
-                  "token"
+                  "token",
+                  "writable"
                 ],
                 "type": "object"
               }
@@ -3474,6 +3589,27 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/app/connection": {
+      "get": {
+        "operationId": "connection",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppConnectionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "当前连接（远程查看模式下同样可用：无库 daemon 只暴露远程管理面与会话代理）",
+        "tags": [
+          "app"
+        ]
+      }
+    },
     "/api/v1/app/info": {
       "get": {
         "operationId": "info",

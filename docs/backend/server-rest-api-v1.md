@@ -43,6 +43,7 @@
 | GET  | `/api/v1/app/startup` | 启动状态与索引构建进度（就绪网关唯一放行端点） |
 | GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列 + 索引管道；SSE 的 `task.progress` 事件为同一快照的推送版） |
 | GET  | `/api/v1/app/token` | 发现连接 token（免鉴权，仅限扩展类客户端） |
+| GET  | `/api/v1/app/connection` | 当前连接描述符（本地库 / 正在浏览的远端库），生态客户端跟随目标用（admin 限定） |
 | GET  | `/api/v1/app/lan` | 读取局域网 web 查看配置与运行状态（admin 限定） |
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
 
@@ -146,6 +147,39 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看器或远程只读会话）/ `remote_writer`（广域网受限写会话） |
 | writable  | boolean | 当前 token 是否可执行写操作：admin 恒 true；viewer 取决于 `[web]` 的写权限配置；remote_writer 仅限导入/建文件夹 |
 | lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。配置读写走 `app/lan`（PUT 内置收敛等待），此字段供状态展示 |
+
+### connection
+
+`GET /api/v1/app/connection`（admin 限定）
+
+当前连接描述符：本地 hawk 现在在看哪个素材库。浏览器插件用它把「跟随本地 hawk」落到具体目标——本地库时返回 `local`（调用方继续用自己的环回地址 + admin token），正在浏览远端库时返回会话代理地址与会话令牌，插件直接打该代理即可把素材写进远端库；无本地库且无远端会话时返回 `none`。远程查看模式（无库 daemon）下同样可用。
+
+能否写入由 `writable` 表示：本地库恒 true；远端库取决于会话是否争取到写权限，即目标设备的「允许广域网保存素材」（目标 daemon 每请求二次执法）。
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": {
+    "mode": "remote",
+    "api_base": "http://127.0.0.1:57123",
+    "token": "会话令牌",
+    "device_id": "d_aaba43017fff4888",
+    "label": "台式机 · 我的素材库",
+    "writable": true
+  }
+}
+```
+
+| 字段     | 类型    | 说明                                                         |
+| -------- | ------- | ------------------------------------------------------------ |
+| mode     | string  | `local`（本地库）/ `remote`（正在浏览的远端库）/ `none`（未连接任何素材库） |
+| api_base | string? | 仅 remote：会话代理环回地址                                  |
+| token    | string? | 仅 remote：会话令牌（与 app 渲染进程同一把）                 |
+| device_id| string? | 仅 remote：目标设备 id                                       |
+| label    | string? | 仅 remote：目标展示名（设备名 · 库名）                       |
+| writable | boolean | 当前连接是否可写                                             |
 
 ### health
 

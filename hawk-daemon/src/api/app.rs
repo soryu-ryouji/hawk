@@ -2,7 +2,7 @@
 //! App 端点：启动握手、积压快照、token 发现的 Host 环回约束。
 
 use crate::api::envelope::{ApiError, Envelope};
-use crate::api::{AccessLevel, SharedState};
+use crate::api::{require_admin, AccessLevel, SharedState};
 use axum::extract::{Extension, State};
 use axum::Json;
 use serde::Serialize;
@@ -15,6 +15,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(startup))
         .routes(routes!(status))
         .routes(routes!(info))
+        .routes(routes!(connection))
         .routes(routes!(token))
 }
 
@@ -282,4 +283,62 @@ async fn token(
 struct TokenResponse {
     status: &'static str,
     data: String,
+}
+
+/// 当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。
+/// 本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。
+#[derive(Serialize, utoipa::ToSchema)]
+struct AppConnectionDto {
+    /// local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）
+    mode: &'static str,
+    /// 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_base: Option<String>,
+    /// 仅 remote 有值：会话令牌
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    /// 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）
+    writable: bool,
+}
+
+/// 当前连接（远程查看模式下同样可用：无库 daemon 只暴露远程管理面与会话代理）
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/connection",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = Envelope<AppConnectionDto>))
+)]
+async fn connection(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+) -> Result<Json<Envelope<AppConnectionDto>>, ApiError> {
+    require_admin(&access)?;
+    if let Some(session) = state.remote.sessions.snapshot() {
+        let label = if session.target_library_name.is_empty() {
+            session.target_name.clone()
+        } else {
+            format!("{} · {}", session.target_name, session.target_library_name)
+        };
+        return Ok(Json(Envelope::ok(AppConnectionDto {
+            mode: "remote",
+            api_base: Some(format!("http://127.0.0.1:{}", session.proxy_port)),
+            token: Some(session.token),
+            device_id: Some(session.target_device_id),
+            label: Some(label),
+            writable: session.writable,
+        })));
+    }
+    let has_library = state.library.is_some();
+    Ok(Json(Envelope::ok(AppConnectionDto {
+        mode: if has_library { "local" } else { "none" },
+        api_base: None,
+        token: None,
+        device_id: None,
+        label: None,
+        writable: has_library,
+    })))
 }

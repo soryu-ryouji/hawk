@@ -653,9 +653,54 @@ async fn write_session_rejected_when_writable_off() {
     task.abort();
 }
 
-/// 写会话不携带查看者凭证（app 间语义）→ 一律拒绝（写只对 key 持有者开放）
+/// app 间写会话（同租户设备互信，无查看者凭证）：本机 writable 关闭 → 拒绝
 #[tokio::test]
-async fn write_session_rejected_without_credential() {
+async fn write_session_from_device_rejected_when_writable_off() {
+    let _guard = TEST_LOCK.lock().await;
+    let (base, hub) = spawn_mock_hub().await;
+    hub.set_write_request(true);
+    let lib = test_library();
+    lib.remote
+        .update(&RemoteSettings {
+            enabled: true,
+            url: base,
+            service_key: KEY.to_string(),
+            quic_port: 0,
+            writable: false,
+            relay: false,
+        })
+        .unwrap();
+
+    let supervisor = Supervisor::new(
+        hawk_daemon::core::events::EventBus::new(),
+        lib.remote.clone(),
+    );
+    let task = tokio::spawn(supervisor.clone().run(
+        Some(hawk_daemon::remote::LibraryContext {
+            paths: lib.paths.clone(),
+            config: lib.config.clone(),
+        }),
+        axum::Router::new(),
+    ));
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if !hub.rejected_sessions().is_empty() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "writable 关闭时同租户写会话未被拒绝"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(hub.accepted_sessions().is_empty(), "写会话不应被接受");
+    task.abort();
+}
+
+/// app 间写会话：本机 writable 开启 → 放行（同租户设备互信，不要求访问密钥）
+#[tokio::test]
+async fn write_session_from_device_accepted_when_writable_on() {
     let _guard = TEST_LOCK.lock().await;
     let (base, hub) = spawn_mock_hub().await;
     hub.set_write_request(true);
@@ -685,16 +730,16 @@ async fn write_session_rejected_without_credential() {
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        if !hub.rejected_sessions().is_empty() {
+        if !hub.accepted_sessions().is_empty() {
             break;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "无凭证写会话未被拒绝"
+            "writable 开启时同租户写会话未被接受"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(hub.accepted_sessions().is_empty(), "无凭证写会话不应被接受");
+    assert!(hub.rejected_sessions().is_empty(), "写会话不应被拒绝");
     task.abort();
 }
 

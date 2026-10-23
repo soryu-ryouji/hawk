@@ -399,6 +399,8 @@ pub struct ProxyContext {
     pub token: String,
     /// 隧道会话 id：每个转发请求带上，A 侧据此判定读写权限
     pub session_id: String,
+    /// 会话是否可写：只读会话在代理侧直接拦写请求（目标侧仍会二次执法，这里省一次隧道往返）
+    pub writable: bool,
 }
 
 /// 启动会话代理：环回 HTTP 监听，token 门禁，逐请求开流转发。
@@ -416,6 +418,10 @@ async fn proxy_handler(
 ) -> Result<axum::response::Response, StatusCode> {
     if !token_valid(&req, &ctx.token) {
         return Err(StatusCode::UNAUTHORIZED);
+    }
+    // 只读会话的纵深防御：与本地库验证同一套只读白名单（GET + 查询类 POST）
+    if !ctx.writable && !crate::api::is_viewer_allowed(&req) {
+        return Err(StatusCode::FORBIDDEN);
     }
     // 客户端自带的会话头一律丢弃，改用服务端绑定的会话标识
     let (mut parts, body) = req.into_parts();
