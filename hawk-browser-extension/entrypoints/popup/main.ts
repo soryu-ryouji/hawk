@@ -1,5 +1,5 @@
 // 弹窗：本地/远程连接设置、目标素材库选择、连接状态。
-import { fetchLibraryInfo, listRemoteDevices, type RemoteDevice } from '../../lib/api';
+import { fetchLibraryInfo, listRemoteDevices, resolveLocalTarget, type RemoteDevice } from '../../lib/api';
 import { getSettings, saveSettings, targetLabel, type HawkSettings } from '../../lib/settings';
 
 const modeSelect = document.querySelector<HTMLSelectElement>('#mode')!;
@@ -95,10 +95,30 @@ async function refreshStatus() {
   setStatus('检查连接中…', 'wait');
   try {
     const info = await fetchLibraryInfo();
-    const label = targetLabel(await getSettings());
-    setStatus(label ? `已连接：${info.name}（${label}）` : `已连接：${info.name}`, 'ok');
+    if (settings.mode === 'remote') {
+      const label = targetLabel(settings);
+      setStatus(label ? `已连接：${info.name}（${label}）` : `已连接：${info.name}`, 'ok');
+      return;
+    }
+    // 本地模式跟随本地 hawk 当前浏览的库（可能是它正在看的远端库）
+    const target = await resolveLocalTarget();
+    if (target.kind === 'remote') {
+      setStatus(
+        target.writable
+          ? `已连接：${info.name}（跟随本地 hawk · ${target.label}）`
+          : `只读：${info.name}（跟随本地 hawk · ${target.label}，目标未开启远程写入）`,
+        target.writable ? 'ok' : 'err',
+      );
+      return;
+    }
+    setStatus(`已连接：${info.name}（本地库）`, 'ok');
   } catch (e) {
-    setStatus(`未连接：${e instanceof Error ? e.message : String(e)}`, 'err');
+    const message = e instanceof Error ? e.message : String(e);
+    // fetch 的网络失败只有 TypeError: Failed to fetch，补上最常见的原因（本地模式排查用）
+    const hint = /fetch|network/i.test(message)
+      ? '本地 hawk 未运行，或 daemon 端口不是 27371（端口被占用时 app 会回退随机端口，需在设置里改地址）'
+      : message;
+    setStatus(`未连接：${hint}`, 'err');
   }
 }
 

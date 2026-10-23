@@ -1,7 +1,14 @@
 // 后台：右键菜单「保存图片到 hawk」入口，负责与 hawk-daemon 通信并反馈结果。
 // MV3 下 contextMenus 须在 onInstalled 里创建，避免 service worker 重启后重复注册。
 import { browser } from 'wxt/browser';
-import { addItemByBase64, createFolder, fetchFolderList, HttpError, type FolderNode } from '../lib/api';
+import {
+  addItemByBase64,
+  createFolder,
+  fetchFolderList,
+  HttpError,
+  resolveLocalTarget,
+  type FolderNode,
+} from '../lib/api';
 import { notify } from '../lib/notify';
 import { getSettings, targetLabel, type HawkSettings } from '../lib/settings';
 
@@ -18,15 +25,18 @@ const USAGE_KEY = 'folderLastUse';
 let foldersCache: { key: string; folders: FolderNode; at: number } | null = null;
 const FOLDERS_CACHE_TTL = 30_000;
 
-/** 最近使用统计按素材库隔离：不同库的同名文件夹不应互相影响排序 */
-function libraryKey(settings: HawkSettings): string {
-  return settings.mode === 'remote'
-    ? `remote:${settings.remoteUrl}:${settings.targetDeviceId}`
-    : `local:${settings.localUrl}`;
+/** 最近使用统计按素材库隔离：不同库的同名文件夹不应互相影响排序。
+ *  本地模式可能跟随远端库（app 正在浏览别的设备），按跟随目标区分，避免切库后串用 */
+async function libraryKey(settings: HawkSettings): Promise<string> {
+  if (settings.mode === 'remote') {
+    return `remote:${settings.remoteUrl}:${settings.targetDeviceId}`;
+  }
+  const target = await resolveLocalTarget();
+  return target.kind === 'remote' ? `follow:${target.label}` : `local:${settings.localUrl}`;
 }
 
 async function getUsage(settings: HawkSettings): Promise<FolderUsage> {
-  const key = `${USAGE_KEY}:${libraryKey(settings)}`;
+  const key = `${USAGE_KEY}:${await libraryKey(settings)}`;
   const stored = await browser.storage.local.get(key);
   return (stored[key] as FolderUsage | undefined) ?? {};
 }
@@ -34,7 +44,7 @@ async function getUsage(settings: HawkSettings): Promise<FolderUsage> {
 /** 保存成功后记录时间戳，并作废缓存让下次面板拿到新排序 */
 async function recordUsage(path: string) {
   const settings = await getSettings();
-  const key = `${USAGE_KEY}:${libraryKey(settings)}`;
+  const key = `${USAGE_KEY}:${await libraryKey(settings)}`;
   const usage = await getUsage(settings);
   usage[path] = Date.now();
   await browser.storage.local.set({ [key]: usage });
@@ -51,7 +61,7 @@ function sortByLastUse(nodes: FolderNode[], usage: FolderUsage): FolderNode[] {
 /** 按最近使用排序后的文件夹树（拖拽保存面板展示用） */
 async function getFolders(force = false): Promise<{ folders: FolderNode; targetLabel: string }> {
   const settings = await getSettings();
-  const key = libraryKey(settings);
+  const key = await libraryKey(settings);
   if (!force && foldersCache && foldersCache.key === key && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
     return { folders: foldersCache.folders, targetLabel: targetLabel(settings) };
   }

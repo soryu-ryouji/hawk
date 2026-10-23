@@ -125,10 +125,50 @@ async function discoverToken(serverUrl: string): Promise<string> {
   }
 }
 
-async function localContext(): Promise<{ base: string; token: string }> {
+/** 当前目标：本地库，或本地 hawk 正在浏览的远端库（跟随它的会话代理） */
+export interface ResolvedTarget {
+  kind: 'local' | 'remote';
+  base: string;
+  token: string;
+  writable: boolean;
+  label: string;
+}
+
+/** daemon 的当前连接描述符（GET /api/v1/app/connection，admin 鉴权） */
+interface AppConnection {
+  mode: 'local' | 'remote' | 'none';
+  api_base?: string;
+  token?: string;
+  device_id?: string;
+  label?: string;
+  writable: boolean;
+}
+
+/**
+ * 本地模式的目标解析：跟随本地 hawk 当前浏览的库——
+ * 本地库直连 localUrl；正在浏览远端库时用会话代理地址 + 会话令牌（与 app 渲染进程同一条通道，
+ * 远端是否可写由目标设备的「允许广域网保存素材」决定，app/connection 的 writable 即该结论）。
+ */
+export async function resolveLocalTarget(): Promise<ResolvedTarget> {
   const s = await getSettings();
-  const token = s.localToken || (await discoverToken(s.localUrl));
-  return { base: s.localUrl, token };
+  const adminToken = s.localToken || (await discoverToken(s.localUrl));
+  const conn = await call<AppConnection>(s.localUrl, '/api/v1/app/connection', {
+    method: 'GET',
+    token: adminToken,
+  });
+  if (conn.mode === 'remote' && conn.api_base && conn.token) {
+    return {
+      kind: 'remote',
+      base: conn.api_base,
+      token: conn.token,
+      writable: conn.writable,
+      label: conn.label ?? '',
+    };
+  }
+  if (conn.mode !== 'local') {
+    throw new Error('本地 hawk 未连接任何素材库');
+  }
+  return { kind: 'local', base: s.localUrl, token: adminToken, writable: true, label: '' };
 }
 
 interface RemoteLoginResult {
@@ -242,7 +282,17 @@ async function remoteContext(forceLogin = false): Promise<{ base: string; token:
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+interface RequestOptions {
+  /** 写请求：本地 hawk 正在浏览一个不可写的远端库时提前给出可读错误（否则只是裸 403） */
+  write?: boolean;
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts: RequestOptions = {},
+): Promise<T> {
   const settings = await getSettings();
   if (settings.mode === 'remote') {
     const { base, token } = await remoteContext();
@@ -257,14 +307,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
   }
 
-  const { base, token } = await localContext();
+  const target = await resolveLocalTarget();
+  if (opts.write && !target.writable) {
+    throw new Error(
+      `本地 hawk 正在浏览的远端库「${target.label || target.base}」未开启远程写入` +
+        '（在目标设备 hawk 设置 → 远程 → 允许广域网保存素材 打开）',
+    );
+  }
   try {
-    return await call<T>(base, path, { method, token, body });
+    return await call<T>(target.base, path, { method, token: target.token, body });
   } catch (e) {
-    // 自动发现的 token 失效（服务重启）→ 清缓存重新发现后重试一次
-    if (e instanceof HttpError && e.status === 401 && !settings.localToken) {
+    // 自动发现的 token 失效（app 重启）或远端会话已换（重连后新代理端口）→ 重新解析重试一次
+    if (e instanceof HttpError && e.status === 401) {
       discovered = null;
-      const retry = await localContext();
+      const retry = await resolveLocalTarget();
       return call<T>(retry.base, path, { method, token: retry.token, body });
     }
     throw e;
@@ -283,7 +339,7 @@ export function fetchFolderList() {
 
 /** 新建文件夹（parent_path 传 null 表示根目录） */
 export function createFolder(name: string) {
-  return request('POST', '/api/v1/folder/create', { name, parent_path: null });
+  return request('POST', '/api/v1/folder/create', { name, parent_path: null }, { write: true });
 }
 
 // 收集来源网页对应 hawk 的 Item.url 字段（与 Eagle 的 website 参数同义）：
@@ -291,11 +347,16 @@ export function createFolder(name: string) {
 
 /** 按 base64 导入（浏览器下载后的图片内容）；website 为来源网页（可选） */
 export function addItemByBase64(imgBase64: string, website?: string, folderPath?: string) {
-  return request('POST', '/api/v1/item/add', {
-    img_base64: imgBase64,
-    ...(website ? { website } : {}),
-    ...(folderPath ? { folder_path: folderPath } : {}),
-  });
+  return request(
+    'POST',
+    '/api/v1/item/add',
+    {
+      img_base64: imgBase64,
+      ...(website ? { website } : {}),
+      ...(folderPath ? { folder_path: folderPath } : {}),
+    },
+    { write: true },
+  );
 }
 
 /**
