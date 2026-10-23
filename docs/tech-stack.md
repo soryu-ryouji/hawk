@@ -6,6 +6,7 @@
 后端：Rust
 前端：Vue 3 + TypeScript (Vite)，只走 HTTP
 桌面壳：Electron，sidecar 拉起后端
+移动端：Swift + SwiftUI（iOS 26+，原生，复用同一套 HTTP 契约）
 契约：OpenAPI
 ```
 
@@ -29,6 +30,15 @@ Electron 壳 + Vue 3 前端（Composition API + `<script setup>` + Pinia），�
 - 前端只通过 REST API 与后端通信，不依赖 Electron IPC
 - Electron 主进程只负责：创建窗口、拉起/回收后端进程、注入 token
 - electron-builder 打包，`extraResources` 携带各平台后端二进制
+
+## 移动端：hawk-ios/（规划中）
+
+原生 iOS / iPadOS 客户端，设计见 [iOS 客户端设计](frontend/ios-app.md)。约束：
+
+- Swift 6 + SwiftUI，部署目标 iOS 26.0，iPhone/iPad 单 target；不使用 WebView 壳、Kotlin Multiplatform、Flutter
+- 只走 HTTP 契约：局域网直连 daemon，广域网经 hawk-server 查看面（`gate`/`login` 换 `bt` 后由服务端隧道代理 `/api/v1/*`），不链接 AGPL 代码
+- SwiftPM 依赖：GRDB（本地索引，M2）；iroh-ffi（设备内直连，M4 视需要）
+- AI 能力：App Intents（Spotlight 语义索引，全机型）、Foundation Models（本地推理，iOS 26+ 且需支持 Apple Intelligence）、Vision（OCR/分类，全机型）
 
 ## 契约：OpenAPI
 

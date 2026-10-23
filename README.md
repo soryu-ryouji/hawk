@@ -34,7 +34,8 @@
   - [x] NAT 穿透栈：传输层为 iroh（打洞/中继/路径迁移/映射保活内建），中继为服务端可选组件（内嵌 iroh-relay，token 准入）
 - 3.0 版本
   - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
-  - [ ] 实现 ios, android 等移动端 app
+  - [ ] 实现 iOS 原生客户端（iPhone / iPad 查看，局域网直连 + 广域网查看，接入 Apple 智能生态），见 [iOS 客户端设计](docs/frontend/ios-app.md)
+  - [ ] 实现 Android 客户端（iOS 稳定后评估跨平台共享层）
 
 ## 核心特性
 
@@ -105,6 +106,7 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 **前端**（[hawk-app](hawk-app/README.md)）
 
 - [hawk-app 设计](docs/frontend/hawk-app.md)：Electron 壳 + Vue 前端的界面与接入设计
+- [iOS 客户端设计](docs/frontend/ios-app.md)：iPhone / iPad 原生端的连接形态、本地索引、AI 分层与路线图
 
 **后端（hawk-daemon/）**
 
