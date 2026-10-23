@@ -20,8 +20,14 @@ const refreshTargetsBtn = document.querySelector<HTMLButtonElement>('#refresh-ta
 let devices: RemoteDevice[] = [];
 let settings: HawkSettings;
 
-function setStatus(text: string, kind: 'ok' | 'err' | 'wait') {
-  statusEl.textContent = text;
+/** 状态行：圆点 + 文案（文案包在 .status-text 里，超长省略而不顶破弹窗宽度） */
+function setStatus(text: string, kind: 'ok' | 'err' | 'wait' | 'warn') {
+  const label = statusEl.querySelector('.status-text');
+  if (label) {
+    label.textContent = text;
+  } else {
+    statusEl.textContent = text;
+  }
   statusEl.dataset.kind = kind;
 }
 
@@ -98,28 +104,26 @@ async function refreshStatus() {
     const info = await fetchLibraryInfo();
     if (settings.mode === 'remote') {
       const label = targetLabel(settings);
-      setStatus(label ? `已连接：${info.name}（${label}）` : `已连接：${info.name}`, 'ok');
+      setStatus(label ? `已连接 · ${label}` : `已连接 · ${info.name}`, 'ok');
       return;
     }
     // 本地模式跟随本地 hawk 当前浏览的库（可能是它正在看的远端库）
     const target = await resolveLocalTarget();
     if (target.kind === 'remote') {
       setStatus(
-        target.writable
-          ? `已连接：${info.name}（跟随本地 hawk · ${target.label}）`
-          : `只读：${info.name}（跟随本地 hawk · ${target.label}，目标未开启远程写入）`,
-        target.writable ? 'ok' : 'err',
+        target.writable ? `已连接 · ${target.label || info.name}` : `只读 · ${target.label || info.name}`,
+        target.writable ? 'ok' : 'warn',
       );
       return;
     }
-    setStatus(`已连接：${info.name}（本地库 · ${target.base.replace('http://', '')}）`, 'ok');
+    setStatus(`已连接 · ${info.name}`, 'ok');
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     // fetch 的网络失败只有 TypeError: Failed to fetch，补上最常见的原因（本地模式排查用）
     const hint = /fetch|network/i.test(message)
       ? '连不上本机 hawk（未运行，或端口被其他程序占用）。端口在 hawk 设置 → 网络 → 本地服务里；若改到了 27371–27400 之外，请在下方「高级选项」里填上端口'
       : message;
-    setStatus(`未连接：${hint}`, 'err');
+    setStatus(`未连接 · ${hint}`, 'err');
   }
 }
 

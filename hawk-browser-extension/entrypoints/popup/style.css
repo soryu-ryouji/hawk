@@ -1,32 +1,67 @@
-:root {
+/* 弹窗（popup）样式：深色简约，扁平单列。
+   尺寸：宽度由内容决定（min-width 300px），高度自适应；html 也铺底色——body 比视口小时
+   浏览器默认白底会从边缘透出来（扩展 popup 的 html 背景默认是白的）。 */
+html {
   color-scheme: dark;
+  background: #16181d;
 }
 
 body {
   margin: 0;
-  width: 300px;
+  min-width: 300px;
   background: #16181d;
   color: #d6d9de;
   font: 13px/1.5 system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  overflow-x: hidden;
 }
 
 main {
-  padding: 14px 16px;
+  padding: 12px 14px 10px;
 }
 
-h1 {
-  margin: 0 0 8px;
-  font-size: 15px;
+/* ---- 头部：品牌 + 状态（状态以圆点 + 短文案，不占整行） ---- */
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.brand {
+  font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .status {
-  margin: 0 0 12px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
+  color: #8a8f98;
+  white-space: nowrap;
+}
+
+/* 状态文本超出时省略（设备 · 库名等长标签不换行、不顶破弹窗宽度） */
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .status[data-kind='ok'] {
-  color: #6fcf7c;
+  color: #5fbf6f;
 }
 
 .status[data-kind='err'] {
@@ -37,9 +72,15 @@ h1 {
   color: #8a8f98;
 }
 
+/* 只读（跟随的远端库未开启写入）：警告色，不是错误 */
+.status[data-kind='warn'] {
+  color: #d9a441;
+}
+
+/* ---- 表单 ---- */
 label {
   display: block;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   font-size: 12px;
   color: #8a8f98;
 }
@@ -49,6 +90,7 @@ select {
   display: block;
   box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
   margin-top: 4px;
   padding: 6px 8px;
   border: 1px solid #2c313a;
@@ -64,33 +106,92 @@ select:focus {
   border-color: #4a7dff;
 }
 
-#remote-fields #refresh-targets {
-  width: 100%;
+#mode {
   margin-bottom: 10px;
 }
 
-.secondary {
-  background: #23272f;
+#remote-fields #refresh-targets {
+  width: 100%;
+  margin: 2px 0 10px;
 }
 
+/* ---- 高级选项：纯文字折叠行（不加边框，避免像输入框） ---- */
+.advanced {
+  margin: 2px 0 10px;
+}
+
+.advanced summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #8a8f98;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced summary::before {
+  content: '▸';
+  font-size: 10px;
+  transition: transform 0.12s;
+}
+
+.advanced[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.advanced summary:hover {
+  color: #c6cbd2;
+}
+
+.advanced[open] summary {
+  margin-bottom: 8px;
+}
+
+.advanced .hint {
+  margin-top: 6px;
+}
+
+/* ---- 按钮：主/次两个等宽并排 ---- */
 .actions {
   display: flex;
   gap: 8px;
-  margin: 4px 0 12px;
+  margin: 2px 0 8px;
 }
 
 button {
+  box-sizing: border-box;
+  max-width: 100%;
   padding: 6px 12px;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 5px;
-  background: #2c313a;
+  background: #262b33;
   color: #d6d9de;
   font-size: 13px;
   cursor: pointer;
 }
 
+.actions button {
+  flex: 1;
+}
+
 button:hover {
-  background: #363c47;
+  background: #30363f;
+}
+
+.secondary {
+  background: transparent;
+  border-color: #2c313a;
+  color: #b9bfc7;
+}
+
+.secondary:hover {
+  background: #23272f;
 }
 
 #save {
@@ -105,27 +206,6 @@ button:hover {
 .hint {
   margin: 0;
   font-size: 12px;
+  line-height: 1.5;
   color: #6b7078;
-}
-
-/* 高级选项折叠区：平时收起，只在改过本地端口/需手动填 Token 时展开 */
-.advanced {
-  margin-bottom: 10px;
-  padding: 8px 10px;
-  border: 1px solid #2c313a;
-  border-radius: 6px;
-}
-
-.advanced summary {
-  font-size: 12px;
-  color: #8a8f98;
-  cursor: pointer;
-}
-
-.advanced[open] summary {
-  margin-bottom: 10px;
-}
-
-.advanced .hint {
-  margin-top: 8px;
 }

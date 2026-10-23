@@ -7,16 +7,15 @@
   </head>
   <body>
     <main>
-      <h1>hawk</h1>
-      <p id="status" class="status">…</p>
+      <header class="head">
+        <span class="brand">hawk</span>
+        <span id="status" class="status"><span class="status-text">…</span></span>
+      </header>
 
-      <label>
-        连接方式
-        <select id="mode">
-          <option value="local">本地 hawk</option>
-          <option value="remote">远程 hawk-server</option>
-        </select>
-      </label>
+      <select id="mode" aria-label="连接方式">
+        <option value="local">本地 hawk</option>
+        <option value="remote">远程 hawk-server</option>
+      </select>
 
       <div id="local-fields">
         <!-- 本地模式零配置：端口由 hawk app 决定、插件自动发现，这里平时不需要填任何东西 -->
@@ -30,7 +29,7 @@
             Token（可选）
             <input id="local-token" type="text" placeholder="留空自动获取（推荐）" />
           </label>
-          <p class="hint">默认按 127.0.0.1:27371–27400 自动寻找本机 hawk。只有在 hawk 设置 → 网络 → 本地服务里把端口改到这段之外时，才需要在这里填端口。</p>
+          <p class="hint">默认按 127.0.0.1:27371–27400 自动寻找本机 hawk。只有把 hawk 的端口改到这段之外，才需要在这里填。</p>
         </details>
       </div>
 
@@ -41,11 +40,11 @@
         </label>
         <label>
           服务密钥（service-key）
-          <input id="service-key" type="password" placeholder="hawk-server tenant add 生成的 hs_ 密钥" autocomplete="off" spellcheck="false" />
+          <input id="service-key" type="password" placeholder="tenant add 生成的 hs_ 密钥" autocomplete="off" spellcheck="false" />
         </label>
         <label>
           访问密钥（须带写权限）
-          <input id="remote-key" type="password" placeholder="hawk 设置 → 远程中签发的访问密钥" autocomplete="off" spellcheck="false" />
+          <input id="remote-key" type="password" placeholder="hawk 设置 → 远程中签发" autocomplete="off" spellcheck="false" />
         </label>
         <label>
           保存到素材库
@@ -55,10 +54,11 @@
       </div>
 
       <div class="actions">
-        <button id="save" type="button">保存设置</button>
-        <button id="check" type="button">测试连接</button>
+        <button id="save" type="button">保存</button>
+        <button id="check" class="secondary" type="button">测试连接</button>
       </div>
-      <p class="hint">右键图片，或拖拽图片到右下角投放区即可收集。</p>
+
+      <p class="hint">右键图片直接保存；拖拽图片过阈值可投到根目录或指定文件夹。</p>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>
