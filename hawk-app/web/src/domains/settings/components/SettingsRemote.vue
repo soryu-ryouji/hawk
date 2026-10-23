@@ -7,6 +7,8 @@
 // 错误条在主组件（v-model:error）；分区切换 v-show 保活（编辑中的字段不丢）。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRemoteStore, useConnectionLabel } from '@/domains/remote';
+import PairingQrDialog from './PairingQrDialog.vue';
+import { encodePairingPayload, remotePairingPayload } from '../pairing';
 import type { RemoteKeyCreated } from '@/shared/types';
 
 /** libraryless：远程查看模式（本地无库）——隐藏分享向开关（没有本地素材可服务）；
@@ -36,6 +38,9 @@ const creating = ref(false);
 /** 刚签发的密钥（明文只在创建响应里，展示到用户关闭为止） */
 const createdKey = ref<RemoteKeyCreated | null>(null);
 const copied = ref('');
+/** 配对二维码（由「保存并生成 iOS 配对二维码」签发的只读密钥生成） */
+const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
+const pairingBusy = ref(false);
 
 onMounted(() => {
   store.startPolling();
@@ -78,7 +83,7 @@ const peerDevices = computed(() =>
   store.devices.filter((d) => d.device_id !== store.dto?.status.device_id).sort((a, b) => Number(b.online) - Number(a.online)),
 );
 
-async function save() {
+async function save(): Promise<boolean> {
   error.value = null;
   saving.value = true;
   const ok = await store.saveConfig({
@@ -92,6 +97,51 @@ async function save() {
   if (!ok) {
     error.value = store.error;
   }
+  return ok;
+}
+
+/** 配对二维码可用条件：启用、服务端地址与服务密钥已填写（保存由按钮动作完成） */
+const canPair = computed(() => enabled.value && url.value.trim().length > 0 && serviceKey.value.trim().length > 0);
+
+/** 保存接入配置 → 签发只读访问密钥 → 生成 iOS 配对二维码 */
+async function openPairing(): Promise<void> {
+  if (!canPair.value || saving.value || pairingBusy.value) {
+    return;
+  }
+  const ok = await save();
+  if (!ok) {
+    return;
+  }
+  const dto = store.dto;
+  if (!dto?.enabled || !dto.url.trim() || !dto.service_key.trim()) {
+    error.value = '请先保存并接入远程访问';
+    return;
+  }
+  pairingBusy.value = true;
+  const created = await store.createKey({ label: 'iPhone / iPad 配对', read: true });
+  pairingBusy.value = false;
+  if (!created) {
+    error.value = store.error;
+    return;
+  }
+  createdKey.value = created;
+  const serverURL = dto.url.trim().replace(/\/+$/, '');
+  const warnings: string[] = [];
+  if (!created.synced) {
+    warnings.push('访问密钥尚未同步到服务端；本机远程接入在线后会自动重试，这之前 iOS 登录会失败。');
+  }
+  if (dto.status.state !== 'online') {
+    warnings.push('远程信令当前未在线；目标设备上线后才能连接。');
+  }
+  pairing.value = {
+    payload: encodePairingPayload(remotePairingPayload(serverURL, dto.service_key.trim(), created.key)),
+    details: [
+      { label: '服务器', value: serverURL },
+      { label: '服务密钥', value: dto.service_key.trim() },
+      { label: '访问密钥', value: created.key },
+    ],
+    warning: warnings.join(' '),
+  };
 }
 
 // ---- 访问密钥动作 ----
@@ -251,6 +301,15 @@ async function removeDevice(deviceId: string, name: string) {
         <div class="switch-label">访问密钥</div>
         <p class="hint">每把密钥独立读/写权限，可随时吊销；查看者需同时提供服务密钥与访问密钥。密钥明文只在签发时显示一次。</p>
 
+        <div v-if="!props.libraryless" class="pair-entry">
+          <button class="primary" :disabled="!canPair || saving || pairingBusy" @click="openPairing">
+            {{ pairingBusy ? '签发中…' : '保存并生成 iOS 配对二维码' }}
+          </button>
+          <p class="hint">
+            会签发一把只读访问密钥并编码进二维码（同时包含 service-key），供 iPhone / iPad 扫码接入。关闭二维码后密钥明文不再展示，可重新生成。
+          </p>
+        </div>
+
         <!-- 签发结果：明文展示一次 -->
         <div v-if="createdKey" class="created-key">
           <code class="created-key-code">{{ createdKey.key }}</code>
@@ -374,6 +433,16 @@ async function removeDevice(deviceId: string, name: string) {
         </div>
       </template>
     </div>
+
+    <PairingQrDialog
+      v-if="pairing"
+      title="广域网配对"
+      :payload="pairing.payload"
+      :details="pairing.details"
+      note="用 hawk iOS 客户端扫码，经自托管 hawk-server 远程浏览本素材库。"
+      :warning="pairing.warning"
+      @close="pairing = null"
+    />
   </div>
 </template>
 
@@ -429,6 +498,12 @@ async function removeDevice(deviceId: string, name: string) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.pair-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 .created-key {
   display: flex;

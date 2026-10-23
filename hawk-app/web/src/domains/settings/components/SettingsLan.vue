@@ -11,6 +11,8 @@ import { errorText } from '@/shared/lib/storeUtil';
 import { useLibraryStore } from '@/domains/library';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
+import PairingQrDialog from './PairingQrDialog.vue';
+import { encodePairingPayload, lanPairingPayload } from '../pairing';
 
 const store = useLibraryStore();
 const error = defineModel<string | null>('error', { default: null });
@@ -24,6 +26,8 @@ const writable = ref(false);
 const separate = ref(false);
 const writeToken = ref('');
 const addresses = ref<string[]>([]);
+const selectedAddress = ref('');
+const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
 const { copy: copyText } = useClipboard({ legacy: true });
 
 onMounted(async () => {
@@ -36,6 +40,7 @@ onMounted(async () => {
     separate.value = s.separate_write_token;
     writeToken.value = s.write_token;
     addresses.value = await shell.lanAddresses();
+    selectedAddress.value = addresses.value[0] ?? '';
   } catch (e) {
     error.value = `读取设置失败：${errorText(e)}`;
   } finally {
@@ -79,6 +84,34 @@ function toggleSeparate(on: boolean) {
 function copy(value: string) {
   void copyText(value);
   store.showToast('已复制到剪贴板');
+}
+
+/** 配对二维码可用条件：启用、有 token、至少一个局域网地址 */
+const canPair = computed(() => enabled.value && addresses.value.length > 0 && token.value.trim().length > 0 && portValid.value);
+
+/** 保存当前配置并生成 iOS 配对二维码（二维码使用保存后的端口与 token） */
+async function openPairing(): Promise<void> {
+  if (!canPair.value || saving.value) {
+    return;
+  }
+  const ok = await save();
+  if (!ok) {
+    return;
+  }
+  const ip = selectedAddress.value || addresses.value[0];
+  if (!ip) {
+    error.value = '未检测到局域网 IPv4 地址';
+    return;
+  }
+  const url = `http://${ip}:${portValue()}`;
+  pairing.value = {
+    payload: encodePairingPayload(lanPairingPayload(url, token.value.trim())),
+    details: [
+      { label: '地址', value: url },
+      { label: '访问 token', value: token.value.trim() },
+    ],
+    warning: writable.value && !separate.value ? '当前访问 token 同时具备写权限；iOS 客户端只读浏览，但请只在信任的设备上配对。' : '',
+  };
 }
 
 /** 保存 [web] 配置（主组件 footer 保存按钮的委托入口）：成功返回 true（主组件据此关闭对话框） */
@@ -218,8 +251,32 @@ defineExpose({ save, busy });
           </ul>
           <p class="hint">在浏览器打开地址并输入访问 token 即可查看；首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。</p>
         </div>
+
+        <label v-if="addresses.length > 1" class="field column">
+          <span class="field-label">配对二维码使用的地址</span>
+          <select v-model="selectedAddress">
+            <option v-for="ip in addresses" :key="ip" :value="ip">{{ ip }}</option>
+          </select>
+        </label>
+
+        <div class="pair-row">
+          <button class="primary" :disabled="!canPair || saving" @click="openPairing">
+            {{ saving ? '保存中…' : '保存并生成配对二维码' }}
+          </button>
+          <span class="hint">用 hawk iOS 客户端扫码接入；会先保存当前局域网配置，二维码包含访问 token。</span>
+        </div>
       </div>
     </template>
+
+    <PairingQrDialog
+      v-if="pairing"
+      title="局域网配对"
+      :payload="pairing.payload"
+      :details="pairing.details"
+      note="用 hawk iOS 客户端扫码连接同一局域网内的素材库。"
+      :warning="pairing.warning"
+      @close="pairing = null"
+    />
   </div>
 </template>
 
@@ -272,5 +329,13 @@ defineExpose({ save, busy });
   color: var(--accent);
   text-decoration: none;
   overflow-wrap: anywhere;
+}
+
+.pair-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  padding-top: 4px;
 }
 </style>

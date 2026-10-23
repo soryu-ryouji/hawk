@@ -69,6 +69,10 @@ useEventListener(
   window,
   'keydown',
   (e) => {
+    // 配对二维码弹层在上层自己处理 Esc；不能同时关掉底层设置面板
+    if (document.body.classList.contains('pairing-open')) {
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
