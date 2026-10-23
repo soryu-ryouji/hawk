@@ -107,3 +107,25 @@ button:hover {
   font-size: 12px;
   color: #6b7078;
 }
+
+/* 高级选项折叠区：平时收起，只在改过本地端口/需手动填 Token 时展开 */
+.advanced {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid #2c313a;
+  border-radius: 6px;
+}
+
+.advanced summary {
+  font-size: 12px;
+  color: #8a8f98;
+  cursor: pointer;
+}
+
+.advanced[open] summary {
+  margin-bottom: 10px;
+}
+
+.advanced .hint {
+  margin-top: 8px;
+}

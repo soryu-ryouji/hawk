@@ -5,9 +5,9 @@ export type ConnectionMode = 'local' | 'remote';
 
 export interface HawkSettings {
   mode: ConnectionMode;
-  /** 本地 hawk-daemon 地址（默认本机 27371 端口） */
-  localUrl: string;
-  /** 手动覆盖本地 Token（可选）；留空则自动发现（仅环回地址） */
+  /** 本地 daemon 端口覆盖（高级选项，留空 = 自动发现 27371–27400）；正常情况下不需要填 */
+  localPort: string;
+  /** 手动覆盖本地 Token（高级选项，可选）；留空则自动发现（仅环回地址） */
   localToken: string;
   /** hawk-server 域名（http(s):// 开头） */
   remoteUrl: string;
@@ -25,7 +25,7 @@ export interface HawkSettings {
 
 const DEFAULTS: HawkSettings = {
   mode: 'local',
-  localUrl: 'http://127.0.0.1:27371',
+  localPort: '',
   localToken: '',
   remoteUrl: '',
   serviceKey: '',
@@ -47,8 +47,8 @@ function normalizeUrl(value: string): string {
 
 export async function saveSettings(patch: Partial<HawkSettings>): Promise<HawkSettings> {
   const normalized = { ...patch };
-  if (patch.localUrl !== undefined) {
-    normalized.localUrl = normalizeUrl(patch.localUrl);
+  if (patch.localPort !== undefined) {
+    normalized.localPort = patch.localPort.trim();
   }
   if (patch.remoteUrl !== undefined) {
     normalized.remoteUrl = normalizeUrl(patch.remoteUrl);
@@ -76,7 +76,7 @@ export async function saveSettings(patch: Partial<HawkSettings>): Promise<HawkSe
   return next;
 }
 
-/** 当前目标素材库展示名 */
+/** 当前目标素材库展示名（远程模式用；本地模式的实际目标由 daemon 的 app/connection 决定） */
 export function targetLabel(settings: HawkSettings): string {
   if (!settings.targetDeviceId) {
     return '';

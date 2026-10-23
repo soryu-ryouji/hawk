@@ -25,27 +25,29 @@ const USAGE_KEY = 'folderLastUse';
 let foldersCache: { key: string; folders: FolderNode; at: number } | null = null;
 const FOLDERS_CACHE_TTL = 30_000;
 
-/** 最近使用统计按素材库隔离：不同库的同名文件夹不应互相影响排序。
- *  本地模式可能跟随远端库（app 正在浏览别的设备），按跟随目标区分，避免切库后串用 */
-async function libraryKey(settings: HawkSettings): Promise<string> {
+/** 目标标识 + 展示名：最近使用统计与文件夹树缓存按目标隔离（本机切库/切到远端库不串用），
+ *  展示名同时给拖拽面板标题用（跟随远端库时告诉用户存进的是哪台设备） */
+async function targetInfo(settings: HawkSettings): Promise<{ key: string; label: string }> {
   if (settings.mode === 'remote') {
-    return `remote:${settings.remoteUrl}:${settings.targetDeviceId}`;
+    return { key: `remote:${settings.remoteUrl}:${settings.targetDeviceId}`, label: targetLabel(settings) };
   }
   const target = await resolveLocalTarget();
-  return target.kind === 'remote' ? `follow:${target.label}` : `local:${settings.localUrl}`;
+  return target.kind === 'remote'
+    ? { key: `follow:${target.label}`, label: `跟随本地 hawk · ${target.label}` }
+    : { key: `local:${target.base}`, label: '本地库' };
 }
 
-async function getUsage(settings: HawkSettings): Promise<FolderUsage> {
-  const key = `${USAGE_KEY}:${await libraryKey(settings)}`;
-  const stored = await browser.storage.local.get(key);
-  return (stored[key] as FolderUsage | undefined) ?? {};
+async function getUsage(key: string): Promise<FolderUsage> {
+  const storageKey = `${USAGE_KEY}:${key}`;
+  const stored = await browser.storage.local.get(storageKey);
+  return (stored[storageKey] as FolderUsage | undefined) ?? {};
 }
 
 /** 保存成功后记录时间戳，并作废缓存让下次面板拿到新排序 */
 async function recordUsage(path: string) {
-  const settings = await getSettings();
-  const key = `${USAGE_KEY}:${await libraryKey(settings)}`;
-  const usage = await getUsage(settings);
+  const info = await targetInfo(await getSettings());
+  const key = `${USAGE_KEY}:${info.key}`;
+  const usage = await getUsage(info.key);
   usage[path] = Date.now();
   await browser.storage.local.set({ [key]: usage });
   foldersCache = null;
@@ -61,14 +63,14 @@ function sortByLastUse(nodes: FolderNode[], usage: FolderUsage): FolderNode[] {
 /** 按最近使用排序后的文件夹树（拖拽保存面板展示用） */
 async function getFolders(force = false): Promise<{ folders: FolderNode; targetLabel: string }> {
   const settings = await getSettings();
-  const key = await libraryKey(settings);
-  if (!force && foldersCache && foldersCache.key === key && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
-    return { folders: foldersCache.folders, targetLabel: targetLabel(settings) };
+  const info = await targetInfo(settings);
+  if (!force && foldersCache && foldersCache.key === info.key && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
+    return { folders: foldersCache.folders, targetLabel: info.label };
   }
   const root = await fetchFolderList();
-  const folders = { ...root, children: sortByLastUse(root.children, await getUsage(settings)) };
-  foldersCache = { key, folders, at: Date.now() };
-  return { folders, targetLabel: targetLabel(settings) };
+  const folders = { ...root, children: sortByLastUse(root.children, await getUsage(info.key)) };
+  foldersCache = { key: info.key, folders, at: Date.now() };
+  return { folders, targetLabel: info.label };
 }
 
 export default defineBackground(() => {
@@ -156,8 +158,7 @@ async function saveImage(srcUrl: string, pageUrl?: string, folderPath?: string) 
     if (folderPath) {
       void recordUsage(folderPath).catch(() => {}); // 计入常用统计，失败不影响保存结果
     }
-    const settings = await getSettings();
-    const label = targetLabel(settings);
+    const label = (await targetInfo(await getSettings())).label;
     await notify(label ? `已保存到 ${label}` : '已保存到 hawk');
   } catch (e) {
     await notify(`保存失败：${e instanceof Error ? e.message : String(e)}`);

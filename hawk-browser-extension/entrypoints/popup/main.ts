@@ -1,11 +1,12 @@
-// 弹窗：本地/远程连接设置、目标素材库选择、连接状态。
+// 弹窗：连接方式与状态（本地模式零配置：端口自动发现；可选的端口/Token 覆盖收在「高级选项」里）。
 import { fetchLibraryInfo, listRemoteDevices, resolveLocalTarget, type RemoteDevice } from '../../lib/api';
+import { resetLocalBase } from '../../lib/local-discovery';
 import { getSettings, saveSettings, targetLabel, type HawkSettings } from '../../lib/settings';
 
 const modeSelect = document.querySelector<HTMLSelectElement>('#mode')!;
 const localFields = document.querySelector<HTMLDivElement>('#local-fields')!;
 const remoteFields = document.querySelector<HTMLDivElement>('#remote-fields')!;
-const localUrlInput = document.querySelector<HTMLInputElement>('#local-url')!;
+const localPortInput = document.querySelector<HTMLInputElement>('#local-port')!;
 const localTokenInput = document.querySelector<HTMLInputElement>('#local-token')!;
 const remoteUrlInput = document.querySelector<HTMLInputElement>('#remote-url')!;
 const serviceKeyInput = document.querySelector<HTMLInputElement>('#service-key')!;
@@ -111,12 +112,12 @@ async function refreshStatus() {
       );
       return;
     }
-    setStatus(`已连接：${info.name}（本地库）`, 'ok');
+    setStatus(`已连接：${info.name}（本地库 · ${target.base.replace('http://', '')}）`, 'ok');
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     // fetch 的网络失败只有 TypeError: Failed to fetch，补上最常见的原因（本地模式排查用）
     const hint = /fetch|network/i.test(message)
-      ? '本地 hawk 未运行，或 daemon 端口不是 27371（端口被占用时 app 会回退随机端口，需在设置里改地址）'
+      ? '连不上本机 hawk（未运行，或端口被其他程序占用）。端口在 hawk 设置 → 网络 → 本地服务里；若改到了 27371–27400 之外，请在下方「高级选项」里填上端口'
       : message;
     setStatus(`未连接：${hint}`, 'err');
   }
@@ -125,7 +126,7 @@ async function refreshStatus() {
 async function init() {
   settings = await getSettings();
   modeSelect.value = settings.mode;
-  localUrlInput.value = settings.localUrl;
+  localPortInput.value = settings.localPort;
   localTokenInput.value = settings.localToken;
   remoteUrlInput.value = settings.remoteUrl;
   serviceKeyInput.value = settings.serviceKey;
@@ -171,13 +172,14 @@ saveBtn.addEventListener('click', async () => {
   try {
     settings = await saveSettings({
       mode,
-      localUrl: localUrlInput.value,
+      localPort: localPortInput.value,
       localToken: localTokenInput.value,
       remoteUrl: remoteUrlInput.value,
       serviceKey: serviceKeyInput.value,
       remoteKey: remoteKeyInput.value,
       ...(mode === 'remote' ? target : {}),
     });
+    resetLocalBase(); // 端口覆盖可能变了，丢弃发现缓存（下次请求重新探活/直连）
     await refreshStatus();
   } catch (e) {
     setStatus(`保存失败：${e instanceof Error ? e.message : String(e)}`, 'err');

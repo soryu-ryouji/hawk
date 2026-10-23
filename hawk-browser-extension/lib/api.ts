@@ -5,6 +5,7 @@
 // 远程模式：两级验证——service-key（池门禁）换门令牌，门令牌 + hawk-app key（须带写权限）
 // 换写作用域令牌（bt 绑定唯一目标素材库），之后的素材请求经查看面代理转发到目标 daemon。
 import { getSettings, saveSettings, type HawkSettings } from './settings';
+import { discoverLocalBase, resetLocalBase } from './local-discovery';
 
 interface Envelope<T> {
   status: string;
@@ -146,13 +147,16 @@ interface AppConnection {
 
 /**
  * 本地模式的目标解析：跟随本地 hawk 当前浏览的库——
- * 本地库直连 localUrl；正在浏览远端库时用会话代理地址 + 会话令牌（与 app 渲染进程同一条通道，
+ * 本地库直连本地 daemon；正在浏览远端库时用会话代理地址 + 会话令牌（与 app 渲染进程同一条通道，
  * 远端是否可写由目标设备的「允许广域网保存素材」决定，app/connection 的 writable 即该结论）。
+ * 本地 daemon 的端口由 app 决定（默认 27371，自动选择限 27371–27400），插件按同一段探活；
+ * 高级选项里的端口覆盖优先（见 local-discovery.ts）。
  */
 export async function resolveLocalTarget(): Promise<ResolvedTarget> {
   const s = await getSettings();
-  const adminToken = s.localToken || (await discoverToken(s.localUrl));
-  const conn = await call<AppConnection>(s.localUrl, '/api/v1/app/connection', {
+  const base = await discoverLocalBase(parsePort(s.localPort));
+  const adminToken = s.localToken || (await discoverToken(base));
+  const conn = await call<AppConnection>(base, '/api/v1/app/connection', {
     method: 'GET',
     token: adminToken,
   });
@@ -168,7 +172,13 @@ export async function resolveLocalTarget(): Promise<ResolvedTarget> {
   if (conn.mode !== 'local') {
     throw new Error('本地 hawk 未连接任何素材库');
   }
-  return { kind: 'local', base: s.localUrl, token: adminToken, writable: true, label: '' };
+  return { kind: 'local', base, token: adminToken, writable: true, label: '' };
+}
+
+/** 高级选项里的端口（留空/非法 → 不用覆盖，走自动发现） */
+function parsePort(value: string): number | undefined {
+  const port = Number(value.trim());
+  return value.trim() !== '' && Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
 }
 
 interface RemoteLoginResult {
@@ -320,6 +330,7 @@ async function request<T>(
     // 自动发现的 token 失效（app 重启）或远端会话已换（重连后新代理端口）→ 重新解析重试一次
     if (e instanceof HttpError && e.status === 401) {
       discovered = null;
+      resetLocalBase(); // app 重启可能换了端口，重试时重新探活
       const retry = await resolveLocalTarget();
       return call<T>(retry.base, path, { method, token: retry.token, body });
     }

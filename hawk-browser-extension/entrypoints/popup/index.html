@@ -19,14 +19,19 @@
       </label>
 
       <div id="local-fields">
-        <label>
-          本地服务器地址
-          <input id="local-url" type="text" placeholder="http://127.0.0.1:27371" />
-        </label>
-        <label>
-          本地 Token（可选）
-          <input id="local-token" type="text" placeholder="留空自动获取（推荐）" />
-        </label>
+        <!-- 本地模式零配置：端口由 hawk app 决定、插件自动发现，这里平时不需要填任何东西 -->
+        <details id="local-advanced" class="advanced">
+          <summary>高级选项</summary>
+          <label>
+            本地端口（留空自动发现）
+            <input id="local-port" type="text" inputmode="numeric" placeholder="留空即自动查找本机 hawk" />
+          </label>
+          <label>
+            Token（可选）
+            <input id="local-token" type="text" placeholder="留空自动获取（推荐）" />
+          </label>
+          <p class="hint">默认按 127.0.0.1:27371–27400 自动寻找本机 hawk。只有在 hawk 设置 → 网络 → 本地服务里把端口改到这段之外时，才需要在这里填端口。</p>
+        </details>
       </div>
 
       <div id="remote-fields" hidden>
