@@ -45,7 +45,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 
 0. 门禁并行：`rust`（daemon / server 两腿 matrix：fmt → clippy → test）+ `app`（lint / 格式 / 单测）
 1. 构建同时起跑，不等门禁：
-   - `windows`：先过发版守卫（版本号取自 package.json，同名 tag 已存在则失败）→ web 与 cargo 并行 → `hawk-windows-x64.zip` + 边车（正式版 mx=9 最小体积）
+   - `windows`：先过发版守卫（版本号取自 package.json，同名 tag 已存在则失败）→ web 与 cargo 并行 → `hawk-windows-x64.zip` + 边车（mx=5 压缩）
    - `macos`：只产 Apple Silicon，`hawk-mac-arm64.zip` + 边车
    - `linux`：兼作全链复现门禁——daemon release 构建 → OpenAPI 类型同步校验 → UI 端到端自检 → `hawk-linux-x64.AppImage` + 边车
 2. `publish` 汇流 job（ubuntu，门禁与三平台构建**全部成功**后才跑）：下载全部 Artifacts → 以 `tag_name: v2.5.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）；nightly 则轮转重建。任一检查/构建失败则不发布（全有或全无，不会出现只有部分平台产物的半成品 Release）
@@ -67,7 +67,7 @@ main 分支出现 `feat` / `fix` 开头的提交即触发（同分支 `concurren
 
 特性与边界：
 
-- **滚动覆盖，无历史**：旧 nightly 即删，要看历史版本用正式 Release；打包用 mx=5 快速出包（正式版才用 mx=9 最小体积）
+- **滚动覆盖，无历史**：旧 nightly 即删，要看历史版本用正式 Release；打包统一 mx=5 快速出包（mx=9 只省 10-20MB，Windows 上多花 ~2.5 分钟）
 - prerelease 不出现在 `releases/latest`，stable 通道查询天然隔离
 - nightly 通道客户端（含局域网 web 端刷新）自动拿到最新构建
 - 版本覆写与 sha 注入见上文「版本号规则」

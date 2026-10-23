@@ -1,4 +1,5 @@
-// electron-builder 包装：默认降低 7z 压缩级别换取打包速度（mx=9 单线程 2 分钟 → mx=5 约 1 分钟）。
+// electron-builder 包装：默认降低 7z 压缩级别换取打包速度（mx=9 单线程 2 分钟 → mx=5 约 1 分钟；
+// Windows 上实测 199s → 46s，只省 ~10-20MB）。CI 全通道都用默认 5，不再按通道切换。
 // 覆盖：ELECTRON_BUILDER_COMPRESSION_LEVEL=9 npm run pack（最小体积）；=3 约 20 秒（+27MB）。
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';

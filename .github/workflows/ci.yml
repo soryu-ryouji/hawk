@@ -17,8 +17,9 @@
 # - push(main) 且提交信息以 feat/fix 开头：滚动更新 nightly 预发布（固定 tag=nightly，prerelease）
 # - workflow_dispatch：inputs.publish 选 none（只构建上传 Artifacts，不动 Release）/ nightly / stable
 #
-# 压缩级别按构建类型分流：正式版 mx=9 最小体积；nightly/手动 mx=5 快速出包
-# （mx=9 压缩耗时翻倍只换 ~10-20MB 体积；下载走 GitHub CDN，仅正式版在意最小体积）。
+# 压缩级别：全通道统一 mx=5（pack.mjs 默认值）。曾经正式版用 mx=9 换最小体积，实测 Windows 上
+# 打包 46s → 199s，只省 ~10-20MB；下载走 GitHub CDN，这 2.5 分钟不值得。需要最小体积时本地用
+# ELECTRON_BUILDER_COMPRESSION_LEVEL=9 打包。
 # Windows 产物为 zip（解压即用，全 64 位，无 NSIS 启动壳）；macOS 只产 Apple Silicon（arm64）。
 name: ci
 
@@ -177,12 +178,15 @@ jobs:
       # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
       - name: Build web & daemon (parallel)
         run: |
+          t0=$(date +%s)
+          el() { echo "[$1] $(( $(date +%s) - t0 ))s"; }
           node scripts/build-server.mjs & p1=$!
           npm run build & p2=$!
           node scripts/build-electron.mjs & p3=$!
-          wait $p1
-          wait $p2
-          wait $p3
+          # 逐个 wait 传播后台失败，并打印各自完成时刻（定位构建耗时构成）
+          wait $p1; el daemon
+          wait $p2; el web
+          wait $p3; el main
 
       # OpenAPI → TS 类型同步校验：openapi.json 变更必须重新生成 schema.d.ts 一并提交，
       # 否则前端类型与契约静默漂移（gen-types 直接用上一步的 daemon 产物拉起服务）
@@ -246,6 +250,19 @@ jobs:
         working-directory: hawk-app
     steps:
       - uses: actions/checkout@v7
+
+      # Windows runner 上 Defender 实时扫描会让大 target 目录的编译/链接慢 2-3 倍；
+      # 把工作区（含 hawk-daemon/target）与 cargo 缓存排除掉（hosted runner 有管理员权限；
+      # 策略禁用时忽略，不影响构建）
+      - name: Exclude build dirs from Defender
+        shell: pwsh
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo" -ErrorAction Stop
+            Write-Host 'Defender 实时扫描已排除工作区与 cargo 缓存'
+          } catch {
+            Write-Host "Defender 排除失败（忽略）：$_"
+          }
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -313,24 +330,24 @@ jobs:
       - name: Build web & native (parallel)
         shell: bash
         run: |
+          t0=$(date +%s)
+          el() { echo "[$1] $(( $(date +%s) - t0 ))s"; }
           node scripts/build-server.mjs & p1=$!
           node scripts/build-update.mjs & p2=$!
           npm run build & p3=$!
           node scripts/build-electron.mjs & p4=$!
           # 逐个 wait 传播后台失败（裸 wait 无论子任务成败都返回 0，
-          # 曾导致 Windows 上 daemon 编译失败被吞、打包继续产出无 daemon 的 zip）
-          wait $p1
-          wait $p2
-          wait $p3
-          wait $p4
+          # 曾导致 Windows 上 daemon 编译失败被吞、打包继续产出无 daemon 的 zip），
+          # 并打印各自完成时刻：Windows 的耗时构成（cargo / vite / esbuild）只有这里能看到
+          wait $p1; el daemon
+          wait $p2; el update
+          wait $p3; el web
+          wait $p4; el main
 
       - name: Pack
         # --publish never：禁用 electron-builder 自带发布（CI 下会隐式触发并索要 GH_TOKEN；
         # 配置文件里写 never 会被当成自定义 publisher 模块名，只能走 CLI）——发布统一由 publish job 负责
         run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.flag }}
-        env:
-          # 正式版（release 守卫产出 tag）mx=9 最小体积；nightly/手动 mx=5 快速出包
-          ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ steps.release.outputs.tag && '9' || '5' }}
 
       # 回归守卫：Windows 构建曾因 daemon 编译失败静默产出无 daemon 的 zip（并行 wait 吞错误），
       # 旧 daemon 会被沿用到运行时，表现为新 app 传 --remote-config 报错

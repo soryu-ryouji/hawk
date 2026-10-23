@@ -48,7 +48,7 @@ export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-b
 
 ## CI 发版
 
-`.github/workflows/ci.yml`（门禁与三平台构建并行起跑，`publish` 汇流 job 全部成功后发布；正式版 mx=9 压缩，nightly/手动 mx=5）：
+`.github/workflows/ci.yml`（门禁与三平台构建并行起跑，`publish` 汇流 job 全部成功后发布；打包统一 mx=5 压缩）：
 
 - main 分支提交信息以 `release` 开头：正式 Release（版本号取自 package.json，同名 tag 已存在则失败）
 - main 分支提交信息以 `feat`/`fix` 开头（conventional commits）：滚动覆盖 `nightly` 预发布（PR 合并想触发请用 squash merge）
