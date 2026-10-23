@@ -7,13 +7,8 @@
 # 构建/安装脚本（build.* / install.*）默认输出目录
 /out/
 
-# Rust 后端构建产物
-hawk-daemon/target/
-hawk-server/target/
-hawk-update/target/
 # deploy 脚本默认输出（仓库根同名目录已被 hawk-server/ 占用）
 /hawk-server.bin
-/tools/.tmp/
 
-# Electron 主进程/preload 的 esbuild 产物（electron/src 的 TS 源码构建生成）
-hawk-app/electron/out/
+# 各子项目的构建产物由子项目自己的 .gitignore 管（hawk-daemon/、hawk-app/、hawk-server/、
+# hawk-update/、hawk-browser-extension/、hawk-ios/、tools/），根目录只留跨项目条目
