@@ -11,6 +11,29 @@
   gap: 12px;
 }
 
+/* 嵌入到合并分区（网络）内的分组：沿用字段间距，但不再自带 padding/滚动——
+   滚动容器是外层分区，否则嵌套出两个滚动条。给 SettingsLan/SettingsRemote/SettingsLocalService 用 */
+.pane.embedded {
+  flex: none;
+  overflow: visible;
+  padding: 0;
+}
+
+/* 合并分区的分组标题（网络：本地服务 / 局域网 / 远程） */
+.section-title {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-0);
+}
+
+.section-title:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
 /* ---- 字段：标签置顶的块状排布 ---- */
 .field {
   display: flex;

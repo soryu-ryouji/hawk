@@ -99,6 +99,12 @@ fs.writeFileSync(path.join(lib, '海报', 'logo.png'), png(8, 8, [0, 0, 255]));
 const fakeHome = path.join(tmp, 'home');
 const configDir = path.join(fakeHome, '.config', 'hawk');
 fs.mkdirSync(configDir, { recursive: true });
+// Windows 的 app.getPath('appData')/Electron userData 要求 %APPDATA%/%LOCALAPPDATA% 目录存在，
+// 否则主进程启动即抛 "Failed to get 'appData' path"（全新临时目录必现）
+if (process.platform === 'win32') {
+  fs.mkdirSync(path.join(fakeHome, 'AppData', 'Roaming'), { recursive: true });
+  fs.mkdirSync(path.join(fakeHome, 'AppData', 'Local'), { recursive: true });
+}
 const configFile = path.join(configDir, 'config.toml');
 const homeEnv =
   process.platform === 'win32'
@@ -331,14 +337,19 @@ try {
   await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
   check('Esc 关闭预览', await evaljs(`!document.querySelector('.overlay')`), true);
 
-  // ---- 设置面板：打开 → 分区导航 → 局域网分区（子组件保活挂载）→ 关闭 ----
+  // ---- 设置面板：打开 → 分区导航 → 网络分区（本地端口 + 局域网块，子组件保活挂载）→ 关闭 ----
   await evaljs(`document.querySelector('.titlebar [title="设置"]')?.click()`);
   check('设置面板打开', await waitFor(async () => evaljs(`!!document.querySelector('.dialog .nav')`), 5_000), true);
-  await evaljs(`[...document.querySelectorAll('.dialog .nav-item')].find((b) => b.textContent.includes('局域网'))?.click()`);
-  check('局域网分区渲染（v-show 切换）', await waitFor(async () => {
+  await evaljs(`[...document.querySelectorAll('.dialog .nav-item')].find((b) => b.textContent.includes('网络'))?.click()`);
+  check('网络分区渲染（v-show 切换）', await waitFor(async () => {
     const el = await evaljs(`[...document.querySelectorAll('.pane')].find((p) => p.textContent.includes('启用局域网'))`);
     return el ? true : null;
   }, 5_000), true);
+  check(
+    '网络分区包含本地端口设置',
+    await evaljs(`[...document.querySelectorAll('.pane')].some((p) => p.textContent.includes('本地 API 端口'))`),
+    true,
+  );
   await evaljs(`document.querySelector('.dialog-head .icon-btn')?.click()`);
   check('关闭设置面板', await evaljs(`!document.querySelector('.dialog')`), true);
 

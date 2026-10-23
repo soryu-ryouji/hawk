@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设置面板壳：左侧导航 + 右侧分区（子组件）的两栏结构（窄屏折叠为顶部横向页签）。
-// 分区实现各自独立：SettingsAppearance（外观，实时生效）/ SettingsLan（局域网，仅 Electron，
-// 状态自管 + 暴露 save 给 footer 委托调用）/ SettingsUpdate（更新，仅 Electron）/
+// 分区实现各自独立：SettingsAppearance（外观，实时生效）/ SettingsLocalService + SettingsLan +
+// SettingsRemote（「网络」分区的三块：本地端口 / 局域网 / 远程）/ SettingsUpdate（更新，仅 Electron）/
 // SettingsConnection（连接，仅局域网 web 端）。分区切换用 v-show 保活：LAN 编辑中字段与
 // 更新下载进度在切换分区后不丢。
 // 交互要点：
@@ -19,6 +19,7 @@ import Icon from '@/shared/ui/Icon.vue';
 import SettingsAppearance from './SettingsAppearance.vue';
 import SettingsHiding from './SettingsHiding.vue';
 import SettingsLan from './SettingsLan.vue';
+import SettingsLocalService from './SettingsLocalService.vue';
 import SettingsRemote from './SettingsRemote.vue';
 import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
@@ -26,17 +27,18 @@ import SettingsConnection from './SettingsConnection.vue';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
-/** 当前分区：外观 / 隐藏项 / 局域网（Electron）/ 远程（Electron）/ 存储（Electron）/ 更新（Electron）/ 连接（局域网 web 端，含 token 注销） */
-const section = ref<'appearance' | 'hiding' | 'lan' | 'remote' | 'storage' | 'update' | 'connection'>('appearance');
+/** 当前分区：外观 / 隐藏项 / 网络（Electron：本地端口 + 局域网 + 远程）/ 存储 / 更新 /
+ *  连接（局域网 web 端，含 token 注销） */
+const section = ref<'appearance' | 'hiding' | 'network' | 'storage' | 'update' | 'connection'>('appearance');
 /** 错误条（各分区经 v-model:error 写入；LAN 分区的读取/校验/保存错误） */
 const error = ref<string | null>(null);
 
 const store = useLibraryStore();
-/** 当前连接是否 admin：远程浏览/局域网 viewer 下隐藏 admin 限定分区（局域网），
+/** 当前连接是否 admin：远程浏览/局域网 viewer 下隐藏 admin 限定内容（局域网块），
  *  避免只读 token 调管理端点 403（viewer token cannot access admin settings） */
 const isAdmin = computed(() => store.access === 'admin');
 
-/** LAN 分区实例（v-show 保活，footer 保存按钮委托其 save；外观/更新分区无保存语义） */
+/** 「网络」分区的 LAN 块实例（v-show 保活，footer 保存按钮委托其 save；本地端口块自带重启按钮） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
 /** footer 按钮禁用：LAN 分区加载/保存中 */
 function lanBusy(): boolean {
@@ -82,7 +84,7 @@ useEventListener(
   { capture: true },
 );
 
-/** 保存：委托 LAN 分区（设置面板唯一有保存语义的分区）；失败切到局域网分区暴露错误字段 */
+/** 保存：委托 LAN 块（footer 保存的唯一语义所在）；失败切到网络分区暴露错误字段 */
 async function save() {
   if (!lanPane.value) {
     return;
@@ -90,8 +92,8 @@ async function save() {
   const ok = await lanPane.value.save();
   if (ok) {
     emit('close');
-  } else if (section.value !== 'lan') {
-    section.value = 'lan';
+  } else if (section.value !== 'network') {
+    section.value = 'network';
   }
 }
 </script>
@@ -108,22 +110,31 @@ async function save() {
         </header>
 
         <div class="dialog-main">
-          <!-- 左侧导航：桌面（外观/局域网/更新）与局域网 web 端（外观/连接）；窄屏折叠为顶部横向页签 -->
+          <!-- 左侧导航：桌面（外观/隐藏项/网络/存储/更新）与局域网 web 端（外观/隐藏项/连接）；
+               窄屏折叠为顶部横向页签 -->
           <nav class="nav">
             <button class="nav-item" :class="{ active: section === 'appearance' }" @click="section = 'appearance'">外观</button>
             <button class="nav-item" :class="{ active: section === 'hiding' }" @click="section = 'hiding'">隐藏项</button>
-            <button v-if="hasShell && isAdmin" class="nav-item" :class="{ active: section === 'lan' }" @click="section = 'lan'">局域网</button>
-            <button v-if="hasShell" class="nav-item" :class="{ active: section === 'remote' }" @click="section = 'remote'">远程</button>
+            <button v-if="hasShell" class="nav-item" :class="{ active: section === 'network' }" @click="section = 'network'">网络</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'storage' }" @click="section = 'storage'">存储</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'update' }" @click="section = 'update'">更新</button>
             <button v-else class="nav-item" :class="{ active: section === 'connection' }" @click="section = 'connection'">连接</button>
           </nav>
 
-          <!-- 分区保活挂载（v-show）：LAN 字段编辑与更新下载进度切分区不丢；web 端不挂载 LAN/更新 -->
+          <!-- 分区保活挂载（v-show）：网络分区的字段编辑与更新下载进度切分区不丢；web 端不挂载网络/更新 -->
           <SettingsAppearance v-show="section === 'appearance'" />
           <SettingsHiding v-show="section === 'hiding'" />
-          <SettingsLan v-if="hasShell && isAdmin" v-show="section === 'lan'" ref="lanPane" v-model:error="error" />
-          <SettingsRemote v-if="hasShell" v-show="section === 'remote'" v-model:error="error" />
+          <!-- 网络：本地服务端口（壳层）、局域网（库级 [web]，admin 限定）、远程（应用级 remote.toml） -->
+          <div v-if="hasShell" v-show="section === 'network'" class="pane">
+            <h3 class="section-title">本地服务</h3>
+            <SettingsLocalService />
+            <template v-if="isAdmin">
+              <h3 class="section-title">局域网</h3>
+              <SettingsLan ref="lanPane" v-model:error="error" embedded />
+            </template>
+            <h3 class="section-title">远程</h3>
+            <SettingsRemote v-model:error="error" embedded />
+          </div>
           <SettingsStorage v-if="hasShell" v-show="section === 'storage'" />
           <SettingsUpdate v-if="hasShell" v-show="section === 'update'" />
           <SettingsConnection v-if="!hasShell" v-show="section === 'connection'" @logout="emit('logout')" />

@@ -14,7 +14,7 @@ import type { RemoteKeyCreated } from '@/shared/types';
 
 /** libraryless：远程查看模式（本地无库）——隐藏分享向开关（没有本地素材可服务）；
  *  设置对话框内（有本地库）不传 */
-const props = defineProps<{ libraryless?: boolean }>();
+const props = defineProps<{ libraryless?: boolean; embedded?: boolean }>();
 const error = defineModel<string | null>('error', { default: null });
 const store = useRemoteStore();
 const connection = useConnectionLabel();
@@ -259,7 +259,7 @@ async function removeDevice(deviceId: string, name: string) {
 </script>
 
 <template>
-  <div class="pane">
+  <div class="pane" :class="{ embedded: props.embedded }">
     <div class="switch-row">
       <div>
         <div class="switch-label">启用远程访问</div>

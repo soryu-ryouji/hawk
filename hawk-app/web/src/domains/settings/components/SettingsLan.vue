@@ -16,6 +16,8 @@ import { encodePairingPayload, lanPairingPayload } from '../pairing';
 
 const store = useLibraryStore();
 const error = defineModel<string | null>('error', { default: null });
+/** embedded：作为合并分区（网络）内的一块渲染（不自带滚动容器），见 settings-shared.css 的 .pane.embedded */
+const props = defineProps<{ embedded?: boolean }>();
 
 const loading = ref(true);
 const saving = ref(false);
@@ -161,7 +163,7 @@ defineExpose({ save, busy });
 </script>
 
 <template>
-  <div class="pane">
+  <div class="pane" :class="{ embedded: props.embedded }">
     <div class="switch-row">
       <div>
         <div class="switch-label">启用局域网 web 查看</div>
