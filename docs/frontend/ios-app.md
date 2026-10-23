@@ -65,13 +65,27 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 
 ## 鉴权与配对
 
-- 全部凭证存 Keychain（accessibility：`kSecAttrAccessibleAfterFirstUnlock`）：局域网 token、`bt`、service-key、hawk-app key
-- 配对主路径是**桌面端出二维码**，App 扫码导入（新增桌面端能力）：
+- 长期凭证存 Keychain（accessibility：`kSecAttrAccessibleAfterFirstUnlock`）：局域网 token、service-key、hawk-app key。`bt` 是短生命周期令牌，可只在内存持有（当前实现不落盘，重启重新登录）
+- 配对主路径是**桌面端出二维码**，App 扫码导入（桌面端设置面板已提供入口）：
   - 局域网：`{ "v": 1, "kind": "lan", "url": "http://192.168.1.5:27372", "token": "..." }`
   - 广域网：`{ "v": 1, "kind": "remote", "url": "https://hawk.example.com", "service_key": "hs_...", "key": "hk_..." }`
   - `v` 为载荷版本，解码失败给「二维码版本不支持，请升级」而不是静默失败
 - 手动输入地址 + token 作为兜底（无桌面端可用时）
-- `bt` 有效期由服务端决定，过期或 401 时用 Keychain 里的 service-key + key 自动重换一次；再失败才提示重新配对
+- `bt` 有效期由服务端决定。设计目标是用 Keychain 里的 service-key + key 自动重换一次；**当前实现**在 401/过期时展示错误，由用户点「重新连接」重新走 `gate`/`login`（见「实现进度」差异）
+
+## 在线首屏加载（不依赖本地索引）
+
+在线浏览时手机不建索引：素材索引在 daemon（桌面端 / hawk-server 宿主机）上，手机只做查询与渲染。M1 的首屏策略：
+
+1. `app/info` + `app/startup` 就绪、远端会话建立后，只等 `library/info` 与 `global_filter/list`，立即进主界面——导航、侧栏和网格占位先出现。
+2. 后台并发：
+   - `item/list` 第一页（48 条）先出真实卡片；
+   - `item/skeleton` 建立完整虚拟网格（滚动条总高与跳转）；
+   - `folder/list` / `category/list` / `tag/list` 填侧栏。
+3. 完整骨架到达后替换首屏分页骨架；首屏已取到的详情复用，第一页不重复请求。
+4. 5 个智能条目计数（全部/根目录/未分类/未标签/回收站）最后加载，侧栏先隐藏计数，不阻塞首屏。
+
+因此「手机上先建索引」不是在线浏览的前提。M2 的 GRDB 索引用于离线、Spotlight 与 AI；若要让二次启动/切换库也秒开，需要的是首屏快照缓存（裁剪后的骨架 + 分类 + 计数），不是完整索引。首次加载仍取决于 daemon 出首屏分页与骨架的速度——首屏分页已先展示，完整骨架在后台补齐。
 
 ## 本地索引（M2 核心）
 
@@ -115,22 +129,54 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 2. 广域网写回需要扩白名单（仅 `item/update` 的 `tags` / `annotation` 字段），属于安全边界变更：要单独设计、单独测试、同步更新 [remote-access.md](../backend/remote-access.md) 的权限分层表与 [远程访问协议](../backend/remote-protocol.md)
 3. 在没有任何真实使用数据前不动白名单
 
+## 实现进度
+
+截至当前仓库版本，M0 与 M1 的只读主链路已落地，代码在 `hawk-ios/hawk-ios/`：
+
+| 能力 | 状态 | 说明 |
+| ---- | ---- | ---- |
+| 局域网直连 + token 验证 | ✅ | Keychain 记忆、启动自动连接、失败回连接列表 |
+| 广域网查看面 | ✅ | `gate` → `login` 换 `bt` → `viewer/session`；`bt` 绑定单设备，自动打开，不再做设备选择 |
+| 扫码 / 手动配对 | ✅ | iOS 扫码与手填；桌面端局域网/广域网设置面板可生成配对二维码（局域网含 token，广域网现签只读 key 并标注同步状态） |
+| 在线首屏（不依赖本地索引） | ✅ | 库信息+隐藏集后立即进主界面；`item/list` 首页与 `item/skeleton` 并发，首屏分页先出，分类/标签与计数后台补齐 |
+| 齐行网格 + 分页详情 | ✅ | 骨架 + `item/list` 窗口分页 + `LazyVStack`；首屏分页与骨架共用详情缓存，缩略图尺寸可调 |
+| 全屏预览 | ✅ | 缩放/拖动/左右切换/下拉关闭；原图降采样解码 |
+| 保存到相册 | ✅ | 保存原图数据（`PHPhotoLibrary` 添加权限） |
+| 搜索 / 排序 / 筛选 | ✅ | 名称备注搜索、四种排序、评分、短边区间、颜色 |
+| 侧栏导航 | ✅ | 智能条目、文件夹树、分类、标签与计数；iPad `NavigationSplitView` |
+| 下拉刷新 / 回前台刷新 | ✅ | 无 SSE，节流拉取 |
+| 本地索引 / 离线 | ⬜ | M2 |
+| App Intents / Spotlight | ⬜ | M2 |
+| Foundation Models / Vision | ⬜ | M3 |
+| 锁视图解锁 | ⬜ | 当前展示服务端 403 message |
+
+实现中与设计稿的差异：
+
+- **设备选择**：hawk-app key 在服务端只映射一台设备，`login` 返回的 `device_id` 即目标，客户端直接 `POST /viewer/session`。服务端的 `/viewer/devices` 仍服务于网页版选择器。
+- **会话重建**：每次连接都调用 `POST /viewer/session`（服务端对存活会话复用、对死会话重新撮合），不依赖 `GET /viewer/session`，避免旧隧道失效后卡死。
+- **实时性**：M1 不订阅 SSE；用下拉刷新与回前台节流刷新收敛。SSE 归入 M2 增量同步。
+- **bt 不落盘**：服务端换发的浏览器令牌只保存在内存，App 重启后重新走 `gate`/`login`；局域网 token、service-key 与 hawk-app key 存 Keychain。
+- **bt 过期/401**：当前不自动重换，错误横幅提示后由用户「重新连接」重新走 `gate`/`login`；自动重换待补。
+- **二次启动/切换库秒开**：尚未做磁盘首屏快照缓存；当前在线首屏已先出（分页 + 占位），但每次启动/切库仍重新认证并重取首屏。
+- **导航**：未做桌面端的前进/后退栈；文件夹层级靠侧栏树与「返回上级」菜单。
+- **锁定视图**：读路径遇到 403 `LOCKED` 时展示服务端 message，解锁 UI 留到后续。
+
 ## 路线图
 
-| 阶段 | 交付物 | 验收标准 |
-| ---- | ------ | -------- |
-| M0 工程就位 | `hawk-ios/` Xcode 工程、SwiftUI 骨架、Keychain 存储、网络层（URLSession + 信封解包） | 真机可运行；局域网连上 daemon 拿到 `app/info` |
-| M1 只读浏览 | 连接管理（局域网 / 广域网查看面）、设备选择、齐行网格 + 虚拟滚动、全屏预览（缩放/滑动/下拉关闭）、保存到相册、搜索与筛选、文件夹树 | 1000+ 素材的库滚动不掉帧；广域网从扫码到出图 ≤ 3s（首屏用缩略图） |
-| M2 本地索引 + 系统集成 | GRDB 索引与增量同步、离线浏览、App Intents 实体 + Spotlight 语义索引、二维码配对 | 飞行模式下可浏览与搜索；Spotlight 能搜到库内素材并跳转 |
-| M3 端上 AI | Foundation Models 自然语言 → 查询参数；图片理解出标签候选（iOS 27+ 走 `Attachment`，iOS 26 走 Vision OCR/分类）；能力检测与降级 | 无 Apple Intelligence 的机型功能完整可用；自然语言查询命中率在自建样例集上可评估 |
-| M4 写回与直连评估 | 写回确认流（按决策 2）；视实际流量决定是否引入 iroh-ffi 直连 | — |
+| 阶段 | 交付物 | 验收标准 | 状态 |
+| ---- | ------ | -------- | ---- |
+| M0 工程就位 | `hawk-ios/` Xcode 工程、SwiftUI 骨架、Keychain 存储、网络层（URLSession + 信封解包） | 真机可运行；局域网连上 daemon 拿到 `app/info` | ✅ |
+| M1 只读浏览 | 连接管理（局域网 / 广域网查看面）、扫码配对、齐行网格 + 虚拟滚动、首屏分页先出、全屏预览（缩放/滑动/下拉关闭）、保存到相册、搜索与筛选、文件夹树 | 1000+ 素材的库滚动不掉帧；广域网从扫码到出图 ≤ 3s（首屏用缩略图） | 🟡 核心与桌面二维码完成，1000+ 性能待压测 |
+| M2 本地索引 + 系统集成 | GRDB 索引与增量同步、离线浏览、App Intents 实体 + Spotlight 语义索引 | 飞行模式下可浏览与搜索；Spotlight 能搜到库内素材并跳转 | ⬜ |
+| M3 端上 AI | Foundation Models 自然语言 → 查询参数；图片理解出标签候选（iOS 27+ 走 `Attachment`，iOS 26 走 Vision OCR/分类）；能力检测与降级 | 无 Apple Intelligence 的机型功能完整可用；自然语言查询命中率在自建样例集上可评估 | ⬜ |
+| M4 写回与直连评估 | 写回确认流（按决策 2）；视实际流量决定是否引入 iroh-ffi 直连 | — | ⬜ |
 
 ## 对仓库其他部分的改动
 
 | 位置 | 改动 | 阶段 |
 | ---- | ---- | ---- |
 | `hawk-ios/` | 新增原生客户端（本文件的设计对象） | M0 |
-| `hawk-app`（桌面端） | 生成配对二维码（局域网 token / 广域网 service-key + hawk-app key），设置面板加入口 | M1 |
+| `hawk-app`（桌面端） | 生成配对二维码（局域网 token / 广域网 service-key + hawk-app key），设置面板加入口 | M1 已完成 |
 | `README.md` / `docs/tech-stack.md` / `docs/architecture.md` | 移动端条目与仓库结构 | 已随本文件更新 |
 | `hawk-daemon` | 可选：mDNS 广播（自动发现局域网库）；批量元数据端点（仅当全量分页成为瓶颈） | M2 / 视情况 |
 | `.github/workflows/ci.yml` | 暂不纳入 iOS 构建（需要 macOS runner + 签名）；本地提交前跑 `xcodebuild build` | — |

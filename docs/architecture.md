@@ -94,11 +94,11 @@ Electron 退出
 
 这三处差异在架构上已预留位置：core 的索引读写收在窄接口后面、API 预留认证头位置。但**当前只实现桌面版**，不提前实现服务器版的任何功能。
 
-### 远程访问（服务端已实现 P1，客户端信令进行中）
+### 远程访问（服务端与 daemon remote 模块已实现）
 
-远程访问不走服务器版路线：每台设备只有 hawk-app 与 hawk-daemon 两个进程，广域网连接能力（信令、心跳、UPnP、QUIC 隧道、会话代理）全部收在 daemon 的 **`remote/` 模块**——可选子系统，应用级 `remote.toml` 启用才激活，supervisor reconcile 管理（同 LAN web 先例）；隧道内请求在进程内转发并标记 viewer 级权限或受限远程写权限（写会话需带写权限的访问密钥 + 目标设备开关 + daemon 本地 key 执法），无需受托 token 机制。hawk-app 主进程只做连接描述符与断线回切（订阅 daemon SSE 的 remote 事件）。远程查看时数据面为端到端 QUIC 直连，素材数据始终由素材库所在机的 daemon 产出，复用现有 API 与只读/受限写鉴权。远程访问服务端 **hawk-server**（本仓库 `hawk-server/`，独立 crate）为多租户自托管方案：无账号/会员体系，准入即程序生成的租户 service-key（`tenant` CLI 管理，服务端只存 HMAC 哈希，凭证验证面带 IP/租户风控）；查看者两级验证（service-key 换门令牌 → hawk-app key 换 bt）。与客户端零代码共享，协议契约是唯一共享物。数据面直连优先（服务器只做撮合、不承素材带宽），中继为二期兜底。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)，服务端使用见 [hawk-server 使用指南](backend/hawk-server.md)。
+远程访问不走服务器版路线：每台设备只有 hawk-app 与 hawk-daemon 两个进程，广域网连接能力（信令、心跳、iroh 隧道、会话代理；打洞/中继/路径迁移由 iroh 承担）全部收在 daemon 的 **`remote/` 模块**——可选子系统，应用级 `remote.toml` 启用才激活，supervisor reconcile 管理（同 LAN web 先例）；隧道内请求在进程内转发并标记 viewer 级权限或受限远程写权限（写会话需带写权限的访问密钥 + 目标设备开关 + daemon 本地 key 执法），无需受托 token 机制。hawk-app 主进程只做连接描述符与断线回切（订阅 daemon SSE 的 remote 事件）。远程查看时数据面为端到端 QUIC 直连，素材数据始终由素材库所在机的 daemon 产出，复用现有 API 与只读/受限写鉴权。远程访问服务端 **hawk-server**（本仓库 `hawk-server/`，独立 crate）为多租户自托管方案：无账号/会员体系，准入即程序生成的租户 service-key（`tenant` CLI 管理，服务端只存 HMAC 哈希，凭证验证面带 IP/租户风控）；查看者两级验证（service-key 换门令牌 → hawk-app key 换 bt）。与客户端零代码共享，协议契约是唯一共享物。数据面直连优先（服务器只做撮合、不承素材带宽），中继为服务端可选组件（已实现）。设计见 [远程访问设计](backend/remote-access.md)，接口契约见 [remote-protocol](backend/remote-protocol.md)，服务端使用见 [hawk-server 使用指南](backend/hawk-server.md)。
 
-### 移动端（iOS 原生，规划中）
+### 移动端（iOS 原生，M1 只读浏览已实现）
 
 移动端不走 WebView 壳，也不做服务器版：客户端只吃 HTTP 契约，局域网直连 daemon，广域网经 hawk-server 查看面（服务端隧道代理 `/api/v1/*`）。选原生的原因是 Apple 智能生态接入（App Intents / Spotlight 语义索引 / Foundation Models）只有原生可用，WebView 拿不到。客户端不链接 AGPL 代码，许可证与上架不受约束。设计见 [iOS 客户端设计](frontend/ios-app.md)。
 
@@ -110,8 +110,8 @@ hawk/
 ├── hawk-update/             ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
 ├── hawk-app/                ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 ├── hawk-browser-extension/  ← 浏览器插件（Chrome/Firefox，WXT）
-├── hawk-server/             ← Rust 远程访问服务端（单用户，见 docs/backend/remote-access.md，P1 已实现）
-├── hawk-ios/                ← iOS 原生客户端（规划中，见 docs/frontend/ios-app.md）
+├── hawk-server/             ← Rust 远程访问服务端（控制面/中继/查看面，见 docs/backend/remote-access.md）
+├── hawk-ios/                ← iOS 原生客户端（M1 只读浏览，见 docs/frontend/ios-app.md）
 ├── tools/                   ← 仓库级脚本（构建/安装/冒烟/性能压测/文档链接检查）
 └── docs/                    ← 设计文档
 ```

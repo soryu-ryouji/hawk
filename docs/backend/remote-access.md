@@ -38,8 +38,8 @@
                 │  HTTPS/WSS 控制面（注册/心跳/会话/WSS）  │
                 └───────────────┬───────────────────────┘
                                 ▼
-              hawk-server（本仓库 hawk-server/，P1 控制面已实现；
-              中继为二期，见 remote-protocol.md）
+              hawk-server（本仓库 hawk-server/，控制面/中继/查看面已实现；
+              见 remote-protocol.md）
 ```
 
 端口默认值：hawk-server 9100 / 内嵌中继 9102（可选组件）/ daemon API 27371 / LAN web 27372 / 远程隧道 UDP 27373。本地端口由 daemon 在会话建立时分配空闲端口（不固定绑定）。
@@ -217,7 +217,7 @@ hawk-server 内嵌 iroh-relay（库形态，不另起进程），准入为共享
 
 | 位置                       | 改动 |
 | -------------------------- | ---- |
-| `hawk-server/`             | 远程访问服务端（多租户：租户注册表 + key 映射 + 门令牌两步登录 + 风控；P1 控制面 + P2 中继） |
+| `hawk-server/`             | 远程访问服务端（多租户：租户注册表 + key 映射 + 门令牌两步登录 + 风控；控制面 + 中继 + 查看面） |
 | `hawk-daemon/src/remote/`  | 模块：信令客户端 / iroh 数据面 / B 侧会话代理 / 访问密钥保管（keys.rs），supervisor reconcile 管理 |
 | `hawk-daemon` config       | 应用级 `remote.toml`（enabled/url/service_key/writable），保存即热生效（写开关不重启信令）；设备身份与 keys.json 同级 `remote/` |
 | `hawk-daemon` 鉴权中间件   | 进程内 viewer / remote_writer 权限标记（供隧道转发请求使用），无 remote 语义、无门控 |
