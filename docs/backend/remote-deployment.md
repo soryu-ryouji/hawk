@@ -36,20 +36,49 @@ tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server   # 指定输出�
 # → 输出租户 id 与 service-key（hs_...），立即保存
 ```
 
-systemd 单元示例：
+systemd 单元示例（`/etc/systemd/system/hawk-server.service`）；日志走 stdout 落 journald，级别由 `RUST_LOG` 控制：
 
 ```ini
 [Unit]
 Description=hawk-server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
+Type=simple
+User=hawk
+Group=hawk
 ExecStart=/usr/local/bin/hawk-server --data-dir /var/lib/hawk-server
 Restart=on-failure
+RestartSec=3
+
+# 日志：stdout/stderr → journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hawk-server
+Environment=RUST_LOG=info
+
+# 沙箱（端口均 >1024，无需特权）
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/hawk-server
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+配套准备与日常运维：
+
+```bash
+sudo useradd --system --home /var/lib/hawk-server --shell /usr/sbin/nologin hawk
+sudo install -d -o hawk -g hawk /var/lib/hawk-server
+sudo systemctl daemon-reload && sudo systemctl enable --now hawk-server
+journalctl -u hawk-server -f    # 跟日志；--since today 按时间查
+```
+
+`tenant` 子命令直接写数据目录文件，需以 hawk 身份执行（`sudo -u hawk hawk-server tenant add ...`），避免 root 写入后服务读不了。
 
 租户管理同样在命令行完成（`tenant list` / `tenant revoke`），数据目录见[配置](hawk-server.md#配置)。
 
