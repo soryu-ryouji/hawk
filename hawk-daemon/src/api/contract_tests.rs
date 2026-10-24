@@ -344,6 +344,7 @@ async fn lan_ports_enforce_separate_key_namespaces() {
                 token: "web-token".into(),
                 write: false,
                 created_at_ms: 0,
+                ..Default::default()
             }],
             peer_keys: vec![WebAccessKey {
                 id: "peer".into(),
@@ -351,6 +352,7 @@ async fn lan_ports_enforce_separate_key_namespaces() {
                 token: "peer-token".into(),
                 write: false,
                 created_at_ms: 0,
+                ..Default::default()
             }],
         })
         .unwrap();
@@ -421,7 +423,13 @@ async fn lan_device_keys_are_independent_from_website_keys() {
         &app.router,
         "POST",
         "/api/v1/app/lan/device-keys",
-        Some(json!({ "label": "Target-Mac", "write": false })),
+        Some(json!({
+            "label": "Target-Mac",
+            "write": false,
+            "peer_id": "peer-source",
+            "library_name": "Source Library",
+            "url": "http://192.168.1.10:27375"
+        })),
     )
     .await;
     assert_eq!(
@@ -433,6 +441,9 @@ async fn lan_device_keys_are_independent_from_website_keys() {
     let created: Value = serde_json::from_slice(&bytes).unwrap();
     let key_id = created["data"]["id"].as_str().unwrap().to_string();
     assert_eq!(created["data"]["label"], "Target-Mac");
+    assert_eq!(created["data"]["peer_id"], "peer-source");
+    assert_eq!(created["data"]["library_name"], "Source Library");
+    assert_eq!(created["data"]["url"], "http://192.168.1.10:27375");
     let web = lib.config.current().web;
     assert!(web.keys.is_empty(), "不得隐式创建网站访问密钥");
     assert_eq!(web.peer_keys.len(), 1);
@@ -464,6 +475,7 @@ async fn lan_peer_activity_reports_online_client() {
                 token: "peer-token".into(),
                 write: false,
                 created_at_ms: 0,
+                ..Default::default()
             }],
         })
         .unwrap();
@@ -551,6 +563,18 @@ async fn put_lan_auto_pair_request_flow() {
     assert_eq!(decision["data"]["peer"]["id"], "source-peer");
     assert_eq!(decision["data"]["peer"]["url"], "http://192.168.1.10:27375");
     assert_eq!(decision["data"]["peer"]["token"], "reverse-token");
+    let peer_key = &app
+        .state
+        .library
+        .as_ref()
+        .unwrap()
+        .config
+        .current()
+        .web
+        .peer_keys[0];
+    assert_eq!(peer_key.peer_id.as_deref(), Some("source-peer"));
+    assert_eq!(peer_key.library_name.as_deref(), Some("Source Library"));
+    assert_eq!(peer_key.url.as_deref(), Some("http://192.168.1.10:27375"));
 
     let status_path = format!("/api/v1/app/lan/pair-requests/{request_id}");
     let (status, bytes) = call_json(&peer_router, "GET", &status_path, None).await;
@@ -741,6 +765,7 @@ async fn lan_supervisor_starts_configured_peer_port_on_boot() {
                 token: "peer-token".into(),
                 write: false,
                 created_at_ms: 0,
+                ..Default::default()
             }],
         })
         .unwrap();

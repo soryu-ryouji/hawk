@@ -998,6 +998,13 @@ async fn decide_lan_pair_request(
             peer: None,
         })));
     }
+    let reverse = &request.reverse;
+    let reverse_url = reverse
+        .urls
+        .iter()
+        .find(|url| url.starts_with("http://") || url.starts_with("https://"))
+        .cloned()
+        .expect("reverse urls validated when request was created");
     let mut web = lib.config.current().web;
     if web.peer_keys.len() >= 32 {
         state
@@ -1017,6 +1024,9 @@ async fn decide_lan_pair_request(
         token: token.clone(),
         write: body.write,
         created_at_ms: unix_ms_now(),
+        peer_id: Some(reverse.peer_id.clone()),
+        library_name: Some(reverse.library_name.clone()),
+        url: Some(reverse_url.clone()),
     });
     if let Err(error) = lib.config.update_web(&web) {
         state
@@ -1040,17 +1050,11 @@ async fn decide_lan_pair_request(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
     );
-    let reverse = &request.reverse;
-    let url = reverse
-        .urls
-        .iter()
-        .find(|url| url.starts_with("http://") || url.starts_with("https://"))
-        .expect("reverse urls validated when request was created");
     let reverse_peer = LanPairedPeerDto {
         id: reverse.peer_id.clone(),
         name: reverse.name.clone(),
         library_name: reverse.library_name.clone(),
-        url: url.clone(),
+        url: reverse_url,
         writable: reverse.writable,
         token: reverse.token.clone(),
     };
@@ -1151,6 +1155,9 @@ async fn create_lan_device_key(
         token: random_hex(32),
         write: body.write,
         created_at_ms: unix_ms_now(),
+        peer_id: body.peer_id,
+        library_name: body.library_name,
+        url: body.url,
     };
     web.peer_keys.push(key.clone());
     lib.config.update_web(&web).map_err(|error| {
@@ -1258,6 +1265,12 @@ struct LanAccessKeyDto {
     token: String,
     write: bool,
     created_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    library_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1265,6 +1278,12 @@ struct LanDeviceKeyCreateBody {
     label: String,
     #[serde(default)]
     write: bool,
+    #[serde(default)]
+    peer_id: Option<String>,
+    #[serde(default)]
+    library_name: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1284,6 +1303,9 @@ fn access_key_dto(key: crate::core::config::WebAccessKey) -> LanAccessKeyDto {
         token: key.token,
         write: key.write,
         created_at_ms: key.created_at_ms,
+        peer_id: key.peer_id,
+        library_name: key.library_name,
+        url: key.url,
     }
 }
 
@@ -1326,6 +1348,9 @@ fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
                 token: key.token,
                 write: key.write,
                 created_at_ms: key.created_at_ms,
+                peer_id: key.peer_id,
+                library_name: key.library_name,
+                url: key.url,
             })
             .collect(),
         peer_keys: web
@@ -1337,6 +1362,9 @@ fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
                 token: key.token,
                 write: key.write,
                 created_at_ms: key.created_at_ms,
+                peer_id: key.peer_id,
+                library_name: key.library_name,
+                url: key.url,
             })
             .collect(),
         active: status.web.active,
@@ -1371,6 +1399,12 @@ struct PutLanKey {
     write: bool,
     #[serde(default)]
     created_at_ms: u64,
+    #[serde(default)]
+    peer_id: Option<String>,
+    #[serde(default)]
+    library_name: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1526,6 +1560,18 @@ async fn put_lan(
                     token,
                     write: key.write,
                     created_at_ms: key.created_at_ms,
+                    peer_id: key
+                        .peer_id
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty()),
+                    library_name: key
+                        .library_name
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty()),
+                    url: key
+                        .url
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty()),
                 });
             }
             Ok(out)
@@ -1653,6 +1699,7 @@ mod tests {
                 token: "peer-token".into(),
                 write: false,
                 created_at_ms: 0,
+                ..Default::default()
             }],
         };
         assert_eq!(desired_web_port(&web), None);

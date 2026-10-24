@@ -17,6 +17,10 @@ pub struct WebAccessKey {
     /// true = 该密钥允许写操作；false = 只读
     pub write: bool,
     pub created_at_ms: u64,
+    /// 配对设备元数据：用于目标端管理列表展示对端信息（网站密钥为空）。
+    pub peer_id: Option<String>,
+    pub library_name: Option<String>,
+    pub url: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -297,6 +301,15 @@ fn keys_to_toml(keys: &[WebAccessKey]) -> toml_edit::Item {
         table["token"] = toml_edit::value(key.token.as_str());
         table["write"] = toml_edit::value(key.write);
         table["created_at_ms"] = toml_edit::value(key.created_at_ms as i64);
+        if let Some(peer_id) = &key.peer_id {
+            table["peer_id"] = toml_edit::value(peer_id.as_str());
+        }
+        if let Some(library_name) = &key.library_name {
+            table["library_name"] = toml_edit::value(library_name.as_str());
+        }
+        if let Some(url) = &key.url {
+            table["url"] = toml_edit::value(url.as_str());
+        }
         tables.push(table);
     }
     toml_edit::Item::ArrayOfTables(tables)
@@ -417,6 +430,24 @@ fn parse_web_keys(value: Option<&toml::Value>) -> Vec<WebAccessKey> {
                     .and_then(|v| v.as_integer())
                     .unwrap_or(0)
                     .max(0) as u64,
+                peer_id: key
+                    .get("peer_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string),
+                library_name: key
+                    .get("library_name")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string),
+                url: key
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string),
             })
         })
         .collect()
@@ -758,6 +789,7 @@ mod tests {
             token: token.to_string(),
             write,
             created_at_ms: 42,
+            ..Default::default()
         };
         let web = WebSettings {
             enabled: true,

@@ -960,9 +960,27 @@
               "label": {
                 "type": "string"
               },
+              "library_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "peer_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "token": {
                 "description": "完整 token 仅 admin 可读；设置面板负责打码展示与复制",
                 "type": "string"
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "write": {
                 "type": "boolean"
@@ -2861,9 +2879,27 @@
           "label": {
             "type": "string"
           },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "token": {
             "description": "完整 token 仅 admin 可读；设置面板负责打码展示与复制",
             "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "write": {
             "type": "boolean"
@@ -2921,6 +2957,24 @@
         "properties": {
           "label": {
             "type": "string"
+          },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "write": {
             "type": "boolean"
@@ -3625,8 +3679,26 @@
           "label": {
             "type": "string"
           },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "token": {
             "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "write": {
             "type": "boolean"
