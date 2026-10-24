@@ -261,10 +261,7 @@ async function removeDevice(deviceId: string, name: string) {
 <template>
   <div class="pane" :class="{ embedded: props.embedded }">
     <div class="switch-row">
-      <div>
-        <div class="switch-label">启用远程访问</div>
-        <p class="hint">接入自托管 hawk-server 后，可在其他设备上浏览本素材库（只读），也可浏览其他在线设备。接入配置跨素材库共享。</p>
-      </div>
+      <div class="switch-label">启用远程访问</div>
       <label class="switch" title="启用远程访问">
         <input v-model="enabled" type="checkbox" />
         <span class="track" />
@@ -279,13 +276,9 @@ async function removeDevice(deviceId: string, name: string) {
       <div class="field column">
         <span class="field-label">服务密钥（service-key）</span>
         <input v-model="serviceKey" type="password" placeholder="hawk-server tenant add 生成的 hs_ 密钥" autocomplete="off" spellcheck="false" />
-        <p class="hint">池门禁凭证：接入后本机可被发现，也可浏览池内其他设备。服务密钥不对外分发——分发给查看者的是下面的访问密钥。</p>
       </div>
       <div v-if="!props.libraryless" class="switch-row">
-        <div>
-          <div class="switch-label">允许广域网保存素材</div>
-          <p class="hint">允许持有服务端写入密钥的浏览器插件向本库导入图片、新建文件夹。与局域网写权限独立；不开放删除、改标签等操作。</p>
-        </div>
+        <div class="switch-label">允许广域网保存素材</div>
         <label class="switch" title="允许广域网会话导入素材">
           <input v-model="writable" type="checkbox" />
           <span class="track" />
@@ -302,15 +295,11 @@ async function removeDevice(deviceId: string, name: string) {
       <!-- 访问密钥管理：分发给网页版/插件等外部查看者（与池门禁的 service-key 不同物） -->
       <div class="keys">
         <div class="switch-label">访问密钥</div>
-        <p class="hint">每把密钥独立读/写权限，可随时吊销；查看者需同时提供服务密钥与访问密钥。密钥明文只在签发时显示一次。</p>
 
         <div v-if="!props.libraryless" class="pair-entry">
           <button class="primary" :disabled="!canPair || saving || pairingBusy" @click="openPairing">
             {{ pairingBusy ? '签发中…' : '保存并生成 iOS 配对二维码' }}
           </button>
-          <p class="hint">
-            会签发一把只读访问密钥并编码进二维码（同时包含 service-key），供 iPhone / iPad 扫码接入。关闭二维码后密钥明文不再展示，可重新生成。
-          </p>
         </div>
 
         <!-- 签发结果：明文展示一次 -->
@@ -321,7 +310,7 @@ async function removeDevice(deviceId: string, name: string) {
             <button @click="copyText(shareText(createdKey!.key), 'share')">{{ copied === 'share' ? '已复制' : '复制分享串' }}</button>
             <button @click="createdKey = null">我已保存</button>
           </div>
-          <p class="hint">{{ createdKey.synced ? '已同步到服务端。' : '远程未在线，同步会在接入后自动重试。' }}此后无法再查看明文。</p>
+          <p class="hint">{{ createdKey.synced ? '已同步到服务端' : '远程未在线，待自动同步' }}</p>
         </div>
 
         <!-- 签发表单 -->
@@ -333,7 +322,6 @@ async function removeDevice(deviceId: string, name: string) {
             <label class="perm"><input v-model="keyWrite" type="checkbox" :disabled="!keyRead && keyWrite" /> 可写</label>
             <button class="primary" :disabled="creating || (!keyRead && !keyWrite)" @click="createKey">{{ creating ? '签发中…' : '签发' }}</button>
           </div>
-          <p v-if="keyWrite" class="hint">携带写权限的自定义密钥至少 12 个字符；写权限允许导入素材与新建文件夹。</p>
         </div>
 
         <!-- 已有密钥列表 -->
@@ -379,10 +367,7 @@ async function removeDevice(deviceId: string, name: string) {
             </div>
           </div>
           <div v-if="!props.libraryless" class="switch-row">
-            <div>
-              <div class="switch-label">允许其他设备访问本库</div>
-              <p class="hint">关闭后其他设备的会话请求被自动拒绝。</p>
-            </div>
+            <div class="switch-label">允许其他设备访问本库</div>
             <label class="switch" title="允许其他设备访问本库">
               <input :checked="selfDevice.allow_remote" type="checkbox" @change="toggleAllowRemote(($event.target as HTMLInputElement).checked)" />
               <span class="track" />
@@ -390,7 +375,6 @@ async function removeDevice(deviceId: string, name: string) {
           </div>
           <div class="actions-left">
             <button :disabled="rotating" @click="rotate">{{ rotating ? '轮换中…' : '轮换设备证书' }}</button>
-            <span class="hint">轮换后旧证书的会话失效（TOFU 锚点更新）</span>
           </div>
         </div>
 
@@ -405,17 +389,14 @@ async function removeDevice(deviceId: string, name: string) {
           <button @click="disconnect">断开并回到我的库</button>
         </div>
         <div class="switch-row">
-          <div>
-            <div class="switch-label">使用中继</div>
-            <p class="hint">直连失败时询问是否经服务端中继继续（素材流量经过你的服务器带宽，内容端到端加密）。</p>
-          </div>
+          <div class="switch-label">使用中继</div>
           <label class="switch" title="直连失败时经服务端使用中继">
             <input :checked="store.relayEnabled" type="checkbox" @change="store.setRelayEnabled(($event.target as HTMLInputElement).checked)" />
             <span class="track" />
           </label>
         </div>
 
-        <div v-if="peerDevices.length === 0" class="hint">暂无其他设备。在另一台设备上运行 hawk 并接入同一服务端即可出现。</div>
+        <div v-if="peerDevices.length === 0" class="hint">暂无其他设备</div>
         <div v-for="device in peerDevices" :key="device.device_id" class="device-row">
           <span class="dot" :class="{ online: device.online }" />
           <div class="device-info">

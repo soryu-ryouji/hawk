@@ -62,11 +62,6 @@ async function apply() {
         <input v-model="input" type="text" inputmode="numeric" :disabled="saving" aria-label="本地 API 端口" @keydown.enter="apply()" />
         <button :disabled="saving || !dirty" @click="apply()">{{ saving ? '正在重启…' : '应用并重启' }}</button>
       </div>
-      <p class="hint">
-        hawk 桌面端本地服务的端口（被占用时启动屏会提示换端口，不会静默改端口）。浏览器插件按
-        {{ range[0] }}–{{ range[1] }} 自动寻找本机
-        hawk；填到这段之外时，需要在插件的高级选项里指定端口。正在远程浏览别的设备时改端口会重启本地服务并断开当前连接。
-      </p>
       <p v-if="outsideRange" class="field-error">端口 {{ input.trim() }} 在自动发现区间 {{ range[0] }}–{{ range[1] }} 之外，浏览器插件将无法自动找到它。</p>
       <p v-if="error" class="field-error">{{ error }}</p>
       <p v-if="notice" class="hint">{{ notice }}</p>

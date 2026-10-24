@@ -42,10 +42,9 @@ const KIND_LABEL: Record<HiddenRow['kind'], string> = { folder: '文件夹', cat
   <div class="pane">
     <div class="field column">
       <span class="field-label">全局列表隐藏项</span>
-      <p class="hint">被隐藏的文件夹/分类/标签，其下素材不再出现在全部素材、根目录、未分类、未标签列表中；进入该维度自身视图仍可见。</p>
     </div>
 
-    <div v-if="rows.length === 0" class="hint">暂无隐藏项。在侧栏文件夹/分类/标签上右键可设置「不在全局列表显示」。</div>
+    <div v-if="rows.length === 0" class="hint">暂无隐藏项</div>
 
     <div v-for="row in rows" :key="`${row.kind}:${row.name}`" class="hiding-row">
       <Icon :name="row.icon" :size="13" />

@@ -58,10 +58,7 @@ function onHidePreviewClose(e: Event) {
     </div>
 
     <div class="switch-row">
-      <div>
-        <div class="switch-label">预览模式隐藏关闭按钮</div>
-        <p class="hint">开启后全屏预览不显示右上角 ×；仍可用 Esc、双击或触屏下拉手势关闭。</p>
-      </div>
+      <div class="switch-label">预览模式隐藏关闭按钮</div>
       <label class="switch" title="预览模式隐藏关闭按钮">
         <input type="checkbox" :checked="preview.hidePreviewClose" @change="onHidePreviewClose" />
         <span class="track" />
@@ -71,7 +68,6 @@ function onHidePreviewClose(e: Event) {
     <div v-if="hasShell" class="field column">
       <span class="field-label">关闭行为</span>
       <SelectBox :model-value="closeAction" :options="closeOptions" @update:model-value="onCloseActionChange($event as CloseAction)" />
-      <p class="hint">关闭到托盘：窗口驻留系统托盘、后台服务保持运行；从托盘菜单或再次启动唤起。</p>
     </div>
   </div>
 </template>

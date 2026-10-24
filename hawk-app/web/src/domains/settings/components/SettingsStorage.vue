@@ -92,12 +92,6 @@ async function confirmMigrate() {
 
 // ---- 周期兜底重扫（库级设置，写 .hawk/config.toml 的 [scan]）----
 const periodicRescan = computed(() => store.library?.scan?.periodic ?? true);
-/** 间隔文案（秒 → 分钟/秒） */
-const intervalText = computed(() => {
-  const seconds = store.library?.scan?.interval ?? 900;
-  return seconds >= 60 ? `每 ${Math.round(seconds / 60)} 分钟` : `每 ${seconds} 秒`;
-});
-
 async function onPeriodicRescan(e: Event) {
   await setPeriodicRescan((e.target as HTMLInputElement).checked);
 }
@@ -118,13 +112,7 @@ async function runCleanup() {
 <template>
   <div class="pane">
     <div v-if="isAdmin" class="switch-row">
-      <div>
-        <div class="switch-label">周期兜底重扫</div>
-        <p class="hint">
-          文件监听可能静默漏事件（尤其 macOS）。开启后 {{ intervalText }}强制遍历一次（只读元数据、不读文件内容），收敛漏掉的新增/删除；
-          关闭后新增/删除仍由实时监听捕获，仅「监听漏掉」的部分需要手动右键「重新扫描」。
-        </p>
-      </div>
+      <div class="switch-label">周期兜底重扫</div>
       <label class="switch" title="周期兜底重扫">
         <input type="checkbox" :checked="periodicRescan" @change="onPeriodicRescan" />
         <span class="track" />
@@ -137,12 +125,10 @@ async function runCleanup() {
         <label class="mode-option" :class="{ active: storageMode === 'database' }">
           <input type="radio" name="storage-mode" :checked="storageMode === 'database'" @change="switchTo('database')" />
           <span class="mode-name">数据库</span>
-          <span class="hint">默认。单文件 .hawk/metadata.db，大批量操作快（事务写入）。适合不挂网盘同步的本地库。</span>
         </label>
         <label class="mode-option" :class="{ active: storageMode === 'toml' }">
           <input type="radio" name="storage-mode" :checked="storageMode === 'toml'" @change="switchTo('toml')" />
           <span class="mode-name">配置文件</span>
-          <span class="hint">每素材一个 TOML 小文件，同步冲突粒度最小。库在 iCloud/Dropbox 等同步盘时必须选这个。</span>
         </label>
       </div>
       <p v-if="switchError" class="field-error">{{ switchError }}</p>
@@ -151,15 +137,10 @@ async function runCleanup() {
     <div class="field column">
       <span class="field-label">缓存目录</span>
       <span class="cache-path">{{ current || '…' }}</span>
-      <p class="hint">缩略图与索引缓存（派生物，可重建）统一存放在此目录下，各素材库按子目录区分。默认位于系统缓存目录；盘空间紧张时可迁移到其他盘。</p>
     </div>
 
     <div v-if="isAdmin" class="field column">
       <span class="field-label">索引体检</span>
-      <p class="hint">
-        检查索引中不该存在的条目并清除：`.` 开头的隐藏文件（如 .DS_Store、.stignore）、ignore 规则命中的文件、源文件已删除的残留。
-        只清理索引与界面显示，不会删除磁盘上的文件；正常素材不受影响。
-      </p>
       <div class="actions-left">
         <button class="btn" :disabled="cleaning" @click="runCleanup">{{ cleaning ? '正在检查…' : '检查并清理缓存' }}</button>
       </div>
@@ -222,10 +203,6 @@ async function runCleanup() {
 
 .mode-option.active {
   border-color: var(--accent);
-}
-
-.mode-option .hint {
-  grid-column: 1 / -1;
 }
 
 .mode-name {

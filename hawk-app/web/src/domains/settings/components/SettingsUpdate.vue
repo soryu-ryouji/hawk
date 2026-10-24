@@ -17,14 +17,6 @@ const channelOptions: { value: UpdateChannel; label: string }[] = [
   { value: 'off', label: '不检查更新' },
 ];
 
-/** 各通道的说明文案（与下拉选项一一对应） */
-const channelHints: Record<UpdateChannel, string> = {
-  stable: '正式发布版本，稳定优先',
-  nightly: '包含最新改动，稳定性不作保证，开发人员专用',
-  off: '不联网检查更新，可到 GitHub Releases 手动下载',
-};
-const channelHint = computed(() => channelHints[updater.channel.value]);
-
 /** 下载百分比（total 未知时为 null，UI 显示已下载字节数） */
 const downloadPct = computed(() => {
   const p = updater.progress.value;
@@ -54,7 +46,6 @@ onMounted(() => {
     <div class="field column">
       <span class="field-label">更新通道</span>
       <SelectBox :model-value="updater.channel.value" :options="channelOptions" @update:model-value="updater.setChannel($event as UpdateChannel)" />
-      <p class="hint">{{ channelHint }}</p>
     </div>
 
     <div class="field column">
@@ -105,7 +96,6 @@ onMounted(() => {
         <button v-if="updater.phase.value === 'downloading'" @click="void updater.cancel()">取消下载</button>
         <button v-if="updater.phase.value === 'ready'" class="primary" @click="void updater.install()">重启并安装</button>
       </div>
-      <p v-if="updater.phase.value === 'ready'" class="hint">安装包已下载。重启后自动完成安装；已打开的局域网查看页在重启后刷新即可。</p>
     </div>
   </div>
 </template>
