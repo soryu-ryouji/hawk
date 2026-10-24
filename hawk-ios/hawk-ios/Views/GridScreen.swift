@@ -9,6 +9,7 @@ struct GridScreen: View {
     @State private var store: GridStore
     @Environment(PreviewCoordinator.self) private var preview
     @State private var showFilter = false
+    @State private var showSearch = false
     @State private var showSettings = false
     @State private var exporter = MediaExporter()
     @AppStorage("hawk.ios.thumbSize") private var thumbSize = 0.0
@@ -74,13 +75,25 @@ struct GridScreen: View {
         .background(HawkTheme.bg0)
         .navigationTitle(store.viewTitle)
         .navigationBarTitleDisplayMode(isRoot ? .large : .inline)
+        // 搜索用得少：默认不占位，点右上角放大镜才展开搜索框
         .searchable(
             text: Binding(get: { store.searchText }, set: { store.setSearchText($0) }),
+            isPresented: $showSearch,
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "搜索名称与备注"
         )
         .onSubmit(of: .search) { store.submitSearch() }
         .toolbar { toolbar }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showSearch = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .accessibilityLabel("搜索")
+            }
+        }
         .sheet(isPresented: $showFilter) {
             FilterSheet(store: store)
         }
