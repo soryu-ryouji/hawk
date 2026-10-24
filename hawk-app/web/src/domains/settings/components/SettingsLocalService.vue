@@ -55,29 +55,27 @@ async function apply() {
 </script>
 
 <template>
-  <div class="pane embedded">
-    <div class="field column">
-      <span class="field-label">本地 API 端口</span>
-      <div class="port-row">
-        <input v-model="input" type="text" inputmode="numeric" :disabled="saving" aria-label="本地 API 端口" @keydown.enter="apply()" />
-        <button :disabled="saving || !dirty" @click="apply()">{{ saving ? '正在重启…' : '应用并重启' }}</button>
-      </div>
-      <p v-if="outsideRange" class="field-error">端口 {{ input.trim() }} 在自动发现区间 {{ range[0] }}–{{ range[1] }} 之外，浏览器插件将无法自动找到它。</p>
-      <p v-if="error" class="field-error">{{ error }}</p>
-      <p v-if="notice" class="hint">{{ notice }}</p>
+  <div class="settings-group">
+    <div class="settings-row">
+      <label class="settings-label" for="settings-api-port">本地 API 端口</label>
+      <input
+        id="settings-api-port"
+        v-model="input"
+        class="settings-input"
+        type="text"
+        inputmode="numeric"
+        :disabled="saving"
+        aria-label="本地 API 端口"
+        @keydown.enter="apply()"
+      />
+      <button class="settings-action" :disabled="saving || !dirty" @click="apply()">
+        {{ saving ? '正在重启…' : '应用并重启' }}
+      </button>
     </div>
+    <p v-if="outsideRange" class="settings-message error">
+      端口 {{ input.trim() }} 在自动发现区间 {{ range[0] }}–{{ range[1] }} 之外，浏览器插件将无法自动找到它。
+    </p>
+    <p v-if="error" class="settings-message error">{{ error }}</p>
+    <p v-if="notice" class="settings-message">{{ notice }}</p>
   </div>
 </template>
-
-<style scoped>
-.port-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.port-row input {
-  width: 120px;
-  text-align: center;
-}
-</style>

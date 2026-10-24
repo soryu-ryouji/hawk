@@ -150,3 +150,111 @@
   display: flex;
   margin-top: 8px;
 }
+
+/* ---- Apple 风格分组表单：标签 / 控件 / 操作三列对齐 ---- */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.settings-section-title {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--fg-1);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.settings-group {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px 104px;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-row:first-child {
+  border-top: 0;
+}
+
+.settings-label {
+  min-width: 0;
+  color: var(--fg-0);
+  font-size: 13px;
+}
+
+.settings-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--bg-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-input.invalid {
+  border-color: var(--danger);
+}
+
+.settings-action {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+
+.settings-action.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.settings-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-1);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-message {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-1);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-message.error {
+  color: var(--danger);
+}
+
+.settings-message.success {
+  color: var(--accent);
+}
+
+@media (max-width: 460px) {
+  .settings-row {
+    grid-template-columns: minmax(0, 1fr) 96px;
+  }
+
+  .settings-row .settings-action {
+    grid-column: 1 / -1;
+    justify-self: end;
+    width: 104px;
+  }
+}
