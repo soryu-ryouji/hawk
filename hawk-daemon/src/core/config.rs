@@ -1,25 +1,46 @@
 //! 项目配置（.hawk/config.toml）。由文件监听触发 Reload，索引流水线在配置变更后全量比对。
 //! 库配置：ignore 模式无 "/" 时匹配任意深度同名项；Matcher 默认序数忽略大小写。
 //! [web] 段保存即热生效（LAN 监听 supervisor 运行期重绑，见 api/lan.rs）；
-//! token 读写能力同样每请求经 current().web 判定，热生效：
-//! writable=false 时 token 只读；true 且未拆分时 token 读写；拆分时 token 只读、
-//! write_token 读写（separate_write_token 防止误删 write_token 后主 token 静默获得写权限）。
+//! 每个局域网访问密钥独立携带读/写权限，鉴权中间件每请求经 current().web 查找并判定，热生效。
 
 use crate::core::paths::LibraryPaths;
 use std::collections::HashSet;
 use std::sync::RwLock;
 
+/// 局域网访问密钥：明文 token 与配置一起存于库内（与旧的单 token 模型同级）；
+/// 列表 API 仅 admin 可读，渲染层可复制给浏览器/移动端使用。
 #[derive(Clone, Default, PartialEq)]
+pub struct WebAccessKey {
+    pub id: String,
+    pub label: String,
+    pub token: String,
+    /// true = 该密钥允许写操作；false = 只读
+    pub write: bool,
+    pub created_at_ms: u64,
+}
+
+#[derive(Clone, PartialEq)]
 pub struct WebSettings {
     pub enabled: bool,
+    /// 局域网网站访问（浏览器/网页版）密钥
+    pub keys: Vec<WebAccessKey>,
     pub port: u16,
-    pub token: Option<String>,
-    /// 允许局域网 token 执行写操作（上传/删除/修改等）；关闭则一律只读（403 READ_ONLY）
-    pub writable: bool,
-    /// 拆分只读/可写 token：token 降为只读，write_token 具备写权限
-    pub separate_write_token: bool,
-    /// 拆分模式下的可写 token
-    pub write_token: Option<String>,
+    /// hawk-app 之间直连共享使用的密钥；非空即允许局域网 app 配对，不依赖 enabled
+    pub peer_keys: Vec<WebAccessKey>,
+    /// hawk-app 直连 API 端口（与网站端口分离）
+    pub peer_port: u16,
+}
+
+impl Default for WebSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: 27372,
+            keys: Vec::new(),
+            peer_keys: Vec::new(),
+            peer_port: 27375,
+        }
+    }
 }
 
 /// 周期兜底扫描设置（库级，随库同步）：监听漏事件时的最终一致保证
@@ -209,21 +230,76 @@ impl LibraryConfig {
         let mut doc = text
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("配置解析失败 {file}: {e}"))?;
-        // 索引赋值：已存在的键只换值（键上的注释装饰保留），缺失的键/表自动创建
-        doc["web"]["enabled"] = toml_edit::value(web.enabled);
-        doc["web"]["port"] = toml_edit::value(i64::from(web.port));
-        doc["web"]["token"] = toml_edit::value(web.token.as_deref().unwrap_or(""));
-        doc["web"]["writable"] = toml_edit::value(web.writable);
-        doc["web"]["separate_write_token"] = toml_edit::value(web.separate_write_token);
-        doc["web"]["write_token"] = toml_edit::value(web.write_token.as_deref().unwrap_or(""));
+        // 历史版本曾用 `web = { ... }` 的内联表写配置；内联表不能承载
+        // `[[web.keys]]` / `[[web.peer_keys]]` 数组表，直接按 `doc["web"]["keys"]`
+        // 赋值会被静默丢弃，reload 后密钥为空，PUT 随后必然超时。
+        // 这里先把 web 统一迁移成普通表，再写入嵌套数组表。
+        if !doc["web"].is_table() {
+            // remove_entry + insert_formatted 同时清掉旧内联表留在 key 上的行尾空白，
+            // 否则表头会渲染成 `[web ]`（语法合法但不够整洁）。
+            let (mut key, old) = doc
+                .as_table_mut()
+                .remove_entry("web")
+                .unwrap_or_else(|| (toml_edit::Key::new("web"), toml_edit::Item::None));
+            key.leaf_decor_mut().set_suffix("");
+            let table = old.into_table().unwrap_or_default();
+            doc.as_table_mut()
+                .insert_formatted(&key, toml_edit::Item::Table(table));
+        }
+        let table = doc["web"].as_table_mut().expect("web 已在上方归一为普通表");
+        // 已存在的键只换值（键上的注释装饰保留），缺失的键自动创建。
+        table["enabled"] = toml_edit::value(web.enabled);
+        table["port"] = toml_edit::value(i64::from(web.port));
+        table["peer_port"] = toml_edit::value(i64::from(web.peer_port));
+        // 旧版单 token 字段直接删除；访问密钥改为 [[web.keys]] 数组表。
+        for legacy in ["token", "writable", "separate_write_token", "write_token"] {
+            table.remove(legacy);
+        }
+        set_web_keys(table, "keys", &web.keys);
+        set_web_keys(table, "peer_keys", &web.peer_keys);
+        let output = doc.to_string();
+        // 写盘前先做一次完整 TOML 解析：toml_edit 的类型/嵌套约束在某些历史配置
+        // 形态下可能留下不可解析文本，不能让 reload 静默保留旧配置后由上层超时暴露。
+        toml::from_str::<toml::Value>(&output)
+            .map_err(|e| format!("配置序列化校验失败 {file}: {e}"))?;
         let tmp = format!("{file}.tmp");
-        std::fs::write(&tmp, doc.to_string()).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
+        std::fs::write(&tmp, output).map_err(|e| format!("配置写入失败 {tmp}: {e}"))?;
         if let Err(e) = std::fs::rename(&tmp, file) {
             let _ = std::fs::remove_file(&tmp);
             return Err(format!("配置替换失败 {file}: {e}"));
         }
-        Ok(self.reload())
+        let change = self.reload();
+        if let Some(error) = self.config_error() {
+            return Err(error);
+        }
+        // 防止序列化层再次静默丢字段：落盘并 reload 后必须与调用方提交的 WebSettings 一致。
+        if self.current().web != *web {
+            return Err("配置写回后校验失败：web 段未完整持久化".to_string());
+        }
+        Ok(change)
     }
+}
+
+fn set_web_keys(table: &mut toml_edit::Table, field: &str, keys: &[WebAccessKey]) {
+    if keys.is_empty() {
+        table.remove(field);
+    } else {
+        table[field] = keys_to_toml(keys);
+    }
+}
+
+fn keys_to_toml(keys: &[WebAccessKey]) -> toml_edit::Item {
+    let mut tables = toml_edit::ArrayOfTables::new();
+    for key in keys {
+        let mut table = toml_edit::Table::new();
+        table["id"] = toml_edit::value(key.id.as_str());
+        table["label"] = toml_edit::value(key.label.as_str());
+        table["token"] = toml_edit::value(key.token.as_str());
+        table["write"] = toml_edit::value(key.write);
+        table["created_at_ms"] = toml_edit::value(key.created_at_ms as i64);
+        tables.push(table);
+    }
+    toml_edit::Item::ArrayOfTables(tables)
 }
 
 /// 库首次打开时生成带注释的默认 config.toml（已存在则不覆盖）
@@ -258,15 +334,17 @@ ignore = []
 periodic = true
 interval = 900
 
-# 局域网 web 查看（桌面端设置面板读写；开启「允许修改素材库」后查看端可上传/删除等，请谨慎授权）
+# 局域网网站访问（桌面端设置面板读写）。
+# 访问密钥由设置面板创建，每把密钥独立读/写权限；密钥明文随库配置保存，请勿随库公开分享。
 [web]
 enabled = false
 port = 27372
-token = ""
-writable = false
-# 拆分只读/可写 token：token 只读，write_token 可写（不拆分时 token 读写兼具）
-separate_write_token = false
-write_token = ""
+# [[web.keys]]
+# id = "..."
+# label = "我的浏览器"
+# token = "..."
+# write = false
+# created_at_ms = 0
 
 "#;
 
@@ -308,6 +386,42 @@ fn load(paths: &LibraryPaths) -> Result<Snapshot, String> {
     Ok(snapshot)
 }
 
+fn parse_web_keys(value: Option<&toml::Value>) -> Vec<WebAccessKey> {
+    let Some(keys) = value.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    keys.iter()
+        .filter_map(|value| {
+            let key = value.as_table()?;
+            let id = key.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let token = key
+                .get("token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if id.is_empty() || token.is_empty() {
+                return None;
+            }
+            Some(WebAccessKey {
+                id: id.to_string(),
+                label: key
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("访问密钥")
+                    .trim()
+                    .to_string(),
+                token: token.to_string(),
+                write: key.get("write").and_then(|v| v.as_bool()).unwrap_or(false),
+                created_at_ms: key
+                    .get("created_at_ms")
+                    .and_then(|v| v.as_integer())
+                    .unwrap_or(0)
+                    .max(0) as u64,
+            })
+        })
+        .collect()
+}
+
 fn parse_web_value(value: &toml::Value) -> WebSettings {
     let mut web = WebSettings::default();
     if let Some(table) = value.as_table() {
@@ -320,26 +434,13 @@ fn parse_web_value(value: &toml::Value) -> WebSettings {
                 web.port = port as u16;
             }
         }
-        if let Some(token) = table.get("token").and_then(|v| v.as_str()) {
-            let token = token.trim();
-            if !token.is_empty() {
-                web.token = Some(token.to_string());
+        if let Some(port) = table.get("peer_port").and_then(|v| v.as_integer()) {
+            if (1..=65535).contains(&port) {
+                web.peer_port = port as u16;
             }
         }
-        web.writable = table
-            .get("writable")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        web.separate_write_token = table
-            .get("separate_write_token")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if let Some(write_token) = table.get("write_token").and_then(|v| v.as_str()) {
-            let write_token = write_token.trim();
-            if !write_token.is_empty() {
-                web.write_token = Some(write_token.to_string());
-            }
-        }
+        web.keys = parse_web_keys(table.get("keys"));
+        web.peer_keys = parse_web_keys(table.get("peer_keys"));
     }
     web
 }
@@ -632,6 +733,79 @@ mod tests {
         let text = std::fs::read_to_string(root.join(".hawk/config.toml")).unwrap();
         assert!(!text.lines().any(|l| l.starts_with("name")));
         assert_eq!(cfg.current().name, None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_web_migrates_inline_table_and_persists_keys() {
+        let dir = std::env::temp_dir().join(format!("hawk-cfg-web-inline-{}", std::process::id()));
+        let root = dir.join("lib");
+        std::fs::create_dir_all(root.join(".hawk")).unwrap();
+        let paths = LibraryPaths::new(root.to_str().unwrap(), None);
+        // 旧版壳层用 smol-toml 序列化过 web，留下内联表形态；内联表无法承载
+        // [[web.keys]] / [[web.peer_keys]]，这正是保存后密钥被静默丢弃的回归场景。
+        std::fs::write(
+            &paths.config_file,
+            "web = { enabled = false, port = 27372, peer_port = 27375 }\n",
+        )
+        .unwrap();
+        let cfg = LibraryConfig::new(paths.clone());
+
+        let key = |id: &str, token: &str, write: bool| WebAccessKey {
+            id: id.to_string(),
+            label: format!("label-{id}"),
+            token: token.to_string(),
+            write,
+            created_at_ms: 42,
+        };
+        let web = WebSettings {
+            enabled: true,
+            port: 28101,
+            keys: vec![key("web_a", "token_a", false)],
+            peer_keys: vec![key("peer_a", "token_b", true)],
+            peer_port: 28102,
+        };
+        let change = cfg.update_web(&web).unwrap();
+        assert!(change.web_changed);
+        let saved = cfg.current().web;
+        assert!(saved.enabled);
+        assert_eq!(saved.port, web.port);
+        assert_eq!(saved.peer_port, web.peer_port);
+        assert!(saved.keys == web.keys);
+        assert!(saved.peer_keys == web.peer_keys);
+
+        let text = std::fs::read_to_string(&paths.config_file).unwrap();
+        assert!(
+            text.lines()
+                .any(|line| line.trim_start().starts_with("[web")),
+            "内联表应迁移为普通表: {text}"
+        );
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.trim_start().starts_with("web = {")),
+            "不应继续写内联表: {text}"
+        );
+        assert!(text.contains("[[web.keys]]"), "{text}");
+        assert!(text.contains("[[web.peer_keys]]"), "{text}");
+
+        // 清空密钥时也要移除数组表，避免 reload 后残留旧密钥。
+        let cleared = WebSettings {
+            keys: vec![],
+            peer_keys: vec![],
+            ..web
+        };
+        cfg.update_web(&cleared).unwrap();
+        let saved = cfg.current().web;
+        assert!(saved.enabled);
+        assert_eq!(saved.port, cleared.port);
+        assert_eq!(saved.peer_port, cleared.peer_port);
+        assert!(saved.keys.is_empty());
+        assert!(saved.peer_keys.is_empty());
+        let text = std::fs::read_to_string(&paths.config_file).unwrap();
+        assert!(!text.contains("[[web.keys]]"), "{text}");
+        assert!(!text.contains("[[web.peer_keys]]"), "{text}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

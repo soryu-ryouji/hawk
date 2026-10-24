@@ -10,8 +10,8 @@
 //! 4. SSE：事件名集合与 SseEvents schema 双向比对；item.added 经真实订阅捕获校验载荷
 
 use super::lan::LanSupervisor;
-use super::{build_router, AppState, SharedState};
-use crate::core::config::LibraryConfig;
+use super::{build_router, build_router_for, AppState, ListenerMode, SharedState};
+use crate::core::config::{LibraryConfig, WebAccessKey, WebSettings};
 use crate::core::events::{EventBus, LibraryEvents};
 use crate::core::index::ItemIndex;
 use crate::core::metadata_store::MetadataStore;
@@ -133,6 +133,11 @@ const WRITE_SCRIPT: &[(&str, &str)] = &[
 /// 只校验路由存在的端点：app/lan PUT 需运行中的 LAN supervisor 收敛，不在测试内成功调用
 const ROUTE_ONLY: &[(&str, &str)] = &[
     ("PUT", "/api/v1/app/lan"),
+    // 局域网发现/配对依赖真实网卡与目标设备；配对码生成要求 [web] 已启用
+    ("GET", "/api/v1/app/lan/peers"),
+    ("POST", "/api/v1/app/lan/pair-code"),
+    // 目标端以一次性配对码准入（免 Bearer），契约测试不预置目标配对码
+    ("POST", "/api/v1/app/lan/pair"),
     // 依赖存活的 hawk-server（转发调用），契约环境无服务端可连
     ("GET", "/api/v1/remote/devices"),
     ("POST", "/api/v1/remote/session"),
@@ -312,6 +317,339 @@ impl TestApp {
             .expect("upsert 失败")
             .expect("upsert 被防抖延迟（mtime 已拨回，不应发生）");
         result.item.id
+    }
+}
+
+/// 局域网配对：admin 生成一次性码，目标端点消费一次后即失效；请求写权限时按 [web] 配置授予。
+#[tokio::test]
+async fn lan_pair_code_is_one_time_and_grants_configured_access() {
+    let app = test_app("lan-pair");
+    let lib = app.state.library.as_ref().unwrap();
+    lib.config
+        .update_web(&WebSettings {
+            // 网站访问关闭，仅 hawk-app 直连密钥存在：配对码仍必须可用
+            enabled: false,
+            port: 27372,
+            peer_port: 27375,
+            keys: vec![],
+            peer_keys: vec![
+                WebAccessKey {
+                    id: "read".into(),
+                    label: "只读".into(),
+                    token: "lan-read".into(),
+                    write: false,
+                    created_at_ms: 0,
+                },
+                WebAccessKey {
+                    id: "write".into(),
+                    label: "可写".into(),
+                    token: "lan-write".into(),
+                    write: true,
+                    created_at_ms: 0,
+                },
+            ],
+        })
+        .unwrap();
+    app.state.lan.mark_peer_active_for_test(27375);
+    let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
+
+    let (status, body) = call_json(
+        &peer_router,
+        "POST",
+        "/api/v1/app/lan/pair-code",
+        Some(json!({ "key_id": "read" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let code = serde_json::from_slice::<Value>(&body).unwrap()["data"]["code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 配对码绑定只读密钥：即使源端请求写，也只能拿到只读权限
+    let pair_body = json!({ "code": code, "writable": true, "client_name": "contract-peer" });
+    let (status, body) = call_json(
+        &peer_router,
+        "POST",
+        "/api/v1/app/lan/pair",
+        Some(pair_body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let data = serde_json::from_slice::<Value>(&body).unwrap();
+    assert_eq!(data["data"]["token"], "lan-read");
+    assert_eq!(data["data"]["writable"], false);
+
+    // 一次性：同一码第二次必须失败
+    let (status, _) = call_json(
+        &peer_router,
+        "POST",
+        "/api/v1/app/lan/pair",
+        Some(pair_body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // 绑定可写密钥时返回写权限
+    let (status, body) = call_json(
+        &peer_router,
+        "POST",
+        "/api/v1/app/lan/pair-code",
+        Some(json!({ "key_id": "write" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let code = serde_json::from_slice::<Value>(&body).unwrap()["data"]["code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, body) = call_json(
+        &peer_router,
+        "POST",
+        "/api/v1/app/lan/pair",
+        Some(json!({ "code": code, "writable": false, "client_name": "contract-peer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let data = serde_json::from_slice::<Value>(&body).unwrap();
+    assert_eq!(data["data"]["token"], "lan-write");
+    assert_eq!(data["data"]["writable"], true);
+}
+
+/// 网站端口与 hawk-app 直连端口必须各自只接受本命名空间的密钥。
+#[tokio::test]
+async fn lan_ports_enforce_separate_key_namespaces() {
+    let app = test_app("lan-port-auth");
+    let lib = app.state.library.as_ref().unwrap();
+    lib.config
+        .update_web(&WebSettings {
+            enabled: true,
+            port: 27372,
+            peer_port: 27375,
+            keys: vec![WebAccessKey {
+                id: "web".into(),
+                label: "web".into(),
+                token: "web-token".into(),
+                write: false,
+                created_at_ms: 0,
+            }],
+            peer_keys: vec![WebAccessKey {
+                id: "peer".into(),
+                label: "peer".into(),
+                token: "peer-token".into(),
+                write: false,
+                created_at_ms: 0,
+            }],
+        })
+        .unwrap();
+    let web_router = build_router_for(app.state.clone(), ListenerMode::Web);
+    let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
+
+    let call_auth = |router: axum::Router, token: &str| {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/v1/app/info")
+            .header("authorization", format!("Bearer {token}"))
+            .header("host", "127.0.0.1")
+            .body(Body::empty())
+            .unwrap();
+        async move { router.oneshot(req).await.unwrap().status() }
+    };
+
+    assert_eq!(
+        call_auth(web_router.clone(), "web-token").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call_auth(web_router, "peer-token").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call_auth(peer_router.clone(), "peer-token").await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call_auth(peer_router, "web-token").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// PUT /app/lan 必须真正唤醒 supervisor 并让 hawk-app 端口开始监听。
+#[tokio::test]
+async fn put_lan_starts_peer_listener() {
+    let app = test_app("lan-put-start");
+    tokio::spawn(app.state.lan.clone().run(app.state.clone()));
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+    let free_port = || {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let web_port = free_port();
+    let mut peer_port = free_port();
+    while peer_port == web_port {
+        peer_port = free_port();
+    }
+
+    let body = json!({
+        "enabled": false,
+        "port": web_port,
+        "peer_port": peer_port,
+        "keys": [],
+        "peer_keys": [{
+            "id": "peer",
+            "label": "peer",
+            "token": "peer-token",
+            "write": false,
+            "created_at_ms": 0
+        }]
+    });
+    let (status, bytes) = call_json(&app.router, "PUT", "/api/v1/app/lan", Some(body)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["data"]["peer_active"], true);
+    assert_eq!(value["data"]["peer_port"], peer_port);
+}
+
+/// 旧版壳层把 [web] 写成内联表时，PUT /app/lan 仍必须落盘 peer_keys 并成功监听；
+/// 否则 update_web 写入 [[web.peer_keys]] 会静默丢失，最终表现为 10 秒收敛超时。
+#[tokio::test]
+async fn put_lan_migrates_legacy_inline_web_table() {
+    let app = test_app("lan-put-inline-web");
+    let free_port = || {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let web_port = free_port();
+    let mut peer_port = free_port();
+    while peer_port == web_port {
+        peer_port = free_port();
+    }
+    let lib = app.state.library.as_ref().unwrap();
+    std::fs::write(
+        &lib.paths.config_file,
+        format!("web = {{ enabled = false, port = {web_port}, peer_port = {peer_port} }}\n"),
+    )
+    .unwrap();
+
+    let body = json!({
+        "enabled": false,
+        "port": web_port,
+        "peer_port": peer_port,
+        "keys": [],
+        "peer_keys": [{
+            "id": "peer",
+            "label": "peer",
+            "token": "peer-token",
+            "write": false,
+            "created_at_ms": 0
+        }]
+    });
+    let (status, bytes) = call_json(&app.router, "PUT", "/api/v1/app/lan", Some(body)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["data"]["peer_active"], true);
+    assert_eq!(value["data"]["peer_port"], peer_port);
+
+    let text = std::fs::read_to_string(&lib.paths.config_file).unwrap();
+    assert!(text.contains("[[web.peer_keys]]"), "{text}");
+    assert!(
+        !text
+            .lines()
+            .any(|line| line.trim_start().starts_with("web = {")),
+        "旧内联表应被迁移: {text}"
+    );
+}
+
+/// 直连端口被占用时，PUT /app/lan 自动向后选可用端口并成功监听。
+#[tokio::test]
+async fn put_lan_auto_selects_free_peer_port() {
+    let app = test_app("lan-put-autoport");
+    tokio::spawn(app.state.lan.clone().run(app.state.clone()));
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+    let occupied = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
+    let occupied_port = occupied.local_addr().unwrap().port();
+    let free_port = || {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let web_port = free_port();
+
+    let body = json!({
+        "enabled": false,
+        "port": web_port,
+        "peer_port": occupied_port,
+        "keys": [],
+        "peer_keys": [{
+            "id": "peer",
+            "label": "peer",
+            "token": "peer-token",
+            "write": false,
+            "created_at_ms": 0
+        }]
+    });
+    let (status, bytes) = call_json(&app.router, "PUT", "/api/v1/app/lan", Some(body)).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    let selected = value["data"]["peer_port"].as_u64().unwrap() as u16;
+    assert_ne!(selected, occupied_port);
+    assert_eq!(value["data"]["peer_active"], true);
+    drop(occupied);
+}
+
+/// 应用启动时，已有 peer_keys/peer_port 的配置必须自动开始监听，无需用户先打开高级设置。
+#[tokio::test]
+async fn lan_supervisor_starts_configured_peer_port_on_boot() {
+    let app = test_app("lan-boot-listen");
+    let peer_port = {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let lib = app.state.library.as_ref().unwrap();
+    lib.config
+        .update_web(&WebSettings {
+            enabled: false,
+            port: 27372,
+            peer_port,
+            keys: vec![],
+            peer_keys: vec![WebAccessKey {
+                id: "peer".into(),
+                label: "peer".into(),
+                token: "peer-token".into(),
+                write: false,
+                created_at_ms: 0,
+            }],
+        })
+        .unwrap();
+
+    tokio::spawn(app.state.lan.clone().run(app.state.clone()));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let status = app.state.lan.snapshot();
+        if status.peer.active && status.peer.port == Some(peer_port) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "启动后未自动监听 peer 端口"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 }
 

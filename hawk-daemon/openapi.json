@@ -944,13 +944,107 @@
         ],
         "type": "object"
       },
+      "Envelope_LanPairCodeDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "expires_in_seconds": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code",
+              "expires_in_seconds"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairResultDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "library_name": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "peer_id": {
+                "type": "string"
+              },
+              "token": {
+                "type": "string"
+              },
+              "writable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "token",
+              "writable",
+              "peer_id",
+              "name",
+              "library_name"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPeersDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "peers": {
+                "items": {
+                  "$ref": "#/components/schemas/LanPeerDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "peers"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_LanSettingsDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
           "data": {
             "properties": {
               "active": {
-                "description": "运行状态（热重绑实况）：active=监听中，error=绑定失败原因",
+                "description": "网站监听状态",
                 "type": "boolean"
               },
               "enabled": {
@@ -962,32 +1056,47 @@
                   "null"
                 ]
               },
-              "port": {
+              "keys": {
+                "items": {
+                  "$ref": "#/components/schemas/LanAccessKeyDto"
+                },
+                "type": "array"
+              },
+              "peer_active": {
+                "description": "hawk-app 直连监听状态",
+                "type": "boolean"
+              },
+              "peer_error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "peer_keys": {
+                "items": {
+                  "$ref": "#/components/schemas/LanAccessKeyDto"
+                },
+                "type": "array"
+              },
+              "peer_port": {
                 "format": "int32",
                 "minimum": 0,
                 "type": "integer"
               },
-              "separate_write_token": {
-                "type": "boolean"
-              },
-              "token": {
-                "type": "string"
-              },
-              "writable": {
-                "type": "boolean"
-              },
-              "write_token": {
-                "type": "string"
+              "port": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
               "enabled",
               "port",
-              "token",
-              "writable",
-              "separate_write_token",
-              "write_token",
-              "active"
+              "peer_port",
+              "keys",
+              "peer_keys",
+              "active",
+              "peer_active"
             ],
             "type": "object"
           },
@@ -2544,14 +2653,63 @@
         ],
         "type": "object"
       },
+      "LanAccessKeyDto": {
+        "properties": {
+          "created_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "token": {
+            "description": "完整 token 仅 admin 可读；设置面板负责打码展示与复制",
+            "type": "string"
+          },
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "token",
+          "write",
+          "created_at_ms"
+        ],
+        "type": "object"
+      },
       "LanInfo": {
         "properties": {
           "active": {
+            "description": "网站端口监听状态",
             "type": "boolean"
           },
           "error": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "peer_active": {
+            "description": "hawk-app 直连端口监听状态",
+            "type": "boolean"
+          },
+          "peer_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
               "null"
             ]
           },
@@ -2565,14 +2723,137 @@
           }
         },
         "required": [
-          "active"
+          "active",
+          "peer_active"
+        ],
+        "type": "object"
+      },
+      "LanPairBody": {
+        "properties": {
+          "client_name": {
+            "description": "源端设备名（日志/后续审计用，不参与鉴权）",
+            "type": "string"
+          },
+          "code": {
+            "description": "目标端设置面板展示的一次性配对码",
+            "type": "string"
+          },
+          "writable": {
+            "description": "源端希望获得的写权限；目标端 [web].writable=false 时自动降级为只读",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "LanPairCodeBody": {
+        "properties": {
+          "key_id": {
+            "description": "目标设备上选定的访问密钥 id；用于让 pairing code 精确绑定权限",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key_id"
+        ],
+        "type": "object"
+      },
+      "LanPairCodeDto": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "expires_in_seconds": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "expires_in_seconds"
+        ],
+        "type": "object"
+      },
+      "LanPairResultDto": {
+        "properties": {
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "peer_id": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "token",
+          "writable",
+          "peer_id",
+          "name",
+          "library_name"
+        ],
+        "type": "object"
+      },
+      "LanPeerDto": {
+        "description": "发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requires_pairing": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "library_name",
+          "url",
+          "writable",
+          "requires_pairing"
+        ],
+        "type": "object"
+      },
+      "LanPeersDto": {
+        "properties": {
+          "peers": {
+            "items": {
+              "$ref": "#/components/schemas/LanPeerDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "peers"
         ],
         "type": "object"
       },
       "LanSettingsDto": {
         "properties": {
           "active": {
-            "description": "运行状态（热重绑实况）：active=监听中，error=绑定失败原因",
+            "description": "网站监听状态",
             "type": "boolean"
           },
           "enabled": {
@@ -2584,32 +2865,47 @@
               "null"
             ]
           },
-          "port": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/LanAccessKeyDto"
+            },
+            "type": "array"
+          },
+          "peer_active": {
+            "description": "hawk-app 直连监听状态",
+            "type": "boolean"
+          },
+          "peer_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_keys": {
+            "items": {
+              "$ref": "#/components/schemas/LanAccessKeyDto"
+            },
+            "type": "array"
+          },
+          "peer_port": {
             "format": "int32",
             "minimum": 0,
             "type": "integer"
           },
-          "separate_write_token": {
-            "type": "boolean"
-          },
-          "token": {
-            "type": "string"
-          },
-          "writable": {
-            "type": "boolean"
-          },
-          "write_token": {
-            "type": "string"
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
           "enabled",
           "port",
-          "token",
-          "writable",
-          "separate_write_token",
-          "write_token",
-          "active"
+          "peer_port",
+          "keys",
+          "peer_keys",
+          "active",
+          "peer_active"
         ],
         "type": "object"
       },
@@ -2852,34 +3148,60 @@
           "enabled": {
             "type": "boolean"
           },
-          "port": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/PutLanKey"
+            },
+            "type": "array"
+          },
+          "peer_keys": {
+            "items": {
+              "$ref": "#/components/schemas/PutLanKey"
+            },
+            "type": "array"
+          },
+          "peer_port": {
             "format": "int32",
             "minimum": 0,
             "type": "integer"
           },
-          "separate_write_token": {
-            "type": "boolean"
-          },
-          "token": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "writable": {
-            "type": "boolean"
-          },
-          "write_token": {
-            "type": [
-              "string",
-              "null"
-            ]
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
           "enabled",
           "port",
-          "writable"
+          "peer_port"
+        ],
+        "type": "object"
+      },
+      "PutLanKey": {
+        "properties": {
+          "created_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "token"
         ],
         "type": "object"
       },
@@ -3676,6 +3998,92 @@
           }
         },
         "summary": "写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair": {
+      "post": {
+        "operationId": "lan_pair",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanPairBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairResultDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "description": "配对码无效或已过期"
+          }
+        },
+        "summary": "局域网配对（目标端 LAN 端点，免 Bearer token：以一次性配对码作为准入凭证）。\n只返回 viewer/write token 与展示信息；配对码一次性消费，过期后失效。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair-code": {
+      "post": {
+        "operationId": "create_lan_pair_code",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanPairCodeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairCodeDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "生成一次性局域网配对码（admin 限定）：目标端 haw-app 设置面板读取并展示。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/peers": {
+      "get": {
+        "operationId": "discover_lan_peers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPeersDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "探测局域网内可配对的 hawk 设备（admin 限定；源端 app 经本机 daemon 调用）。",
         "tags": [
           "app"
         ]

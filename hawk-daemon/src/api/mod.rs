@@ -73,13 +73,22 @@ fn strip_schema_defaults(value: &mut serde_json::Value) {
 }
 
 /// 请求级扩展：当前 token 的访问级别，app/info 据此报告。
-/// Viewer 携带该 token 的写能力（[web] 的 writable/separate/write_token 共同决定，
+/// Viewer 携带该访问密钥的写能力（[web].keys 每把密钥独立 read/write，
 /// 每请求解析，配置热生效）；RemoteWriter 为广域网隧道的受限写（仅导入/建文件夹）。
 #[derive(Clone, Copy)]
 pub enum AccessLevel {
     Admin,
     Viewer { writable: bool },
     RemoteWriter,
+}
+
+/// LAN 监听器类型：网页端口与 hawk-app 直连端口各自只接受对应密钥。
+/// Local = 本机 daemon API（以及测试/隧道复用），兼容两类局域网密钥。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListenerMode {
+    Local,
+    Web,
+    Peer,
 }
 
 /// admin 限定端点的统一门禁：viewer（含可写）与远程写 403，防止只读 token 经管理端点提权
@@ -171,16 +180,26 @@ pub fn api_router() -> (axum::Router<SharedState>, utoipa::openapi::OpenApi) {
         .split_for_parts()
 }
 
-/// 构建路由：中间件链 CORS → Auth → ReadyGate → Endpoints
+/// 构建本机 daemon API 路由（兼容两类局域网密钥；隧道/测试复用同一装配）
 pub fn build_router(state: SharedState) -> axum::Router {
+    build_router_for(state, ListenerMode::Local)
+}
+
+/// 按监听器类型构建路由：网页端口托管静态页面，peer 端口只提供 API，不暴露网页。
+pub fn build_router_for(state: SharedState, mode: ListenerMode) -> axum::Router {
     let (api_routes, _doc) = api_router();
-    axum::Router::new()
+    let router = axum::Router::new()
         .route(
             "/openapi/v1.json",
             axum::routing::get(openapi::openapi_schema),
         )
-        .merge(api_routes)
-        .fallback(web_dist::serve)
+        .merge(api_routes);
+    let router = match mode {
+        ListenerMode::Web => router.fallback(web_dist::serve),
+        ListenerMode::Peer => router.fallback(|| async { axum::http::StatusCode::NOT_FOUND }),
+        ListenerMode::Local => router.fallback(web_dist::serve),
+    };
+    router
         .with_state(state.clone())
         // 请求体上限放宽到 256MB（axum 默认 2MB）：item/upload 整文件上传与 item/replace 的
         // base64 内容替换都会超过默认值；端点全部 token 鉴权，局域网/本机场景风险可控
@@ -194,6 +213,8 @@ pub fn build_router(state: SharedState) -> axum::Router {
         .layer(axum::middleware::from_fn(cors))
         // 最外层兜底：handler/中间件 panic 转 500，不拖垮进程（进程级 panic 隔离见 main 的 panic hook）
         .layer(tower_http::catch_panic::CatchPanicLayer::new())
+        // 请求扩展供 auth / pair handler 判断当前端口类型
+        .layer(axum::Extension(mode))
 }
 
 /// CORS 全放开（localhost 工具，token 兜底）；唯一例外：token 发现端点不带 CORS 头
@@ -238,7 +259,17 @@ async fn auth(
     if !path.starts_with("/api") {
         return next.run(req).await;
     }
+    let mode = req
+        .extensions()
+        .get::<ListenerMode>()
+        .copied()
+        .unwrap_or(ListenerMode::Local);
     if path == "/api/v1/app/token" && req.method() == axum::http::Method::GET {
+        return next.run(req).await;
+    }
+    // 局域网配对：目标端以一次性配对码作为准入凭证（不是 Bearer token）。该端点只在
+    // [web] 启用时有效，码由 admin 在目标设备现场生成、单次使用且 5 分钟过期。
+    if path == "/api/v1/app/lan/pair" && req.method() == axum::http::Method::POST {
         return next.run(req).await;
     }
 
@@ -251,7 +282,7 @@ async fn auth(
             Some(AccessLevel::Viewer { writable: false })
         }
     } else {
-        resolve_access(&state, &req)
+        resolve_access(&state, &req, mode)
     }; // 无库模式仅 admin token 有效（viewer token 存于库内配置）
     let Some(access) = access else {
         return (
@@ -333,7 +364,11 @@ fn parse_unlock_tickets(req: &axum::extract::Request) -> Vec<String> {
 }
 
 /// 返回 access 级别（含 viewer 的 per-token 写能力），token 无效返回 None
-fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<AccessLevel> {
+fn resolve_access(
+    state: &AppState,
+    req: &axum::extract::Request,
+    mode: ListenerMode,
+) -> Option<AccessLevel> {
     let headers = req.headers();
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
         if let Ok(value) = auth.to_str() {
@@ -341,7 +376,7 @@ fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<Acce
                 if token == state.settings.token {
                     return Some(AccessLevel::Admin);
                 }
-                if let Some(access) = viewer_access(state, token) {
+                if let Some(access) = viewer_access(state, token, mode) {
                     return Some(access);
                 }
             }
@@ -366,7 +401,7 @@ fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<Acce
                 if token == state.settings.token {
                     return Some(AccessLevel::Admin);
                 }
-                if let Some(access) = viewer_access(state, token) {
+                if let Some(access) = viewer_access(state, token, mode) {
                     return Some(access);
                 }
             }
@@ -376,28 +411,38 @@ fn resolve_access(state: &AppState, req: &axum::extract::Request) -> Option<Acce
 }
 
 /// 局域网 viewer token 的访问能力（每请求解析，配置变更热生效）：
-/// - token：未拆分时随 writable，拆分（separate_write_token）时恒只读
-/// - write_token：仅在启用写 + 拆分时有效，恒可写
+/// 在 [web].keys 中按 token 查找，密钥自身的 write 字段决定读写；密钥吊销/权限变更即刻生效。
 ///
 /// 无库模式无库内 [web] 配置，viewer token 不生效
-fn viewer_access(state: &AppState, token: &str) -> Option<AccessLevel> {
+fn viewer_access(state: &AppState, token: &str, mode: ListenerMode) -> Option<AccessLevel> {
     let web = &state.library.as_ref()?.config.current().web;
-    if !web.enabled {
-        return None;
+    let lookup = |keys: &[crate::core::config::WebAccessKey]| {
+        keys.iter()
+            .find(|key| key.token == token)
+            .map(|key| AccessLevel::Viewer {
+                writable: key.write,
+            })
+    };
+    match mode {
+        // 网页端口只认网站密钥；网站关闭时该端口应已停止监听，这里是纵深防御。
+        ListenerMode::Web => {
+            if web.enabled {
+                lookup(&web.keys)
+            } else {
+                None
+            }
+        }
+        // hawk-app 端口只认直连密钥，不暴露网站密钥。
+        ListenerMode::Peer => lookup(&web.peer_keys),
+        // 本机 API/隧道测试兼容两类。
+        ListenerMode::Local => {
+            lookup(&web.peer_keys).or_else(|| if web.enabled { lookup(&web.keys) } else { None })
+        }
     }
-    if web.token.as_deref() == Some(token) {
-        return Some(AccessLevel::Viewer {
-            writable: web.writable && !web.separate_write_token,
-        });
-    }
-    if web.separate_write_token && web.writable && web.write_token.as_deref() == Some(token) {
-        return Some(AccessLevel::Viewer { writable: true });
-    }
-    None
 }
 
 /// viewer（局域网 web 查看）默认只读：仅放行 GET 与查询类 POST；
-/// 可写 token（[web] writable，拆分时为 write_token）解除限制（每请求经 current() 校验，保存即热生效）。
+/// 可写密钥（[web].keys 中 write=true）解除限制（每请求经 current() 校验，保存即热生效）。
 /// 会话代理的只读纵深防御复用同一白名单（remote/data.rs）。
 pub(crate) fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
     if req.method() == axum::http::Method::GET {

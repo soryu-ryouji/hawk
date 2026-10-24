@@ -174,11 +174,18 @@ async fn status(State(state): State<SharedState>) -> Result<Json<Envelope<TaskSt
 
 #[derive(Serialize, utoipa::ToSchema)]
 struct LanInfo {
+    /// 网站端口监听状态
     active: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// hawk-app 直连端口监听状态
+    peer_active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_error: Option<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -231,9 +238,12 @@ async fn info(
         has_library: state.library.is_some(),
         writable,
         lan: LanInfo {
-            active: lan.active,
-            port: lan.port,
-            error: lan.error,
+            active: lan.web.active,
+            port: lan.web.port,
+            error: lan.web.error,
+            peer_active: lan.peer.active,
+            peer_port: lan.peer.port,
+            peer_error: lan.peer.error,
         },
     }))
 }

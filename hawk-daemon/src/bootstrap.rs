@@ -40,6 +40,9 @@ pub async fn run(settings: Settings) {
     };
     let state = build_state(settings);
 
+    // 启动期先同步收敛一次 LAN 监听：已有 peer_keys/网站密钥的配置无需用户再进设置保存。
+    let _ = state.lan.reconcile_once(&state).await;
+
     let app = api::build_router(state.clone());
     // remote 数据面转发目标：同一套路由的克隆（A 侧隧道端进程内转发，标记 TunneledPeer）
     let tunnel_router = api::build_router(state.clone());
