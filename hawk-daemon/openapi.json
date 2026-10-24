@@ -944,6 +944,48 @@
         ],
         "type": "object"
       },
+      "Envelope_LanAccessKeyDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "created_at_ms": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "token": {
+                "description": "完整 token 仅 admin 可读；设置面板负责打码展示与复制",
+                "type": "string"
+              },
+              "write": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "token",
+              "write",
+              "created_at_ms"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_LanClientsDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -958,6 +1000,29 @@
             },
             "required": [
               "clients"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanDeviceKeyDeletedDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "deleted": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "deleted"
             ],
             "type": "object"
           },
@@ -2852,6 +2917,42 @@
         ],
         "type": "object"
       },
+      "LanDeviceKeyCreateBody": {
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "LanDeviceKeyDeletedDto": {
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "type": "object"
+      },
+      "LanDeviceKeyUpdateBody": {
+        "properties": {
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "write"
+        ],
+        "type": "object"
+      },
       "LanInfo": {
         "properties": {
           "active": {
@@ -4357,6 +4458,109 @@
           }
         },
         "summary": "目标端查看当前通过 hawk-app 直连端口活跃的设备（admin 限定）。\n只返回授权列表内 key 的最近活跃时间，不返回 token。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/device-keys": {
+      "post": {
+        "operationId": "create_lan_device_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanDeviceKeyCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanAccessKeyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "创建一把设备访问密钥（仅 peer_keys，不触碰网站访问密钥与网站开关）。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/device-keys/{key_id}": {
+      "delete": {
+        "operationId": "delete_lan_device_key",
+        "parameters": [
+          {
+            "description": "设备密钥 id",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanDeviceKeyDeletedDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除一把设备访问密钥（撤销该设备共享）。",
+        "tags": [
+          "app"
+        ]
+      },
+      "patch": {
+        "operationId": "update_lan_device_key",
+        "parameters": [
+          {
+            "description": "设备密钥 id",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanDeviceKeyUpdateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanAccessKeyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "调整一把设备访问密钥的读写权限。",
         "tags": [
           "app"
         ]

@@ -695,6 +695,9 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(get_lan, put_lan))
         .routes(routes!(discover_lan_peers))
         .routes(routes!(list_lan_clients))
+        .routes(routes!(create_lan_device_key))
+        .routes(routes!(update_lan_device_key))
+        .routes(routes!(delete_lan_device_key))
         .routes(routes!(create_lan_pair_request))
         .routes(routes!(list_lan_pair_requests))
         .routes(routes!(get_lan_pair_request_status))
@@ -1010,7 +1013,7 @@ async fn decide_lan_pair_request(
     let key_id = format!("peer_{}", random_hex(8));
     web.peer_keys.push(crate::core::config::WebAccessKey {
         id: key_id,
-        label: format!("局域网设备：{}", request.client_name),
+        label: request.client_name.clone(),
         token: token.clone(),
         write: body.write,
         created_at_ms: unix_ms_now(),
@@ -1111,6 +1114,141 @@ async fn list_lan_clients(
         .collect();
     Ok(Json(Envelope::ok(LanClientsDto { clients })))
 }
+/// 创建一把设备访问密钥（仅 peer_keys，不触碰网站访问密钥与网站开关）。
+#[utoipa::path(
+    post,
+    path = "/api/v1/app/lan/device-keys",
+    tags = ["app"],
+    request_body = LanDeviceKeyCreateBody,
+    responses((status = 200, description = "OK", body = Envelope<LanAccessKeyDto>))
+)]
+async fn create_lan_device_key(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+    Json(body): Json<LanDeviceKeyCreateBody>,
+) -> Result<Json<Envelope<LanAccessKeyDto>>, ApiError> {
+    require_admin(&access)?;
+    let lib = state.require_library()?;
+    let label = body.label.trim();
+    if label.is_empty() {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "设备密钥名称不能为空",
+        ));
+    }
+    let mut web = lib.config.current().web;
+    if web.peer_keys.len() >= 32 {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "同类访问密钥最多 32 把",
+        ));
+    }
+    let key = crate::core::config::WebAccessKey {
+        id: format!("peer_{}", random_hex(8)),
+        label: label.to_string(),
+        token: random_hex(32),
+        write: body.write,
+        created_at_ms: unix_ms_now(),
+    };
+    web.peer_keys.push(key.clone());
+    lib.config.update_web(&web).map_err(|error| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error,
+        )
+    })?;
+    state.lan.wake();
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
+    Ok(Json(Envelope::ok(access_key_dto(key))))
+}
+
+/// 调整一把设备访问密钥的读写权限。
+#[utoipa::path(
+    patch,
+    path = "/api/v1/app/lan/device-keys/{key_id}",
+    tags = ["app"],
+    params(("key_id" = String, Path, description = "设备密钥 id")),
+    request_body = LanDeviceKeyUpdateBody,
+    responses((status = 200, description = "OK", body = Envelope<LanAccessKeyDto>))
+)]
+async fn update_lan_device_key(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+    Path(key_id): Path<String>,
+    Json(body): Json<LanDeviceKeyUpdateBody>,
+) -> Result<Json<Envelope<LanAccessKeyDto>>, ApiError> {
+    require_admin(&access)?;
+    let lib = state.require_library()?;
+    let mut web = lib.config.current().web;
+    let Some(key) = web.peer_keys.iter_mut().find(|key| key.id == key_id) else {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::NOT_FOUND,
+            "设备密钥不存在",
+        ));
+    };
+    key.write = body.write;
+    let updated = key.clone();
+    lib.config.update_web(&web).map_err(|error| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error,
+        )
+    })?;
+    state.lan.wake();
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
+    Ok(Json(Envelope::ok(access_key_dto(updated))))
+}
+
+/// 删除一把设备访问密钥（撤销该设备共享）。
+#[utoipa::path(
+    delete,
+    path = "/api/v1/app/lan/device-keys/{key_id}",
+    tags = ["app"],
+    params(("key_id" = String, Path, description = "设备密钥 id")),
+    responses((status = 200, description = "OK", body = Envelope<LanDeviceKeyDeletedDto>))
+)]
+async fn delete_lan_device_key(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+    Path(key_id): Path<String>,
+) -> Result<Json<Envelope<LanDeviceKeyDeletedDto>>, ApiError> {
+    require_admin(&access)?;
+    let lib = state.require_library()?;
+    let mut web = lib.config.current().web;
+    let before = web.peer_keys.len();
+    web.peer_keys.retain(|key| key.id != key_id);
+    if web.peer_keys.len() == before {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::NOT_FOUND,
+            "设备密钥不存在",
+        ));
+    }
+    lib.config.update_web(&web).map_err(|error| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error,
+        )
+    })?;
+    state.lan.wake();
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
+    Ok(Json(Envelope::ok(LanDeviceKeyDeletedDto { deleted: true })))
+}
 
 #[derive(Serialize, utoipa::ToSchema)]
 struct LanAccessKeyDto {
@@ -1120,6 +1258,33 @@ struct LanAccessKeyDto {
     token: String,
     write: bool,
     created_at_ms: u64,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct LanDeviceKeyCreateBody {
+    label: String,
+    #[serde(default)]
+    write: bool,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct LanDeviceKeyUpdateBody {
+    write: bool,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanDeviceKeyDeletedDto {
+    deleted: bool,
+}
+
+fn access_key_dto(key: crate::core::config::WebAccessKey) -> LanAccessKeyDto {
+    LanAccessKeyDto {
+        id: key.id,
+        label: key.label,
+        token: key.token,
+        write: key.write,
+        created_at_ms: key.created_at_ms,
+    }
 }
 
 #[derive(Serialize, utoipa::ToSchema)]

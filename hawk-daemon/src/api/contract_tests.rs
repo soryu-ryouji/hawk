@@ -136,6 +136,9 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     // 局域网发现依赖真实网卡与目标设备；自动配对请求/轮询由双端串联验证
     ("GET", "/api/v1/app/lan/peers"),
     ("GET", "/api/v1/app/lan/clients"),
+    ("POST", "/api/v1/app/lan/device-keys"),
+    ("PATCH", "/api/v1/app/lan/device-keys/{key_id}"),
+    ("DELETE", "/api/v1/app/lan/device-keys/{key_id}"),
     ("POST", "/api/v1/app/lan/pair-requests"),
     ("GET", "/api/v1/app/lan/pair-requests"),
     ("GET", "/api/v1/app/lan/pair-requests/{request_id}"),
@@ -399,6 +402,51 @@ async fn pair_request_rejects_missing_reverse_profile() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// 设备访问密钥与网站访问密钥完全分离：网站未配置 key 时也能创建设备 key。
+#[tokio::test]
+async fn lan_device_keys_are_independent_from_website_keys() {
+    let app = test_app("lan-device-keys");
+    let lib = app.state.library.as_ref().unwrap();
+    lib.config
+        .update_web(&WebSettings {
+            enabled: true,
+            port: 27372,
+            peer_port: 27375,
+            keys: vec![],
+            peer_keys: vec![],
+        })
+        .unwrap();
+
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/app/lan/device-keys",
+        Some(json!({ "label": "Target-Mac", "write": false })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let created: Value = serde_json::from_slice(&bytes).unwrap();
+    let key_id = created["data"]["id"].as_str().unwrap().to_string();
+    assert_eq!(created["data"]["label"], "Target-Mac");
+    let web = lib.config.current().web;
+    assert!(web.keys.is_empty(), "不得隐式创建网站访问密钥");
+    assert_eq!(web.peer_keys.len(), 1);
+
+    let path = format!("/api/v1/app/lan/device-keys/{key_id}");
+    let (status, _) = call_json(&app.router, "PATCH", &path, Some(json!({ "write": true }))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(lib.config.current().web.peer_keys[0].write);
+
+    let (status, _) = call_json(&app.router, "DELETE", &path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(lib.config.current().web.peer_keys.is_empty());
+}
+
 /// 目标端能看到某把 peer key 最近通过直连端口发过请求（在线状态的数据源）。
 #[tokio::test]
 async fn lan_peer_activity_reports_online_client() {
@@ -530,7 +578,7 @@ async fn put_lan_auto_pair_request_flow() {
         .web
         .peer_keys
         .iter()
-        .any(|key| key.write && key.label.contains("MacBook")));
+        .any(|key| key.write && key.label == "MacBook"));
 }
 
 /// PUT /app/lan 必须真正唤醒 supervisor 并让 hawk-app 端口开始监听。

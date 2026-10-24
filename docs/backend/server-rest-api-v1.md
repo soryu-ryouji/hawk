@@ -48,6 +48,9 @@
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
 | GET  | `/api/v1/app/lan/peers` | 探测同网段可配对的 hawk-app（admin 限定） |
 | GET  | `/api/v1/app/lan/clients` | 目标端查看当前活跃的 hawk-app 直连设备（admin 限定） |
+| POST | /api/v1/app/lan/device-keys | 创建一把设备访问密钥（admin；不触碰网站密钥/开关） |
+| PATCH | /api/v1/app/lan/device-keys/{key_id} | 调整设备密钥读写权限（admin） |
+| DELETE | /api/v1/app/lan/device-keys/{key_id} | 删除设备密钥并撤销共享（admin） |
 | POST | `/api/v1/app/lan/pair-requests` | 源端发起双向配对请求（免 Bearer，仅直连端口） |
 | GET  | `/api/v1/app/lan/pair-requests` | 目标端待确认配对请求列表（admin 限定） |
 | GET  | `/api/v1/app/lan/pair-requests/{request_id}` | 源端轮询配对结果（免 Bearer，request_id 为随机凭证） |
@@ -280,6 +283,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 - `GET /api/v1/app/lan/pair-requests/{request_id}`：源端轮询结果，响应含 `protocol=2`、`status` 与批准后的目标 token；旧协议客户端会被拒绝。
 - `POST /api/v1/app/lan/pair-requests/{request_id}/decision`：目标端批准/拒绝并选择 A 的读写权限；批准时动态创建该设备专用 `[web].peer_keys` 条目，并在响应 `peer` 中返回源端回连 profile，供目标端保存反向连接。
 - `GET /api/v1/app/lan/clients`：目标端本机 admin 查看当前活跃直连设备（key_id、label、last_seen_ms、online）；鉴权成功后按 peer key 记录最近活跃时间，30 秒窗口内视为在线。
+- POST /api/v1/app/lan/device-keys / PATCH / DELETE：设备访问密钥的独立管理面，只操作 [web].peer_keys，不要求存在网站访问密钥，也不会改变网站开关与 [web].keys。配对源端创建同名反向密钥、目标端审批创建访问密钥、设置面板切换权限/撤销设备均走这里。
 
 权限/设备变更通过 SSE `lan.access.changed` 通知已连接客户端重新读取 `app/info`；旧的一次性配对码端点已移除。
 

@@ -62,7 +62,7 @@
 ## 配对流程
 
 1. A 在「局域网互联」扫描到 B，点击「申请配对」。
-2. A 先在本机签发一把只读反向 peer key，然后请求 B 的直连端口：
+2. A 先弹出设备密钥权限弹窗，确认后通过 `POST /api/v1/app/lan/device-keys` 在本机创建一把与 B 同名的设备密钥（默认只读），然后请求 B 的直连端口：
 
    `POST /api/v1/app/lan/pair-requests`
 
@@ -81,9 +81,9 @@
 
 - 配对协议 v2 为破坏性协议：`reverse` 必填，状态响应必须携带 `protocol=2`；缺少反向信息的旧请求直接 422。
 - 请求 id 为随机高熵值，90 秒过期；待确认请求数量有上限，重复点击会复用同一请求。
-- 目标端确认时动态创建该设备专用 peer key，不需要预先创建密钥或生成配对码。
+- 目标端确认时通过独立设备密钥面创建一把与 A 同名的 peer key，不需要预先创建网站密钥或生成配对码；设备密钥与网站访问密钥完全分离。
 - 目标端可随时把该设备切换为仅读取/可读写，或删除设备撤销共享；权限变更广播 `lan.access.changed`。
-- 反向 key 默认只读，A 可在自己的已授权设备列表中调整或撤销。
+- A 创建的反向设备密钥使用弹窗选择的权限；配对失败/被拒/超时会通过 `DELETE /api/v1/app/lan/device-keys/{id}` 自动删除。
 - 旧的 8 位配对码流程已移除；移动端仍通过二维码携带 token 授权。
 
 ## 连接与状态管理
@@ -129,7 +129,7 @@ remoteConn（广域网会话代理）
 
 | 位置 | 内容 |
 | ---- | ---- |
-| hawk-daemon/src/api/lan.rs | 双监听 supervisor、UDP 发现、自动配对请求/审批、按设备创建 peer key、权限变更事件 |
+| hawk-daemon/src/api/lan.rs | 双监听 supervisor、UDP 发现、自动配对请求/审批、独立设备密钥管理端点、权限变更事件 |
 | `hawk-daemon/src/bootstrap.rs` | 启动发现响应器任务 |
 | `hawk-daemon/src/api/mod.rs` | 配对请求创建/状态端点免 Bearer（仍受随机 request_id 与目标端审批保护）；peer 直连接口鉴权成功后记录 peer key 活跃时间，供 `/app/lan/clients` 展示在线状态 |
 | `hawk-app/electron/src/remote.ts` | 源端发现/双向配对/回连 profile 保存、连接描述符、健康检查、冷启动恢复；目标端批准时保存源端 profile |
