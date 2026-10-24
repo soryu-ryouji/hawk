@@ -65,9 +65,6 @@ export const api = {
     request<components['schemas']['LanPairDecisionDto']>('POST', `/api/v1/app/lan/pair-requests/${encodeURIComponent(requestId)}/decision`, {
       body,
     }),
-  /** 生成一次性局域网配对码（移动端/二维码配对仍使用） */
-  createLanPairCode: (body: components['schemas']['LanPairCodeBody']) =>
-    request<components['schemas']['LanPairCodeDto']>('POST', '/api/v1/app/lan/pair-code', { body }),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   /** 改库显示名（写库内 config.toml 的 name，daemon 热更并广播 library.updated 事件）；返回更新后的库信息 */
   libraryRename: (name: string) => request<LibraryInfo>('PATCH', '/api/v1/library/info', { body: { name } }),

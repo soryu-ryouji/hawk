@@ -18,6 +18,9 @@ const manualUrl = ref('');
 const testingSpeed = ref(false);
 const speedMs = ref<number | null>(null);
 const isLanConnected = computed(() => connection.isLan.value);
+const currentPeer = computed(() => store.saved.find((peer) => peer.id === connection.peerId.value) ?? null);
+/** 当前已连接的设备不再出现在发现列表里，避免重复显示和误点申请。 */
+const visibleDiscovered = computed(() => store.discovered.filter((peer) => !(connection.isLan.value && peer.id === connection.peerId.value)));
 const statusText = computed(() => {
   if (!isLanConnected.value) {
     return '当前未连接局域网设备';
@@ -106,12 +109,24 @@ async function forget(peer: LanPeerProfile): Promise<void> {
       </div>
     </div>
 
+    <div v-if="currentPeer" class="current-peer">
+      <div class="peer-main">
+        <div class="peer-name">
+          {{ currentPeer.name }}
+          <span class="lib">（{{ currentPeer.library_name }}）</span>
+          <span class="current-badge">已连接</span>
+        </div>
+        <div class="peer-meta">{{ currentPeer.url }}</div>
+      </div>
+      <button :disabled="store.connectingId !== null" @click="connection.disconnect()">断开</button>
+    </div>
+
     <div v-if="store.error" class="error">{{ store.error }}</div>
     <div v-if="savedMessage" class="ok">{{ savedMessage }}</div>
 
-    <div v-if="store.discovered.length > 0" class="group">
+    <div v-if="visibleDiscovered.length > 0" class="group">
       <div class="group-title">发现的设备</div>
-      <div v-for="peer in store.discovered" :key="peer.id" class="peer-row">
+      <div v-for="peer in visibleDiscovered" :key="peer.id" class="peer-row">
         <div class="peer-main">
           <div class="peer-name">
             {{ peer.name }}
@@ -124,7 +139,7 @@ async function forget(peer: LanPeerProfile): Promise<void> {
         </button>
       </div>
     </div>
-    <div v-else-if="!store.scanning" class="empty-state">未发现设备</div>
+    <div v-else-if="!store.scanning" class="empty-state">{{ isLanConnected ? '未发现其他设备' : '未发现设备' }}</div>
 
     <div class="manual-row">
       <button class="link-btn" @click="manualOpen = !manualOpen">
@@ -174,6 +189,23 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   flex-direction: column;
   gap: 10px;
 }
+.current-peer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.current-peer button {
+  flex: none;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 .status-row {
   display: flex;
   align-items: center;

@@ -58,8 +58,8 @@ async function decide(allow: boolean, write: boolean): Promise<void> {
         <p v-if="error" class="pair-request-error">{{ error }}</p>
         <div class="pair-request-actions">
           <button :disabled="busy" @click="decide(false, false)">拒绝</button>
-          <button :disabled="busy" @click="decide(true, false)">仅浏览</button>
-          <button class="primary" :disabled="busy" @click="decide(true, true)">允许写入</button>
+          <button :disabled="busy" @click="decide(true, false)">仅读取</button>
+          <button class="primary" :disabled="busy" @click="decide(true, true)">可读写</button>
         </div>
       </div>
     </div>

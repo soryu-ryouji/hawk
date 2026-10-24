@@ -1,31 +1,22 @@
 <script setup lang="ts">
-// 访问其他设备 → 配对操作：生成一次性配对码 / iOS 扫码二维码。
-// 与「局域网网站访问」共享 useLanSettingsStore；没有直连密钥时点击生成会弹窗选择权限，
-// 确认后自动创建并保存，不把密钥权限作为页面一级信息展示。
-import { computed, onMounted, ref, watch } from 'vue';
-import { useClipboard } from '@vueuse/core';
-import { api } from '@/shared/api/endpoints';
+// 目标端共享管理：已授权设备权限/撤销，以及移动端扫码授权。
+// 桌面 hawk-app 互连统一走配对请求；这里不再生成配对码或暴露密钥选择。
+import { onMounted, ref } from 'vue';
 import { errorText } from '@/shared/lib/storeUtil';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
-import PairingCodeInput from './PairingCodeInput.vue';
 import PairingQrDialog from './PairingQrDialog.vue';
 import { encodePairingPayload, lanPairingPayload } from '../pairing';
 import { useLanSettingsStore, type LanAccessKey } from '../lanSettings';
 
-type PairMode = 'code' | 'qr';
-
 const lan = useLanSettingsStore();
 const addresses = ref<string[]>([]);
-const selectedKeyId = ref('');
-const generating = ref(false);
-const error = ref('');
-const code = ref('');
-const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
-const pendingMode = ref<PairMode | null>(null);
-const newKeyWrite = ref(false);
 const busyKeyId = ref<string | null>(null);
-const { copy } = useClipboard({ legacy: true });
+const error = ref('');
+const showQrPermission = ref(false);
+const newKeyWrite = ref(false);
+const generating = ref(false);
+const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
 
 onMounted(async () => {
   await lan.load();
@@ -37,102 +28,7 @@ onMounted(async () => {
   } catch (e) {
     error.value = `读取本机地址失败：${errorText(e)}`;
   }
-  selectDefaultKey();
 });
-
-const selectedKey = computed(() => lan.peerKeys.find((key) => key.id === selectedKeyId.value) ?? lan.peerKeys[0] ?? null);
-const canGenerate = computed(() => !lan.loading);
-
-watch(
-  () => lan.peerKeys.map((key) => key.id).join(','),
-  () => selectDefaultKey(),
-);
-
-function selectDefaultKey(): void {
-  if (lan.peerKeys.some((key) => key.id === selectedKeyId.value)) {
-    return;
-  }
-  selectedKeyId.value = (lan.peerKeys.find((key) => !key.write) ?? lan.peerKeys[0])?.id ?? '';
-}
-
-function requestGenerate(mode: PairMode): void {
-  if (!canGenerate.value || generating.value) {
-    return;
-  }
-  if (mode === 'qr' && addresses.value.length === 0) {
-    error.value = '未检测到局域网 IPv4 地址';
-    return;
-  }
-  error.value = '';
-  if (!selectedKey.value) {
-    newKeyWrite.value = false;
-    pendingMode.value = mode;
-    return;
-  }
-  void generate(mode);
-}
-
-async function confirmCreateKey(): Promise<void> {
-  const mode = pendingMode.value;
-  if (!mode || generating.value) {
-    return;
-  }
-  const key = lan.addPeerKey('配对密钥', newKeyWrite.value);
-  pendingMode.value = null;
-  await generate(mode, key);
-}
-
-async function generate(mode: PairMode, created?: LanAccessKey): Promise<void> {
-  if (generating.value) {
-    return;
-  }
-  generating.value = true;
-  error.value = '';
-  try {
-    let key = created ?? selectedKey.value;
-    if (!key) {
-      return;
-    }
-    // 新 key 可能只存在前端草稿中；生成前先保存，保证 key 已落盘且监听就绪。
-    if (!(await lan.save())) {
-      error.value = lan.error ?? '保存局域网配置失败';
-      return;
-    }
-    selectedKeyId.value = key.id;
-    key = lan.peerKeys.find((item) => item.id === key!.id) ?? key;
-    if (mode === 'code') {
-      code.value = (await api.createLanPairCode({ key_id: key.id })).code;
-    } else {
-      openQr(key);
-    }
-  } catch (e) {
-    error.value = `${mode === 'code' ? '生成配对码' : '生成配对二维码'}失败：${errorText(e)}`;
-  } finally {
-    generating.value = false;
-  }
-}
-
-function openQr(key: LanAccessKey): void {
-  const urls = addresses.value.map((addr) => `http://${addr}:${lan.peerPort}`);
-  const warnings: string[] = [];
-  if (key.write) {
-    warnings.push('当前选择的密钥具备写权限；请只在信任的设备上扫码。');
-  }
-  pairing.value = {
-    payload: encodePairingPayload(lanPairingPayload(urls, key.token)),
-    details: [
-      { label: '地址（客户端自动择优）', value: urls.join('\n') },
-      { label: '访问密钥', value: key.token },
-    ],
-    warning: warnings.join(' '),
-  };
-}
-
-function copyCode(): void {
-  if (code.value) {
-    void copy(code.value);
-  }
-}
 
 /** 目标端动态调整某台已授权设备的读写权限；鉴权中间件每请求读取，保存后立即生效。 */
 async function setPeerWrite(id: string, write: boolean): Promise<void> {
@@ -163,6 +59,53 @@ async function revokePeer(id: string, label: string): Promise<void> {
   }
   busyKeyId.value = null;
 }
+
+/** 打开二维码权限选择；确认后自动创建一把移动端专用密钥并展示二维码。 */
+function requestQr(): void {
+  if (lan.loading || generating.value) {
+    return;
+  }
+  error.value = '';
+  newKeyWrite.value = false;
+  showQrPermission.value = true;
+}
+
+async function confirmQr(): Promise<void> {
+  if (generating.value) {
+    return;
+  }
+  generating.value = true;
+  error.value = '';
+  const key = lan.addPeerKey(`移动端扫码 ${lan.peerKeys.length + 1}`, newKeyWrite.value);
+  try {
+    if (!(await lan.save())) {
+      lan.removePeerKey(key.id);
+      error.value = lan.error ?? '保存局域网配置失败';
+      return;
+    }
+    const saved = lan.peerKeys.find((item) => item.id === key.id) ?? key;
+    showQrPermission.value = false;
+    openQr(saved);
+  } finally {
+    generating.value = false;
+  }
+}
+
+function openQr(key: LanAccessKey): void {
+  const urls = addresses.value.map((addr) => `http://${addr}:${lan.peerPort}`);
+  const warnings: string[] = [];
+  if (key.write) {
+    warnings.push('当前二维码包含写权限；请只在信任的设备上扫码。');
+  }
+  pairing.value = {
+    payload: encodePairingPayload(lanPairingPayload(urls, key.token)),
+    details: [
+      { label: '地址（客户端自动择优）', value: urls.join('\n') },
+      { label: '访问密钥', value: key.token },
+    ],
+    warning: warnings.join(' '),
+  };
+}
 </script>
 
 <template>
@@ -186,51 +129,30 @@ async function revokePeer(id: string, label: string): Promise<void> {
       </div>
     </div>
 
-    <div v-if="lan.peerKeys.length > 0" class="pair-controls">
-      <label class="control">
-        <span>使用密钥</span>
-        <select v-model="selectedKeyId">
-          <option v-for="key in lan.peerKeys" :key="key.id" :value="key.id">{{ key.label }}（{{ key.write ? '读写' : '只读' }}）</option>
-        </select>
-      </label>
-    </div>
-
     <div class="button-row">
-      <button :disabled="!canGenerate || generating" @click="requestGenerate('code')">
-        {{ generating ? '生成中…' : '生成配对码' }}
-      </button>
-      <button :disabled="!canGenerate || generating" @click="requestGenerate('qr')">生成配对二维码</button>
+      <button :disabled="lan.loading || generating" @click="requestQr">生成授权二维码</button>
     </div>
-
-    <p v-if="lan.peerKeys.length > 0 && !lan.peerActive" class="hint warning">{{ lan.peerError || 'hawk-app 直连监听未生效' }}</p>
-
-    <div v-if="code" class="code-row">
-      <PairingCodeInput :model-value="code" readonly label="hawk-app 配对码" />
-      <button class="copy-btn" @click="copyCode">
-        <Icon name="copy" :size="12" />
-        复制
-      </button>
-    </div>
+    <p v-if="!lan.peerActive" class="hint warning">{{ lan.peerError || 'hawk-app 直连监听未生效' }}</p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <Teleport to="body">
-      <div v-if="pendingMode" class="key-dialog-backdrop" @click.self="pendingMode = null">
+      <div v-if="showQrPermission" class="key-dialog-backdrop" @click.self="showQrPermission = false">
         <div class="key-dialog" role="dialog" aria-modal="true" aria-labelledby="key-dialog-title">
-          <div id="key-dialog-title" class="key-dialog-title">创建 hawk-app 直连密钥</div>
+          <div id="key-dialog-title" class="key-dialog-title">生成移动端授权二维码</div>
           <div class="perm-options">
             <label class="perm-option" :class="{ active: !newKeyWrite }">
               <input v-model="newKeyWrite" type="radio" :value="false" />
-              <span><strong>只读</strong></span>
+              <span><strong>仅读取</strong></span>
             </label>
             <label class="perm-option" :class="{ active: newKeyWrite }">
               <input v-model="newKeyWrite" type="radio" :value="true" />
-              <span><strong>允许写入</strong></span>
+              <span><strong>可读写</strong></span>
             </label>
           </div>
           <div class="key-dialog-actions">
-            <button :disabled="generating" @click="pendingMode = null">取消</button>
-            <button class="primary" :disabled="generating" @click="confirmCreateKey">
-              {{ generating ? '创建中…' : '创建并使用' }}
+            <button :disabled="generating" @click="showQrPermission = false">取消</button>
+            <button class="primary" :disabled="generating" @click="confirmQr">
+              {{ generating ? '生成中…' : '生成二维码' }}
             </button>
           </div>
         </div>
@@ -239,10 +161,10 @@ async function revokePeer(id: string, label: string): Promise<void> {
 
     <PairingQrDialog
       v-if="pairing"
-      title="局域网配对"
+      title="移动端局域网授权"
       :payload="pairing.payload"
       :details="pairing.details"
-      note="用 hawk iOS 客户端扫码连接同一局域网内的素材库。"
+      note="用 hawk iOS / Android 客户端扫码连接此素材库。"
       :warning="pairing.warning"
       @close="pairing = null"
     />
@@ -255,29 +177,18 @@ async function revokePeer(id: string, label: string): Promise<void> {
 .pair-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-.hint {
-  margin: 0;
-  color: var(--fg-1);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.warning {
-  color: var(--danger);
+  gap: 10px;
 }
 .group {
   display: flex;
   flex-direction: column;
 }
-
 .group-title {
   padding: 2px 0 5px;
   color: var(--fg-1);
   font-size: 11px;
   font-weight: 600;
 }
-
 .peer-row {
   display: flex;
   align-items: center;
@@ -286,86 +197,49 @@ async function revokePeer(id: string, label: string): Promise<void> {
   padding: 7px 0;
   border-bottom: 1px solid var(--border);
 }
-
 .peer-row:last-child {
   border-bottom: none;
 }
-
 .peer-main {
   min-width: 0;
 }
-
 .peer-name {
   overflow: hidden;
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .peer-meta {
   margin-top: 2px;
   color: var(--fg-1);
   font-size: 11px;
 }
-
-.row-actions {
+.row-actions,
+.button-row {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.row-actions {
   flex: none;
 }
-
-.row-actions button {
+.row-actions button,
+.button-row button {
   font-size: 12px;
-  padding: 4px 8px;
+  padding: 4px 9px;
 }
-
 .empty-state {
   padding: 8px 0;
   color: var(--fg-1);
   font-size: 12px;
 }
-
-.pair-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.control {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+.hint {
+  margin: 0;
   color: var(--fg-1);
   font-size: 12px;
 }
-.control select {
-  max-width: 175px;
-}
-.button-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.button-row > button {
-  font-size: 12px;
-  padding: 5px 10px;
-}
-.code-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 2px;
-}
-.copy-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  padding: 5px 9px;
-  font-size: 12px;
-}
+.warning,
 .error {
   color: var(--danger);
   font-size: 12px;
@@ -414,11 +288,6 @@ async function revokePeer(id: string, label: string): Promise<void> {
 .perm-option input {
   margin-top: 2px;
   accent-color: var(--accent);
-}
-.perm-option span {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 .perm-option strong {
   font-size: 13px;
