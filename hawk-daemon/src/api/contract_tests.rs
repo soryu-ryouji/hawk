@@ -136,6 +136,14 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     // 局域网发现/配对依赖真实网卡与目标设备；配对码生成要求 [web] 已启用
     ("GET", "/api/v1/app/lan/peers"),
     ("POST", "/api/v1/app/lan/pair-code"),
+    // 自动配对请求/轮询由真实双端串联验证（见 put_lan_auto_pair_request_flow）
+    ("POST", "/api/v1/app/lan/pair-requests"),
+    ("GET", "/api/v1/app/lan/pair-requests"),
+    ("GET", "/api/v1/app/lan/pair-requests/{request_id}"),
+    (
+        "POST",
+        "/api/v1/app/lan/pair-requests/{request_id}/decision",
+    ),
     // 目标端以一次性配对码准入（免 Bearer），契约测试不预置目标配对码
     ("POST", "/api/v1/app/lan/pair"),
     // 依赖存活的 hawk-server（转发调用），契约环境无服务端可连
@@ -472,6 +480,84 @@ async fn lan_ports_enforce_separate_key_namespaces() {
         call_auth(peer_router, "web-token").await,
         StatusCode::UNAUTHORIZED
     );
+}
+
+/// 桌面自动配对：源端创建请求 → 目标端列表看到 → 允许 → 源端轮询拿到 token。
+#[tokio::test]
+async fn put_lan_auto_pair_request_flow() {
+    let app = test_app("lan-auto-pair");
+    app.state.lan.mark_peer_active_for_test(27375);
+    let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
+
+    let (status, bytes) = call_json(
+        &peer_router,
+        "POST",
+        "/api/v1/app/lan/pair-requests",
+        Some(json!({ "client_name": "MacBook", "writable": true })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let created: Value = serde_json::from_slice(&bytes).unwrap();
+    let request_id = created["data"]["request_id"].as_str().unwrap().to_string();
+
+    let (status, bytes) =
+        call_json(&app.router, "GET", "/api/v1/app/lan/pair-requests", None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let listed: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(listed["data"]["requests"][0]["id"], request_id);
+    assert_eq!(listed["data"]["requests"][0]["client_name"], "MacBook");
+
+    let decision_path = format!("/api/v1/app/lan/pair-requests/{request_id}/decision");
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        &decision_path,
+        Some(json!({ "allow": true, "write": true })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+
+    let status_path = format!("/api/v1/app/lan/pair-requests/{request_id}");
+    let (status, bytes) = call_json(&peer_router, "GET", &status_path, None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let approved: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(approved["data"]["status"], "approved");
+    assert_eq!(approved["data"]["writable"], true);
+    assert!(approved["data"]["token"]
+        .as_str()
+        .is_some_and(|token| !token.is_empty()));
+    assert!(approved["data"]["peer_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+
+    let lib = app.state.library.as_ref().unwrap();
+    assert!(lib
+        .config
+        .current()
+        .web
+        .peer_keys
+        .iter()
+        .any(|key| key.write && key.label.contains("MacBook")));
 }
 
 /// PUT /app/lan 必须真正唤醒 supervisor 并让 hawk-app 端口开始监听。

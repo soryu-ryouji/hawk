@@ -1319,3 +1319,10 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 - **初始索引期间**:就绪网关拦截期内不推事件(订阅端点同样 503),主界面加载完成后订阅即可
 - **顺序**:同一 item 的事件按流水线处理顺序发出;不同 item 之间无全局顺序保证
 - **重连**:EventSource 断线自动重连,`onopen` 再次触发即对齐时机(参考前端 `events.ts` 的 `onReconnect` 约定)
+
+### 自动配对端点
+
+- POST /api/v1/app/lan/pair-requests：源端发起配对请求（免 Bearer，仅 peer 端口）
+- GET /api/v1/app/lan/pair-requests：目标端待确认请求列表（admin）
+- GET /api/v1/app/lan/pair-requests/{request_id}：源端轮询结果（免 Bearer，request_id 为随机凭证）
+- POST /api/v1/app/lan/pair-requests/{request_id}/decision：目标端确认/拒绝并选择读写权限（admin）

@@ -12,12 +12,12 @@
 use super::envelope::{codes, ApiError, Envelope};
 use super::{require_admin, AccessLevel, SharedState};
 use crate::core::config::WebSettings;
-use axum::extract::{Extension, State};
+use axum::extract::{Extension, Path, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::time::Instant;
 use utoipa_axum::router::OpenApiRouter;
@@ -32,6 +32,10 @@ const DISCOVERY_GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 72, 75);
 const DISCOVERY_PROBE_TIMEOUT: Duration = Duration::from_millis(900);
 const PAIRING_CODE_TTL: Duration = Duration::from_secs(300);
 const PAIRING_CODE_LEN: usize = 8;
+/// 桌面端自动配对请求的等待窗口；超时后目标端自动丢弃，无需人工清理。
+const PAIR_REQUEST_TTL: Duration = Duration::from_secs(90);
+/// 待处理请求上限，避免局域网内脚本刷爆目标端提示框。
+const MAX_PENDING_PAIR_REQUESTS: usize = 8;
 /// 去掉易混淆字符（0/O、1/I）的 32 字母表：8 位约 40 bit 熵，配 5 分钟 TTL 足以抵御在线穷举。
 const PAIRING_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -41,6 +45,25 @@ struct PairingTicket {
     expires_at: Instant,
     /// 生成时选定的访问密钥：pair 时精确返回该密钥，而不是按权限猜一把
     key_id: Option<String>,
+}
+
+/// 自动配对请求的状态机。
+#[derive(Clone)]
+enum PairRequestState {
+    Pending,
+    Approving,
+    Approved { token: String, writable: bool },
+    Denied,
+}
+
+#[derive(Clone)]
+struct PairRequestTicket {
+    id: String,
+    client_name: String,
+    requested_write: bool,
+    created_at_ms: u64,
+    expires_at: Instant,
+    state: PairRequestState,
 }
 
 /// 单个 LAN 监听器状态快照（app/info 序列化 + 日志）
@@ -66,6 +89,8 @@ pub struct LanSupervisor {
     /// 一次性局域网配对码：由本机 admin 生成，源端随后在目标机 LAN 端点出示。
     /// 只在内存中保存，5 分钟过期；成功后立即消费，不能重放。
     pairing: Mutex<Option<PairingTicket>>,
+    /// 桌面端自动配对请求：源端创建后等待目标端用户确认；只在内存中保存。
+    pair_requests: Mutex<Vec<PairRequestTicket>>,
     /// 两个监听器与发现任务的实际持有者；后台 run 与 PUT 的直接 reconcile 共用同一把锁。
     listeners: tokio::sync::Mutex<LanListeners>,
 }
@@ -76,6 +101,7 @@ impl LanSupervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new((0, LanStatuses::default())),
             pairing: Mutex::new(None),
+            pair_requests: Mutex::new(Vec::new()),
             listeners: tokio::sync::Mutex::new(LanListeners::default()),
         })
     }
@@ -116,6 +142,103 @@ impl LanSupervisor {
         let key_id = ticket.key_id.clone();
         *guard = None;
         Some(key_id)
+    }
+
+    /// 创建/复用一条待确认的自动配对请求。同一设备名已有 pending 请求时直接复用，
+    /// 避免用户重复点击后目标端出现多个相同提示。
+    fn create_pair_request(
+        &self,
+        client_name: &str,
+        requested_write: bool,
+    ) -> Option<(String, u64)> {
+        let now = Instant::now();
+        let mut requests = self.pair_requests.lock().unwrap();
+        requests.retain(|request| request.expires_at > now);
+        if let Some(existing) = requests.iter().find(|request| {
+            matches!(request.state, PairRequestState::Pending)
+                && request.client_name == client_name
+                && request.requested_write == requested_write
+        }) {
+            return Some((
+                existing.id.clone(),
+                existing.expires_at.saturating_duration_since(now).as_secs(),
+            ));
+        }
+        if requests
+            .iter()
+            .filter(|request| matches!(request.state, PairRequestState::Pending))
+            .count()
+            >= MAX_PENDING_PAIR_REQUESTS
+        {
+            return None;
+        }
+        let id = loop {
+            let candidate = random_hex(16);
+            if requests.iter().all(|request| request.id != candidate) {
+                break candidate;
+            }
+        };
+        requests.push(PairRequestTicket {
+            id: id.clone(),
+            client_name: client_name.to_string(),
+            requested_write,
+            created_at_ms: unix_ms_now(),
+            expires_at: now + PAIR_REQUEST_TTL,
+            state: PairRequestState::Pending,
+        });
+        Some((id, PAIR_REQUEST_TTL.as_secs()))
+    }
+
+    fn pending_pair_requests(&self) -> Vec<PairRequestTicket> {
+        let now = Instant::now();
+        let mut requests = self.pair_requests.lock().unwrap();
+        requests.retain(|request| request.expires_at > now);
+        requests
+            .iter()
+            .filter(|request| matches!(request.state, PairRequestState::Pending))
+            .cloned()
+            .collect()
+    }
+
+    /// 原子地把 pending 请求标记为 approving，返回请求信息；重复点击/并发确认只会成功一次。
+    fn begin_pair_request_decision(&self, id: &str) -> Option<PairRequestTicket> {
+        let now = Instant::now();
+        let mut requests = self.pair_requests.lock().unwrap();
+        requests.retain(|request| request.expires_at > now);
+        let request = requests.iter_mut().find(|request| request.id == id)?;
+        if !matches!(request.state, PairRequestState::Pending) {
+            return None;
+        }
+        request.state = PairRequestState::Approving;
+        Some(request.clone())
+    }
+
+    fn finish_pair_request(&self, id: &str, state: PairRequestState) {
+        if let Some(request) = self
+            .pair_requests
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|request| request.id == id)
+        {
+            request.state = state;
+        }
+    }
+
+    fn pair_request_status(&self, id: &str) -> Option<(String, Option<String>, Option<bool>)> {
+        let now = Instant::now();
+        let mut requests = self.pair_requests.lock().unwrap();
+        requests.retain(|request| request.expires_at > now);
+        let request = requests.iter().find(|request| request.id == id)?;
+        match &request.state {
+            PairRequestState::Pending | PairRequestState::Approving => {
+                Some(("pending".to_string(), None, None))
+            }
+            PairRequestState::Approved { token, writable } => {
+                Some(("approved".to_string(), Some(token.clone()), Some(*writable)))
+            }
+            PairRequestState::Denied => Some(("denied".to_string(), None, None)),
+        }
     }
 
     /// 唤醒收敛（watcher 回调同步调用；Notify 无等待者时记 permit，不丢事件）
@@ -297,7 +420,20 @@ async fn reconcile_listener(
 }
 
 // ---------- 局域网发现与配对：不经服务器的 hawk-app 互联 ----------
-// 发现只回答「谁在同一网段」；token 必须经目标端一次性配对码交换，不进入广播/组播。
+// 发现只回答「谁在同一网段」；token 必须在目标端用户确认后返回，不进入广播/组播。
+
+fn random_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    getrandom::fill(&mut buf).expect("生成随机数失败");
+    buf.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn unix_ms_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -391,14 +527,9 @@ pub async fn run_discovery_responder(state: SharedState) {
             continue;
         };
         let web = lib.config.current().web;
-        if web.peer_keys.is_empty() {
-            continue;
-        }
-        let reply = announce_message(
-            lib,
-            web.peer_port,
-            web.peer_keys.iter().any(|key| key.write),
-        );
+        // 自动配对模型下，即使还没有任何直连密钥也要应答发现：目标端用户批准后
+        // 会即时创建该设备专用的 peer key。
+        let reply = announce_message(lib, web.peer_port, true);
         if let Ok(payload) = serde_json::to_vec(&reply) {
             let _ = socket.send_to(&payload, peer).await;
         }
@@ -600,6 +731,10 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     OpenApiRouter::new()
         .routes(routes!(get_lan, put_lan))
         .routes(routes!(discover_lan_peers))
+        .routes(routes!(create_lan_pair_request))
+        .routes(routes!(list_lan_pair_requests))
+        .routes(routes!(get_lan_pair_request_status))
+        .routes(routes!(decide_lan_pair_request))
         .routes(routes!(create_lan_pair_code))
         .routes(routes!(lan_pair))
 }
@@ -618,6 +753,271 @@ struct LanPeerDto {
 #[derive(Serialize, utoipa::ToSchema)]
 struct LanPeersDto {
     peers: Vec<LanPeerDto>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct LanPairRequestCreateBody {
+    /// 源端设备名（仅用于目标端确认提示）
+    client_name: String,
+    /// 源端希望获得写权限；最终由目标端用户决定
+    #[serde(default)]
+    writable: bool,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanPairRequestCreatedDto {
+    request_id: String,
+    expires_in_seconds: u64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanPairRequestDto {
+    id: String,
+    client_name: String,
+    requested_write: bool,
+    created_at_ms: u64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanPairRequestsDto {
+    requests: Vec<LanPairRequestDto>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanPairRequestStatusDto {
+    /// pending / approved / denied / expired
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    writable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    library_name: Option<String>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct LanPairDecisionBody {
+    allow: bool,
+    #[serde(default)]
+    write: bool,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanPairDecisionDto {
+    status: String,
+}
+
+fn sanitized_client_name(raw: &str) -> String {
+    let name = raw.trim();
+    let name: String = if name.is_empty() {
+        "未知设备".to_string()
+    } else {
+        name.chars().take(64).collect()
+    };
+    name
+}
+
+/// 源端发起自动配对请求（免 Bearer，仅 hawk-app 直连端口）。
+#[utoipa::path(
+    post,
+    path = "/api/v1/app/lan/pair-requests",
+    tags = ["app"],
+    request_body = LanPairRequestCreateBody,
+    responses((status = 200, description = "OK", body = Envelope<LanPairRequestCreatedDto>))
+)]
+async fn create_lan_pair_request(
+    State(state): State<SharedState>,
+    Extension(mode): Extension<super::ListenerMode>,
+    Json(body): Json<LanPairRequestCreateBody>,
+) -> Result<Json<Envelope<LanPairRequestCreatedDto>>, ApiError> {
+    if mode != super::ListenerMode::Peer {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::NOT_FOUND,
+            "配对请求仅在 hawk-app 直连端口可用",
+        ));
+    }
+    let _ = state.require_library()?;
+    if !state.lan.snapshot().peer.active {
+        return Err(ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "本机 hawk-app 直连监听尚未就绪",
+        ));
+    }
+    let client_name = sanitized_client_name(&body.client_name);
+    let Some((request_id, expires_in_seconds)) =
+        state.lan.create_pair_request(&client_name, body.writable)
+    else {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "目标设备待确认的配对请求过多，请稍后再试",
+        ));
+    };
+    tracing::info!("收到局域网配对请求: {client_name}（request={request_id}）");
+    Ok(Json(Envelope::ok(LanPairRequestCreatedDto {
+        request_id,
+        expires_in_seconds,
+    })))
+}
+
+/// 源端轮询配对请求结果（免 Bearer；request_id 为随机不可猜 secret）。
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/lan/pair-requests/{request_id}",
+    tags = ["app"],
+    params(("request_id" = String, Path, description = "配对请求 id")),
+    responses((status = 200, description = "OK", body = Envelope<LanPairRequestStatusDto>))
+)]
+async fn get_lan_pair_request_status(
+    State(state): State<SharedState>,
+    Extension(mode): Extension<super::ListenerMode>,
+    Path(request_id): Path<String>,
+) -> Result<Json<Envelope<LanPairRequestStatusDto>>, ApiError> {
+    if mode != super::ListenerMode::Peer {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::NOT_FOUND,
+            "配对请求仅在 hawk-app 直连端口可用",
+        ));
+    }
+    let lib = state.require_library()?;
+    let Some((status, token, writable)) = state.lan.pair_request_status(&request_id) else {
+        return Ok(Json(Envelope::ok(LanPairRequestStatusDto {
+            status: "expired".to_string(),
+            token: None,
+            writable: None,
+            peer_id: None,
+            name: None,
+            library_name: None,
+        })));
+    };
+    let approved = status == "approved";
+    Ok(Json(Envelope::ok(LanPairRequestStatusDto {
+        status,
+        token,
+        writable,
+        peer_id: approved.then(|| local_peer_id(lib)),
+        name: approved.then(|| gethostname::gethostname().to_string_lossy().to_string()),
+        library_name: approved.then(|| local_library_name(lib)),
+    })))
+}
+
+/// 目标端待处理配对请求列表（仅本机 admin 设置面板轮询）。
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/lan/pair-requests",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = Envelope<LanPairRequestsDto>))
+)]
+async fn list_lan_pair_requests(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+) -> Result<Json<Envelope<LanPairRequestsDto>>, ApiError> {
+    require_admin(&access)?;
+    let _ = state.require_library()?;
+    Ok(Json(Envelope::ok(LanPairRequestsDto {
+        requests: state
+            .lan
+            .pending_pair_requests()
+            .into_iter()
+            .map(|request| LanPairRequestDto {
+                id: request.id,
+                client_name: request.client_name,
+                requested_write: request.requested_write,
+                created_at_ms: request.created_at_ms,
+            })
+            .collect(),
+    })))
+}
+
+/// 目标端用户确认/拒绝配对请求（admin 限定）。允许时创建一把该设备专用的直连密钥。
+#[utoipa::path(
+    post,
+    path = "/api/v1/app/lan/pair-requests/{request_id}/decision",
+    tags = ["app"],
+    params(("request_id" = String, Path, description = "配对请求 id")),
+    request_body = LanPairDecisionBody,
+    responses((status = 200, description = "OK", body = Envelope<LanPairDecisionDto>))
+)]
+async fn decide_lan_pair_request(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+    Path(request_id): Path<String>,
+    Json(body): Json<LanPairDecisionBody>,
+) -> Result<Json<Envelope<LanPairDecisionDto>>, ApiError> {
+    require_admin(&access)?;
+    let lib = state.require_library()?;
+    let Some(request) = state.lan.begin_pair_request_decision(&request_id) else {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::CONFLICT,
+            "配对请求不存在、已处理或已过期",
+        ));
+    };
+    if !body.allow {
+        state
+            .lan
+            .finish_pair_request(&request_id, PairRequestState::Denied);
+        tracing::info!(
+            "局域网配对请求已拒绝: {}（request={request_id}）",
+            request.client_name
+        );
+        return Ok(Json(Envelope::ok(LanPairDecisionDto {
+            status: "denied".to_string(),
+        })));
+    }
+    let mut web = lib.config.current().web;
+    if web.peer_keys.len() >= 32 {
+        state
+            .lan
+            .finish_pair_request(&request_id, PairRequestState::Denied);
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "直连访问密钥已达上限，请先删除不再使用的设备",
+        ));
+    }
+    let token = random_hex(32);
+    let key_id = format!("peer_{}", random_hex(8));
+    web.peer_keys.push(crate::core::config::WebAccessKey {
+        id: key_id,
+        label: format!("局域网设备：{}", request.client_name),
+        token: token.clone(),
+        write: body.write,
+        created_at_ms: unix_ms_now(),
+    });
+    if let Err(error) = lib.config.update_web(&web) {
+        state
+            .lan
+            .finish_pair_request(&request_id, PairRequestState::Denied);
+        return Err(ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error,
+        ));
+    }
+    state.lan.wake();
+    state.lan.finish_pair_request(
+        &request_id,
+        PairRequestState::Approved {
+            token,
+            writable: body.write,
+        },
+    );
+    tracing::info!(
+        "局域网配对请求已允许: {}（request={request_id}, write={}）",
+        request.client_name,
+        body.write
+    );
+    Ok(Json(Envelope::ok(LanPairDecisionDto {
+        status: "approved".to_string(),
+    })))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -912,13 +1312,9 @@ fn desired_web_port(web: &WebSettings) -> Option<u16> {
     }
 }
 
-/// hawk-app 直连端口期望态：只要有直连密钥就监听，不依赖网站开关。
+/// hawk-app 直连端口期望态：始终监听，用于接收自动配对请求；不依赖网站开关或已有密钥。
 fn desired_peer_port(web: &WebSettings) -> Option<u16> {
-    if web.peer_keys.is_empty() {
-        None
-    } else {
-        Some(web.peer_port)
-    }
+    Some(web.peer_port)
 }
 
 /// 尝试在 preferred 起连续范围内选一个可绑定端口（跳过另一方向端口）。
@@ -1067,7 +1463,7 @@ async fn put_lan(
     let owned_web = current.web.active && current.web.port == Some(body.port);
     let owned_peer = current.peer.active && current.peer.port == Some(body.peer_port);
     let web_needed = body.enabled && !keys.is_empty();
-    let peer_needed = !peer_keys.is_empty();
+    let peer_needed = true;
     let mut web_port = body.port;
     let mut peer_port = body.peer_port;
 
@@ -1146,6 +1542,18 @@ async fn put_lan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_listener_is_always_desired_for_auto_pairing() {
+        let web = WebSettings {
+            enabled: false,
+            port: 27372,
+            peer_port: 27375,
+            keys: vec![],
+            peer_keys: vec![],
+        };
+        assert_eq!(desired_peer_port(&web), Some(27375));
+    }
 
     #[test]
     fn listener_desired_for_peer_keys_even_when_website_off() {

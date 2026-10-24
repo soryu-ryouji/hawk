@@ -973,6 +973,138 @@
         ],
         "type": "object"
       },
+      "Envelope_LanPairDecisionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairRequestCreatedDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "expires_in_seconds": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_id",
+              "expires_in_seconds"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairRequestStatusDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "library_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "peer_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "description": "pending / approved / denied / expired",
+                "type": "string"
+              },
+              "token": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "writable": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairRequestsDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "requests": {
+                "items": {
+                  "$ref": "#/components/schemas/LanPairRequestDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "requests"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_LanPairResultDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -2777,6 +2909,145 @@
         ],
         "type": "object"
       },
+      "LanPairDecisionBody": {
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          },
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allow"
+        ],
+        "type": "object"
+      },
+      "LanPairDecisionDto": {
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestCreateBody": {
+        "properties": {
+          "client_name": {
+            "description": "源端设备名（仅用于目标端确认提示）",
+            "type": "string"
+          },
+          "writable": {
+            "description": "源端希望获得写权限；最终由目标端用户决定",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "client_name"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestCreatedDto": {
+        "properties": {
+          "expires_in_seconds": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expires_in_seconds"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestDto": {
+        "properties": {
+          "client_name": {
+            "type": "string"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "requested_write": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "client_name",
+          "requested_write",
+          "created_at_ms"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestStatusDto": {
+        "properties": {
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "pending / approved / denied / expired",
+            "type": "string"
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "writable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestsDto": {
+        "properties": {
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/LanPairRequestDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "type": "object"
+      },
       "LanPairResultDto": {
         "properties": {
           "library_name": {
@@ -4063,6 +4334,130 @@
           }
         },
         "summary": "生成一次性局域网配对码（admin 限定）：目标端 haw-app 设置面板读取并展示。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair-requests": {
+      "get": {
+        "operationId": "list_lan_pair_requests",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairRequestsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "目标端待处理配对请求列表（仅本机 admin 设置面板轮询）。",
+        "tags": [
+          "app"
+        ]
+      },
+      "post": {
+        "operationId": "create_lan_pair_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanPairRequestCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairRequestCreatedDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "源端发起自动配对请求（免 Bearer，仅 hawk-app 直连端口）。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair-requests/{request_id}": {
+      "get": {
+        "operationId": "get_lan_pair_request_status",
+        "parameters": [
+          {
+            "description": "配对请求 id",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairRequestStatusDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "源端轮询配对请求结果（免 Bearer；request_id 为随机不可猜 secret）。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair-requests/{request_id}/decision": {
+      "post": {
+        "operationId": "decide_lan_pair_request",
+        "parameters": [
+          {
+            "description": "配对请求 id",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanPairDecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairDecisionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "目标端用户确认/拒绝配对请求（admin 限定）。允许时创建一把该设备专用的直连密钥。",
         "tags": [
           "app"
         ]
