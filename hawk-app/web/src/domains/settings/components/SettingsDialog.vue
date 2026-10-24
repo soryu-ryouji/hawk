@@ -20,7 +20,7 @@ import SettingsAppearance from './SettingsAppearance.vue';
 import SettingsHiding from './SettingsHiding.vue';
 import SettingsLan from './SettingsLan.vue';
 import SettingsLanConnect from './SettingsLanConnect.vue';
-import SettingsLanPairActions from './SettingsLanPairActions.vue';
+import SettingsLanDevices from './SettingsLanDevices.vue';
 import SettingsAdvanced from './SettingsAdvanced.vue';
 import SettingsRemote from './SettingsRemote.vue';
 import SettingsStorage from './SettingsStorage.vue';
@@ -59,7 +59,7 @@ const isAdmin = computed(() => store.access === 'admin');
 const showLanSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'lan-access');
 const showAdvancedSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'advanced');
 
-/** 「网络 → 局域网访问 → 共享本机素材库」块实例（v-show 保活，footer 保存按钮委托其 save） */
+/** 「网络 → 局域网访问 → 局域网网站访问」块实例（v-show 保活，footer 保存按钮委托其 save） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
 /** 「高级」块实例：本地 API 端口与局域网端口统一保存 */
 const advancedPane = ref<InstanceType<typeof SettingsAdvanced> | null>(null);
@@ -176,8 +176,7 @@ async function saveAdvanced(): Promise<void> {
             <div v-show="networkTab === 'lan-access'" class="tab-content lan-access" role="tabpanel">
               <SettingsLanConnect />
               <template v-if="isAdmin">
-                <h3 class="section-title">共享本机素材库</h3>
-                <SettingsLanPairActions />
+                <SettingsLanDevices />
                 <h3 class="section-title">局域网网站访问</h3>
                 <SettingsLan ref="lanPane" v-model:error="error" embedded />
               </template>

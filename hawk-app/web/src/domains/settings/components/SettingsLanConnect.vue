@@ -3,12 +3,14 @@
 // 目标端决定只读/可写权限，源端不经过 hawk-server；token 由主进程保存，本组件只见设备展示信息。
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useLanStore } from '@/domains/lan';
+import { useLanSettingsStore } from '../lanSettings';
 import { ipcMessage, useConnectionLabel } from '@/domains/remote';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
-import type { LanClient, LanPeer, LanPeerProfile } from '@/shared/types';
+import type { LanClient, LanPeer } from '@/shared/types';
 
 const store = useLanStore();
+const lanSettings = useLanSettingsStore();
 const connection = useConnectionLabel();
 const incomingClients = ref<LanClient[]>([]);
 let clientTimer: ReturnType<typeof setInterval> | null = null;
@@ -24,7 +26,13 @@ const speedMs = ref<number | null>(null);
 const isLanConnected = computed(() => connection.isLan.value);
 const currentPeer = computed(() => store.saved.find((peer) => peer.id === connection.peerId.value) ?? null);
 /** 当前已连接的设备不再出现在发现列表里，避免重复显示和误点申请。 */
-const visibleDiscovered = computed(() => store.discovered.filter((peer) => !(connection.isLan.value && peer.id === connection.peerId.value)));
+const visibleDiscovered = computed(() =>
+  store.discovered.filter((peer) => {
+    const current = connection.isLan.value && peer.id === connection.peerId.value;
+    const paired = store.saved.some((saved) => saved.id === peer.id || saved.name === peer.name) || lanSettings.peerKeys.some((key) => key.label === peer.name);
+    return !current && !paired;
+  }),
+);
 // 切换局域网目标后清除上一次测速结果
 watch(
   () => connection.peerId.value,
@@ -43,6 +51,7 @@ async function refreshClients(): Promise<void> {
 }
 
 onMounted(() => {
+  void lanSettings.load();
   void store.refreshSaved();
   void store.scan();
   void refreshClients();
@@ -114,14 +123,6 @@ async function testSpeed(): Promise<void> {
     testingSpeed.value = false;
   }
 }
-
-async function connectSaved(peer: LanPeerProfile): Promise<void> {
-  await store.connect(peer.id);
-}
-
-async function forget(peer: LanPeerProfile): Promise<void> {
-  await store.forget(peer.id);
-}
 </script>
 
 <template>
@@ -176,7 +177,7 @@ async function forget(peer: LanPeerProfile): Promise<void> {
         </button>
       </div>
     </div>
-    <div v-else-if="!store.scanning" class="empty-state">{{ isLanConnected ? '未发现其他设备' : '未发现设备' }}</div>
+    <div v-else-if="!store.scanning" class="empty-state">{{ store.saved.length > 0 ? '未发现其他设备' : '未发现设备' }}</div>
 
     <div class="manual-row">
       <button class="link-btn" @click="manualOpen = !manualOpen">
@@ -191,28 +192,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
         <button class="primary" :disabled="!manualUrl.trim() || store.connectingId !== null" @click="submitManualPair">
           {{ store.connectingId ? '等待对方确认…' : '申请配对' }}
         </button>
-      </div>
-    </div>
-
-    <div v-if="store.saved.length > 0" class="group">
-      <div class="group-title">已配对设备</div>
-      <div v-for="peer in store.saved" :key="peer.id" class="peer-row">
-        <div class="peer-main">
-          <div class="peer-name">
-            {{ peer.name }}
-            <span class="lib">（{{ peer.library_name }}）</span>
-            <span v-if="connection.isLan.value && connection.peerId.value === peer.id" class="current-badge">当前</span>
-          </div>
-          <div class="peer-meta">{{ peer.url }}</div>
-        </div>
-        <div class="row-actions">
-          <button :disabled="store.connectingId !== null || (connection.isLan.value && connection.peerId.value === peer.id)" @click="connectSaved(peer)">
-            {{ store.connectingId === peer.id ? '连接中…' : '连接' }}
-          </button>
-          <button class="icon-btn" title="忘记此设备" @click="forget(peer)">
-            <Icon name="trash" :size="13" />
-          </button>
-        </div>
       </div>
     </div>
 
