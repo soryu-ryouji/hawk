@@ -1,12 +1,12 @@
 import Foundation
 
 /// 桌面端生成的配对二维码载荷（设计文档「鉴权与配对」）。
-/// 局域网：{ "v": 1, "kind": "lan", "url": "...", "urls": ["..."], "token": "..." }
+/// 局域网：{ "v": 1, "kind": "lan", "urls": ["..."], "token": "..." }
 /// 广域网：{ "v": 1, "kind": "remote", "url": "...", "service_key": "...", "key": "..." }
 nonisolated struct PairingPayload: Decodable, Sendable {
     let v: Int
     let kind: String
-    let url: String
+    let url: String?
     let urls: [String]?
     let token: String?
     let serviceKey: String?
@@ -39,7 +39,7 @@ nonisolated struct PairingPayload: Decodable, Sendable {
             guard let token, !token.isEmpty else {
                 throw ConnectionError.message("配对二维码缺少访问 token")
             }
-            let candidates = ([url] + (urls ?? []))
+            let candidates = (urls ?? [])
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
             var seen = Set<String>()
@@ -49,7 +49,7 @@ nonisolated struct PairingPayload: Decodable, Sendable {
             }
             return ConnectionProfile(kind: .lan, url: primary, urls: unique, token: token)
         case "remote":
-            guard let serviceKey, let key, !serviceKey.isEmpty, !key.isEmpty else {
+            guard let url, !url.isEmpty, let serviceKey, let key, !serviceKey.isEmpty, !key.isEmpty else {
                 throw ConnectionError.message("配对二维码缺少访问密钥")
             }
             return ConnectionProfile(kind: .remote, url: url, serviceKey: serviceKey, appKey: key)

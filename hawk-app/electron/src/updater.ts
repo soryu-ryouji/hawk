@@ -146,20 +146,16 @@ export function registerUpdaterIpc(): void {
       available = semverNewer(remote, parseSemver(app.getVersion()));
       version = release.tag_name.replace(/^v/, '');
     } else {
-      // nightly：滚动 tag 固定，比 Release 所指 commit 与本机构建 sha。
-      // Release 的 target_commitish 是分支名不是 sha：CI 在 body 末尾注入 hawk-nightly-sha 注释；
-      // 注释机制上线前的旧 nightly 退化为 Release 名（Nightly <短sha>）前缀匹配
+      // nightly：滚动 tag 固定，比 Release body 中的构建 sha 与本机构建 sha。
       const localSha = readBuildInfo().sha;
       if (localSha === 'dev') {
         throw new Error('开发构建无构建标识，无法检查 nightly 更新');
       }
-      const bodySha = /hawk-nightly-sha:\s*([0-9a-f]{7,40})/i.exec(release.body || '');
-      const nameSha = /nightly\s+([0-9a-f]{7,40})/i.exec(release.name || '');
-      const remote = bodySha ?? nameSha;
+      const remote = /hawk-nightly-sha:\s*([0-9a-f]{7,40})/i.exec(release.body || '');
       if (!remote) {
         throw new Error('nightly 发布缺少构建标识，无法比较');
       }
-      // 短 sha（Release 名）与本机全 sha 按短侧长度前缀比较
+      // 构建标识可能为短 sha，与本机全 sha 按短侧长度前缀比较
       const n = Math.min(remote[1].length, localSha.length);
       available = remote[1].slice(0, n).toLowerCase() !== localSha.slice(0, n).toLowerCase();
       version = remote[1].slice(0, 7).toLowerCase();

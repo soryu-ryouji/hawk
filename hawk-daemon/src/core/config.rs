@@ -7,7 +7,7 @@ use crate::core::paths::LibraryPaths;
 use std::collections::HashSet;
 use std::sync::RwLock;
 
-/// 局域网访问密钥：明文 token 与配置一起存于库内（与旧的单 token 模型同级）；
+/// 局域网访问密钥：明文 token 与配置一起存于库内；
 /// 列表 API 仅 admin 可读，渲染层可复制给浏览器/移动端使用。
 #[derive(Clone, Default, PartialEq)]
 pub struct WebAccessKey {
@@ -234,36 +234,18 @@ impl LibraryConfig {
         let mut doc = text
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("配置解析失败 {file}: {e}"))?;
-        // 历史版本曾用 `web = { ... }` 的内联表写配置；内联表不能承载
-        // `[[web.keys]]` / `[[web.peer_keys]]` 数组表，直接按 `doc["web"]["keys"]`
-        // 赋值会被静默丢弃，reload 后密钥为空，PUT 随后必然超时。
-        // 这里先把 web 统一迁移成普通表，再写入嵌套数组表。
-        if !doc["web"].is_table() {
-            // remove_entry + insert_formatted 同时清掉旧内联表留在 key 上的行尾空白，
-            // 否则表头会渲染成 `[web ]`（语法合法但不够整洁）。
-            let (mut key, old) = doc
-                .as_table_mut()
-                .remove_entry("web")
-                .unwrap_or_else(|| (toml_edit::Key::new("web"), toml_edit::Item::None));
-            key.leaf_decor_mut().set_suffix("");
-            let table = old.into_table().unwrap_or_default();
-            doc.as_table_mut()
-                .insert_formatted(&key, toml_edit::Item::Table(table));
-        }
-        let table = doc["web"].as_table_mut().expect("web 已在上方归一为普通表");
+        let table = doc["web"]
+            .as_table_mut()
+            .ok_or_else(|| format!("配置格式错误 {file}：[web] 必须是普通表"))?;
         // 已存在的键只换值（键上的注释装饰保留），缺失的键自动创建。
         table["enabled"] = toml_edit::value(web.enabled);
         table["port"] = toml_edit::value(i64::from(web.port));
         table["peer_port"] = toml_edit::value(i64::from(web.peer_port));
-        // 旧版单 token 字段直接删除；访问密钥改为 [[web.keys]] 数组表。
-        for legacy in ["token", "writable", "separate_write_token", "write_token"] {
-            table.remove(legacy);
-        }
+
         set_web_keys(table, "keys", &web.keys);
         set_web_keys(table, "peer_keys", &web.peer_keys);
         let output = doc.to_string();
-        // 写盘前先做一次完整 TOML 解析：toml_edit 的类型/嵌套约束在某些历史配置
-        // 形态下可能留下不可解析文本，不能让 reload 静默保留旧配置后由上层超时暴露。
+        // 写盘前先做一次完整 TOML 解析，避免留下不可解析文本。
         toml::from_str::<toml::Value>(&output)
             .map_err(|e| format!("配置序列化校验失败 {file}: {e}"))?;
         let tmp = format!("{file}.tmp");
@@ -769,16 +751,14 @@ mod tests {
     }
 
     #[test]
-    fn update_web_migrates_inline_table_and_persists_keys() {
-        let dir = std::env::temp_dir().join(format!("hawk-cfg-web-inline-{}", std::process::id()));
+    fn update_web_persists_keys() {
+        let dir = std::env::temp_dir().join(format!("hawk-cfg-web-keys-{}", std::process::id()));
         let root = dir.join("lib");
         std::fs::create_dir_all(root.join(".hawk")).unwrap();
         let paths = LibraryPaths::new(root.to_str().unwrap(), None);
-        // 旧版壳层用 smol-toml 序列化过 web，留下内联表形态；内联表无法承载
-        // [[web.keys]] / [[web.peer_keys]]，这正是保存后密钥被静默丢弃的回归场景。
         std::fs::write(
             &paths.config_file,
-            "web = { enabled = false, port = 27372, peer_port = 27375 }\n",
+            "[web]\nenabled = false\nport = 27372\npeer_port = 27375\n",
         )
         .unwrap();
         let cfg = LibraryConfig::new(paths.clone());
@@ -808,21 +788,9 @@ mod tests {
         assert!(saved.peer_keys == web.peer_keys);
 
         let text = std::fs::read_to_string(&paths.config_file).unwrap();
-        assert!(
-            text.lines()
-                .any(|line| line.trim_start().starts_with("[web")),
-            "内联表应迁移为普通表: {text}"
-        );
-        assert!(
-            !text
-                .lines()
-                .any(|line| line.trim_start().starts_with("web = {")),
-            "不应继续写内联表: {text}"
-        );
         assert!(text.contains("[[web.keys]]"), "{text}");
         assert!(text.contains("[[web.peer_keys]]"), "{text}");
 
-        // 清空密钥时也要移除数组表，避免 reload 后残留旧密钥。
         let cleared = WebSettings {
             keys: vec![],
             peer_keys: vec![],

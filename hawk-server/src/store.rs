@@ -46,13 +46,7 @@ impl Store {
                     .map(|d| (d.device_id.clone(), d))
                     .collect(),
                 Err(e) => {
-                    // 旧格式（字段变更）或损坏：备份后从空表重建，设备重新注册收敛
-                    let legacy = path.with_extension("json.legacy");
-                    let _ = fs::rename(&path, &legacy);
-                    tracing::warn!(
-                        "设备表格式过旧或损坏（{e}），已备份到 {} 并从空表重建",
-                        legacy.display()
-                    );
+                    tracing::warn!("设备表损坏（{e}），从空表重建");
                     HashMap::new()
                 }
             },

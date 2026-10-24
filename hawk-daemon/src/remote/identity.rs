@@ -24,13 +24,7 @@ impl Identity {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(identity) => Ok(identity),
                 Err(e) => {
-                    // 旧格式（证书时代字段）或损坏：备份后重新生成，不硬崩
-                    let legacy = file.with_extension("json.legacy");
-                    let _ = std::fs::rename(&file, &legacy);
-                    tracing::warn!(
-                        "设备身份文件格式过旧或损坏（{e}），已备份到 {} 并重新生成身份",
-                        legacy.display()
-                    );
+                    tracing::warn!("设备身份文件损坏（{e}），重新生成身份");
                     let identity = Identity::generate();
                     identity.persist(remote_dir)?;
                     Ok(identity)
@@ -119,8 +113,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_identity_file_regenerates() {
-        // 证书时代的旧格式：解析失败 → 备份 + 重新生成，不硬崩
+    fn corrupt_identity_file_regenerates() {
+        // 无法解析的身份文件：重新生成，不保留旧文件
         let dir = tempfile::tempdir().unwrap();
         let remote_dir = dir.path().join("remote");
         std::fs::create_dir_all(&remote_dir).unwrap();
@@ -132,10 +126,9 @@ mod tests {
         let identity = Identity::load_or_create(remote_dir.to_str().unwrap()).unwrap();
         assert!(
             identity.device_id.is_none(),
-            "旧格式不保留 device_id（重新注册）"
+            "损坏身份不保留 device_id（重新注册）"
         );
         assert_eq!(identity.endpoint_id.len(), 64);
-        assert!(remote_dir.join("identity.json.legacy").exists());
     }
 
     #[test]

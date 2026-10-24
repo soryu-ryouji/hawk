@@ -54,7 +54,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 ## 鉴权与配对
 
 - 配对载荷与 iOS 相同：
-  - 局域网 `{ "v": 1, "kind": "lan", "url": "...", "urls": ["..."], "token": "..." }`
+  - 局域网 `{ "v": 1, "kind": "lan", "urls": ["..."], "token": "..." }`
   - 广域网 `{ "v": 1, "kind": "remote", "url": "...", "service_key": "...", "key": "..." }`
 - `v` 不等于 1 时提示升级，不静默失败
 - 扫码（CameraX + ZXing）为主路径，手动输入地址 + token 兜底；局域网支持直接粘贴带 `?token=` 的查看器地址

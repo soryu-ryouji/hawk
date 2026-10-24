@@ -85,7 +85,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
         "/api/v1/library/storage_mode",
         Some(r#"{"mode":"database"}"#),
     ),
-    ("POST", "/api/v1/library/rescan", None),
+    ("POST", "/api/v1/library/rescan", Some("{}")),
     ("PUT", "/api/v1/library/scan", Some(r#"{"periodic":true}"#)),
     (
         "POST",
@@ -647,61 +647,6 @@ async fn put_lan_starts_peer_listener() {
     assert_eq!(value["data"]["peer_port"], peer_port);
 }
 
-/// 旧版壳层把 [web] 写成内联表时，PUT /app/lan 仍必须落盘 peer_keys 并成功监听；
-/// 否则 update_web 写入 [[web.peer_keys]] 会静默丢失，最终表现为 10 秒收敛超时。
-#[tokio::test]
-async fn put_lan_migrates_legacy_inline_web_table() {
-    let app = test_app("lan-put-inline-web");
-    let free_port = || {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        listener.local_addr().unwrap().port()
-    };
-    let web_port = free_port();
-    let mut peer_port = free_port();
-    while peer_port == web_port {
-        peer_port = free_port();
-    }
-    let lib = app.state.library.as_ref().unwrap();
-    std::fs::write(
-        &lib.paths.config_file,
-        format!("web = {{ enabled = false, port = {web_port}, peer_port = {peer_port} }}\n"),
-    )
-    .unwrap();
-
-    let body = json!({
-        "enabled": false,
-        "port": web_port,
-        "peer_port": peer_port,
-        "keys": [],
-        "peer_keys": [{
-            "id": "peer",
-            "label": "peer",
-            "token": "peer-token",
-            "write": false,
-            "created_at_ms": 0
-        }]
-    });
-    let (status, bytes) = call_json(&app.router, "PUT", "/api/v1/app/lan", Some(body)).await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "{}",
-        String::from_utf8_lossy(&bytes)
-    );
-    let value: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(value["data"]["peer_active"], true);
-    assert_eq!(value["data"]["peer_port"], peer_port);
-
-    let text = std::fs::read_to_string(&lib.paths.config_file).unwrap();
-    assert!(text.contains("[[web.peer_keys]]"), "{text}");
-    assert!(
-        !text
-            .lines()
-            .any(|line| line.trim_start().starts_with("web = {")),
-        "旧内联表应被迁移: {text}"
-    );
-}
-
 /// 直连端口被占用时，PUT /app/lan 自动向后选可用端口并成功监听。
 #[tokio::test]
 async fn put_lan_auto_selects_free_peer_port() {
@@ -1122,7 +1067,7 @@ async fn item_add_conflict_renames_and_dedupes() {
         )
     };
 
-    // 异内容同名：第二张自动重命名为 a 2.png（旧版此处报 FILE_EXISTS 409）
+    // 异内容同名：第二张自动重命名为 a 2.png
     let (status, _) = add("a", encode([200, 30, 30])).await;
     assert_eq!(status, StatusCode::OK);
     let (status, bytes) = add("a", encode([30, 30, 200])).await;

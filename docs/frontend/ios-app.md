@@ -67,7 +67,7 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 
 - 长期凭证存 Keychain（accessibility：`kSecAttrAccessibleAfterFirstUnlock`）：局域网直连 token、service-key、hawk-app key。`bt` 是短生命周期令牌，可只在内存持有（当前实现不落盘，重启重新登录）
 - 配对主路径是**桌面端出二维码**，App 扫码导入（桌面端设置面板已提供入口）：
-  - 局域网：`{ "v": 1, "kind": "lan", "url": "http://192.168.1.5:27375", "urls": ["http://192.168.1.5:27375", "http://10.0.0.5:27375"], "token": "..." }`
+  - 局域网：`{ "v": 1, "kind": "lan", "urls": ["http://192.168.1.5:27375", "http://10.0.0.5:27375"], "token": "..." }`
   - 广域网：`{ "v": 1, "kind": "remote", "url": "https://hawk.example.com", "service_key": "hs_...", "key": "hk_..." }`
   - `v` 为载荷版本，解码失败给「二维码版本不支持，请升级」而不是静默失败
 - 手动输入地址 + token 作为兜底（无桌面端可用时）

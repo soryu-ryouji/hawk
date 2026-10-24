@@ -7,7 +7,6 @@ describe('pairing payload', () => {
     expect(payload).toEqual({
       v: PAIRING_PAYLOAD_VERSION,
       kind: 'lan',
-      url: 'http://192.168.1.5:27372',
       urls: ['http://192.168.1.5:27372', 'http://10.0.0.5:27372'],
       token: 'tok',
     });

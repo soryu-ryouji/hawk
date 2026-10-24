@@ -22,8 +22,7 @@ pub struct RegisterRequest {
     endpoint_id: String,
     library_name: String,
     allow_remote: bool,
-    /// 允许广域网写会话（目标设备 [remote].writable）；旧客户端缺省 false
-    #[serde(default)]
+    /// 允许广域网写会话（目标设备 [remote].writable）
     allow_write: bool,
 }
 

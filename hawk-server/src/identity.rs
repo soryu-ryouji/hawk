@@ -1,6 +1,6 @@
 //! 服务端设备身份（网页版宿主）：data_dir/identity.json（device_id + iroh 密钥对）。
 //! 服务端以「网页版」设备身份走既有协议发起会话，A 侧按常规对端裁决（allow_remote + 身份放行）。
-//! 旧格式（证书时代）或损坏的文件不硬崩：备份为 identity.json.legacy 后重新生成。
+//! 身份文件损坏时重新生成，不保留旧文件。
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -24,13 +24,7 @@ impl Identity {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(identity) => Ok(identity),
                 Err(e) => {
-                    // 旧格式（证书时代字段）或损坏：备份后重新生成，不硬崩
-                    let legacy = file.with_extension("json.legacy");
-                    let _ = std::fs::rename(&file, &legacy);
-                    tracing::warn!(
-                        "设备身份文件格式过旧或损坏（{e}），已备份到 {} 并重新生成身份",
-                        legacy.display()
-                    );
+                    tracing::warn!("设备身份文件损坏（{e}），重新生成身份");
                     let identity = Identity::generate();
                     identity.persist(data_dir)?;
                     Ok(identity)

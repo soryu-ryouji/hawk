@@ -23,7 +23,3 @@ export const REMOTE_CONFIG_FILE = path.join(CONFIG_DIR, 'remote.toml');
 
 /** daemon stdout（tracing 日志）落盘位置：每次拉起截断重写，只留当次会话；远程打洞/中继排障依赖 */
 export const DAEMON_LOG_FILE = path.join(CONFIG_DIR, 'daemon.log');
-
-/** 已废弃的远程查看宿主库目录（旧版在本地建假库承载 daemon；现已由 daemon 无库模式取代）。
- *  仅存留一处用途：冷启动时识别旧配置并转为远程查看模式（不再启动该目录） */
-export const LEGACY_REMOTE_HOST_DIR = path.join(CONFIG_DIR, 'remote-library');

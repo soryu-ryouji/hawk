@@ -6,14 +6,14 @@ import kotlinx.serialization.Serializable
 
 /**
  * 桌面端生成的配对二维码载荷：
- * 局域网 `{ "v": 1, "kind": "lan", "url": "...", "urls": ["..."], "token": "..." }`
+ * 局域网 `{ "v": 1, "kind": "lan", "urls": ["..."], "token": "..." }`
  * 广域网 `{ "v": 1, "kind": "remote", "url": "...", "service_key": "...", "key": "..." }`
  */
 @Serializable
 data class PairingPayload(
     val v: Int,
     val kind: String,
-    val url: String,
+    val url: String? = null,
     val urls: List<String> = emptyList(),
     val token: String? = null,
     @SerialName("service_key") val serviceKey: String? = null,
@@ -23,7 +23,7 @@ data class PairingPayload(
         "lan" -> {
             val accessToken = token?.trim().orEmpty()
             if (accessToken.isEmpty()) throw ConnectionException("配对二维码缺少访问 token")
-            val candidates = (listOf(url) + urls)
+            val candidates = urls
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinctBy { it.lowercase() }
@@ -37,14 +37,15 @@ data class PairingPayload(
         }
 
         "remote" -> {
+            val remoteUrl = url?.trim().orEmpty()
             val secret = serviceKey?.trim().orEmpty()
             val appKeyValue = key?.trim().orEmpty()
-            if (secret.isEmpty() || appKeyValue.isEmpty()) {
+            if (remoteUrl.isEmpty() || secret.isEmpty() || appKeyValue.isEmpty()) {
                 throw ConnectionException("配对二维码缺少访问密钥")
             }
             ConnectionProfile(
                 kind = ConnectionKind.Remote,
-                url = url,
+                url = remoteUrl,
                 serviceKey = secret,
                 appKey = appKeyValue,
             )

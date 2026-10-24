@@ -9,8 +9,6 @@ export type PairingKind = 'lan' | 'remote';
 export interface LanPairingPayload {
   v: typeof PAIRING_PAYLOAD_VERSION;
   kind: 'lan';
-  /** 首个候选地址（旧客户端兼容字段） */
-  url: string;
   /** 同一目标的所有可用候选地址，由客户端依次探测 */
   urls: string[];
   token: string;
@@ -29,7 +27,7 @@ export type PairingPayload = LanPairingPayload | RemotePairingPayload;
 /** 局域网：urls 为同一目标的所有候选地址（http://ip:port），token 为访问密钥 */
 export function lanPairingPayload(urls: string[], token: string): LanPairingPayload {
   const candidates = urls.map((url) => url.trim()).filter(Boolean);
-  return { v: PAIRING_PAYLOAD_VERSION, kind: 'lan', url: candidates[0] ?? '', urls: candidates, token };
+  return { v: PAIRING_PAYLOAD_VERSION, kind: 'lan', urls: candidates, token };
 }
 
 /** 广域网：url 为 hawk-server 地址，key 为本机新签发的只读 hawk-app key */

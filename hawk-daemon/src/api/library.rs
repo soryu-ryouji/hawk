@@ -224,16 +224,9 @@ struct RescanRequest {
 )]
 async fn rescan(
     State(state): State<SharedState>,
-    body: axum::body::Bytes,
+    Json(req): Json<RescanRequest>,
 ) -> Result<Json<SuccessOnly>, ApiError> {
-    // 请求体可省略（兼容无 body / 空 body / `{}` 三种写法）
-    let path = if body.is_empty() {
-        String::new()
-    } else {
-        let req: RescanRequest = serde_json::from_slice(&body)
-            .map_err(|e| ApiError::invalid_param(format!("请求体解析失败: {e}")))?;
-        req.path.unwrap_or_default()
-    };
+    let path = req.path.unwrap_or_default();
     let lib = state.require_library()?;
     if path.is_empty() {
         lib.pipeline.request_rescan();
