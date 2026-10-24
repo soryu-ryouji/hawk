@@ -726,6 +726,13 @@ struct LanClientDto {
     label: String,
     last_seen_ms: u64,
     online: bool,
+    write: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    library_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1113,6 +1120,10 @@ async fn list_lan_clients(
                 label: key.label.clone(),
                 last_seen_ms,
                 online: now.saturating_sub(last_seen_ms) <= PEER_ONLINE_WINDOW_MS,
+                write: key.write,
+                peer_id: key.peer_id.clone(),
+                library_name: key.library_name.clone(),
+                url: key.url.clone(),
             })
         })
         .collect();

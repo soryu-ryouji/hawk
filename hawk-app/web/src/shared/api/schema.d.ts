@@ -2090,7 +2090,11 @@ export interface components {
             label: string;
             /** Format: int64 */
             last_seen_ms: number;
+            library_name?: string | null;
             online: boolean;
+            peer_id?: string | null;
+            url?: string | null;
+            write: boolean;
         };
         LanClientsDto: {
             clients: components["schemas"]["LanClientDto"][];

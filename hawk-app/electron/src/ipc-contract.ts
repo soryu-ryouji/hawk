@@ -180,6 +180,10 @@ export interface LanClient {
   label: string;
   last_seen_ms: number;
   online: boolean;
+  write: boolean;
+  peer_id?: string | null;
+  library_name?: string | null;
+  url?: string | null;
 }
 
 /** 已配对并保存在本机的局域网设备（token 只在主进程配置中，不送往渲染层） */

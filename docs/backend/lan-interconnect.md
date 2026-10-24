@@ -153,5 +153,5 @@ remoteConn（广域网会话代理）
 - 源端发起请求前在本机签发一把反向 peer key，并把本机 peer_id、名称、素材库名、候选地址和 token 放进请求的 reverse 字段。
 - 目标端批准后，decision 响应返回源端回连 profile；两端主进程各自保存已配对设备，因此一次审批即可双向连接。
 - 反向密钥默认只读，源端可在自己的已授权设备列表中调整或撤销。
-- 直连鉴权成功后 daemon 按 peer key 记录最近活跃时间；GET /api/v1/app/lan/clients 返回在线状态，双方局域网互联面板均可显示当前连接设备。
+- 直连鉴权成功后 daemon 按 peer key 记录最近活跃时间；GET /api/v1/app/lan/clients 返回在线状态、权限和配对密钥中的 peer_id/库名/地址元数据，双方局域网互联面板都能显示同样完整的当前连接设备信息。
 - 配对协议为破坏性更新：配对请求必须携带 reverse 回连 profile，两端版本需要一致。

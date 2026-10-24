@@ -2927,7 +2927,28 @@
             "minimum": 0,
             "type": "integer"
           },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "online": {
+            "type": "boolean"
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "write": {
             "type": "boolean"
           }
         },
@@ -2935,7 +2956,8 @@
           "key_id",
           "label",
           "last_seen_ms",
-          "online"
+          "online",
+          "write"
         ],
         "type": "object"
       },

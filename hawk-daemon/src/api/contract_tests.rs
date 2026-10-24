@@ -471,11 +471,13 @@ async fn lan_peer_activity_reports_online_client() {
             keys: vec![],
             peer_keys: vec![WebAccessKey {
                 id: "peer".into(),
-                label: "局域网设备：Test".into(),
+                label: "Test-Mac".into(),
                 token: "peer-token".into(),
                 write: false,
                 created_at_ms: 0,
-                ..Default::default()
+                peer_id: Some("source-peer".into()),
+                library_name: Some("Source Library".into()),
+                url: Some("http://192.168.1.20:27375".into()),
             }],
         })
         .unwrap();
@@ -497,6 +499,13 @@ async fn lan_peer_activity_reports_online_client() {
     let data: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(data["data"]["clients"][0]["key_id"], "peer");
     assert_eq!(data["data"]["clients"][0]["online"], true);
+    assert_eq!(data["data"]["clients"][0]["write"], false);
+    assert_eq!(data["data"]["clients"][0]["peer_id"], "source-peer");
+    assert_eq!(data["data"]["clients"][0]["library_name"], "Source Library");
+    assert_eq!(
+        data["data"]["clients"][0]["url"],
+        "http://192.168.1.20:27375"
+    );
 }
 
 /// 桌面自动配对：源端创建请求 → 目标端列表看到 → 允许 → 源端轮询拿到 token。

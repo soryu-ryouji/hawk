@@ -164,7 +164,13 @@ async function testSpeed(): Promise<void> {
       <div class="peer-main">
         <div class="peer-name">
           {{ client.label }}
+          <span v-if="client.library_name" class="lib">（{{ client.library_name }}）</span>
           <span class="current-badge">在线</span>
+        </div>
+        <div v-if="client.url || client.write" class="peer-meta">
+          <span v-if="client.url">{{ client.url }}</span>
+          <span v-if="client.url"> · </span>
+          <span>本机权限：{{ client.write ? '可读写' : '仅读取' }}</span>
         </div>
       </div>
     </div>
