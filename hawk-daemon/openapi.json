@@ -975,6 +975,16 @@
         "properties": {
           "data": {
             "properties": {
+              "peer": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LanPairedPeerDto"
+                  }
+                ]
+              },
               "status": {
                 "type": "string"
               }
@@ -1152,6 +1162,12 @@
                 },
                 "type": "array"
               },
+              "library_name": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
               "peer_active": {
                 "description": "hawk-app 直连监听状态",
                 "type": "boolean"
@@ -1161,6 +1177,9 @@
                   "string",
                   "null"
                 ]
+              },
+              "peer_id": {
+                "type": "string"
               },
               "peer_keys": {
                 "items": {
@@ -1183,6 +1202,9 @@
               "enabled",
               "port",
               "peer_port",
+              "peer_id",
+              "name",
+              "library_name",
               "keys",
               "peer_keys",
               "active",
@@ -2789,6 +2811,9 @@
           "key_id": {
             "type": "string"
           },
+          "label": {
+            "type": "string"
+          },
           "last_seen_ms": {
             "format": "int64",
             "minimum": 0,
@@ -2800,6 +2825,7 @@
         },
         "required": [
           "key_id",
+          "label",
           "last_seen_ms",
           "online"
         ],
@@ -2880,6 +2906,16 @@
       },
       "LanPairDecisionDto": {
         "properties": {
+          "peer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LanPairedPeerDto"
+              }
+            ]
+          },
           "status": {
             "type": "string"
           }
@@ -2894,6 +2930,17 @@
           "client_name": {
             "description": "源端设备名（仅用于目标端确认提示）",
             "type": "string"
+          },
+          "reverse": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LanReversePeerDto",
+                "description": "新客户端会携带；旧客户端缺省时仍是一对一单向配对。"
+              }
+            ]
           },
           "writable": {
             "description": "源端希望获得写权限；最终由目标端用户决定",
@@ -3003,6 +3050,37 @@
         ],
         "type": "object"
       },
+      "LanPairedPeerDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "library_name",
+          "url",
+          "writable",
+          "token"
+        ],
+        "type": "object"
+      },
       "LanPeerDto": {
         "description": "发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。",
         "properties": {
@@ -3049,6 +3127,41 @@
         ],
         "type": "object"
       },
+      "LanReversePeerDto": {
+        "description": "源端为反向连接提供的设备信息；token 由源端为本机 daemon 新签发。",
+        "properties": {
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "peer_id": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "urls": {
+            "description": "源端候选局域网地址（http://ip:peer_port）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "peer_id",
+          "name",
+          "library_name",
+          "urls",
+          "token"
+        ],
+        "type": "object"
+      },
       "LanSettingsDto": {
         "properties": {
           "active": {
@@ -3070,6 +3183,12 @@
             },
             "type": "array"
           },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
           "peer_active": {
             "description": "hawk-app 直连监听状态",
             "type": "boolean"
@@ -3079,6 +3198,9 @@
               "string",
               "null"
             ]
+          },
+          "peer_id": {
+            "type": "string"
           },
           "peer_keys": {
             "items": {
@@ -3101,6 +3223,9 @@
           "enabled",
           "port",
           "peer_port",
+          "peer_id",
+          "name",
+          "library_name",
           "keys",
           "peer_keys",
           "active",

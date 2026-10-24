@@ -53,6 +53,8 @@ struct PairRequestTicket {
     created_at_ms: u64,
     expires_at: Instant,
     state: PairRequestState,
+    /// 源端回连凭据：目标端批准后据此保存一台可反向连接的设备。
+    reverse: Option<LanReversePeerDto>,
 }
 
 /// 单个 LAN 监听器状态快照（app/info 序列化 + 日志）
@@ -101,6 +103,7 @@ impl LanSupervisor {
         &self,
         client_name: &str,
         requested_write: bool,
+        reverse: Option<LanReversePeerDto>,
     ) -> Option<(String, u64)> {
         let now = Instant::now();
         let mut requests = self.pair_requests.lock().unwrap();
@@ -136,6 +139,7 @@ impl LanSupervisor {
             created_at_ms: unix_ms_now(),
             expires_at: now + PAIR_REQUEST_TTL,
             state: PairRequestState::Pending,
+            reverse,
         });
         Some((id, PAIR_REQUEST_TTL.as_secs()))
     }
@@ -714,6 +718,7 @@ struct LanPeersDto {
 #[derive(Serialize, utoipa::ToSchema)]
 struct LanClientDto {
     key_id: String,
+    label: String,
     last_seen_ms: u64,
     online: bool,
 }
@@ -723,6 +728,19 @@ struct LanClientsDto {
     clients: Vec<LanClientDto>,
 }
 
+/// 源端为反向连接提供的设备信息；token 由源端为本机 daemon 新签发。
+#[derive(Clone, Deserialize, utoipa::ToSchema)]
+struct LanReversePeerDto {
+    peer_id: String,
+    name: String,
+    library_name: String,
+    /// 源端候选局域网地址（http://ip:peer_port）
+    urls: Vec<String>,
+    token: String,
+    #[serde(default)]
+    writable: bool,
+}
+
 #[derive(Deserialize, utoipa::ToSchema)]
 struct LanPairRequestCreateBody {
     /// 源端设备名（仅用于目标端确认提示）
@@ -730,6 +748,19 @@ struct LanPairRequestCreateBody {
     /// 源端希望获得写权限；最终由目标端用户决定
     #[serde(default)]
     writable: bool,
+    /// 新客户端会携带；旧客户端缺省时仍是一对一单向配对。
+    #[serde(default)]
+    reverse: Option<LanReversePeerDto>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanPairedPeerDto {
+    id: String,
+    name: String,
+    library_name: String,
+    url: String,
+    writable: bool,
+    token: String,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -777,6 +808,8 @@ struct LanPairDecisionBody {
 #[derive(Serialize, utoipa::ToSchema)]
 struct LanPairDecisionDto {
     status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer: Option<LanPairedPeerDto>,
 }
 
 fn sanitized_client_name(raw: &str) -> String {
@@ -819,7 +852,9 @@ async fn create_lan_pair_request(
     }
     let client_name = sanitized_client_name(&body.client_name);
     let Some((request_id, expires_in_seconds)) =
-        state.lan.create_pair_request(&client_name, body.writable)
+        state
+            .lan
+            .create_pair_request(&client_name, body.writable, body.reverse)
     else {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
@@ -938,6 +973,7 @@ async fn decide_lan_pair_request(
         );
         return Ok(Json(Envelope::ok(LanPairDecisionDto {
             status: "denied".to_string(),
+            peer: None,
         })));
     }
     let mut web = lib.config.current().web;
@@ -982,6 +1018,23 @@ async fn decide_lan_pair_request(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
     );
+    let reverse_peer = request.reverse.as_ref().and_then(|reverse| {
+        if reverse.peer_id.is_empty() || reverse.token.is_empty() {
+            return None;
+        }
+        reverse
+            .urls
+            .iter()
+            .find(|url| url.starts_with("http://") || url.starts_with("https://"))
+            .map(|url| LanPairedPeerDto {
+                id: reverse.peer_id.clone(),
+                name: reverse.name.clone(),
+                library_name: reverse.library_name.clone(),
+                url: url.clone(),
+                writable: reverse.writable,
+                token: reverse.token.clone(),
+            })
+    });
     tracing::info!(
         "局域网配对请求已允许: {}（request={request_id}, write={}）",
         request.client_name,
@@ -989,6 +1042,7 @@ async fn decide_lan_pair_request(
     );
     Ok(Json(Envelope::ok(LanPairDecisionDto {
         status: "approved".to_string(),
+        peer: reverse_peer,
     })))
 }
 
@@ -1029,11 +1083,14 @@ async fn list_lan_clients(
         .lan
         .peer_activity_snapshot()
         .into_iter()
-        .filter(|(id, _)| web.peer_keys.iter().any(|key| key.id == *id))
-        .map(|(key_id, last_seen_ms)| LanClientDto {
-            key_id,
-            last_seen_ms,
-            online: now.saturating_sub(last_seen_ms) <= PEER_ONLINE_WINDOW_MS,
+        .filter_map(|(key_id, last_seen_ms)| {
+            let key = web.peer_keys.iter().find(|key| key.id == key_id)?;
+            Some(LanClientDto {
+                key_id,
+                label: key.label.clone(),
+                last_seen_ms,
+                online: now.saturating_sub(last_seen_ms) <= PEER_ONLINE_WINDOW_MS,
+            })
         })
         .collect();
     Ok(Json(Envelope::ok(LanClientsDto { clients })))
@@ -1054,6 +1111,9 @@ struct LanSettingsDto {
     enabled: bool,
     port: u16,
     peer_port: u16,
+    peer_id: String,
+    name: String,
+    library_name: String,
     keys: Vec<LanAccessKeyDto>,
     peer_keys: Vec<LanAccessKeyDto>,
     /// 网站监听状态
@@ -1073,6 +1133,9 @@ fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
         enabled: web.enabled,
         port: web.port,
         peer_port: web.peer_port,
+        peer_id: local_peer_id(lib),
+        name: gethostname::gethostname().to_string_lossy().to_string(),
+        library_name: local_library_name(lib),
         keys: web
             .keys
             .into_iter()

@@ -434,7 +434,18 @@ async fn put_lan_auto_pair_request_flow() {
         &peer_router,
         "POST",
         "/api/v1/app/lan/pair-requests",
-        Some(json!({ "client_name": "MacBook", "writable": true })),
+        Some(json!({
+            "client_name": "MacBook",
+            "writable": true,
+            "reverse": {
+                "peer_id": "source-peer",
+                "name": "MacBook",
+                "library_name": "Source Library",
+                "urls": ["http://192.168.1.10:27375"],
+                "token": "reverse-token",
+                "writable": false
+            }
+        })),
     )
     .await;
     assert_eq!(
@@ -472,6 +483,10 @@ async fn put_lan_auto_pair_request_flow() {
         "{}",
         String::from_utf8_lossy(&bytes)
     );
+    let decision: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decision["data"]["peer"]["id"], "source-peer");
+    assert_eq!(decision["data"]["peer"]["url"], "http://192.168.1.10:27375");
+    assert_eq!(decision["data"]["peer"]["token"], "reverse-token");
 
     let status_path = format!("/api/v1/app/lan/pair-requests/{request_id}");
     let (status, bytes) = call_json(&peer_router, "GET", &status_path, None).await;
