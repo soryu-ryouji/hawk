@@ -1539,8 +1539,11 @@ export interface components {
                 created_at_ms: number;
                 id: string;
                 label: string;
+                library_name?: string | null;
+                peer_id?: string | null;
                 /** @description 完整 token 仅 admin 可读；设置面板负责打码展示与复制 */
                 token: string;
+                url?: string | null;
                 write: boolean;
             };
             status: string;
@@ -2075,8 +2078,11 @@ export interface components {
             created_at_ms: number;
             id: string;
             label: string;
+            library_name?: string | null;
+            peer_id?: string | null;
             /** @description 完整 token 仅 admin 可读；设置面板负责打码展示与复制 */
             token: string;
+            url?: string | null;
             write: boolean;
         };
         LanClientDto: {
@@ -2091,6 +2097,9 @@ export interface components {
         };
         LanDeviceKeyCreateBody: {
             label: string;
+            library_name?: string | null;
+            peer_id?: string | null;
+            url?: string | null;
             write?: boolean;
         };
         LanDeviceKeyDeletedDto: {
@@ -2281,7 +2290,10 @@ export interface components {
             created_at_ms?: number;
             id: string;
             label: string;
+            library_name?: string | null;
+            peer_id?: string | null;
             token: string;
+            url?: string | null;
             write?: boolean;
         };
         PutRemoteBody: {

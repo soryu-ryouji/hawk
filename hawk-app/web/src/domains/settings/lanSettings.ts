@@ -9,6 +9,9 @@ export interface LanAccessKey {
   token: string;
   write: boolean;
   created_at_ms: number;
+  peer_id?: string | null;
+  library_name?: string | null;
+  url?: string | null;
 }
 
 export const useLanSettingsStore = defineStore('lanSettings', () => {

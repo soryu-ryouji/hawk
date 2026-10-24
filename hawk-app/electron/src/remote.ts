@@ -270,6 +270,9 @@ interface LanKeyDto {
   token: string;
   write: boolean;
   created_at_ms: number;
+  peer_id?: string;
+  library_name?: string;
+  url?: string;
 }
 
 interface LanSettingsDto {
@@ -307,6 +310,9 @@ async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ 
   const key = await daemonCall<LanKeyDto>('POST', '/api/v1/app/lan/device-keys', {
     label: target.name,
     write: writable,
+    peer_id: target.id,
+    library_name: target.library_name,
+    url: target.url,
   });
   try {
     const settings = await daemonCall<LanSettingsDto>('GET', '/api/v1/app/lan');

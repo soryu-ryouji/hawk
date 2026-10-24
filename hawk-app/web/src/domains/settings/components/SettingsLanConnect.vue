@@ -7,7 +7,7 @@ import { useLanSettingsStore } from '../lanSettings';
 import { ipcMessage, useConnectionLabel } from '@/domains/remote';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
-import type { LanClient, LanPeer } from '@/shared/types';
+import type { LanClient, LanPeer, LanPeerProfile } from '@/shared/types';
 
 const store = useLanStore();
 const lanSettings = useLanSettingsStore();
@@ -26,6 +26,13 @@ const speedMs = ref<number | null>(null);
 const isLanConnected = computed(() => connection.isLan.value);
 const currentPeer = computed(() => store.saved.find((peer) => peer.id === connection.peerId.value) ?? null);
 /** 当前已连接的设备不再出现在发现列表里，避免重复显示和误点申请。 */
+const connectablePeers = computed(() =>
+  store.saved.filter(
+    (profile) =>
+      !(connection.isLan.value && connection.peerId.value === profile.id) &&
+      store.discovered.some((peer) => peer.id === profile.id || peer.name === profile.name),
+  ),
+);
 const visibleDiscovered = computed(() =>
   store.discovered.filter((peer) => {
     const current = connection.isLan.value && peer.id === connection.peerId.value;
@@ -109,6 +116,10 @@ async function submitManualPair(): Promise<void> {
   openPairPermission(peer);
 }
 
+async function connectSaved(peer: LanPeerProfile): Promise<void> {
+  await store.connect(peer.id);
+}
+
 async function testSpeed(): Promise<void> {
   if (!isLanConnected.value || testingSpeed.value) {
     return;
@@ -162,6 +173,22 @@ async function testSpeed(): Promise<void> {
     <div v-if="store.error" class="error">{{ store.error }}</div>
     <div v-if="savedMessage" class="ok">{{ savedMessage }}</div>
 
+    <div v-if="connectablePeers.length > 0" class="group">
+      <div class="group-title">可连接的已授权设备</div>
+      <div v-for="peer in connectablePeers" :key="peer.id" class="peer-row">
+        <div class="peer-main">
+          <div class="peer-name">
+            {{ peer.name }}
+            <span class="lib">（{{ peer.library_name }}）</span>
+            <span class="online-badge">同一局域网</span>
+          </div>
+          <div class="peer-meta">{{ peer.url }}</div>
+        </div>
+        <button class="primary" :disabled="store.connectingId !== null" @click="connectSaved(peer)">
+          {{ store.connectingId === peer.id ? '连接中…' : '连接' }}
+        </button>
+      </div>
+    </div>
     <div v-if="visibleDiscovered.length > 0" class="group">
       <div class="group-title">发现的设备</div>
       <div v-for="peer in visibleDiscovered" :key="peer.id" class="peer-row">
