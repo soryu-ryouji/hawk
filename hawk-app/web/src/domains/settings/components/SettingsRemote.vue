@@ -42,7 +42,7 @@ const keyCreateOpen = ref(false);
 /** 刚签发的密钥（明文只在创建响应里，展示到用户关闭为止） */
 const createdKey = ref<RemoteKeyCreated | null>(null);
 const copied = ref('');
-/** 配对二维码（由「保存并生成 iOS 配对二维码」签发的只读密钥生成） */
+/** 配对二维码（由「生成配对二维码」签发的只读密钥生成） */
 const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
 const pairingBusy = ref(false);
 
@@ -136,7 +136,7 @@ defineExpose({ save, busy });
 /** 配对二维码可用条件：启用、服务端地址与服务密钥已填写（保存由按钮动作完成） */
 const canPair = computed(() => enabled.value && url.value.trim().length > 0 && serviceKey.value.trim().length > 0);
 
-/** 保存接入配置 → 签发只读访问密钥 → 生成 iOS 配对二维码 */
+/** 保存接入配置 → 签发只读访问密钥 → 生成移动端配对二维码 */
 async function openPairing(): Promise<void> {
   if (!canPair.value || saving.value || pairingBusy.value) {
     return;
@@ -151,7 +151,7 @@ async function openPairing(): Promise<void> {
     return;
   }
   pairingBusy.value = true;
-  const created = await store.createKey({ label: 'iPhone / iPad 配对', read: true });
+  const created = await store.createKey({ label: '移动端配对', read: true });
   pairingBusy.value = false;
   if (!created) {
     error.value = store.error;
@@ -463,7 +463,7 @@ async function removeDevice(deviceId: string, name: string) {
           <div class="modal-title">新建访问密钥</div>
           <label class="modal-field">
             <span>名称</span>
-            <input v-model="keyLabel" class="settings-input" type="text" placeholder="例如：iPad 插件" autocomplete="off" />
+            <input v-model="keyLabel" class="settings-input" type="text" placeholder="例如：手机 / 平板" autocomplete="off" />
           </label>
           <label class="modal-field">
             <span>自定义密钥</span>
@@ -486,7 +486,7 @@ async function removeDevice(deviceId: string, name: string) {
       title="广域网配对"
       :payload="pairing.payload"
       :details="pairing.details"
-      note="用 hawk iOS 客户端扫码，经自托管 hawk-server 远程浏览本素材库。"
+      note="用 hawk iOS / Android 客户端扫码，经自托管 hawk-server 远程浏览本素材库。"
       :warning="pairing.warning"
       @close="pairing = null"
     />

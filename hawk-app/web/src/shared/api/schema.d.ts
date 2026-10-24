@@ -1300,7 +1300,7 @@ export interface components {
         CreateKeyBody: {
             /** @description 自定义密钥（可空 = 程序生成 128 位随机串） */
             custom?: string | null;
-            /** @description 展示标签（如「iPhone 插件」；可空） */
+            /** @description 展示标签（如「手机插件」；可空） */
             label?: string | null;
             read: boolean;
             /** @description 写权限（广域网导入素材/新建文件夹；自定义 key 携带写权限时至少 12 字符） */

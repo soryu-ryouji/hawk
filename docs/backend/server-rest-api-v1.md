@@ -442,7 +442,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
     "keys": [
       {
         "id": "k_8f3a…",
-        "label": "iPhone 插件",
+        "label": "手机插件",
         "read": true,
         "write": true,
         "prefix": "hk_a1",
@@ -463,7 +463,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 
 ```json
 // 请求
-{ "label": "iPhone 插件", "read": true, "write": true, "custom": null }
+{ "label": "手机插件", "read": true, "write": true, "custom": null }
 // 响应：key 明文只在本次出现；synced=false 表示远程未接入/推送失败（下次接入自动重试）
 { "status": "success", "data": { "id": "k_8f3a…", "key": "hk_a1b2…", "synced": true } }
 ```

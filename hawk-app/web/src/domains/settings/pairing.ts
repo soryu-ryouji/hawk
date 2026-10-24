@@ -1,4 +1,4 @@
-// iOS 配对二维码载荷（与 docs/frontend/ios-app.md「鉴权与配对」及 hawk-ios 的 PairingPayload 对齐）。
+// 移动端配对二维码载荷（iOS / Android 共用协议；字段与两端 PairingPayload 对齐）。
 // 编码产物必须是 snake_case 字段名；解码端按原始 JSON 键读取，不做 camelCase 转换。
 
 /** 配对载荷版本：解码端遇到更高版本应提示升级，而不是静默失败 */

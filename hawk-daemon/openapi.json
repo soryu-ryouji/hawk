@@ -206,7 +206,7 @@
             ]
           },
           "label": {
-            "description": "展示标签（如「iPhone 插件」；可空）",
+            "description": "展示标签（如「手机插件」；可空）",
             "type": [
               "string",
               "null"

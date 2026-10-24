@@ -574,7 +574,7 @@ async fn list_keys(
 
 #[derive(Deserialize, utoipa::ToSchema)]
 struct CreateKeyBody {
-    /// 展示标签（如「iPhone 插件」；可空）
+    /// 展示标签（如「手机插件」；可空）
     #[serde(default)]
     label: Option<String>,
     read: bool,
