@@ -82,6 +82,14 @@ pub enum AccessLevel {
     RemoteWriter,
 }
 
+/// 鉴权结果：AccessLevel 之外保留命中的 peer key id，用于记录设备活跃时间。
+/// key id 只留在进程内，不写入请求扩展或响应。
+#[derive(Clone)]
+struct ResolvedAccess {
+    level: AccessLevel,
+    peer_key_id: Option<String>,
+}
+
 /// LAN 监听器类型：网页端口与 hawk-app 直连端口各自只接受对应密钥。
 /// Local = 本机 daemon API（以及测试/隧道复用），兼容两类局域网密钥。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,25 +289,34 @@ async fn auth(
 
     // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledPeer（HTTP 客户端无法伪造扩展，
     // 忽略其携带的任何 token 头）。写会话是否生效还要看当前 remote.writable（应用级配置，热生效）。
-    let access = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
-        if tunnel.writable && state.remote.remote_config().current().writable {
-            Some(AccessLevel::RemoteWriter)
-        } else {
-            Some(AccessLevel::Viewer { writable: false })
+    let resolved = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>()
+    {
+        ResolvedAccess {
+            level: if tunnel.writable && state.remote.remote_config().current().writable {
+                AccessLevel::RemoteWriter
+            } else {
+                AccessLevel::Viewer { writable: false }
+            },
+            peer_key_id: None,
         }
     } else {
-        resolve_access(&state, &req, mode)
+        let Some(resolved) = resolve_access(&state, &req, mode) else {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                axum::Json(
+                    serde_json::json!({ "status": "error", "error": { "code": envelope::codes::UNAUTHORIZED, "message": "missing or invalid token" } }),
+                ),
+            )
+                .into_response();
+        };
+        resolved
     }; // 无库模式仅 admin token 有效（viewer token 存于库内配置）
-    let Some(access) = access else {
-        return (
-            axum::http::StatusCode::UNAUTHORIZED,
-            axum::Json(
-                serde_json::json!({ "status": "error", "error": { "code": envelope::codes::UNAUTHORIZED, "message": "missing or invalid token" } }),
-            ),
-        )
-            .into_response();
-    };
-
+    let access = resolved.level;
+    if mode == ListenerMode::Peer {
+        if let Some(key_id) = resolved.peer_key_id {
+            state.lan.record_peer_activity(&key_id);
+        }
+    }
     if matches!(access, AccessLevel::Viewer { writable: false }) && !is_viewer_allowed(&req) {
         return (
             axum::http::StatusCode::FORBIDDEN,
@@ -374,13 +391,16 @@ fn resolve_access(
     state: &AppState,
     req: &axum::extract::Request,
     mode: ListenerMode,
-) -> Option<AccessLevel> {
+) -> Option<ResolvedAccess> {
     let headers = req.headers();
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
         if let Ok(value) = auth.to_str() {
             if let Some(token) = value.strip_prefix("Bearer ") {
                 if token == state.settings.token {
-                    return Some(AccessLevel::Admin);
+                    return Some(ResolvedAccess {
+                        level: AccessLevel::Admin,
+                        peer_key_id: None,
+                    });
                 }
                 if let Some(access) = viewer_access(state, token, mode) {
                     return Some(access);
@@ -405,7 +425,10 @@ fn resolve_access(
                 .map(|(_, v)| v);
             if let Some(token) = token {
                 if token == state.settings.token {
-                    return Some(AccessLevel::Admin);
+                    return Some(ResolvedAccess {
+                        level: AccessLevel::Admin,
+                        peer_key_id: None,
+                    });
                 }
                 if let Some(access) = viewer_access(state, token, mode) {
                     return Some(access);
@@ -420,13 +443,16 @@ fn resolve_access(
 /// 在 [web].keys 中按 token 查找，密钥自身的 write 字段决定读写；密钥吊销/权限变更即刻生效。
 ///
 /// 无库模式无库内 [web] 配置，viewer token 不生效
-fn viewer_access(state: &AppState, token: &str, mode: ListenerMode) -> Option<AccessLevel> {
+fn viewer_access(state: &AppState, token: &str, mode: ListenerMode) -> Option<ResolvedAccess> {
     let web = &state.library.as_ref()?.config.current().web;
     let lookup = |keys: &[crate::core::config::WebAccessKey]| {
         keys.iter()
             .find(|key| key.token == token)
-            .map(|key| AccessLevel::Viewer {
-                writable: key.write,
+            .map(|key| ResolvedAccess {
+                level: AccessLevel::Viewer {
+                    writable: key.write,
+                },
+                peer_key_id: Some(key.id.clone()),
             })
     };
     match mode {

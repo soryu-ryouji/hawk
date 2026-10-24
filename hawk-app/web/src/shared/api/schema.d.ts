@@ -59,6 +59,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/lan/clients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 目标端查看当前通过 hawk-app 直连端口活跃的设备（admin 限定）。
+         *     只返回授权列表内 key 的最近活跃时间，不返回 token。
+         */
+        get: operations["list_lan_clients"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/lan/pair-requests": {
         parameters: {
             query?: never;
@@ -1478,6 +1498,13 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanClientsDto: {
+            data?: {
+                clients: components["schemas"]["LanClientDto"][];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanPairDecisionDto: {
             data?: {
                 status: string;
@@ -1988,6 +2015,15 @@ export interface components {
             token: string;
             write: boolean;
         };
+        LanClientDto: {
+            key_id: string;
+            /** Format: int64 */
+            last_seen_ms: number;
+            online: boolean;
+        };
+        LanClientsDto: {
+            clients: components["schemas"]["LanClientDto"][];
+        };
         LanInfo: {
             /** @description 网站端口监听状态 */
             active: boolean;
@@ -2471,6 +2507,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_LanSettingsDto"];
+                };
+            };
+        };
+    };
+    list_lan_clients: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanClientsDto"];
                 };
             };
         };

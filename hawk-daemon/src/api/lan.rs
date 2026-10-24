@@ -34,6 +34,8 @@ const DISCOVERY_PROBE_TIMEOUT: Duration = Duration::from_millis(900);
 const PAIR_REQUEST_TTL: Duration = Duration::from_secs(90);
 /// 待处理请求上限，避免局域网内脚本刷爆目标端提示框。
 const MAX_PENDING_PAIR_REQUESTS: usize = 8;
+/// 源端健康检查约每 5 秒一次；30 秒内有请求即视为在线，容忍短暂卡顿。
+const PEER_ONLINE_WINDOW_MS: u64 = 30_000;
 /// 自动配对请求的状态机。
 #[derive(Clone)]
 enum PairRequestState {
@@ -75,6 +77,9 @@ pub struct LanSupervisor {
     status: Mutex<(u64, LanStatuses)>,
     /// 桌面端自动配对请求：源端创建后等待目标端用户确认；只在内存中保存。
     pair_requests: Mutex<Vec<PairRequestTicket>>,
+    /// 每把 peer key 最近一次通过直连端口发起请求的时间（毫秒时间戳）。
+    /// HTTP 无长连接状态，用近期活跃度呈现当前连接；不保存任何 token。
+    peer_activity: Mutex<std::collections::HashMap<String, u64>>,
     /// 两个监听器与发现任务的实际持有者；后台 run 与 PUT 的直接 reconcile 共用同一把锁。
     listeners: tokio::sync::Mutex<LanListeners>,
 }
@@ -85,6 +90,7 @@ impl LanSupervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new((0, LanStatuses::default())),
             pair_requests: Mutex::new(Vec::new()),
+            peer_activity: Mutex::new(std::collections::HashMap::new()),
             listeners: tokio::sync::Mutex::new(LanListeners::default()),
         })
     }
@@ -194,6 +200,23 @@ impl LanSupervisor {
     /// 当前两个监听器状态快照
     pub fn snapshot(&self) -> LanStatuses {
         self.status.lock().unwrap().1.clone()
+    }
+
+    /// 鉴权成功后记录 peer key 活跃时间；只保留最近一次，不存 token。
+    pub fn record_peer_activity(&self, key_id: &str) {
+        self.peer_activity
+            .lock()
+            .unwrap()
+            .insert(key_id.to_string(), unix_ms_now());
+    }
+
+    fn peer_activity_snapshot(&self) -> Vec<(String, u64)> {
+        self.peer_activity
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(id, at)| (id.clone(), *at))
+            .collect()
     }
 
     /// 当前收敛代数与状态快照
@@ -665,6 +688,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     OpenApiRouter::new()
         .routes(routes!(get_lan, put_lan))
         .routes(routes!(discover_lan_peers))
+        .routes(routes!(list_lan_clients))
         .routes(routes!(create_lan_pair_request))
         .routes(routes!(list_lan_pair_requests))
         .routes(routes!(get_lan_pair_request_status))
@@ -685,6 +709,18 @@ struct LanPeerDto {
 #[derive(Serialize, utoipa::ToSchema)]
 struct LanPeersDto {
     peers: Vec<LanPeerDto>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanClientDto {
+    key_id: String,
+    last_seen_ms: u64,
+    online: bool,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanClientsDto {
+    clients: Vec<LanClientDto>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -971,6 +1007,36 @@ async fn discover_lan_peers(
     Ok(Json(Envelope::ok(LanPeersDto {
         peers: discover_peers(&state).await?,
     })))
+}
+
+/// 目标端查看当前通过 hawk-app 直连端口活跃的设备（admin 限定）。
+/// 只返回授权列表内 key 的最近活跃时间，不返回 token。
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/lan/clients",
+    tags = ["app"],
+    responses((status = 200, description = "OK", body = Envelope<LanClientsDto>))
+)]
+async fn list_lan_clients(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessLevel>,
+) -> Result<Json<Envelope<LanClientsDto>>, ApiError> {
+    require_admin(&access)?;
+    let lib = state.require_library()?;
+    let web = lib.config.current().web;
+    let now = unix_ms_now();
+    let clients = state
+        .lan
+        .peer_activity_snapshot()
+        .into_iter()
+        .filter(|(id, _)| web.peer_keys.iter().any(|key| key.id == *id))
+        .map(|(key_id, last_seen_ms)| LanClientDto {
+            key_id,
+            last_seen_ms,
+            online: now.saturating_sub(last_seen_ms) <= PEER_ONLINE_WINDOW_MS,
+        })
+        .collect();
+    Ok(Json(Envelope::ok(LanClientsDto { clients })))
 }
 
 #[derive(Serialize, utoipa::ToSchema)]

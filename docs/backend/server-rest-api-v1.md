@@ -1263,3 +1263,4 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 - POST /api/v1/app/lan/pair-requests/{request_id}/decision：目标端确认/拒绝并选择读写权限（admin）
 - lan.access.changed：局域网 peer key 权限/设备列表变更，客户端收到后重新请求 app/info 刷新读写能力。
 
+- GET /api/v1/app/lan/clients：目标端查看当前活跃的 hawk-app 直连设备（admin；只返回 key_id/last_seen_ms/online）

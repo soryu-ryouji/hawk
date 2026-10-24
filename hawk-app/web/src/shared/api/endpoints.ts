@@ -60,6 +60,7 @@ export const api = {
   saveAppLan: (body: components['schemas']['PutLanBody']) => request<components['schemas']['LanSettingsDto']>('PUT', '/api/v1/app/lan', { body }),
   /** 目标端待确认的自动配对请求（本机 admin 设置面板轮询） */
   appLanPairRequests: () => request<components['schemas']['LanPairRequestsDto']>('GET', '/api/v1/app/lan/pair-requests'),
+  appLanClients: () => request<components['schemas']['LanClientsDto']>('GET', '/api/v1/app/lan/clients'),
   /** 目标端用户确认/拒绝自动配对请求并选择权限 */
   decideLanPairRequest: (requestId: string, body: { allow: boolean; write: boolean }) =>
     request<components['schemas']['LanPairDecisionDto']>('POST', `/api/v1/app/lan/pair-requests/${encodeURIComponent(requestId)}/decision`, {

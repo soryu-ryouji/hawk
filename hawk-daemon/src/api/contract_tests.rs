@@ -135,6 +135,7 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     ("PUT", "/api/v1/app/lan"),
     // 局域网发现依赖真实网卡与目标设备；自动配对请求/轮询由双端串联验证
     ("GET", "/api/v1/app/lan/peers"),
+    ("GET", "/api/v1/app/lan/clients"),
     ("POST", "/api/v1/app/lan/pair-requests"),
     ("GET", "/api/v1/app/lan/pair-requests"),
     ("GET", "/api/v1/app/lan/pair-requests/{request_id}"),
@@ -380,6 +381,46 @@ async fn lan_ports_enforce_separate_key_namespaces() {
         call_auth(peer_router, "web-token").await,
         StatusCode::UNAUTHORIZED
     );
+}
+
+/// 目标端能看到某把 peer key 最近通过直连端口发过请求（在线状态的数据源）。
+#[tokio::test]
+async fn lan_peer_activity_reports_online_client() {
+    let app = test_app("lan-activity");
+    let lib = app.state.library.as_ref().unwrap();
+    lib.config
+        .update_web(&WebSettings {
+            enabled: false,
+            port: 27372,
+            peer_port: 27375,
+            keys: vec![],
+            peer_keys: vec![WebAccessKey {
+                id: "peer".into(),
+                label: "局域网设备：Test".into(),
+                token: "peer-token".into(),
+                write: false,
+                created_at_ms: 0,
+            }],
+        })
+        .unwrap();
+    let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/app/info")
+        .header("authorization", "Bearer peer-token")
+        .header("host", "127.0.0.1")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        peer_router.oneshot(req).await.unwrap().status(),
+        StatusCode::OK
+    );
+
+    let (status, bytes) = call_json(&app.router, "GET", "/api/v1/app/lan/clients", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let data: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(data["data"]["clients"][0]["key_id"], "peer");
+    assert_eq!(data["data"]["clients"][0]["online"], true);
 }
 
 /// 桌面自动配对：源端创建请求 → 目标端列表看到 → 允许 → 源端轮询拿到 token。

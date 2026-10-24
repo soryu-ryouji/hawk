@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 目标端共享管理：已授权设备权限/撤销，以及移动端扫码授权。
 // 桌面 hawk-app 互连统一走配对请求；这里不再生成配对码或暴露密钥选择。
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
@@ -17,6 +18,23 @@ const showQrPermission = ref(false);
 const newKeyWrite = ref(false);
 const generating = ref(false);
 const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
+const clientActivity = ref<Record<string, { last_seen_ms: number; online: boolean }>>({});
+const onlineCount = computed(() => lan.peerKeys.filter((key) => isOnline(key.id)).length);
+
+let clientTimer: ReturnType<typeof setInterval> | null = null;
+
+function isOnline(id: string): boolean {
+  return clientActivity.value[id]?.online ?? false;
+}
+
+async function refreshClients(): Promise<void> {
+  try {
+    const { clients } = await api.appLanClients();
+    clientActivity.value = Object.fromEntries(clients.map((client) => [client.key_id, client]));
+  } catch {
+    // 目标端可能正在保存/重绑端口；下一轮继续。
+  }
+}
 
 onMounted(async () => {
   await lan.load();
@@ -27,6 +45,14 @@ onMounted(async () => {
     addresses.value = await shell.lanAddresses();
   } catch (e) {
     error.value = `读取本机地址失败：${errorText(e)}`;
+  }
+  void refreshClients();
+  clientTimer = setInterval(() => void refreshClients(), 4000);
+});
+
+onUnmounted(() => {
+  if (clientTimer) {
+    clearInterval(clientTimer);
   }
 });
 
@@ -112,10 +138,11 @@ function openQr(key: LanAccessKey): void {
   <div class="pair-actions">
     <div class="group">
       <div class="group-title">已授权设备</div>
+      <div class="connection-summary">{{ onlineCount > 0 ? onlineCount + ' 台设备在线' : '当前没有设备在线' }}</div>
       <div v-if="lan.peerKeys.length === 0" class="empty-state">暂无授权设备</div>
       <div v-for="key in lan.peerKeys" :key="key.id" class="peer-row">
         <div class="peer-main">
-          <div class="peer-name">{{ key.label }}</div>
+          <div class="peer-name">{{ key.label }}<span v-if="isOnline(key.id)" class="online-badge">在线</span></div>
           <div class="peer-meta">{{ key.write ? '可读写' : '只读' }}</div>
         </div>
         <div class="row-actions">
@@ -171,7 +198,19 @@ function openQr(key: LanAccessKey): void {
   </div>
 </template>
 
-<style src="./settings-shared.css"></style>
+<style src="./settings-shared.css">
+.connection-summary {
+  padding-bottom: 3px;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+.online-badge {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 500;
+}
+</style>
 
 <style scoped>
 .pair-actions {
@@ -302,5 +341,16 @@ function openQr(key: LanAccessKey): void {
 .key-dialog-actions button {
   padding: 5px 10px;
   font-size: 12px;
+}
+.connection-summary {
+  padding-bottom: 3px;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+.online-badge {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 500;
 }
 </style>

@@ -944,6 +944,32 @@
         ],
         "type": "object"
       },
+      "Envelope_LanClientsDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "clients": {
+                "items": {
+                  "$ref": "#/components/schemas/LanClientDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "clients"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_LanPairDecisionDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -2758,6 +2784,41 @@
         ],
         "type": "object"
       },
+      "LanClientDto": {
+        "properties": {
+          "key_id": {
+            "type": "string"
+          },
+          "last_seen_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "online": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key_id",
+          "last_seen_ms",
+          "online"
+        ],
+        "type": "object"
+      },
+      "LanClientsDto": {
+        "properties": {
+          "clients": {
+            "items": {
+              "$ref": "#/components/schemas/LanClientDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "clients"
+        ],
+        "type": "object"
+      },
       "LanInfo": {
         "properties": {
           "active": {
@@ -4141,6 +4202,27 @@
           }
         },
         "summary": "写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/clients": {
+      "get": {
+        "operationId": "list_lan_clients",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanClientsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "目标端查看当前通过 hawk-app 直连端口活跃的设备（admin 限定）。\n只返回授权列表内 key 的最近活跃时间，不返回 token。",
         "tags": [
           "app"
         ]
