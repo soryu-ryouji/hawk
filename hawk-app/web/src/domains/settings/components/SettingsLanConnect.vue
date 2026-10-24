@@ -1,26 +1,19 @@
 <script setup lang="ts">
-// 局域网互联（仅 Electron）：发现同网段其他 hawk-app，凭目标端一次性配对码建立直连。
-// 目标端只需有 [web].peer_keys 直连密钥并生成配对码，不依赖局域网网站开关；源端不经过 hawk-server。
-// token 由主进程保存，本组件只见设备展示信息。
+// 局域网互联（仅 Electron）：发现同网段其他 hawk-app，发起配对请求后等待目标端确认。
+// 目标端决定只读/可写权限，源端不经过 hawk-server；token 由主进程保存，本组件只见设备展示信息。
 import { computed, onMounted, ref, watch } from 'vue';
 import { useLanStore } from '@/domains/lan';
 import { ipcMessage, useConnectionLabel } from '@/domains/remote';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
-import PairingCodeInput from './PairingCodeInput.vue';
 import type { LanPeer, LanPeerProfile } from '@/shared/types';
 
 const store = useLanStore();
 const connection = useConnectionLabel();
-const code = ref('');
-const pairTarget = ref<LanPeer | null>(null);
-const pairWritable = ref(false);
 const savedMessage = ref<string | null>(null);
-/** 手动配对兜底：广播/组播被访客网络隔离时，输入目标设置面板显示的访问地址 + 配对码 */
+/** 手动配对兜底：广播/组播被访客网络隔离时，直接输入目标 hawk-app 直连地址。 */
 const manualOpen = ref(false);
 const manualUrl = ref('');
-const manualCode = ref('');
-const manualWritable = ref(false);
 /** 局域网测速（当前实现为 app/info 往返延迟中位数） */
 const testingSpeed = ref(false);
 const speedMs = ref<number | null>(null);
@@ -45,31 +38,19 @@ onMounted(() => {
   void store.scan();
 });
 
-function beginPair(peer: LanPeer): void {
-  pairTarget.value = peer;
-  code.value = '';
-  pairWritable.value = false;
+async function requestPair(peer: LanPeer): Promise<boolean> {
   store.error = null;
-}
-
-async function submitPair(): Promise<void> {
-  const peer = pairTarget.value;
-  const value = code.value.trim().toUpperCase();
-  if (!peer || !value) {
-    return;
-  }
-  const ok = await store.pair(peer, value, pairWritable.value);
+  const ok = await store.pair(peer, true);
   if (ok) {
-    pairTarget.value = null;
     savedMessage.value = `已连接到 ${peer.name}（${peer.library_name}）`;
     window.setTimeout(() => (savedMessage.value = null), 3000);
   }
+  return ok;
 }
 
 async function submitManualPair(): Promise<void> {
   const url = manualUrl.value.trim();
-  const value = manualCode.value.trim().toUpperCase();
-  if (!url || !value) {
+  if (!url) {
     return;
   }
   const peer: LanPeer = {
@@ -77,17 +58,12 @@ async function submitManualPair(): Promise<void> {
     name: '局域网设备',
     library_name: '',
     url,
-    // 目标端仍按选中直连密钥的 write 权限决定最终权限；这里仅表达请求意图
     writable: true,
     requires_pairing: true,
   };
-  const ok = await store.pair(peer, value, manualWritable.value);
-  if (ok) {
+  if (await requestPair(peer)) {
     manualOpen.value = false;
     manualUrl.value = '';
-    manualCode.value = '';
-    savedMessage.value = '手动配对成功';
-    window.setTimeout(() => (savedMessage.value = null), 3000);
   }
 }
 
@@ -141,13 +117,10 @@ async function forget(peer: LanPeerProfile): Promise<void> {
             {{ peer.name }}
             <span class="lib">（{{ peer.library_name }}）</span>
           </div>
-          <div class="peer-meta">
-            {{ peer.url }}
-            <span v-if="peer.writable" class="write-badge">允许写入</span>
-          </div>
+          <div class="peer-meta">{{ peer.url }}</div>
         </div>
-        <button class="primary" :disabled="store.connectingId !== null" @click="beginPair(peer)">
-          {{ store.connectingId === peer.id ? '配对中…' : '配对连接' }}
+        <button class="primary" :disabled="store.connectingId !== null" @click="requestPair(peer)">
+          {{ store.connectingId === peer.id ? '等待对方确认…' : '申请配对' }}
         </button>
       </div>
     </div>
@@ -162,29 +135,9 @@ async function forget(peer: LanPeerProfile): Promise<void> {
     <div v-if="manualOpen" class="pair-box">
       <div class="pair-title">手动配对</div>
       <input v-model="manualUrl" placeholder="http://192.168.1.5:27375" autocomplete="off" spellcheck="false" />
-      <PairingCodeInput v-model="manualCode" label="8 位配对码" @submit="submitManualPair" />
-      <label class="write-request">
-        <input v-model="manualWritable" type="checkbox" />
-        请求写权限
-      </label>
       <div class="pair-actions">
-        <button class="primary" :disabled="!manualUrl.trim() || !manualCode.trim() || store.connectingId !== null" @click="submitManualPair">
-          {{ store.connectingId ? '配对中…' : '连接' }}
-        </button>
-      </div>
-    </div>
-
-    <div v-if="pairTarget" class="pair-box">
-      <div class="pair-title">配对 {{ pairTarget.name }}</div>
-      <PairingCodeInput v-model="code" label="8 位配对码" @submit="submitPair" />
-      <label v-if="pairTarget.writable" class="write-request">
-        <input v-model="pairWritable" type="checkbox" />
-        请求写权限
-      </label>
-      <div class="pair-actions">
-        <button @click="pairTarget = null">取消</button>
-        <button class="primary" :disabled="!code.trim() || store.connectingId !== null" @click="submitPair">
-          {{ store.connectingId ? '配对中…' : '连接' }}
+        <button class="primary" :disabled="!manualUrl.trim() || store.connectingId !== null" @click="submitManualPair">
+          {{ store.connectingId ? '等待对方确认…' : '申请配对' }}
         </button>
       </div>
     </div>
@@ -311,7 +264,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   font-size: 11px;
   overflow-wrap: anywhere;
 }
-.write-badge,
 .current-badge {
   margin-left: 6px;
   padding: 0 5px;
@@ -350,16 +302,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--bg-1);
-}
-.write-request {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--fg-1);
-  font-size: 12px;
-}
-.write-request input {
-  accent-color: var(--accent);
 }
 .pair-actions {
   display: flex;

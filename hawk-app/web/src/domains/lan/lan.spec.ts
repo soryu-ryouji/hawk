@@ -5,7 +5,7 @@ import { reactive } from 'vue';
 import type { LanPeer } from '@/shared/types';
 
 const shellMock = vi.hoisted(() => ({
-  lanPair: vi.fn((_input: { peer: LanPeer; code: string; writable: boolean }) =>
+  lanPair: vi.fn((_input: { peer: LanPeer; writable: boolean }) =>
     Promise.resolve({ api_base: 'http://192.168.1.2:27375', token: 't', label: '目标', remote: true, kind: 'lan', peer_id: 'peer' }),
   ),
   lanPeers: vi.fn(() => Promise.resolve({ peers: [] })),
@@ -35,7 +35,7 @@ describe('useLanStore', () => {
     });
 
     const store = useLanStore();
-    await store.pair(peer, 'ABCDEFGH', true);
+    await store.pair(peer, true);
 
     const payload = shellMock.lanPair.mock.calls[0][0];
     expect(() => structuredClone(payload)).not.toThrow();
@@ -48,7 +48,6 @@ describe('useLanStore', () => {
       writable: true,
       requires_pairing: true,
     });
-    expect(payload.code).toBe('ABCDEFGH');
     expect(payload.writable).toBe(true);
   });
 });

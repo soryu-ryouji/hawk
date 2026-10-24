@@ -24,7 +24,7 @@ import SetupScreen from './screens/SetupScreen.vue';
 import RemoteScreen from './screens/RemoteScreen.vue';
 import ConnectScreen from './screens/ConnectScreen.vue';
 import StartingScreen from './screens/StartingScreen.vue';
-import { SettingsDialog } from '@/domains/settings';
+import { LanPairRequestPrompt, SettingsDialog } from '@/domains/settings';
 import { ImportDuplicateDialog } from '@/domains/import';
 
 const store = useLibraryStore();
@@ -162,6 +162,7 @@ useDragImport();
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
     <ImageEditDialog v-if="preview.editorTarget" :item="preview.editorTarget" @close="preview.closeEditor()" />
     <SettingsDialog v-if="showSettings" @close="showSettings = false" @logout="logoutToken" />
+    <LanPairRequestPrompt />
     <!-- 导入重复策略对话框（导入中首个重复内容触发，选择整批生效） -->
     <ImportDuplicateDialog />
     <!-- 多位置删除策略对话框（删除含多位置副本的素材时触发） -->

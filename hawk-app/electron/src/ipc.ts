@@ -27,6 +27,8 @@ import {
   lanPeers,
   lanForget,
   lanSpeedTest,
+  lanPairRequests,
+  lanDecidePairRequest,
 } from './remote';
 import type { LanPeer, RemoteConfig } from './ipc-contract';
 import { changeCacheParent, currentCacheParent } from './cache';
@@ -221,7 +223,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
   // ---- 局域网互联：发现/配对/连接经本机 daemon + 目标 LAN 端点；token 只在主进程 ----
   ipcMain.handle(IPC.lanDiscover, () => lanDiscover());
-  ipcMain.handle(IPC.lanPair, (_event, input: { peer: LanPeer; code: string; writable: boolean }) => lanPair(input));
+  ipcMain.handle(IPC.lanPair, (_event, input: { peer: LanPeer; writable: boolean }) => lanPair(input));
   ipcMain.handle(IPC.lanConnect, (_event, peerId: unknown) => {
     if (typeof peerId !== 'string' || !peerId) {
       throw new Error('无效的局域网设备');
@@ -230,6 +232,14 @@ export function registerIpc(): void {
   });
   ipcMain.handle(IPC.lanPeers, () => lanPeers());
   ipcMain.handle(IPC.lanSpeedTest, () => lanSpeedTest());
+  ipcMain.handle(IPC.lanPairRequests, () => lanPairRequests());
+  ipcMain.handle(IPC.lanDecidePairRequest, (_event, requestId: unknown, body: unknown) => {
+    if (typeof requestId !== 'string' || !requestId || typeof body !== 'object' || body === null) {
+      throw new Error('无效的配对请求');
+    }
+    const { allow, write } = body as { allow?: unknown; write?: unknown };
+    return lanDecidePairRequest(requestId, { allow: Boolean(allow), write: Boolean(write) });
+  });
   ipcMain.handle(IPC.lanForget, (_event, peerId: unknown) => {
     if (typeof peerId === 'string' && peerId) {
       return lanForget(peerId);

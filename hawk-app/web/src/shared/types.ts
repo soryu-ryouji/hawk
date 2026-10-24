@@ -8,6 +8,7 @@ import type {
   UpdateProgress,
   ConnectionDescriptor,
   ConnectionKind,
+  LanPairRequest,
   LanPeer,
   LanPeerProfile,
   RemoteConfig,
@@ -26,6 +27,7 @@ export type { LibraryHistoryItem, UpdateChannel, CloseAction, UpdateInfo, Update
 export type {
   ConnectionDescriptor,
   ConnectionKind,
+  LanPairRequest,
   LanPeer,
   LanPeerProfile,
   RemoteConfig,

@@ -96,6 +96,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/lan/pair-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 目标端待处理配对请求列表（仅本机 admin 设置面板轮询）。 */
+        get: operations["list_lan_pair_requests"];
+        put?: never;
+        /** 源端发起自动配对请求（免 Bearer，仅 hawk-app 直连端口）。 */
+        post: operations["create_lan_pair_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/lan/pair-requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 源端轮询配对请求结果（免 Bearer；request_id 为随机不可猜 secret）。 */
+        get: operations["get_lan_pair_request_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/lan/pair-requests/{request_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 目标端用户确认/拒绝配对请求（admin 限定）。允许时创建一把该设备专用的直连密钥。 */
+        post: operations["decide_lan_pair_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/lan/peers": {
         parameters: {
             query?: never;
@@ -1472,6 +1524,42 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanPairDecisionDto: {
+            data?: {
+                status: string;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanPairRequestCreatedDto: {
+            data?: {
+                /** Format: int64 */
+                expires_in_seconds: number;
+                request_id: string;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanPairRequestStatusDto: {
+            data?: {
+                library_name?: string | null;
+                name?: string | null;
+                peer_id?: string | null;
+                /** @description pending / approved / denied / expired */
+                status: string;
+                token?: string | null;
+                writable?: boolean | null;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanPairRequestsDto: {
+            data?: {
+                requests: components["schemas"]["LanPairRequestDto"][];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanPairResultDto: {
             data?: {
                 library_name: string;
@@ -1983,6 +2071,43 @@ export interface components {
             /** Format: int64 */
             expires_in_seconds: number;
         };
+        LanPairDecisionBody: {
+            allow: boolean;
+            write?: boolean;
+        };
+        LanPairDecisionDto: {
+            status: string;
+        };
+        LanPairRequestCreateBody: {
+            /** @description 源端设备名（仅用于目标端确认提示） */
+            client_name: string;
+            /** @description 源端希望获得写权限；最终由目标端用户决定 */
+            writable?: boolean;
+        };
+        LanPairRequestCreatedDto: {
+            /** Format: int64 */
+            expires_in_seconds: number;
+            request_id: string;
+        };
+        LanPairRequestDto: {
+            client_name: string;
+            /** Format: int64 */
+            created_at_ms: number;
+            id: string;
+            requested_write: boolean;
+        };
+        LanPairRequestStatusDto: {
+            library_name?: string | null;
+            name?: string | null;
+            peer_id?: string | null;
+            /** @description pending / approved / denied / expired */
+            status: string;
+            token?: string | null;
+            writable?: boolean | null;
+        };
+        LanPairRequestsDto: {
+            requests: components["schemas"]["LanPairRequestDto"][];
+        };
         LanPairResultDto: {
             library_name: string;
             name: string;
@@ -2477,6 +2602,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_LanPairCodeDto"];
+                };
+            };
+        };
+    };
+    list_lan_pair_requests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanPairRequestsDto"];
+                };
+            };
+        };
+    };
+    create_lan_pair_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanPairRequestCreateBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanPairRequestCreatedDto"];
+                };
+            };
+        };
+    };
+    get_lan_pair_request_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 配对请求 id */
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanPairRequestStatusDto"];
+                };
+            };
+        };
+    };
+    decide_lan_pair_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 配对请求 id */
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanPairDecisionBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanPairDecisionDto"];
                 };
             };
         };

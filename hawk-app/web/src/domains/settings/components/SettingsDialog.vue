@@ -163,10 +163,11 @@ async function save() {
               </button>
             </div>
             <div v-show="networkTab === 'lan-access'" class="tab-content lan-access" role="tabpanel">
-              <h3 class="section-title">访问其他设备</h3>
+              <h3 class="section-title">局域网互联</h3>
               <SettingsLanConnect />
-              <SettingsLanPairActions v-if="isAdmin" />
               <template v-if="isAdmin">
+                <h3 class="section-title">共享本机素材库</h3>
+                <SettingsLanPairActions />
                 <h3 class="section-title">局域网网站访问</h3>
                 <SettingsLan ref="lanPane" v-model:error="error" embedded />
               </template>

@@ -53,6 +53,8 @@ export const IPC = {
   lanPeers: 'hawk:lan-peers',
   lanForget: 'hawk:lan-forget',
   lanSpeedTest: 'hawk:lan-speed-test',
+  lanPairRequests: 'hawk:lan-pair-requests',
+  lanDecidePairRequest: 'hawk:lan-decide-pair-request',
   // ---- 主进程 → 渲染进程（webContents.send / ipcRenderer.on） ----
   winMaximized: 'hawk:win-maximized',
   serverProgress: 'hawk:server-progress',
@@ -161,6 +163,14 @@ export interface LanPeer {
   /** 目标设备是否允许局域网写操作 */
   writable: boolean;
   requires_pairing: boolean;
+}
+
+/** 目标端待确认的自动配对请求（仅展示字段，无访问凭证） */
+export interface LanPairRequest {
+  id: string;
+  client_name: string;
+  requested_write: boolean;
+  created_at_ms: number;
 }
 
 /** 已配对并保存在本机的局域网设备（token 只在主进程配置中，不送往渲染层） */
@@ -361,8 +371,8 @@ export interface HawkShell {
   remoteDeleteKey(id: string): Promise<{ synced: boolean }>;
   /** 探测同网段可配对的 hawk 设备（经本机 daemon 的 UDP 发现） */
   lanDiscover(): Promise<{ peers: LanPeer[] }>;
-  /** 用目标设备的一次性配对码建立局域网直连，保存连接并切换到目标库 */
-  lanPair(input: { peer: LanPeer; code: string; writable: boolean }): Promise<ConnectionDescriptor>;
+  /** 向目标设备发起自动配对请求，等待目标端用户确认后保存连接并切换 */
+  lanPair(input: { peer: LanPeer; writable: boolean }): Promise<ConnectionDescriptor>;
   /** 连接已保存的局域网设备（刷新目标 app/info 后切换连接） */
   lanConnect(peerId: string): Promise<ConnectionDescriptor>;
   /** 已保存的局域网设备列表（不含 token） */
@@ -371,6 +381,10 @@ export interface HawkShell {
   lanForget(peerId: string): Promise<void>;
   /** 测试当前局域网连接延迟（连续请求目标 app/info，返回中位数毫秒） */
   lanSpeedTest(): Promise<{ latency_ms: number }>;
+  /** 本机 daemon 上待确认的自动配对请求（主进程始终连本地 daemon，不受当前浏览目标影响） */
+  lanPairRequests(): Promise<{ requests: LanPairRequest[] }>;
+  /** 允许/拒绝自动配对请求，并决定只读或读写 */
+  lanDecidePairRequest(requestId: string, body: { allow: boolean; write: boolean }): Promise<{ status: string }>;
   /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。
    *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 remoteGetConnection 拉取兜底 */
   onConnectionChanged(cb: (conn: ConnectionDescriptor) => void): () => void;

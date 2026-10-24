@@ -58,7 +58,14 @@ export const api = {
   appLan: () => request<components['schemas']['LanSettingsDto']>('GET', '/api/v1/app/lan'),
   /** 保存 [web] 配置并热重绑监听（失败 daemon 侧自动回滚并返回错误） */
   saveAppLan: (body: components['schemas']['PutLanBody']) => request<components['schemas']['LanSettingsDto']>('PUT', '/api/v1/app/lan', { body }),
-  /** 生成一次性局域网配对码（admin 限定；目标端展示给另一台 hawk-app） */
+  /** 目标端待确认的自动配对请求（本机 admin 设置面板轮询） */
+  appLanPairRequests: () => request<components['schemas']['LanPairRequestsDto']>('GET', '/api/v1/app/lan/pair-requests'),
+  /** 目标端用户确认/拒绝自动配对请求并选择权限 */
+  decideLanPairRequest: (requestId: string, body: { allow: boolean; write: boolean }) =>
+    request<components['schemas']['LanPairDecisionDto']>('POST', `/api/v1/app/lan/pair-requests/${encodeURIComponent(requestId)}/decision`, {
+      body,
+    }),
+  /** 生成一次性局域网配对码（移动端/二维码配对仍使用） */
   createLanPairCode: (body: components['schemas']['LanPairCodeBody']) =>
     request<components['schemas']['LanPairCodeDto']>('POST', '/api/v1/app/lan/pair-code', { body }),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),

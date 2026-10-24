@@ -8,6 +8,7 @@ import { getLanTarget, getRemoteTarget, getStoredLanPeer, listLanPeers, removeSt
 import {
   IPC,
   type ConnectionDescriptor,
+  type LanPairRequest,
   type LanPeer,
   type LanPeerProfile,
   type RemoteConfig,
@@ -261,6 +262,16 @@ export async function lanSpeedTest(): Promise<{ latency_ms: number }> {
   return { latency_ms: samples[Math.floor(samples.length / 2)] };
 }
 
+/** 本机 daemon 上待确认的自动配对请求（设置/全局提示均经主进程读取）。 */
+export async function lanPairRequests(): Promise<{ requests: LanPairRequest[] }> {
+  return daemonCall<{ requests: LanPairRequest[] }>('GET', '/api/v1/app/lan/pair-requests');
+}
+
+/** 目标端用户确认/拒绝配对请求。 */
+export async function lanDecidePairRequest(requestId: string, body: { allow: boolean; write: boolean }): Promise<{ status: string }> {
+  return daemonCall<{ status: string }>('POST', `/api/v1/app/lan/pair-requests/${encodeURIComponent(requestId)}/decision`, body);
+}
+
 /** 忘记一台已配对设备（若正在浏览则先回本地库） */
 export async function lanForget(peerId: string): Promise<void> {
   if (lanConn?.peer_id === peerId) {
@@ -270,35 +281,54 @@ export async function lanForget(peerId: string): Promise<void> {
   removeStoredLanPeer(peerId);
 }
 
-/** 用目标端一次性配对码建立直连并切换连接。目标返回的是目标 LAN web 的 viewer/write token。 */
-export async function lanPair(input: { peer: LanPeer; code: string; writable: boolean }): Promise<ConnectionDescriptor> {
+/** 向目标设备发起自动配对请求，轮询目标端确认，然后建立直连并切换连接。 */
+export async function lanPair(input: { peer: LanPeer; writable: boolean }): Promise<ConnectionDescriptor> {
   const base = normalizeLanURL(input.peer.url);
-  const paired = await directCall<{ token: string; writable: boolean; peer_id: string; name: string; library_name: string }>(
-    base,
-    '/api/v1/app/lan/pair',
-    '',
-    'POST',
-    {
-      code: input.code.trim(),
-      writable: input.writable,
-      client_name: os.hostname(),
-    },
-  );
-  const info = await directCall<TargetAppInfo>(base, '/api/v1/app/info', paired.token);
-  if (!info.has_library) {
-    throw new Error('目标设备未打开素材库');
-  }
-  const peerId = paired.peer_id || input.peer.id;
-  upsertLanPeer({
-    id: peerId,
-    name: paired.name || input.peer.name,
-    library_name: paired.library_name || input.peer.library_name,
-    url: base,
-    writable: paired.writable,
-    token: paired.token,
-    last_connected_at_ms: Date.now(),
+  const created = await directCall<{ request_id: string; expires_in_seconds: number }>(base, '/api/v1/app/lan/pair-requests', '', 'POST', {
+    client_name: os.hostname(),
+    writable: input.writable,
   });
-  return connectLanPeer(peerId);
+  const requestId = created.request_id;
+  const deadline = Date.now() + Math.min(Math.max(created.expires_in_seconds, 1), 95) * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const status = await directCall<{
+      status: 'pending' | 'approved' | 'denied' | 'expired';
+      token?: string;
+      writable?: boolean;
+      peer_id?: string;
+      name?: string;
+      library_name?: string;
+    }>(base, `/api/v1/app/lan/pair-requests/${encodeURIComponent(requestId)}`, '', 'GET');
+    if (status.status === 'denied') {
+      throw new Error('对方拒绝了配对请求');
+    }
+    if (status.status === 'expired') {
+      throw new Error('配对请求已过期，请重新发起');
+    }
+    if (status.status !== 'approved') {
+      continue;
+    }
+    if (!status.token) {
+      throw new Error('目标设备返回了无效的访问凭证');
+    }
+    const info = await directCall<TargetAppInfo>(base, '/api/v1/app/info', status.token);
+    if (!info.has_library) {
+      throw new Error('目标设备未打开素材库');
+    }
+    const peerId = status.peer_id || input.peer.id;
+    upsertLanPeer({
+      id: peerId,
+      name: status.name || input.peer.name,
+      library_name: status.library_name || input.peer.library_name,
+      url: base,
+      writable: status.writable ?? false,
+      token: status.token,
+      last_connected_at_ms: Date.now(),
+    });
+    return connectLanPeer(peerId);
+  }
+  throw new Error('等待对方确认超时，请重新发起配对');
 }
 
 /** 读取已配对设备并切换当前连接描述符 */

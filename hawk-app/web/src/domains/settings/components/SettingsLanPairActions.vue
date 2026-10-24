@@ -24,6 +24,7 @@ const code = ref('');
 const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
 const pendingMode = ref<PairMode | null>(null);
 const newKeyWrite = ref(false);
+const busyKeyId = ref<string | null>(null);
 const { copy } = useClipboard({ legacy: true });
 
 onMounted(async () => {
@@ -132,10 +133,59 @@ function copyCode(): void {
     void copy(code.value);
   }
 }
+
+/** 目标端动态调整某台已授权设备的读写权限；鉴权中间件每请求读取，保存后立即生效。 */
+async function setPeerWrite(id: string, write: boolean): Promise<void> {
+  if (busyKeyId.value) {
+    return;
+  }
+  const key = lan.peerKeys.find((item) => item.id === id);
+  if (!key) {
+    return;
+  }
+  busyKeyId.value = id;
+  key.write = write;
+  if (!(await lan.save())) {
+    error.value = lan.error ?? '权限更新失败';
+  }
+  busyKeyId.value = null;
+}
+
+/** 撤销某台设备的共享权限：删除其专用直连密钥，对方后续请求会 401。 */
+async function revokePeer(id: string, label: string): Promise<void> {
+  if (busyKeyId.value || !window.confirm(`停止与「${label}」共享素材库？`)) {
+    return;
+  }
+  busyKeyId.value = id;
+  lan.removePeerKey(id);
+  if (!(await lan.save())) {
+    error.value = lan.error ?? '撤销共享失败';
+  }
+  busyKeyId.value = null;
+}
 </script>
 
 <template>
   <div class="pair-actions">
+    <div class="group">
+      <div class="group-title">已授权设备</div>
+      <div v-if="lan.peerKeys.length === 0" class="empty-state">暂无授权设备</div>
+      <div v-for="key in lan.peerKeys" :key="key.id" class="peer-row">
+        <div class="peer-main">
+          <div class="peer-name">{{ key.label }}</div>
+          <div class="peer-meta">{{ key.write ? '可读写' : '只读' }}</div>
+        </div>
+        <div class="row-actions">
+          <button :disabled="busyKeyId !== null" @click="setPeerWrite(key.id, !key.write)">
+            {{ key.write ? '设为只读' : '允许写入' }}
+          </button>
+          <button class="icon-btn" title="停止共享" :disabled="busyKeyId !== null" @click="revokePeer(key.id, key.label)">
+            <Icon name="trash" :size="13" />
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="lan.peerKeys.length > 0" class="pair-controls">
       <label class="control">
         <span>使用密钥</span>
@@ -216,6 +266,66 @@ function copyCode(): void {
 .warning {
   color: var(--danger);
 }
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+.group-title {
+  padding: 2px 0 5px;
+  color: var(--fg-1);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.peer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.peer-row:last-child {
+  border-bottom: none;
+}
+
+.peer-main {
+  min-width: 0;
+}
+
+.peer-name {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.peer-meta {
+  margin-top: 2px;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+.row-actions button {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.empty-state {
+  padding: 8px 0;
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
 .pair-controls {
   display: flex;
   align-items: center;
