@@ -1527,6 +1527,11 @@ export interface components {
                 library_name?: string | null;
                 name?: string | null;
                 peer_id?: string | null;
+                /**
+                 * Format: int32
+                 * @description 桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。
+                 */
+                protocol: number;
                 /** @description pending / approved / denied / expired */
                 status: string;
                 token?: string | null;
@@ -2052,7 +2057,8 @@ export interface components {
         LanPairRequestCreateBody: {
             /** @description 源端设备名（仅用于目标端确认提示） */
             client_name: string;
-            reverse?: null | components["schemas"]["LanReversePeerDto"];
+            /** @description 源端回连 profile：目标端批准后据此保存可反向连接的设备。 */
+            reverse: components["schemas"]["LanReversePeerDto"];
             /** @description 源端希望获得写权限；最终由目标端用户决定 */
             writable?: boolean;
         };
@@ -2072,6 +2078,11 @@ export interface components {
             library_name?: string | null;
             name?: string | null;
             peer_id?: string | null;
+            /**
+             * Format: int32
+             * @description 桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。
+             */
+            protocol: number;
             /** @description pending / approved / denied / expired */
             status: string;
             token?: string | null;
@@ -2108,7 +2119,7 @@ export interface components {
             token: string;
             /** @description 源端候选局域网地址（http://ip:peer_port） */
             urls: string[];
-            writable?: boolean;
+            writable: boolean;
         };
         LanSettingsDto: {
             /** @description 网站监听状态 */

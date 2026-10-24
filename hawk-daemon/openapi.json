@@ -1055,6 +1055,12 @@
                   "null"
                 ]
               },
+              "protocol": {
+                "description": "桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
               "status": {
                 "description": "pending / approved / denied / expired",
                 "type": "string"
@@ -1073,6 +1079,7 @@
               }
             },
             "required": [
+              "protocol",
               "status"
             ],
             "type": "object"
@@ -2932,15 +2939,8 @@
             "type": "string"
           },
           "reverse": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/LanReversePeerDto",
-                "description": "新客户端会携带；旧客户端缺省时仍是一对一单向配对。"
-              }
-            ]
+            "$ref": "#/components/schemas/LanReversePeerDto",
+            "description": "源端回连 profile：目标端批准后据此保存可反向连接的设备。"
           },
           "writable": {
             "description": "源端希望获得写权限；最终由目标端用户决定",
@@ -2948,7 +2948,8 @@
           }
         },
         "required": [
-          "client_name"
+          "client_name",
+          "reverse"
         ],
         "type": "object"
       },
@@ -3014,6 +3015,12 @@
               "null"
             ]
           },
+          "protocol": {
+            "description": "桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "status": {
             "description": "pending / approved / denied / expired",
             "type": "string"
@@ -3032,6 +3039,7 @@
           }
         },
         "required": [
+          "protocol",
           "status"
         ],
         "type": "object"
@@ -3158,7 +3166,8 @@
           "name",
           "library_name",
           "urls",
-          "token"
+          "token",
+          "writable"
         ],
         "type": "object"
       },

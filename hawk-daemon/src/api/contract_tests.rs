@@ -383,6 +383,22 @@ async fn lan_ports_enforce_separate_key_namespaces() {
     );
 }
 
+/// 配对协议 v2 为破坏性更新：缺少 reverse 回连 profile 的旧请求必须直接拒绝。
+#[tokio::test]
+async fn pair_request_rejects_missing_reverse_profile() {
+    let app = test_app("lan-pair-v2-required");
+    app.state.lan.mark_peer_active_for_test(27375);
+    let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
+    let (status, _) = call_json(
+        &peer_router,
+        "POST",
+        "/api/v1/app/lan/pair-requests",
+        Some(json!({ "client_name": "OldClient", "writable": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 /// 目标端能看到某把 peer key 最近通过直连端口发过请求（在线状态的数据源）。
 #[tokio::test]
 async fn lan_peer_activity_reports_online_client() {
@@ -498,6 +514,7 @@ async fn put_lan_auto_pair_request_flow() {
     );
     let approved: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(approved["data"]["status"], "approved");
+    assert_eq!(approved["data"]["protocol"], 2);
     assert_eq!(approved["data"]["writable"], true);
     assert!(approved["data"]["token"]
         .as_str()

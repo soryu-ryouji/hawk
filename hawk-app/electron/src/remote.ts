@@ -360,20 +360,19 @@ export async function lanDecidePairRequest(requestId: string, body: { allow: boo
     '/api/v1/app/lan/pair-requests/' + encodeURIComponent(requestId) + '/decision',
     body,
   );
-  if (result.status === 'approved' && result.peer) {
-    try {
-      upsertLanPeer({
-        id: result.peer.id,
-        name: result.peer.name,
-        library_name: result.peer.library_name,
-        url: normalizeLanURL(result.peer.url),
-        writable: result.peer.writable,
-        token: result.peer.token,
-        last_connected_at_ms: 0,
-      });
-    } catch {
-      // 源端地址异常时不阻断本次审批；单向后仍可正常使用。
+  if (result.status === 'approved') {
+    if (!result.peer) {
+      throw new Error('目标端未返回双向配对信息，请确认两端 hawk 已升级到同一版本');
     }
+    upsertLanPeer({
+      id: result.peer.id,
+      name: result.peer.name,
+      library_name: result.peer.library_name,
+      url: normalizeLanURL(result.peer.url),
+      writable: result.peer.writable,
+      token: result.peer.token,
+      last_connected_at_ms: 0,
+    });
   }
   return { status: result.status };
 }
@@ -389,20 +388,21 @@ export async function lanForget(peerId: string): Promise<void> {
 
 /** 向目标设备发起自动配对请求；目标端批准后双方各自保存一台可反向连接的设备。 */
 export async function lanPair(input: { peer: LanPeer; writable: boolean }): Promise<ConnectionDescriptor> {
-  const reverse = await addReversePeerKey(input.peer).catch(() => null);
+  const reverse = await addReversePeerKey(input.peer);
   let approved = false;
   try {
     const base = normalizeLanURL(input.peer.url);
     const created = await directCall<{ request_id: string; expires_in_seconds: number }>(base, '/api/v1/app/lan/pair-requests', '', 'POST', {
       client_name: os.hostname(),
       writable: input.writable,
-      reverse: reverse?.profile,
+      reverse: reverse.profile,
     });
     const requestId = created.request_id;
     const deadline = Date.now() + Math.min(Math.max(created.expires_in_seconds, 1), 95) * 1000;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 700));
       const status = await directCall<{
+        protocol: number;
         status: 'pending' | 'approved' | 'denied' | 'expired';
         token?: string;
         writable?: boolean;
@@ -410,6 +410,9 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean }): Prom
         name?: string;
         library_name?: string;
       }>(base, '/api/v1/app/lan/pair-requests/' + encodeURIComponent(requestId), '', 'GET');
+      if (status.protocol !== 2) {
+        throw new Error('目标端配对协议版本不兼容，请将两端 hawk 升级到同一版本');
+      }
       if (status.status === 'denied') {
         throw new Error('对方拒绝了配对请求');
       }
@@ -441,7 +444,7 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean }): Prom
     }
     throw new Error('等待对方确认超时，请重新发起配对');
   } finally {
-    if (!approved && reverse) {
+    if (!approved) {
       await removeReversePeerKey(reverse.keyId).catch(() => {});
     }
   }
