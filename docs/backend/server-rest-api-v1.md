@@ -44,9 +44,14 @@
 | GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列 + 索引管道；SSE 的 `task.progress` 事件为同一快照的推送版） |
 | GET  | `/api/v1/app/token` | 发现连接 token（免鉴权，仅限扩展类客户端） |
 | GET  | `/api/v1/app/connection` | 当前连接描述符（本地库 / 正在浏览的远端库），生态客户端跟随目标用（admin 限定） |
-| GET  | `/api/v1/app/lan` | 读取局域网 web 查看配置与运行状态（admin 限定） |
+| GET  | `/api/v1/app/lan` | 读取局域网网站与 hawk-app 直连配置、本机身份及运行状态（admin 限定） |
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
 | GET  | `/api/v1/app/lan/peers` | 探测同网段可配对的 hawk-app（admin 限定） |
+| GET  | `/api/v1/app/lan/clients` | 目标端查看当前活跃的 hawk-app 直连设备（admin 限定） |
+| POST | `/api/v1/app/lan/pair-requests` | 源端发起双向配对请求（免 Bearer，仅直连端口） |
+| GET  | `/api/v1/app/lan/pair-requests` | 目标端待确认配对请求列表（admin 限定） |
+| GET  | `/api/v1/app/lan/pair-requests/{request_id}` | 源端轮询配对结果（免 Bearer，request_id 为随机凭证） |
+| POST | `/api/v1/app/lan/pair-requests/{request_id}/decision` | 目标端批准/拒绝并返回反向设备 profile（admin 限定） |
 
 ### startup
 
@@ -222,6 +227,9 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "enabled": true,
     "port": 27372,
     "peer_port": 27375,
+    "peer_id": "9f2c1a7b4e8d0356",
+    "name": "studio-mac",
+    "library_name": "我的素材库",
     "keys": [
       { "id": "key_a1b2", "label": "我的手机", "token": "<access-key>", "write": false, "created_at_ms": 1760000000000 }
     ],
@@ -229,12 +237,13 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
       { "id": "peer_c3d4", "label": "另一台 hawk-app", "token": "<peer-key>", "write": false, "created_at_ms": 1760000000000 }
     ],
     "active": true,
-    "peer_active": true
+    "peer_active": true,
+    "peer_error": null
   }
 }
 ```
 
-`active` 为监听实况，`error` 字段在绑定失败时携带原因。
+`active` / `peer_active` 为两个监听器的实况；`error` / `peer_error` 在绑定失败时携带原因。`peer_id`/`name`/`library_name` 是本机设备身份，用于源端生成反向配对 profile。
 
 ---
 
@@ -262,7 +271,17 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 ### 局域网互联（不经 hawk-server）
 
-daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + 广播），只在存在 `[web].peer_keys` 时应答，公告的是 `peer_port`。发现公告只含设备名、库名、端口与写权限提示，**不含任何 token**。
+daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + 广播），只要 hawk-app 直连端口就绪就应答，不依赖网站开关或已存在的 peer key。公告只含设备名、库名、端口与写能力提示，**不含任何 token**。
+
+桌面配对协议为 v2 双向协议：
+
+- `POST /api/v1/app/lan/pair-requests`：源端创建请求，必须携带 `reverse`（本机 peer_id/name/library_name/候选 urls/token/writable）；请求 id 随机、90 秒过期。
+- `GET /api/v1/app/lan/pair-requests`：目标端本机 admin 查看待确认列表。
+- `GET /api/v1/app/lan/pair-requests/{request_id}`：源端轮询结果，响应含 `protocol=2`、`status` 与批准后的目标 token；旧协议客户端会被拒绝。
+- `POST /api/v1/app/lan/pair-requests/{request_id}/decision`：目标端批准/拒绝并选择 A 的读写权限；批准时动态创建该设备专用 `[web].peer_keys` 条目，并在响应 `peer` 中返回源端回连 profile，供目标端保存反向连接。
+- `GET /api/v1/app/lan/clients`：目标端本机 admin 查看当前活跃直连设备（key_id、label、last_seen_ms、online）；鉴权成功后按 peer key 记录最近活跃时间，30 秒窗口内视为在线。
+
+权限/设备变更通过 SSE `lan.access.changed` 通知已连接客户端重新读取 `app/info`；旧的一次性配对码端点已移除。
 
 ## remote
 
@@ -1255,12 +1274,3 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 - **顺序**:同一 item 的事件按流水线处理顺序发出;不同 item 之间无全局顺序保证
 - **重连**:EventSource 断线自动重连,`onopen` 再次触发即对齐时机(参考前端 `events.ts` 的 `onReconnect` 约定)
 
-### 自动配对端点
-
-- POST /api/v1/app/lan/pair-requests：源端发起配对请求（免 Bearer，仅 peer 端口）
-- GET /api/v1/app/lan/pair-requests：目标端待确认请求列表（admin）
-- GET /api/v1/app/lan/pair-requests/{request_id}：源端轮询结果（免 Bearer，request_id 为随机凭证）
-- POST /api/v1/app/lan/pair-requests/{request_id}/decision：目标端确认/拒绝并选择读写权限（admin）
-- lan.access.changed：局域网 peer key 权限/设备列表变更，客户端收到后重新请求 app/info 刷新读写能力。
-
-- GET /api/v1/app/lan/clients：目标端查看当前活跃的 hawk-app 直连设备（admin；只返回 key_id/last_seen_ms/online）

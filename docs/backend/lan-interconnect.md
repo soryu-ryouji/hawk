@@ -52,7 +52,7 @@
 - 组播地址：`239.255.72.75`；同时向 `255.255.255.255:27374` 发送广播，兼容不转发组播的交换机/热点
 - 消息为 JSON，`hawk: 1`，`op` 为 `probe` 或 `announce`
 - 目标 daemon 在 hawk-app 直连端口就绪时应答；不需要预先存在 peer key，网站访问开关也独立
-- 公告字段：稳定 `id`（主机名 + 库根路径的 BLAKE3 前缀）、设备名、库显示名、hawk-app 直连端口（`peer_port`）、`writable` 提示（按 peer key 汇总）
+- 公告字段：稳定 `id`（主机名 + 库根路径的 BLAKE3 前缀）、设备名、库显示名、hawk-app 直连端口（`peer_port`）、`writable` 提示（表示目标接受写权限授权）
 - **token 永不进入 UDP 包**。发现只解决「谁可以配对」，授权在配对阶段完成
 - 源端 daemon 的 `GET /api/v1/app/lan/peers` 发起 probe，等待最多 900ms，按 id 去重后返回；本机自身从结果中过滤
 - 广播/组播被访客网络隔离时，源端 UI 提供手动地址兜底，仍走同一自动配对请求
@@ -61,27 +61,31 @@
 
 ## 配对流程
 
-```text
-A 打开 设置 → 网络 → 局域网互联 → 扫描设备
-A 选择目标 B，点击「申请配对」
-  → POST B:27375/api/v1/app/lan/pair-requests  (免 Bearer，仅直连端口)
-      { client_name, writable }
-B 的 hawk 主界面弹出「局域网配对请求」
-  → 拒绝 / 仅读取 / 可读写
-  → POST /api/v1/app/lan/pair-requests/{id}/decision  (本机 admin)
-B daemon 为 A 创建一把专用 peer key
-A 轮询 GET /api/v1/app/lan/pair-requests/{id}
-  → 返回 { token, writable, peer_id, name, library_name }
-A 校验目标 app/info 后保存连接并切换
-```
+1. A 在「局域网互联」扫描到 B，点击「申请配对」。
+2. A 先在本机签发一把只读反向 peer key，然后请求 B 的直连端口：
 
-实现要点：
+   `POST /api/v1/app/lan/pair-requests`
 
-- 请求 id 为随机高熵值，90 秒过期；待确认请求数量有上限，重复点击会复用同一请求
-- 目标端确认时动态创建该设备专用 peer key，不需要预先创建密钥或生成配对码
-- 目标端可随时把该设备切换为仅读取/可读写，或删除设备撤销共享
-- 权限变更广播 lan.access.changed，源端收到后重新读取 app/info 热刷新界面
-- 旧的 8 位配对码流程已移除；移动端仍通过二维码携带 token 授权
+   ```json
+   { "client_name": "A", "writable": true, "reverse": { "peer_id": "...", "name": "A", "library_name": "A 的素材库", "urls": ["http://192.168.1.10:27375"], "token": "<A 为 B 签发的 peer key>", "writable": false } }
+   ```
+
+3. B 的 hawk 主界面弹出全局配对请求，用户选择拒绝、仅读取或可读写。
+4. B 调用本机 admin 端点 `POST /api/v1/app/lan/pair-requests/{id}/decision`：
+   - 允许时为 A 创建一把专用 peer key；
+   - 响应除 `status=approved` 外，还返回 `peer`（A 的回连 profile），B 主进程据此保存 A 为已配对设备。
+5. A 轮询 `GET /api/v1/app/lan/pair-requests/{id}`，校验协议版本 `protocol=2`，取得目标 token 后保存 B 并建立连接。
+6. 两端此后都拥有对方的连接 profile，无需再次申请配对，可从已配对设备列表直接连接。
+
+协议要点：
+
+- 配对协议 v2 为破坏性协议：`reverse` 必填，状态响应必须携带 `protocol=2`；缺少反向信息的旧请求直接 422。
+- 请求 id 为随机高熵值，90 秒过期；待确认请求数量有上限，重复点击会复用同一请求。
+- 目标端确认时动态创建该设备专用 peer key，不需要预先创建密钥或生成配对码。
+- 目标端可随时把该设备切换为仅读取/可读写，或删除设备撤销共享；权限变更广播 `lan.access.changed`。
+- 反向 key 默认只读，A 可在自己的已授权设备列表中调整或撤销。
+- 旧的 8 位配对码流程已移除；移动端仍通过二维码携带 token 授权。
+
 ## 连接与状态管理
 
 主进程的连接优先级：
@@ -92,7 +96,7 @@ remoteConn（广域网会话代理）
   > localDescriptor（本机 daemon）
 ```
 
-- `kind` 字段区分 `local | remote | lan`；`remote` 布尔保留为「非本机」语义，旧展示逻辑据此兜底
+- `kind` 字段区分 `local | remote | lan`；`remote` 布尔表示「非本机连接」，用于统一的来源展示与权限提示
 - 切换时前端收到 `connection-changed`，执行统一的 abort 请求/SSE → 清 store → `GET /app/info` → 重注水
 - 已配对设备保存在 `~/.config/hawk/config.toml` 的 `lanPeers`（含 URL 与 token，渲染层只拿脱敏 profile）
 - `lanTarget` 记录上次浏览的局域网设备；daemon 就绪后先尝试恢复，失败回退本地库
@@ -127,18 +131,18 @@ remoteConn（广域网会话代理）
 | ---- | ---- |
 | hawk-daemon/src/api/lan.rs | 双监听 supervisor、UDP 发现、自动配对请求/审批、按设备创建 peer key、权限变更事件 |
 | `hawk-daemon/src/bootstrap.rs` | 启动发现响应器任务 |
-| `hawk-daemon/src/api/mod.rs` | 配对端点免 Bearer 例外（仍受一次性码保护） |
-| `hawk-app/electron/src/remote.ts` | 源端发现/配对/连接、连接描述符、健康检查、冷启动恢复 |
+| `hawk-daemon/src/api/mod.rs` | 配对请求创建/状态端点免 Bearer（仍受随机 request_id 与目标端审批保护）；peer 直连接口鉴权成功后记录 peer key 活跃时间，供 `/app/lan/clients` 展示在线状态 |
+| `hawk-app/electron/src/remote.ts` | 源端发现/双向配对/回连 profile 保存、连接描述符、健康检查、冷启动恢复；目标端批准时保存源端 profile |
 | `hawk-app/electron/src/app-config.ts` | `lanPeers` / `lanTarget` 持久化 |
-| `hawk-app/web/src/domains/lan/` | 源端发现与配对状态 |
+| `hawk-app/web/src/domains/lan/` | 源端发现、已配对设备与配对状态 |
 | `hawk-app/web/src/domains/settings/components/SettingsLanConnect.vue` | 局域网互联 UI |
 | hawk-app/web/src/domains/settings/components/SettingsLanPairActions.vue | 已授权设备权限管理 + 移动端授权二维码 |
 
 ## 验证清单
 
 - 两台 hawk-app 同网段：源端扫描到目标 → 申请配对 → 目标端选择权限 → 自动连接
-- 重复确认/过期请求返回 409/410；目标端删除设备后源端请求返回 401
-- 目标只有只读密钥时源端处于只读；有可写密钥并可匹配时能执行写操作
+- 重复确认返回 409；轮询已过期请求返回 `status=expired`；目标端删除设备后源端请求返回 401
+- 目标端审批「仅读取」时源端只读；审批「可读写」或后续切换后可执行写操作
 - 目标退出/断网：源端 10 秒内无声回本地库；重启源端会尝试恢复上次局域网目标
 - 无本地库的远程查看模式同样能完成局域网配对
 - 不配置 hawk-server、断网（仅局域网）时全流程可用

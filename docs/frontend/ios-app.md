@@ -53,7 +53,7 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 
 | 形态 | 数据通路 | 鉴权 | 适用 | 代价 |
 | -- | -- | -- | -- | -- |
-| 局域网直连 | App → `http://<局域网IP>:<web.port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） | 同网段，带宽最大、时延最低 | 需手动填地址或扫码；iOS 首次弹「本地网络」权限；扫码收到多个候选地址时自动逐个探测 |
+| 局域网直连 | App → `http://<局域网IP>:<peer_port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） | 同网段，带宽最大、时延最低 | 需手动填地址或扫码；iOS 首次弹「本地网络」权限；扫码收到多个候选地址时自动逐个探测 |
 | 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | service-key + hawk-app key 换 `bt` | 任意网络，零后端改动 | 素材流量过自建服务器（带宽 + 服务端可见明文） |
 | 设备内 iroh 直连（M4 起评估） | App 内 iroh endpoint → 打洞/中继 → 目标 daemon | 手机作为池内设备注册（endpoint_id / 心跳 / WSS `session.request`） | 大量浏览、AI 高频小查询 | 需引入 iroh-ffi、实现 B 侧隧道 + HTTP/1.1 over 双向流、会话状态机 |
 

@@ -43,7 +43,7 @@ Eagle 主窗口的关键特征：
 
 远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话/访问密钥）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。凭证模型为两级：service-key（池门禁，接入配置）+ hawk-app key（访问密钥，本机签发逐把读/写权限，分发给网页版/插件）。远端会话的写能力**由目标设备的「允许广域网保存素材」决定**：开启时本机以同租户设备身份拿到 `remote_writer`（仅导入素材与新建文件夹，编辑类写入口仍隐藏），关闭时自动降级只读；前端三态经 `app/info` 的 `access`/`writable` 驱动（`store.viewerMode` 只读 / `store.limitedWrite` 仅导入 / 其余可读写）。来源标识在侧栏左上角库名按钮（「库名 [远程]」，悬停提示带写能力；侧栏隐藏时为顶栏左组紧凑徽标），不在顶栏中段占位。
 
-**局域网互联**复用同一连接描述符模型，但不需要 hawk-server：目标 daemon 通过 UDP `27374` 应答发现 probe；源端设置面板展示同网段设备，用户输入目标端生成的一次性 8 位配对码换取目标 `[web].peer_keys` 中的一把直连密钥，主进程把 `api_base` 直接指向 `http://<目标IP>:<peer_port>`。连接 `kind` 为 `local | remote | lan`，侧栏徽标相应显示「局域网 / 远程」；已配对设备存 `config.toml`（渲染层不见 token），支持冷启动恢复与 5s 健康检查回切。完整协议、写权限与安全边界见 [局域网 hawk-app 互联](../backend/lan-interconnect.md)。
+**局域网互联**复用同一连接描述符模型，但不需要 hawk-server：目标 daemon 通过 UDP `27374` 应答发现 probe；源端设置面板展示同网段设备，点击「申请配对」后由目标端现场选择拒绝/仅读取/可读写。一次审批会同时完成双向授权：源端为目标端签发只读反向 peer key，目标端保存源端回连 profile，两端无需再次申请。连接 `kind` 为 `local | remote | lan`，侧栏徽标相应显示「局域网 / 远程」；已配对设备存 `config.toml`（渲染层不见 token），支持冷启动恢复与 5s 健康检查回切。局域网互联与已授权设备列表都会展示当前连接/在线状态。完整协议、写权限与安全边界见 [局域网 hawk-app 互联](../backend/lan-interconnect.md)。
 
 ```text
 Electron 主进程启动
@@ -372,7 +372,7 @@ export function connectEvents(handlers: {
 
 ### Pinia store（domains/*/store.ts）
 
-五个 store 构成 DAG：子 store（taxonomy/importer/preview）可读主 store 的 state/getter、调其 action；**主 store 不反向依赖子 store，子 store 之间不互引**。三个例外通道（仍是单向语义的解耦）：
+store 按域拆分（library/taxonomy/importer/preview/remote/lan/lanSettings）。核心视图 DAG 中，子 store（taxonomy/importer/preview）可读主 store 的 state/getter、调其 action；**主 store 不反向依赖子 store，子 store 之间不互引**。remote/lan/lanSettings 只承载连接、发现、配对与 LAN 配置，不参与主列表 DAG。三个例外通道（仍是单向语义的解耦）：
 
 - `registerTaxonomyHooks`：taxonomy store 创建时把「防抖刷新计数/文件夹树」两个回调注册到主 store 的模块级钩子，主 store 的 SSE 分发经钩子转发刷新——主 store 不 import taxonomy；
 - `init(validators)`：restoreView 的存在性校验（文件夹/分类/标签是否在词表中）由 app/boot.ts 以参数注入，主 store 不知道数据来自 taxonomy store；
@@ -460,14 +460,15 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | `SetupScreen.vue` | — | `selected` | 引导页：Electron 内素材库未配置/失效时展示。两个入口：「打开资源文件夹」经 preload `selectLibrary()` 选库（主进程即生成端口/token 拉起 server）；「仅浏览远程素材库」经 `openRemoteViewer()` 拉起无库 daemon（不创建本地目录），不弹目录选择框。两者返回 true 都发 `selected` 切启动屏，就绪经 `server-started` 事件进主界面（无库则 runBoot 分流到远程查看屏）；spawn 失败主进程弹系统框并留本页 |
 | `RemoteScreen.vue` | — | — | 远程查看模式主屏（phase=remote，本地无库）：复用 SettingsRemote 面板（libraryless 形态）配置服务端/选设备连接，连上远程库后经连接描述符切换自动进主界面；底部「打开本地素材库…」弹系统目录选择框离开远程查看模式 |
 | `ConnectScreen.vue` | — | `connect` | 局域网 web 查看连接门页：输入 token → `setApiToken` 后经 `app/info` 验证（401 → 「token 无效」），通过则 `storeToken` 按 api host 记入 localStorage 并 `emit('connect')` 重新 boot——之后访问同一服务端免输入直连 |
-| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏（标题 + × 关闭）+ **左侧导航分区 + 右侧内容**的两栏结构（Electron：外观/隐藏项/网络/存储/更新；局域网 web 端：外观/隐藏项/连接；窄屏 ≤520px 折叠为顶部横向页签；宽 `min(560px, 100vw-32px)`、高固定 `min(520px, 86vh)`——分区切换/开关展开细节/错误条出现只改变内容区滚动，面板尺寸不变避免跳跃），正文独立滚动、底部按钮常驻；分区为独立子组件（见下行），**v-show 保活切换**（网络分区的字段编辑与更新下载进度切分区不丢），web 端不挂载网络/存储/更新分区；「网络」分区内再分三个二级标签页（局域网访问 / 远程访问 / 高级，高级放最右侧）；「局域网访问」把局域网能力收在一页：访问其他设备（发现/配对/连接/测速 + 本机配对码/二维码）与局域网网站访问（启用、访问地址、访问密钥），网站端口、hawk-app 直连端口等低频设置收进「高级」，避免日常访问配置被端口打断；子组件带 `embedded` 只渲染内容、不自带滚动容器，标签页用 v-show 保活；非 admin 连接（远程浏览/局域网 viewer）只隐藏网站访问块、配对操作与 footer 保存按钮，存储分区仅保留本机缓存目录行——admin 限定端点经 app/info.access 门禁，避免只读 token 403；壳职责：遮罩关闭（pointerdown/pointerup 配对判定，防拖出面板松开误关）、Esc（捕获阶段拦截；`body.pairing-open` 时让路）、`body.dialog-open` 挂起拖拽区、错误条（子组件经 `v-model:error` 写入）、footer（仅「网络 → 局域网访问」且 admin 时显示「保存网站设置」并委托 `SettingsLan` 的 save，校验失败自动切回该标签；访问其他设备、本机端口与远程访问均为内联操作，不经 footer） |
+| `SettingsDialog.vue` | — | `close`、`logout` | 设置面板**壳**（TitleBar 齿轮打开）：标题栏 + 左侧导航 + 右侧内容两栏结构；网络分区含「局域网访问 / 远程访问 / 高级」三个二级标签。局域网访问包含局域网互联、共享本机素材库和局域网网站访问；高级的本地 API 端口与 LAN 端口共用 footer 左下角「保存」提交，本地 API 端口保存后提示重启 hawk 生效，LAN 端口保存后立即热生效。壳负责遮罩/Esc 关闭、错误条、footer 按钮状态与子组件保活；非 admin 连接隐藏网站访问、配对操作与保存按钮。 |
 | `SettingsAppearance.vue` | — | — | 外观分区：缩略图尺寸滑杆（−/滑杆/＋，实时生效，均经 store.setUserThumbSize——web 端由此记住偏好并停止跟随动态默认）+ 预览关闭按钮开关（preview.setHidePreviewClose 即时生效并 localStorage 记忆，全端持久）；无保存语义 |
 | `SettingsHiding.vue` | — | — | 隐藏项分区：全局列表隐藏清单（文件夹/分类/标签，数据源为 taxonomy.globalFilter，SSE 实时对齐），逐条取消隐藏；回收站中的隐藏文件夹剥前缀加注；viewer 只读时只展示不操作 |
 | `PairingQrDialog.vue` | `title, payload, details, note, warning?` | `close` | 配对二维码弹层（局域网/广域网共用）：`qrcode` 把 JSON 载荷渲染成 480px PNG（白底留白，errorCorrectionLevel M），附手动输入字段明细与逐项复制、复制完整载荷、保存图片；`body.pairing-open` 让设置面板的 Esc 处理让路，z-index 190 高于设置面板；二维码含访问凭证，界面明示勿外传 |
+| `LanPairRequestPrompt.vue` | — | — | 全局局域网配对请求弹窗（App.vue 常驻）：轮询本机 daemon 待确认请求，显示源端设备名并提供拒绝/仅读取/可读写；批准后主进程保存源端回连 profile，弹窗同时刷新已配对设备列表。 |
 | `SettingsLan.vue` | `embedded?` | — | 局域网网站访问块（仅 Electron）：启用开关 + 访问地址列表 + 创建网站访问密钥表单（备注 + 允许写入）+ 密钥列表（label、打码 token、读/写徽标、复制、删除）；状态来自共享 `useLanSettingsStore`，创建/删除 key 后配对入口即时同步；首次启用且无 key 时保存会自动补一把只读网站密钥，保证监听立即启动；保存由 footer「保存网站设置」委托 `defineExpose({ save, busy })` |
 | `SettingsAdvanced.vue` | — | — | 网络 → 高级（最右标签）：本机 API 端口、局域网网站端口（27372）与 hawk-app 直连端口（27375）；统一由面板左下角「保存」提交，本地 API 端口仅写配置并提示重启 hawk 后生效，两个 LAN 端口保存后立即热生效且必须不同。 |
-| SettingsLanConnect.vue | — | — | 局域网互联源端块（仅 Electron）：自动发现设备，点击「申请配对」后等待目标端确认；当前已连接设备单独显示并从发现列表排除；提供扫描与测速，已配对列表支持连接/忘记，并保留手动地址兜底。 |
-| SettingsLanPairActions.vue | — | — | 目标端共享管理：已授权设备列表支持动态切换仅读取/可读写与撤销共享；移动端授权通过「生成授权二维码」自动创建专用 peer key，权限由弹窗选择，不再展示配对码或密钥选择入口。 |
+| `SettingsLanConnect.vue` | — | — | 局域网互联块（仅 Electron）：自动发现设备，点击「申请配对」后等待目标端确认；源端当前连接设备单独显示并从发现列表排除；目标端在此显示「正在连接的设备」（按 peer key 最近活跃时间判定在线，4 秒刷新）。已配对设备支持连接/忘记、测速与断开，并保留手动地址兜底。 |
+| `SettingsLanPairActions.vue` | — | — | 目标端共享管理：已授权设备列表显示在线数量与在线徽标，支持动态切换仅读取/可读写与撤销共享；移动端授权通过「生成授权二维码」自动创建专用 peer key，权限由弹窗选择。桌面配对批准后两端各保存对方回连 profile，不再展示配对码或密钥选择入口。 |
 | `SettingsRemote.vue` | `libraryless?`、`embedded?` | — | 远程块（仅 Electron，嵌在设置面板「网络」分区内；`embedded` 时不带滚动容器。RemoteScreen 复用同组件，libraryless 形态隐藏 writable/allow_remote 两个分享向开关）：启用远程访问 + hawk-server 地址/服务密钥（service-key，池门禁）+ 「允许广域网保存素材」（应用级远程配置的 `writable`，与局域网写权限独立）+ **访问密钥管理**（签发 hawk-app key：默认程序生成 128 位随机、可自定义（带写权限 ≥12 字符）、逐把读/写权限开关与吊销；明文只在签发响应展示一次，提供复制密钥/分享串；签发与变更经 daemon 推送到 server 映射）+ **iOS 配对入口**（保存配置 → 现签只读 key → 二维码含 service-key + key；密钥未同步/信令未在线时给出警告）+ 本机设备改名/allow_remote/证书轮换 + 设备列表（可移除他机记录，daemon 转发服务端注销；本机当前设备不可移除）与会话入口/中继回退；配置读写经主进程 IPC 转发本地 daemon `/api/v1/remote*`，写开关随配置保存热生效；接入配置与设备身份跨素材库共享 |
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：**周期兜底重扫开关**（库级 `[scan]` 设置，写 `.hawk/config.toml` 保存即热生效；文案说明实时监听仍是主路径、关闭后仅漏事件需手动重扫）+ 元数据存储方案切换（数据库/配置文件，`library/storage_mode` 迁移后 `restartServer` IPC 重启生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）；迁移前确认对话框说明「整体搬迁 + 服务重启」，错误内联显示，迁移期间主界面经 `serverRestarting` 切启动屏（主进程代发 migrate 进度帧），就绪自动恢复 |

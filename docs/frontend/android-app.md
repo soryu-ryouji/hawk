@@ -42,7 +42,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 
 | 形态 | 数据通路 | 鉴权 |
 | -- | -- | -- |
-| 局域网直连 | App → `http://<局域网IP>:<web.port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） |
+| 局域网直连 | App → `http://<局域网IP>:<peer_port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） |
 | 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | service-key + hawk-app key 换 `bt` |
 
 约定：
