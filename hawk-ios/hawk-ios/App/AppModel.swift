@@ -67,6 +67,8 @@ final class AppModel {
                 self.context = context
                 self.connectStatus = nil
                 phase = .ready
+                // 分享扩展读 App Group：局域网连接成功即写；远端连接保留上一次的局域网目标
+                ShareTarget.save(profile: saved, libraryName: context.library?.name ?? "")
             } catch is CancellationError {
                 return
             } catch {
@@ -96,6 +98,7 @@ final class AppModel {
         context = nil
         connectStatus = nil
         phase = .connect
+        ShareTarget.clear()
     }
 
     func showConnectScreen() {
@@ -105,6 +108,7 @@ final class AppModel {
         context = nil
         connectStatus = nil
         phase = .connect
+        ShareTarget.clear()
     }
 
     /// 显式断开/切换时通知服务端注销查看会话（best-effort；失败不阻塞 UI）。

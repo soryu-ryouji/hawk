@@ -11,8 +11,9 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 
 | 项 | 值 |
 | -- | -- |
-| 工程 / target / scheme | `hawk-ios.xcodeproj` / `hawk-ios` / `hawk-ios`（scheme 已共享，进仓库） |
-| 源码目录 | `hawk-ios/hawk-ios/`（`PBXFileSystemSynchronizedRootGroup`：新增/重命名文件直接改磁盘，不用改 `project.pbxproj`） |
+| 工程 / target / scheme | `hawk-ios.xcodeproj` / `hawk-ios` + `hawk-ios-share` / 同名 scheme（已共享，进仓库） |
+| 源码目录 | `hawk-ios/hawk-ios/`（主 App）与 `hawk-ios/hawk-ios-share/`（Share Extension），均为 `PBXFileSystemSynchronizedRootGroup`：新增/重命名文件直接改磁盘，不用改 `project.pbxproj` |
+| App Group | `group.com.soryu-ryouji.hawk`（主 App 写「当前局域网素材库的地址 + 访问密钥」，分享扩展只读）；需付费开发者账号 |
 | 部署目标 | iOS 26.0 / iPadOS 26.0（Foundation Models 文本能力 26.0，图片理解 27.0，按 `#available` 分支） |
 | 设备 | iPhone + iPad 单 target（`TARGETED_DEVICE_FAMILY = "1,2"`） |
 | Bundle ID | `com.soryu-ryouji.hawk` |
@@ -45,7 +46,8 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 - iPad：`NavigationSplitView`；横屏常驻侧栏，竖屏收起（detail 工具栏的系统按钮可随时拉出）；单栏（Split View / 窄窗口）自动退化为 Tab
 - 在线首屏不建索引：库信息 + 隐藏集 + 锁集到了就进主界面，`item/list` 首页与 `item/skeleton` 并发，分类/标签与计数后台补齐
 - 齐行网格 + `LazyVStack` 懒渲染；滚动位置按视图记忆（切走再回来仍在原处）
-- 全屏预览：横向分页、双击/双指缩放、放大后拖动、下拉关闭；卡片到预览的缩放转场；保存到相册、系统分享、素材信息
+- 全屏预览（相册式手势）：横向翻页跟手、双击/双指缩放、放大后拖动、放大后拖到边缘「图片钉边 + 相邻图跟手滑入」翻页、未放大时下拉关闭；卡片到预览的缩放转场；保存到相册、系统分享、素材信息
+- 相册分享到素材库（Share Extension）：照片 App → 分享 → hawk → 选分类/标签（均可多选、可不选）→ 存进局域网素材库；HEIC 自动转 PNG（无损，JPEG/PNG 原样不重编码），最多 20 张，串行上传带进度；缺写权限/凭证失效/网络不通都有明确提示
 - 搜索（名称/备注）、排序、筛选（评分、短边像素区间、调色板颜色）、下拉刷新
 - 排序偏好按视图（文件夹/分类/标签 scope）存服务端 `.hawk/view.toml`，与桌面端同步；只读 token 不写回
 

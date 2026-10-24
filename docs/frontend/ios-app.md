@@ -100,7 +100,7 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 交互约定：
 
 - 网格卡片点击进预览，长按出系统菜单（打开、保存到相册、分享原图、素材信息、复制名称）
-- 预览为横向分页 + 双击/双指缩放 + 下拉关闭，卡片到全屏用缩放转场；底部玻璃工具条放保存/分享/信息
+- 预览为相册式手势：横向翻页跟手（首尾页橡皮筋）、双击/双指缩放（围绕触点）、放大后拖到图片边缘继续拖时图片钉边、相邻图跟手滑入，未放大时下拉关闭；卡片到全屏用缩放转场；底部玻璃工具条放保存/分享/信息
 - 搜索栏常驻网格页顶部（iOS 26 的搜索抽屉），排序与筛选合并进一个菜单，避免工具栏拥挤
 - 字号全部用语义字号（`.body` / `.subheadline` / `.caption`），网格元信息高度随动态字体缩放；保存、解锁等状态变化才触发触感反馈
 - 锁定视图就地展示密码输入，不弹模态；解锁后原地重查，不丢失当前导航位置
@@ -134,6 +134,27 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 - 冷启动时延：Spotlight / Siri 唤起可能冷启动 App，网络侧不可同步等待——先返回本地索引结果，远端对账完成后再刷新；单次意图响应预算 1s 内出首屏
 - 标签建议只进本地「建议池」，不自动写库（见下节）
 
+## 分享扩展（相册 → 素材库）
+
+相册里选图 → 分享 → hawk：在扩展里选好分类/标签，直接存进局域网素材库（桌面端即时可见，走 daemon 索引 + SSE）。目标形态是「收集」而不是「上传」——不打开主 App 也能完成。
+
+已完成（M1 + M2）：
+
+- **入口**：Share Extension target `hawk-ios-share`（`com.apple.share-services`，`NSExtensionActivationSupportsImageWithMaxCount = 20`），扩展以 `UIHostingController` 承载 SwiftUI 界面
+- **凭证共享**：App Group `group.com.soryu-ryouji.hawk`。主 App 在局域网连接成功后把「候选地址 + 访问密钥 + 展示名」写进共享 UserDefaults（`shareTarget.v1`），显式断开/退出连接时清除；扩展只读不写
+- **入库**：`POST /api/v1/item/upload`（一次请求带 `categories`/`tags` 文本字段，重复出现表示多选，均可不选；目标固定库根）；`skip_existing=true`，同一张图重复分享记为「已在库内，跳过」
+- **图片处理**：`loadFileRepresentation` 取原文件 → 落到扩展临时目录；**HEIC/HEIF 转 PNG**（daemon 的图片解码器不认 HEIC，直接上传会拿不到宽高/缩略图；转 PNG 是无损的第二次编码，不叠加压缩损失），解码上限 4096px（覆盖 12MP 原图；24MP/48MP 会降采样，PNG 编码在扩展进程里要持有整张位图，再大容易触发内存上限）；JPEG/PNG/GIF/WebP **原样上传、不重编码**
+- **多选**：最多 20 张，逐张串行（扩展内存与前台时间都有限），带进度
+- **错误文案**：401 → 回 App 重新连接；403 `READ_ONLY` → 重新扫码时勾选写权限；`FILE_EXISTS` → 按已收藏跳过；网络失败 → 提示同局域网 + 桌面端在运行；上传失败可原地重试
+
+边界与后续：
+
+- **只支持局域网**（远端库保存需要写会话 + 远端写白名单，属后续里程碑）
+- 只处理图片；视频/PDF 等其它类型后续按需加 `NSExtensionActivationRule`
+- 分享扩展前台执行约 30 秒，超大图 + 弱网可能超时；后续可换后台 URLSession + 共享容器
+- HEIC 转 PNG 后体积约为原 HEIC 的 4-6 倍（12MP 实测：HEIC 1.6MB → PNG 9.6MB，JPEG q0.92 为 2.5MB），多张连传在弱 Wi-Fi 上更慢，素材库也按 PNG 原始体积占用磁盘；在意体积可改回 JPEG（只改 `ShareImageLoader` 的编码目标）
+- 拍照直存（相机扩展）不在范围内：相机保存到相册后再分享，或用主 App 的导入入口
+
 ## 写回与安全边界
 
 现状（不改动即成立）：
@@ -158,12 +179,13 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 | 扫码 / 手动配对 | ✅ | iOS 扫码与手填；桌面端局域网/广域网设置面板可生成配对二维码（局域网含 token，广域网现签只读 key 并标注同步状态） |
 | 在线首屏（不依赖本地索引） | ✅ | 库信息+隐藏集后立即进主界面；`item/list` 首页与 `item/skeleton` 并发，首屏分页先出，分类/标签与计数后台补齐 |
 | 齐行网格 + 分页详情 | ✅ | 骨架 + `item/list` 窗口分页 + `LazyVStack`；首屏分页与骨架共用详情缓存，缩略图尺寸可调 |
-| 全屏预览 | ✅ | 缩放/拖动/左右切换/下拉关闭；原图降采样解码 |
+| 全屏预览 | ✅ | 自绘三段式轮播（不用 ScrollView：iOS 26 起滚动内容里的 DragGesture 会取消分页 pan）；缩放/平移/缩放下钉边翻页/下拉关闭/双击缩放；原图降采样解码 |
 | 保存到相册 | ✅ | 保存原图数据（`PHPhotoLibrary` 添加权限） |
 | 搜索 / 排序 / 筛选 | ✅ | 名称备注搜索、八种排序、评分、短边区间、颜色；排序偏好按视图 scope 存服务端，与桌面端同步 |
 | 导航 | ✅ | iPhone 底部 Tab（素材 / 浏览）；iPad `NavigationSplitView`，横屏常驻侧栏、竖屏收起；单栏（Split View）退化为 Tab |
 | 下拉刷新 / 回前台刷新 | ✅ | 另订阅 SSE 增量更新，前后台切换自动停/启 |
 | 锁视图解锁 | ✅ | `lock/list` + `lock/unlock`，票据走 `X-Hawk-Unlock` 与媒体 `?unlock=`；可重新锁定 |
+| 相册分享到素材库 | ✅ | Share Extension：局域网、分类/标签多选（均可不选）、最多 20 张、HEIC 转 PNG（不重编码 JPEG/PNG）、错误文案与重试；App Group 共享连接 |
 | 实时事件（SSE） | ✅ | `item.*` / `items.*` / `locks.changed` / `global_filter.changed` / `library.updated` / `task.progress`；断线退避重连后全量对齐 |
 | `bt` 过期自动重换 | ✅ | 401 时自动 gate→login→session 重试一次 |
 | 本地索引 / 离线 | ⬜ | M2 |
@@ -197,6 +219,8 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 | ---- | ---- | ---- |
 | `hawk-ios/` | 新增原生客户端（本文件的设计对象） | M0 |
 | `hawk-app`（桌面端） | 生成配对二维码（局域网直连 token / 广域网 service-key + hawk-app key），设置面板加入口 | M1 已完成 |
+| `hawk-daemon` | `item/upload` 增加 `tags` / `categories` 字段（分享扩展一次请求完成入库 + 打标） | 已完成 |
+| `hawk-ios/hawk-ios-share/` | 新增 Share Extension target（相册分享 → 局域网素材库），App Group 共享连接 | M1 + M2 已完成 |
 | `README.md` / `docs/tech-stack.md` / `docs/architecture.md` | 移动端条目与仓库结构 | 已随本文件更新 |
 | `hawk-daemon` | 已提供桌面 hawk-app 的 UDP 局域网发现；移动端 mDNS/Bonjour 自动发现与批量元数据端点（仅当全量分页成为瓶颈） | M2 / 视情况 |
 | `.github/workflows/ci.yml` | 暂不纳入 iOS 构建（需要 macOS runner + 签名）；本地提交前跑 `xcodebuild build` | — |
