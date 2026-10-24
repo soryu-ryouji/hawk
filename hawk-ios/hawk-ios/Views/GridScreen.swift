@@ -10,6 +10,7 @@ struct GridScreen: View {
     @Environment(PreviewCoordinator.self) private var preview
     @State private var showFilter = false
     @State private var showSearch = false
+    @FocusState private var searchFocused: Bool
     @State private var showSettings = false
     @State private var exporter = MediaExporter()
     @AppStorage("hawk.ios.thumbSize") private var thumbSize = 0.0
@@ -75,14 +76,12 @@ struct GridScreen: View {
         .background(HawkTheme.bg0)
         .navigationTitle(store.viewTitle)
         .navigationBarTitleDisplayMode(isRoot ? .large : .inline)
-        // 搜索用得少：默认不占位，点右上角放大镜才展开搜索框
-        .searchable(
-            text: Binding(get: { store.searchText }, set: { store.setSearchText($0) }),
-            isPresented: $showSearch,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "搜索名称与备注"
-        )
-        .onSubmit(of: .search) { store.submitSearch() }
+        // 搜索用得少：默认不占位，点右上角放大镜才展开自绘搜索行（系统 searchable 会常驻一行）
+        .safeAreaInset(edge: .top) {
+            if showSearch {
+                searchBar
+            }
+        }
         .toolbar { toolbar }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -131,6 +130,36 @@ struct GridScreen: View {
         .onChange(of: context.structureRevision) { _, _ in
             store.handleStructureChange()
         }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(HawkTheme.fg1)
+            TextField(
+                "搜索名称与备注",
+                text: Binding(
+                    get: { store.searchText },
+                    set: { store.setSearchText($0) })
+            )
+            .focused($searchFocused)
+            .submitLabel(.search)
+            .onSubmit { store.submitSearch() }
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            Button("取消") {
+                store.setSearchText("")
+                searchFocused = false
+                showSearch = false
+            }
+            .font(.callout)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: Capsule())
+        .padding(.horizontal, HawkTheme.screenPadding)
+        .padding(.bottom, 6)
+        .onAppear { searchFocused = true }
     }
 
     // MARK: - 工具栏
