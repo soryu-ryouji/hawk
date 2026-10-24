@@ -77,7 +77,7 @@ async function submitManualPair(): Promise<void> {
     name: '局域网设备',
     library_name: '',
     url,
-    // 目标端仍按 [web].writable 与拆分 token 决定最终权限；这里仅表达请求意图
+    // 目标端仍按选中直连密钥的 write 权限决定最终权限；这里仅表达请求意图
     writable: true,
     requires_pairing: true,
   };
@@ -151,7 +151,7 @@ async function forget(peer: LanPeerProfile): Promise<void> {
         </button>
       </div>
     </div>
-    <div v-else-if="!store.scanning" class="empty-state">未发现设备。请确认对方已开启局域网查看，并与本机处于同一网络。</div>
+    <div v-else-if="!store.scanning" class="empty-state">未发现设备</div>
 
     <div class="manual-row">
       <button class="link-btn" @click="manualOpen = !manualOpen">
@@ -161,12 +161,11 @@ async function forget(peer: LanPeerProfile): Promise<void> {
     </div>
     <div v-if="manualOpen" class="pair-box">
       <div class="pair-title">手动配对</div>
-      <p class="hint">输入目标设备「局域网」页显示的地址和 8 位配对码。</p>
-      <input v-model="manualUrl" placeholder="http://192.168.1.5:27372" autocomplete="off" spellcheck="false" />
+      <input v-model="manualUrl" placeholder="http://192.168.1.5:27375" autocomplete="off" spellcheck="false" />
       <PairingCodeInput v-model="manualCode" label="8 位配对码" @submit="submitManualPair" />
       <label class="write-request">
         <input v-model="manualWritable" type="checkbox" />
-        请求写权限（目标允许时可直接修改对方素材库）
+        请求写权限
       </label>
       <div class="pair-actions">
         <button class="primary" :disabled="!manualUrl.trim() || !manualCode.trim() || store.connectingId !== null" @click="submitManualPair">
@@ -177,11 +176,10 @@ async function forget(peer: LanPeerProfile): Promise<void> {
 
     <div v-if="pairTarget" class="pair-box">
       <div class="pair-title">配对 {{ pairTarget.name }}</div>
-      <p class="hint">在目标设备生成 8 位配对码后输入。</p>
       <PairingCodeInput v-model="code" label="8 位配对码" @submit="submitPair" />
       <label v-if="pairTarget.writable" class="write-request">
         <input v-model="pairWritable" type="checkbox" />
-        请求写权限（目标允许时可直接修改对方素材库）
+        请求写权限
       </label>
       <div class="pair-actions">
         <button @click="pairTarget = null">取消</button>
@@ -213,7 +211,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
       </div>
     </div>
 
-    <p class="hint footnote">配对码 5 分钟内单次有效；仅建议在可信局域网使用。</p>
   </div>
 </template>
 
@@ -258,12 +255,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   white-space: nowrap;
 }
 
-.hint {
-  margin: 0;
-  color: var(--fg-1);
-  font-size: 12px;
-  line-height: 1.5;
-}
 .error {
   color: var(--danger);
   font-size: 12px;
@@ -403,11 +394,5 @@ async function forget(peer: LanPeerProfile): Promise<void> {
 }
 .link-btn :deep(svg.open) {
   transform: rotate(180deg);
-}
-.footnote {
-  margin: 0;
-  padding-top: 2px;
-  color: var(--fg-1);
-  font-size: 11px;
 }
 </style>

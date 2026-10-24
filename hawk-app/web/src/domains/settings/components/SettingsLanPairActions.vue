@@ -136,8 +136,6 @@ function copyCode(): void {
 
 <template>
   <div class="pair-actions">
-    <p class="hint">用于 hawk-app 之间直连共享，不依赖局域网网站是否开启。已有直连密钥时可选择使用哪一把。</p>
-
     <div v-if="lan.peerKeys.length > 0" class="pair-controls">
       <label class="control">
         <span>使用密钥</span>
@@ -154,8 +152,7 @@ function copyCode(): void {
       <button :disabled="!canGenerate || generating" @click="requestGenerate('qr')">生成配对二维码</button>
     </div>
 
-    <p v-if="lan.peerKeys.length === 0" class="hint">当前没有 hawk-app 直连密钥，点击生成时会弹窗选择权限并自动创建。</p>
-    <p v-else-if="!lan.peerActive" class="hint warning">{{ lan.peerError || 'hawk-app 直连监听尚未生效，请先在「高级」检查端口并保存设置。' }}</p>
+    <p v-if="lan.peerKeys.length > 0 && !lan.peerActive" class="hint warning">{{ lan.peerError || 'hawk-app 直连监听未生效' }}</p>
 
     <div v-if="code" class="code-row">
       <PairingCodeInput :model-value="code" readonly label="hawk-app 配对码" />
@@ -170,21 +167,14 @@ function copyCode(): void {
       <div v-if="pendingMode" class="key-dialog-backdrop" @click.self="pendingMode = null">
         <div class="key-dialog" role="dialog" aria-modal="true" aria-labelledby="key-dialog-title">
           <div id="key-dialog-title" class="key-dialog-title">创建 hawk-app 直连密钥</div>
-          <p class="hint">当前还没有直连访问密钥。选择本次密钥权限后会自动创建并保存。</p>
           <div class="perm-options">
             <label class="perm-option" :class="{ active: !newKeyWrite }">
               <input v-model="newKeyWrite" type="radio" :value="false" />
-              <span>
-                <strong>只读</strong>
-                <small>对方只能浏览、搜索和预览</small>
-              </span>
+              <span><strong>只读</strong></span>
             </label>
             <label class="perm-option" :class="{ active: newKeyWrite }">
               <input v-model="newKeyWrite" type="radio" :value="true" />
-              <span>
-                <strong>允许写入</strong>
-                <small>对方可以修改、上传和删除</small>
-              </span>
+              <span><strong>允许写入</strong></span>
             </label>
           </div>
           <div class="key-dialog-actions">
@@ -323,10 +313,6 @@ function copyCode(): void {
 .perm-option strong {
   font-size: 13px;
   font-weight: 500;
-}
-.perm-option small {
-  color: var(--fg-1);
-  font-size: 11px;
 }
 .key-dialog-actions {
   display: flex;

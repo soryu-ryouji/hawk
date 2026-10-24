@@ -40,8 +40,6 @@ async function saveLanPort(): Promise<void> {
           :class="{ invalid: !lan.portValid }"
         />
       </div>
-      <p class="hint">供浏览器/网页版访问，只接受网站访问密钥。</p>
-
       <span class="field-label">hawk-app 直连端口</span>
       <div class="port-row">
         <input
@@ -57,9 +55,7 @@ async function saveLanPort(): Promise<void> {
           {{ lan.saving ? '保存中…' : '应用端口' }}
         </button>
       </div>
-      <p class="hint">供 hawk-app 直连与配对使用，只接受直连密钥，不托管网页。</p>
       <p v-if="!lan.portValid || !lan.peerPortValid" class="field-error">{{ lan.PORT_ERROR }}</p>
-      <p class="hint">两个端口必须不同。修改后已打开的网页或 hawk-app 连接可能断开，需要重新连接。</p>
       <p v-if="notice" class="ok">{{ notice }}</p>
       <p v-if="lan.error" class="error">{{ lan.error }}</p>
       <p v-if="lan.peerError" class="error">{{ lan.peerError }}</p>

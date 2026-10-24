@@ -67,10 +67,7 @@ defineExpose({ save, busy });
 <template>
   <div class="pane" :class="{ embedded: props.embedded }">
     <div class="switch-row">
-      <div>
-        <div class="switch-label">启用局域网网站访问</div>
-        <p class="hint">同一局域网的设备可用浏览器打开本素材库；首次启用并保存时会自动创建一把只读密钥，也可在下方自行创建。</p>
-      </div>
+      <div class="switch-label">启用局域网网站访问</div>
       <label class="switch" title="启用局域网网站访问">
         <input v-model="lan.enabled" type="checkbox" />
         <span class="track" />
@@ -91,7 +88,6 @@ defineExpose({ save, busy });
             </li>
             <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
           </ul>
-          <p class="hint">首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。端口在「高级」中配置。</p>
         </div>
 
         <div class="field column key-section">
@@ -104,7 +100,6 @@ defineExpose({ save, busy });
             </label>
             <button :disabled="lan.loading" @click="addKey">创建</button>
           </div>
-          <p class="hint">只读密钥仅能浏览；可写密钥可上传、删除和修改素材。创建后点击底部「保存网站设置」生效。</p>
         </div>
 
         <div class="field column">
@@ -127,7 +122,6 @@ defineExpose({ save, busy });
               </div>
             </div>
           </div>
-          <p v-else class="hint">还没有访问密钥。创建一把后保存，才能通过浏览器或其他 hawk-app 访问。</p>
         </div>
       </div>
     </template>
