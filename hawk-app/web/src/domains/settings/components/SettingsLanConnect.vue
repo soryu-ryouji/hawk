@@ -25,13 +25,6 @@ const isLanConnected = computed(() => connection.isLan.value);
 const currentPeer = computed(() => store.saved.find((peer) => peer.id === connection.peerId.value) ?? null);
 /** 当前已连接的设备不再出现在发现列表里，避免重复显示和误点申请。 */
 const visibleDiscovered = computed(() => store.discovered.filter((peer) => !(connection.isLan.value && peer.id === connection.peerId.value)));
-const statusText = computed(() => {
-  if (!isLanConnected.value) {
-    return '当前未连接局域网设备';
-  }
-  return speedMs.value === null ? `已连接 ${connection.label.value}` : `已连接 ${connection.label.value} · 延迟 ${speedMs.value} ms`;
-});
-
 // 切换局域网目标后清除上一次测速结果
 watch(
   () => connection.peerId.value,
@@ -133,11 +126,11 @@ async function forget(peer: LanPeerProfile): Promise<void> {
 
 <template>
   <div class="lan-connect">
-    <div class="status-row">
-      <span class="status-text" :title="statusText">{{ statusText }}</span>
+    <div class="section-head">
+      <h3 class="lan-connect-title">局域网互联</h3>
       <div class="status-actions">
         <button v-if="isLanConnected" class="action-btn" :disabled="testingSpeed || store.scanning" @click="testSpeed">
-          {{ testingSpeed ? '测速中…' : '测速' }}
+          {{ testingSpeed ? '测速中…' : speedMs === null ? '测速' : speedMs + ' ms' }}
         </button>
         <button class="action-btn" :disabled="store.scanning" @click="store.scan">
           <Icon name="refresh" :size="12" />
@@ -145,7 +138,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
         </button>
       </div>
     </div>
-
     <div v-if="currentPeer" class="current-peer">
       <div class="peer-main">
         <div class="peer-name">
@@ -158,15 +150,11 @@ async function forget(peer: LanPeerProfile): Promise<void> {
       <button :disabled="store.connectingId !== null" @click="connection.disconnect()">断开</button>
     </div>
 
-    <div v-if="incomingClients.length > 0" class="group">
-      <div class="group-title">正在连接的设备</div>
-      <div v-for="client in incomingClients" :key="client.key_id" class="peer-row">
-        <div class="peer-main">
-          <div class="peer-name">
-            {{ client.label }}
-            <span class="online-badge">在线</span>
-          </div>
-          <div class="peer-meta">此设备正在通过局域网连接你</div>
+    <div v-for="client in incomingClients" :key="client.key_id" class="current-peer incoming-peer">
+      <div class="peer-main">
+        <div class="peer-name">
+          {{ client.label }}
+          <span class="current-badge">在线</span>
         </div>
       </div>
     </div>
@@ -345,11 +333,19 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   padding: 4px 10px;
 }
 
-.status-row {
+.section-head {
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 32px;
+}
+
+.lan-connect-title {
+  flex: 1;
+  margin: 0;
+  color: var(--fg-1);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .status-actions {
@@ -365,16 +361,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   gap: 5px;
   padding: 5px 10px;
   font-size: 12px;
-  white-space: nowrap;
-}
-
-.status-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--fg-1);
-  font-size: 12px;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

@@ -27,7 +27,6 @@ async function openLibrary() {
       <p class="hint">当前无本地素材库。可直接连接同一局域网内的 hawk-app，或经 hawk-server 远程浏览；素材不落本机。</p>
     </div>
     <div class="panel">
-      <h3 class="section-title">局域网互联</h3>
       <SettingsLanConnect />
       <h3 class="section-title">远程查看</h3>
       <SettingsRemote v-model:error="error" libraryless />

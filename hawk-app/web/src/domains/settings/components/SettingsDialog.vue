@@ -174,7 +174,6 @@ async function saveAdvanced(): Promise<void> {
               </button>
             </div>
             <div v-show="networkTab === 'lan-access'" class="tab-content lan-access" role="tabpanel">
-              <h3 class="section-title">局域网互联</h3>
               <SettingsLanConnect />
               <template v-if="isAdmin">
                 <h3 class="section-title">共享本机素材库</h3>
