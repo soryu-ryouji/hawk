@@ -170,7 +170,9 @@ struct PreviewView: View {
     private func heroTransform(size: CGSize, origin: CGPoint)
         -> (scaleX: CGFloat, scaleY: CGFloat, offset: CGSize)
     {
-        guard let frame = session.sourceFrame, frame.width > 1, size.width > 1,
+        let currentKey = store.item(at: index)?.key
+        let frame = currentKey.flatMap { coordinator.cellFrames[$0] } ?? session.sourceFrame
+        guard let frame, frame.width > 1, size.width > 1,
             let item = store.item(at: index)
         else {
             let shrink = 1 - 0.08 * (1 - present)

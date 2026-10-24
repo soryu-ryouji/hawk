@@ -64,6 +64,7 @@ struct RemoteImage: View {
 
 /// 网格卡片：缩略图 + 名称 + 尺寸；长按出系统菜单，点击进预览。
 struct ItemCard: View {
+    @Environment(PreviewCoordinator.self) private var preview
     let cell: GridLayout.Cell
     let title: String
     let thumbnailURL: URL?
@@ -129,6 +130,13 @@ struct ItemCard: View {
             }
         }
         .frame(width: cell.width, height: cell.height + metaHeight)
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: { frame in
+            preview.reportCellFrame(
+                CGRect(x: frame.minX, y: frame.minY, width: cell.width, height: cell.height),
+                key: cell.item.key)
+        }
     }
 
     private var cardBody: some View {

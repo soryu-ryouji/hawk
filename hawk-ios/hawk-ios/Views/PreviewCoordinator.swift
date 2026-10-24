@@ -23,6 +23,12 @@ final class PreviewCoordinator {
     }
 
     private(set) var session: Session?
+    /// 可见格子的全局矩形（key = item key）：预览内左右翻页后，回场目标要跟着当前图走
+    private(set) var cellFrames: [String: CGRect] = [:]
+
+    func reportCellFrame(_ frame: CGRect, key: String) {
+        cellFrames[key] = frame
+    }
     /// 是否隐藏源格子缩略图：回场一开始就置 false，让缩略图在图片飞回期间提前重新就位
     private(set) var hidesSource = true
 
