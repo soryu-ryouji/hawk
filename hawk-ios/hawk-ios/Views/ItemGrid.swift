@@ -79,27 +79,24 @@ struct ItemCard: View {
     var onCopyName: () -> Void = {}
 
     private var thumbnail: some View {
-        Group {
-            if thumbHidden {
-                Rectangle().fill(HawkTheme.bg2)
-            } else {
-                RemoteImage(url: thumbnailURL)
+        // 用透明度隐藏而不是把 RemoteImage 移出层级：否则回场时视图重建会重新走一遍
+        // 「占位 → 加载 → 显示」，落位瞬间会闪一下
+        RemoteImage(url: thumbnailURL)
+            .opacity(thumbHidden ? 0 : 1)
+            .frame(width: cell.width, height: cell.height)
+            .overlay(alignment: .topTrailing) {
+                if !thumbHidden, starCount > 0 {
+                    Label("\(starCount)", systemImage: "star.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(HawkTheme.star)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.45), in: Capsule())
+                        .padding(5)
+                        .accessibilityLabel("\(starCount) 星")
+                }
             }
-        }
-        .frame(width: cell.width, height: cell.height)
-        .overlay(alignment: .topTrailing) {
-            if !thumbHidden, starCount > 0 {
-                Label("\(starCount)", systemImage: "star.fill")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(HawkTheme.star)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .background(.black.opacity(0.45), in: Capsule())
-                    .padding(5)
-                    .accessibilityLabel("\(starCount) 星")
-            }
-        }
     }
 
     var body: some View {
