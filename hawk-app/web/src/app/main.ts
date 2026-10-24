@@ -38,6 +38,15 @@ function notifyError(scope: string, err: unknown): void {
 
 app.config.errorHandler = (err, _instance, info) => notifyError(info || 'vue', err);
 window.addEventListener('unhandledrejection', (e) => notifyError('未处理的异步错误', e.reason));
-window.addEventListener('error', (e) => notifyError('运行时错误', e.error ?? e.message));
+window.addEventListener('error', (e) => {
+  // ResizeObserver 循环是浏览器在布局阶段的自检告警，不是应用异常（Chrome/Safari 在缩放、
+  // 滚动时偶发上报）。布局侧已消除触发条件（见 layoutRows 行宽不越界、ItemGrid 只纵向滚动），
+  // 这里兜底只留日志，不再把它当成界面错误弹提示
+  if (e.message.startsWith('ResizeObserver loop')) {
+    console.warn('[ResizeObserver]', e.message);
+    return;
+  }
+  notifyError('运行时错误', e.error ?? e.message);
+});
 
 app.mount('#app');

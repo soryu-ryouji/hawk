@@ -65,11 +65,24 @@ export function layoutRows(
     const fitH = (width - (row.length - 1) * gap) / ratiosSum;
     const ideal = isLast ? targetH : Math.min(Math.max(fitH, targetH * 0.5), targetH * 1.75);
     const h = Math.max(1, Math.floor(Math.min(ideal, fitH)));
+    // 逐格四舍五入的累计误差最多让行宽超出容器 (n-1)/2 px（fitH 只保证浮点行宽不超）。
+    // 网格是 overflow-y:auto 的滚动容器（overflow-x 因此也是 auto），超 1px 就会冒出横向
+    // 滚动条：滚动条占用高度 → ResizeObserver 报视口变矮 → 虚拟渲染换渲染行 → 溢出那行
+    // 离开/回到窗口，滚动条跟着消失/重现，同一帧内反复触发（浏览器报
+    // "ResizeObserver loop completed with undelivered notifications"）。从末格回收误差，
+    // 保证整数行宽严格 ≤ 容器宽，横向滚动条无出现的可能。
+    const widths = row.map((r) => Math.round(h * r.ratio));
+    let excess = widths.reduce((sum, w) => sum + w, 0) - (width - (row.length - 1) * gap);
+    for (let i = widths.length - 1; i >= 0 && excess > 0; i--) {
+      const cut = Math.min(Math.max(widths[i] - 1, 0), Math.ceil(excess));
+      widths[i] -= cut;
+      excess -= cut;
+    }
     // 行高 = 卡片总高（缩略图 + meta + 边框），行槽位与真实卡片一致，杜绝行间重叠
     const rowH = h + metaH + cardBorder;
     rows.push({
       key: row[0].id,
-      cells: row.map((r) => ({ id: r.id, width: Math.round(h * r.ratio), height: h, star: r.star })),
+      cells: row.map((r, i) => ({ id: r.id, width: widths[i], height: h, star: r.star })),
       y,
       height: rowH,
       startIdx: row[0].idx,

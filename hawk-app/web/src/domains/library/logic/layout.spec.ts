@@ -63,6 +63,40 @@ describe('layoutRows', () => {
     }
   });
 
+  it('逐格取整的累计误差不越界：连续宽度扫描下行宽始终 ≤ 容器', () => {
+    // 逐格四舍五入最多累计 (n-1)/2 px，宽 1157、目标高 120 时曾溢 2px。横向溢出会让
+    // overflow-y:auto 的网格冒横向滚动条，滚动条占高 → ResizeObserver 报视口变矮 →
+    // 虚拟渲染换行 → 横向滚动条消失/重现，同一帧反复触发（浏览器报 ResizeObserver loop）。
+    const dims: Array<[number, number]> = [
+      [1366, 2048],
+      [500, 750],
+      [2000, 3000],
+      [800, 600],
+      [1200, 500],
+      [700, 1000],
+      [1000, 2000],
+      [1600, 900],
+      [640, 480],
+      [1080, 1920],
+    ];
+    const items: Array<[string, number, number]> = Array.from({ length: 80 }, (_, i) => {
+      const [w, h] = dims[i % dims.length];
+      return [`i${i}`, w, h];
+    });
+    let overflow: { width: number; targetH: number; row: number; actual: number } | null = null;
+    for (let width = 600; width <= 1200 && !overflow; width++) {
+      for (const targetH of [120, 160, 240]) {
+        const rows = layoutRows(sk(items), width, targetH);
+        const bad = rows.findIndex((row) => rowWidth(row) > width);
+        if (bad >= 0) {
+          overflow = { width, targetH, row: bad, actual: rowWidth(rows[bad]) };
+          break;
+        }
+      }
+    }
+    expect(overflow).toBeNull();
+  });
+
   it('全景图宽行 fitH 硬顶：末行单图也不得超出容器', () => {
     // 5000×1000 全景，容器 300：fitH = 300/5 = 60，远小于目标高 160
     const rows = layoutRows(sk([['pano', 5000, 1000]]), 300, 160);

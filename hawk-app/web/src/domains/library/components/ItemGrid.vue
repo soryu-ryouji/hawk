@@ -367,6 +367,11 @@ function onMenu(item: Item, e: MouseEvent) {
 <style scoped>
 .grid-scroll {
   position: relative;
+  /* 网格只纵向滚动：overflow-y:auto 会让 overflow-x 计算成 auto，内容横向溢出 1px 就冒出
+     横向滚动条；滚动条占高 → ResizeObserver 报视口变矮 → 虚拟渲染换行 → 滚动条消失/重现，
+     同一帧内反复触发（浏览器报 "ResizeObserver loop completed with undelivered notifications"）。
+     行宽已由 layoutRows 保证 ≤ 容器宽，这里把「只纵向滚动」固化为容器不变量 */
+  overflow-x: hidden;
   overflow-y: auto;
   /* 恒定预留滚动条槽位：素材数量跨过视口高度时列宽不再跳变（否则 8px 宽度差会重排卡片） */
   scrollbar-gutter: stable;
