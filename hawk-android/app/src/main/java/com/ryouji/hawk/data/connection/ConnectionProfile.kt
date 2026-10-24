@@ -21,6 +21,8 @@ data class ConnectionProfile(
     val kind: ConnectionKind,
     val name: String = "",
     val url: String,
+    /** 同一目标的候选地址；二维码可一次下发多个局域网地址。 */
+    val urls: List<String> = emptyList(),
     val token: String = "",
     val serviceKey: String = "",
     val appKey: String = "",
@@ -33,9 +35,21 @@ data class ConnectionProfile(
             }
         }
 
+    fun baseUrl(): HttpUrl = normalizeBaseUrl(url)
+
+    /** 所有候选地址：二维码下发的 urls 优先，缺省回退到主地址。 */
+    fun candidateBaseUrls(): List<HttpUrl> {
+        val candidates = (listOf(url) + urls)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+        if (candidates.isEmpty()) throw ConnectionException("请填写服务地址")
+        return candidates.map { normalizeBaseUrl(it) }
+    }
+
     /** 规范化用户输入的地址：补 scheme、去掉路径尾部斜杠与查询参数。 */
-    fun baseUrl(): HttpUrl {
-        var raw = url.trim()
+    private fun normalizeBaseUrl(rawValue: String): HttpUrl {
+        var raw = rawValue.trim()
         if (raw.isEmpty()) throw ConnectionException("请填写服务地址")
         if (!raw.contains("://")) raw = "${kind.defaultScheme}://$raw"
         val parsed = raw.toHttpUrlOrNull()

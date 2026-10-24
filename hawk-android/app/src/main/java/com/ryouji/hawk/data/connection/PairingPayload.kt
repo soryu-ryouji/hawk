@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * 桌面端生成的配对二维码载荷：
- * 局域网 `{ "v": 1, "kind": "lan", "url": "...", "token": "..." }`
+ * 局域网 `{ "v": 1, "kind": "lan", "url": "...", "urls": ["..."], "token": "..." }`
  * 广域网 `{ "v": 1, "kind": "remote", "url": "...", "service_key": "...", "key": "..." }`
  */
 @Serializable
@@ -14,6 +14,7 @@ data class PairingPayload(
     val v: Int,
     val kind: String,
     val url: String,
+    val urls: List<String> = emptyList(),
     val token: String? = null,
     @SerialName("service_key") val serviceKey: String? = null,
     val key: String? = null,
@@ -22,7 +23,17 @@ data class PairingPayload(
         "lan" -> {
             val accessToken = token?.trim().orEmpty()
             if (accessToken.isEmpty()) throw ConnectionException("配对二维码缺少访问 token")
-            ConnectionProfile(kind = ConnectionKind.Lan, url = url, token = accessToken)
+            val candidates = (listOf(url) + urls)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinctBy { it.lowercase() }
+            if (candidates.isEmpty()) throw ConnectionException("配对二维码缺少访问地址")
+            ConnectionProfile(
+                kind = ConnectionKind.Lan,
+                url = candidates.first(),
+                urls = candidates,
+                token = accessToken,
+            )
         }
 
         "remote" -> {

@@ -11,29 +11,40 @@ nonisolated enum ConnectionLauncher {
     }
 
     static func launch(_ profile: ConnectionProfile) async throws -> Outcome {
-        let baseURL = try profile.baseURL()
         switch profile.kind {
         case .lan:
             guard !profile.token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ConnectionError.message("请填写局域网访问 token")
             }
-            let api = APIClient(
-                baseURL: baseURL,
-                token: profile.token.trimmingCharacters(in: .whitespacesAndNewlines))
-            let info: AppInfo = try await api.get("/api/v1/app/info")
-            guard info.hasLibrary else {
-                throw ConnectionError.message("该服务没有打开的素材库，请在桌面端切换素材库后重试")
+            var lastError: Error?
+            // 二维码一次下发所有候选地址；客户端逐个验证，哪个连通用哪个。
+            for baseURL in try profile.candidateBaseURLs() {
+                do {
+                    let api = APIClient(
+                        baseURL: baseURL,
+                        token: profile.token.trimmingCharacters(in: .whitespacesAndNewlines))
+                    let info: AppInfo = try await api.get("/api/v1/app/info")
+                    guard info.hasLibrary else {
+                        throw ConnectionError.message("该服务没有打开的素材库，请在桌面端切换素材库后重试")
+                    }
+                    try await waitUntilReady(api)
+                    return Outcome(
+                        api: api,
+                        info: info,
+                        label: profile.displayName,
+                        targetDeviceName: nil,
+                        targetLibraryName: nil
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    lastError = error
+                }
             }
-            try await waitUntilReady(api)
-            return Outcome(
-                api: api,
-                info: info,
-                label: profile.displayName,
-                targetDeviceName: nil,
-                targetLibraryName: nil
-            )
+            throw lastError ?? ConnectionError.message("没有可用的局域网地址")
 
         case .remote:
+            let baseURL = try profile.baseURL()
             let serviceKey = profile.serviceKey.trimmingCharacters(in: .whitespacesAndNewlines)
             let appKey = profile.appKey.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !serviceKey.isEmpty else {

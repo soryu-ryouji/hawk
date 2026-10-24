@@ -25,6 +25,8 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
     var kind: ConnectionKind
     var name: String
     var url: String
+    /// 同一目标的候选地址（二维码可一次下发多个局域网地址）；旧配置为空时只使用 url。
+    var urls: [String]?
     var token: String
     var serviceKey: String
     var appKey: String
@@ -34,6 +36,7 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         kind: ConnectionKind,
         name: String = "",
         url: String,
+        urls: [String]? = nil,
         token: String = "",
         serviceKey: String = "",
         appKey: String = ""
@@ -42,6 +45,7 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         self.kind = kind
         self.name = name
         self.url = url
+        self.urls = urls
         self.token = token
         self.serviceKey = serviceKey
         self.appKey = appKey
@@ -55,9 +59,26 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         return (try? baseURL())?.host ?? url
     }
 
+    /// 所有候选地址：二维码下发的 urls 优先，缺省回退到主地址。
+    func candidateBaseURLs() throws -> [URL] {
+        let candidates = ([url] + (urls ?? []))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var seen = Set<String>()
+        let unique = candidates.filter { seen.insert($0.lowercased()).inserted }
+        guard !unique.isEmpty else {
+            throw ConnectionError.message("请填写服务地址")
+        }
+        return try unique.map { try normalizedBaseURL($0) }
+    }
+
     /// 规范化用户输入的地址：补 scheme、去掉路径尾部斜杠与查询参数。
     func baseURL() throws -> URL {
-        var raw = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        try normalizedBaseURL(url)
+    }
+
+    private func normalizedBaseURL(_ rawValue: String) throws -> URL {
+        var raw = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else {
             throw ConnectionError.message("请填写服务地址")
         }

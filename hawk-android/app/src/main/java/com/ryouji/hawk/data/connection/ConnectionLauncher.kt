@@ -10,6 +10,7 @@ import com.ryouji.hawk.data.model.StartupInfo
 import com.ryouji.hawk.data.model.ViewerSession
 import com.ryouji.hawk.data.net.ApiClient
 import com.ryouji.hawk.data.net.ApiException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 /**
@@ -25,12 +26,24 @@ object ConnectionLauncher {
         val targetLibraryName: String?,
     )
 
-    suspend fun launch(profile: ConnectionProfile): Outcome {
-        val baseUrl = profile.baseUrl()
-        return when (profile.kind) {
-            ConnectionKind.Lan -> launchLan(profile, baseUrl)
-            ConnectionKind.Remote -> launchRemote(profile, baseUrl)
+    suspend fun launch(profile: ConnectionProfile): Outcome = when (profile.kind) {
+        ConnectionKind.Lan -> launchLanCandidates(profile)
+        ConnectionKind.Remote -> launchRemote(profile, profile.baseUrl())
+    }
+
+    /** 二维码一次下发所有候选地址；逐个验证，哪个连通用哪个。 */
+    private suspend fun launchLanCandidates(profile: ConnectionProfile): Outcome {
+        var lastError: Exception? = null
+        for (baseUrl in profile.candidateBaseUrls()) {
+            try {
+                return launchLan(profile, baseUrl)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                lastError = error
+            }
         }
+        throw lastError ?: ConnectionException("没有可用的局域网地址")
     }
 
     private suspend fun launchLan(
