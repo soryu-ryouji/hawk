@@ -41,15 +41,8 @@ let clientTimer: ReturnType<typeof setInterval> | null = null;
 
 const devices = computed<DeviceRow[]>(() => {
   const rows = new Map<string, DeviceRow>();
-  const byName = new Map<string, DeviceRow>();
-  const identity = (name: string) =>
-    name
-      .trim()
-      .toLowerCase()
-      .replace(/\\.local$/, '')
-      .replace(/^局域网设备[：:]\\s*/, '');
   for (const profile of lanStore.saved) {
-    const row: DeviceRow = {
+    rows.set(profile.id, {
       id: profile.id,
       name: profile.name,
       library_name: profile.library_name,
@@ -57,19 +50,17 @@ const devices = computed<DeviceRow[]>(() => {
       profile,
       online: connection.isLan.value && connection.peerId.value === profile.id,
       current: connection.isLan.value && connection.peerId.value === profile.id,
-    };
-    rows.set(row.id, row);
-    byName.set(identity(row.name), row);
+    });
   }
   for (const key of lan.peerKeys) {
-    const matched = (key.peer_id ? rows.get(key.peer_id) : undefined) ?? byName.get(identity(key.label));
+    const matched = key.peer_id ? rows.get(key.peer_id) : undefined;
     if (matched) {
       matched.accessKey = key;
       matched.library_name = matched.library_name || key.library_name || '';
       matched.url = matched.url || key.url || '';
       matched.online = matched.online || Boolean(clients.value[key.id]?.online);
     } else {
-      const row: DeviceRow = {
+      rows.set(key.peer_id || key.id, {
         id: key.peer_id || key.id,
         name: key.label,
         library_name: key.library_name || '',
@@ -77,9 +68,7 @@ const devices = computed<DeviceRow[]>(() => {
         accessKey: key,
         online: Boolean(clients.value[key.id]?.online),
         current: false,
-      };
-      rows.set(row.id, row);
-      byName.set(identity(row.name), row);
+      });
     }
   }
   return [...rows.values()].sort((a, b) => Number(b.current) - Number(a.current) || Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
@@ -232,7 +221,8 @@ async function confirmQr(): Promise<void> {
             {{ device.name }}
             <span v-if="device.library_name" class="lib">（{{ device.library_name }}）</span>
             <span v-if="device.current" class="badge current">已连接</span>
-            <span v-else-if="device.online" class="badge online">在线</span>`n <span v-else class="badge offline">未连接</span>
+            <span v-else-if="device.online" class="badge online">在线</span>
+            <span v-else class="badge offline">未连接</span>
           </div>
           <div class="device-meta">
             <span v-if="device.url">{{ device.url }}</span>
