@@ -210,7 +210,6 @@ async function forget(peer: LanPeerProfile): Promise<void> {
         </div>
       </div>
     </div>
-
   </div>
 </template>
 
