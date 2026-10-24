@@ -2,7 +2,6 @@
 // 渲染进程切到远程后其 API base 已指向会话代理，远程管理面（状态/设备/会话）必须留在主进程：
 // 主进程始终持有本地 daemon 的地址与 admin token，经正规 REST 调用（不经 IPC 传业务数据之外的状态）。
 import os from 'node:os';
-import { randomBytes } from 'node:crypto';
 import { lanAddresses } from './lan';
 import { getStartedConn } from './server';
 import { getMainWindow } from './window';
@@ -303,45 +302,34 @@ interface LanPairedPeer {
   writable: boolean;
   token: string;
 }
-/** 源端发起配对前在本机签一把反向密钥，目标端批准后即可反向连接源端。 */
-async function addReversePeerKey(target: LanPeer): Promise<{ keyId: string; profile: ReversePeerProfile }> {
-  const settings = await daemonCall<LanSettingsDto>('GET', '/api/v1/app/lan');
-  const token = randomBytes(32).toString('hex');
-  const keyId = 'peer_' + randomBytes(8).toString('hex');
-  const updated = await daemonCall<LanSettingsDto>('PUT', '/api/v1/app/lan', {
-    enabled: settings.enabled,
-    port: settings.port,
-    peer_port: settings.peer_port,
-    keys: settings.keys,
-    peer_keys: [...settings.peer_keys, { id: keyId, label: '局域网设备：' + target.name, token, write: false, created_at_ms: Date.now() }],
+/** 源端发起配对前在本机创建一把同名设备密钥；失败则整体配对失败。 */
+async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ keyId: string; profile: ReversePeerProfile }> {
+  const key = await daemonCall<LanKeyDto>('POST', '/api/v1/app/lan/device-keys', {
+    label: target.name,
+    write: writable,
   });
-  return {
-    keyId,
-    profile: {
-      peer_id: updated.peer_id,
-      name: updated.name,
-      library_name: updated.library_name,
-      urls: lanAddresses().map((ip) => 'http://' + ip + ':' + updated.peer_port),
-      token,
-      writable: false,
-    },
-  };
+  try {
+    const settings = await daemonCall<LanSettingsDto>('GET', '/api/v1/app/lan');
+    return {
+      keyId: key.id,
+      profile: {
+        peer_id: settings.peer_id,
+        name: settings.name,
+        library_name: settings.library_name,
+        urls: lanAddresses().map((ip) => 'http://' + ip + ':' + settings.peer_port),
+        token: key.token,
+        writable: key.write,
+      },
+    };
+  } catch (error) {
+    await removeReversePeerKey(key.id).catch(() => {});
+    throw error;
+  }
 }
 
-/** 配对失败/被拒时清理源端为反向连接临时签发的密钥。 */
+/** 配对失败/被拒时通过独立设备密钥端点删除临时密钥，不影响网站访问密钥。 */
 async function removeReversePeerKey(keyId: string): Promise<void> {
-  const settings = await daemonCall<LanSettingsDto>('GET', '/api/v1/app/lan');
-  const peerKeys = settings.peer_keys.filter((key) => key.id !== keyId);
-  if (peerKeys.length === settings.peer_keys.length) {
-    return;
-  }
-  await daemonCall<LanSettingsDto>('PUT', '/api/v1/app/lan', {
-    enabled: settings.enabled,
-    port: settings.port,
-    peer_port: settings.peer_port,
-    keys: settings.keys,
-    peer_keys: peerKeys,
-  });
+  await daemonCall('DELETE', '/api/v1/app/lan/device-keys/' + encodeURIComponent(keyId));
 }
 /** 本机 daemon 上待确认的自动配对请求（设置/全局提示均经主进程读取）。 */
 export async function lanPairRequests(): Promise<{ requests: LanPairRequest[] }> {
@@ -387,8 +375,8 @@ export async function lanForget(peerId: string): Promise<void> {
 }
 
 /** 向目标设备发起自动配对请求；目标端批准后双方各自保存一台可反向连接的设备。 */
-export async function lanPair(input: { peer: LanPeer; writable: boolean }): Promise<ConnectionDescriptor> {
-  const reverse = await addReversePeerKey(input.peer);
+export async function lanPair(input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }): Promise<ConnectionDescriptor> {
+  const reverse = await addReversePeerKey(input.peer, input.reverseWritable);
   let approved = false;
   try {
     const base = normalizeLanURL(input.peer.url);

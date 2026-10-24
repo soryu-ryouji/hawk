@@ -79,6 +79,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/lan/device-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 创建一把设备访问密钥（仅 peer_keys，不触碰网站访问密钥与网站开关）。 */
+        post: operations["create_lan_device_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/lan/device-keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 删除一把设备访问密钥（撤销该设备共享）。 */
+        delete: operations["delete_lan_device_key"];
+        options?: never;
+        head?: never;
+        /** 调整一把设备访问密钥的读写权限。 */
+        patch: operations["update_lan_device_key"];
+        trace?: never;
+    };
     "/api/v1/app/lan/pair-requests": {
         parameters: {
             query?: never;
@@ -1498,9 +1533,29 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanAccessKeyDto: {
+            data?: {
+                /** Format: int64 */
+                created_at_ms: number;
+                id: string;
+                label: string;
+                /** @description 完整 token 仅 admin 可读；设置面板负责打码展示与复制 */
+                token: string;
+                write: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanClientsDto: {
             data?: {
                 clients: components["schemas"]["LanClientDto"][];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanDeviceKeyDeletedDto: {
+            data?: {
+                deleted: boolean;
             };
             status: string;
         };
@@ -2034,6 +2089,16 @@ export interface components {
         LanClientsDto: {
             clients: components["schemas"]["LanClientDto"][];
         };
+        LanDeviceKeyCreateBody: {
+            label: string;
+            write?: boolean;
+        };
+        LanDeviceKeyDeletedDto: {
+            deleted: boolean;
+        };
+        LanDeviceKeyUpdateBody: {
+            write: boolean;
+        };
         LanInfo: {
             /** @description 网站端口监听状态 */
             active: boolean;
@@ -2566,6 +2631,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_LanClientsDto"];
+                };
+            };
+        };
+    };
+    create_lan_device_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanDeviceKeyCreateBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanAccessKeyDto"];
+                };
+            };
+        };
+    };
+    delete_lan_device_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 设备密钥 id */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanDeviceKeyDeletedDto"];
+                };
+            };
+        };
+    };
+    update_lan_device_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 设备密钥 id */
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanDeviceKeyUpdateBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanAccessKeyDto"];
                 };
             };
         };

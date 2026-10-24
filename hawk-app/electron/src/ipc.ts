@@ -224,7 +224,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
   // ---- 局域网互联：发现/配对/连接经本机 daemon + 目标 LAN 端点；token 只在主进程 ----
   ipcMain.handle(IPC.lanDiscover, () => lanDiscover());
-  ipcMain.handle(IPC.lanPair, (_event, input: { peer: LanPeer; writable: boolean }) => lanPair(input));
+  ipcMain.handle(IPC.lanPair, (_event, input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }) => lanPair(input));
   ipcMain.handle(IPC.lanConnect, (_event, peerId: unknown) => {
     if (typeof peerId !== 'string' || !peerId) {
       throw new Error('无效的局域网设备');

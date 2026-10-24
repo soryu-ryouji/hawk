@@ -61,6 +61,12 @@ export const api = {
   /** 目标端待确认的自动配对请求（本机 admin 设置面板轮询） */
   appLanPairRequests: () => request<components['schemas']['LanPairRequestsDto']>('GET', '/api/v1/app/lan/pair-requests'),
   appLanClients: () => request<components['schemas']['LanClientsDto']>('GET', '/api/v1/app/lan/clients'),
+  createLanDeviceKey: (body: components['schemas']['LanDeviceKeyCreateBody']) =>
+    request<components['schemas']['LanAccessKeyDto']>('POST', '/api/v1/app/lan/device-keys', { body }),
+  patchLanDeviceKey: (keyId: string, body: components['schemas']['LanDeviceKeyUpdateBody']) =>
+    request<components['schemas']['LanAccessKeyDto']>('PATCH', '/api/v1/app/lan/device-keys/' + encodeURIComponent(keyId), { body }),
+  deleteLanDeviceKey: (keyId: string) =>
+    request<components['schemas']['LanDeviceKeyDeletedDto']>('DELETE', '/api/v1/app/lan/device-keys/' + encodeURIComponent(keyId)),
   /** 目标端用户确认/拒绝自动配对请求并选择权限 */
   decideLanPairRequest: (requestId: string, body: { allow: boolean; write: boolean }) =>
     request<components['schemas']['LanPairDecisionDto']>('POST', `/api/v1/app/lan/pair-requests/${encodeURIComponent(requestId)}/decision`, {

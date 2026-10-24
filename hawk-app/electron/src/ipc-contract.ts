@@ -381,7 +381,7 @@ export interface HawkShell {
   /** 探测同网段可配对的 hawk 设备（经本机 daemon 的 UDP 发现） */
   lanDiscover(): Promise<{ peers: LanPeer[] }>;
   /** 向目标设备发起自动配对请求，等待目标端用户确认后保存连接并切换 */
-  lanPair(input: { peer: LanPeer; writable: boolean }): Promise<ConnectionDescriptor>;
+  lanPair(input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }): Promise<ConnectionDescriptor>;
   /** 连接已保存的局域网设备（刷新目标 app/info 后切换连接） */
   lanConnect(peerId: string): Promise<ConnectionDescriptor>;
   /** 已保存的局域网设备列表（不含 token） */

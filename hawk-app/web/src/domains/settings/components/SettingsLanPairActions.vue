@@ -65,8 +65,7 @@ async function setPeerWrite(id: string, write: boolean): Promise<void> {
     return;
   }
   busyKeyId.value = id;
-  key.write = write;
-  if (!(await lan.save())) {
+  if (!(await lan.setDeviceKeyWrite(id, write))) {
     error.value = lan.error ?? '权限更新失败';
   }
   busyKeyId.value = null;
@@ -78,8 +77,7 @@ async function revokePeer(id: string, label: string): Promise<void> {
     return;
   }
   busyKeyId.value = id;
-  lan.removePeerKey(id);
-  if (!(await lan.save())) {
+  if (!(await lan.removeDeviceKey(id))) {
     error.value = lan.error ?? '撤销共享失败';
   }
   busyKeyId.value = null;
@@ -101,21 +99,18 @@ async function confirmQr(): Promise<void> {
   }
   generating.value = true;
   error.value = '';
-  const key = lan.addPeerKey(`移动端扫码 ${lan.peerKeys.length + 1}`, newKeyWrite.value);
   try {
-    if (!(await lan.save())) {
-      lan.removePeerKey(key.id);
-      error.value = lan.error ?? '保存局域网配置失败';
+    const key = await lan.addDeviceKey('移动端扫码 ' + (lan.peerKeys.length + 1), newKeyWrite.value);
+    if (!key) {
+      error.value = lan.error ?? '创建设备密钥失败';
       return;
     }
-    const saved = lan.peerKeys.find((item) => item.id === key.id) ?? key;
     showQrPermission.value = false;
-    openQr(saved);
+    openQr(key);
   } finally {
     generating.value = false;
   }
 }
-
 function openQr(key: LanAccessKey): void {
   const urls = addresses.value.map((addr) => `http://${addr}:${lan.peerPort}`);
   const warnings: string[] = [];

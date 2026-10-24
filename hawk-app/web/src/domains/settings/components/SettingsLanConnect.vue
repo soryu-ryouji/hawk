@@ -12,6 +12,8 @@ const store = useLanStore();
 const connection = useConnectionLabel();
 const incomingClients = ref<LanClient[]>([]);
 let clientTimer: ReturnType<typeof setInterval> | null = null;
+const pairPermission = ref<LanPeer | null>(null);
+const pairWrite = ref(false);
 const savedMessage = ref<string | null>(null);
 /** 手动配对兜底：广播/组播被访客网络隔离时，直接输入目标 hawk-app 直连地址。 */
 const manualOpen = ref(false);
@@ -60,16 +62,35 @@ onUnmounted(() => {
   }
 });
 
-async function requestPair(peer: LanPeer): Promise<boolean> {
+function openPairPermission(peer: LanPeer): void {
   store.error = null;
-  const ok = await store.pair(peer, true);
+  pairWrite.value = false;
+  pairPermission.value = peer;
+}
+
+async function requestPair(peer: LanPeer, reverseWrite: boolean): Promise<boolean> {
+  store.error = null;
+  const ok = await store.pair(peer, true, reverseWrite);
   if (ok) {
-    savedMessage.value = `已连接到 ${peer.name}（${peer.library_name}）`;
+    savedMessage.value = '已连接到 ' + peer.name + '（' + peer.library_name + '）';
     window.setTimeout(() => (savedMessage.value = null), 3000);
   }
   return ok;
 }
 
+async function confirmPairPermission(): Promise<void> {
+  const peer = pairPermission.value;
+  if (!peer) {
+    return;
+  }
+  pairPermission.value = null;
+  const manual = peer.id.startsWith('manual-');
+  const ok = await requestPair(peer, pairWrite.value);
+  if (ok && manual) {
+    manualOpen.value = false;
+    manualUrl.value = '';
+  }
+}
 async function submitManualPair(): Promise<void> {
   const url = manualUrl.value.trim();
   if (!url) {
@@ -83,10 +104,7 @@ async function submitManualPair(): Promise<void> {
     writable: true,
     requires_pairing: true,
   };
-  if (await requestPair(peer)) {
-    manualOpen.value = false;
-    manualUrl.value = '';
-  }
+  openPairPermission(peer);
 }
 
 async function testSpeed(): Promise<void> {
@@ -165,7 +183,7 @@ async function forget(peer: LanPeerProfile): Promise<void> {
           </div>
           <div class="peer-meta">{{ peer.url }}</div>
         </div>
-        <button class="primary" :disabled="store.connectingId !== null" @click="requestPair(peer)">
+        <button class="primary" :disabled="store.connectingId !== null" @click="openPairPermission(peer)">
           {{ store.connectingId === peer.id ? '等待对方确认…' : '申请配对' }}
         </button>
       </div>
@@ -208,16 +226,99 @@ async function forget(peer: LanPeerProfile): Promise<void> {
           </button>
         </div>
       </div>
+
+      <Teleport to="body">
+        <div v-if="pairPermission" class="pair-perm-mask" @click.self="pairPermission = null">
+          <div class="pair-perm-dialog" role="dialog" aria-modal="true" aria-labelledby="pair-perm-title">
+            <div id="pair-perm-title" class="pair-perm-title">设备密钥权限</div>
+            <p class="pair-perm-copy">将为本机创建「{{ pairPermission.name }}」的设备密钥，用于对方反向访问此素材库。</p>
+            <div class="pair-perm-options">
+              <label class="pair-perm-option" :class="{ active: !pairWrite }">
+                <input v-model="pairWrite" type="radio" :value="false" />
+                <span><strong>仅读取</strong></span>
+              </label>
+              <label class="pair-perm-option" :class="{ active: pairWrite }">
+                <input v-model="pairWrite" type="radio" :value="true" />
+                <span><strong>可读写</strong></span>
+              </label>
+            </div>
+            <div class="pair-perm-actions">
+              <button @click="pairPermission = null">取消</button>
+              <button class="primary" @click="confirmPairPermission">申请配对</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
     </div>
   </div>
 </template>
 
-<style src="./settings-shared.css">
+<style src="./settings-shared.css"></style>
+<style scoped>
 .online-badge {
   margin-left: 6px;
   color: var(--accent);
   font-size: 10px;
   font-weight: 500;
+}
+.pair-perm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 230;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.52);
+}
+.pair-perm-dialog {
+  width: min(380px, 100%);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-1);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+}
+.pair-perm-title {
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pair-perm-copy {
+  margin: 0 0 12px;
+  color: var(--fg-1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pair-perm-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.pair-perm-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pair-perm-option.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pair-perm-option input {
+  accent-color: var(--accent);
+}
+.pair-perm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.pair-perm-actions button {
+  padding: 5px 10px;
+  font-size: 12px;
 }
 </style>
 
@@ -411,5 +512,64 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   color: var(--accent);
   font-size: 10px;
   font-weight: 500;
+}
+.pair-perm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 230;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.52);
+}
+.pair-perm-dialog {
+  width: min(380px, 100%);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-1);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+}
+.pair-perm-title {
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.pair-perm-copy {
+  margin: 0 0 12px;
+  color: var(--fg-1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pair-perm-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.pair-perm-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pair-perm-option.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pair-perm-option input {
+  accent-color: var(--accent);
+}
+.pair-perm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.pair-perm-actions button {
+  padding: 5px 10px;
+  font-size: 12px;
 }
 </style>

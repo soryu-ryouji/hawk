@@ -79,14 +79,44 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     keys.value = keys.value.filter((key) => key.id !== id);
   }
 
-  function addPeerKey(label: string, write: boolean): LanAccessKey {
-    const key = createKey(label, write, 'peer');
-    peerKeys.value.unshift(key);
-    return key;
+  /** 设备访问密钥走独立端点，和网站访问密钥/网站开关完全解耦。 */
+  async function addDeviceKey(label: string, write: boolean): Promise<LanAccessKey | null> {
+    error.value = null;
+    try {
+      const key = await api.createLanDeviceKey({ label, write });
+      peerKeys.value.unshift(key);
+      return key;
+    } catch (e) {
+      error.value = '创建设备密钥失败：' + errorText(e);
+      return null;
+    }
   }
 
-  function removePeerKey(id: string): void {
-    peerKeys.value = peerKeys.value.filter((key) => key.id !== id);
+  async function setDeviceKeyWrite(id: string, write: boolean): Promise<boolean> {
+    error.value = null;
+    try {
+      const updated = await api.patchLanDeviceKey(id, { write });
+      const index = peerKeys.value.findIndex((key) => key.id === id);
+      if (index >= 0) {
+        peerKeys.value[index] = updated;
+      }
+      return true;
+    } catch (e) {
+      error.value = '更新设备密钥失败：' + errorText(e);
+      return false;
+    }
+  }
+
+  async function removeDeviceKey(id: string): Promise<boolean> {
+    error.value = null;
+    try {
+      await api.deleteLanDeviceKey(id);
+      peerKeys.value = peerKeys.value.filter((key) => key.id !== id);
+      return true;
+    } catch (e) {
+      error.value = '删除设备密钥失败：' + errorText(e);
+      return false;
+    }
   }
 
   function createKey(label: string, write: boolean, prefix: string): LanAccessKey {
@@ -162,8 +192,9 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     load,
     addKey,
     removeKey,
-    addPeerKey,
-    removePeerKey,
+    addDeviceKey,
+    setDeviceKeyWrite,
+    removeDeviceKey,
     save,
   };
 });

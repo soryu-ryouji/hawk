@@ -49,14 +49,14 @@ export const useLanStore = defineStore('lan', () => {
   }
 
   /** 发起自动配对并等待目标端确认；成功后新连接由主进程推送，前端 boot 自动重注水 */
-  async function pair(peer: LanPeer, writable: boolean): Promise<boolean> {
+  async function pair(peer: LanPeer, writable: boolean, reverseWritable = false): Promise<boolean> {
     if (connectingId.value) {
       return false;
     }
     connectingId.value = peer.id;
     error.value = null;
     try {
-      await shell.lanPair({ peer: ipcPeer(peer), writable: Boolean(writable) });
+      await shell.lanPair({ peer: ipcPeer(peer), writable: Boolean(writable), reverseWritable: Boolean(reverseWritable) });
       await refreshSaved();
       return true;
     } catch (e) {
