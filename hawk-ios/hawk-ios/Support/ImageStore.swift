@@ -66,6 +66,15 @@ final class ImageStore {
         return image
     }
 
+    /// 预取相邻页的原图（左右滑动前先落缓存），失败静默
+    func prefetchOriginals(_ urls: [URL], maxPixelSize: Int = 4096) {
+        for url in urls {
+            Task(priority: .utility) {
+                _ = await original(for: url, maxPixelSize: maxPixelSize)
+            }
+        }
+    }
+
     func storeThumbnail(_ image: UIImage, for url: URL) {
         thumbnails.setObject(
             image, forKey: "\(url.absoluteString)#1024" as NSString, cost: Self.cost(of: image))

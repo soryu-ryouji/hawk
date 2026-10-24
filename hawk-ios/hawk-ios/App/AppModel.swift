@@ -7,13 +7,14 @@ final class AppModel {
     enum Phase: Equatable {
         case launching
         case connect
-        case connecting(String)
+        case connecting
         case ready
     }
 
     private(set) var phase: Phase = .launching
-    private(set) var session: LibrarySession?
+    private(set) var context: LibraryContext?
     private(set) var lastError: String?
+    private(set) var connectStatus: String?
     let connections = ConnectionStore()
 
     private var connectTask: Task<Void, Never>?
@@ -34,43 +35,44 @@ final class AppModel {
 
     func connect(_ profile: ConnectionProfile) {
         connectTask?.cancel()
+        context?.stopEvents()
         teardownRemoteSession()
-        session = nil
+        context = nil
         lastError = nil
-        phase = .connecting("正在连接 \(profile.displayName)…")
+        connectStatus = "正在连接 \(profile.displayName)…"
+        phase = .connecting
 
         connectTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let outcome = try await ConnectionLauncher.launch(profile)
+                let outcome = try await ConnectionLauncher.launch(profile) { [weak self] status in
+                    Task { @MainActor in
+                        self?.connectStatus = status
+                    }
+                }
                 try Task.checkCancellation()
                 let saved = connections.upsert(profile)
                 connections.setActive(saved.id)
 
-                let store = LibraryStore(api: outcome.api)
-                try await store.bootstrap()
-                try Task.checkCancellation()
-                let label: String
-                if let targetLibrary = outcome.targetLibraryName, !targetLibrary.isEmpty {
-                    label = "\(outcome.label) · \(targetLibrary)"
-                } else {
-                    label = store.library?.name ?? outcome.label
-                }
-                session = LibrarySession(
+                self.connectStatus = "正在读取素材库…"
+                let context = LibraryContext(
                     api: outcome.api,
                     profile: saved,
-                    label: label,
-                    access: outcome.info.access,
+                    info: outcome.info,
                     targetDeviceName: outcome.targetDeviceName,
-                    targetLibraryName: outcome.targetLibraryName,
-                    store: store
+                    targetLibraryName: outcome.targetLibraryName
                 )
+                try await context.bootstrap()
+                try Task.checkCancellation()
+                self.context = context
+                self.connectStatus = nil
                 phase = .ready
             } catch is CancellationError {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
                 lastError = errorMessage(error)
+                connectStatus = nil
                 phase = .connect
             }
         }
@@ -82,29 +84,33 @@ final class AppModel {
     }
 
     func reconnect() {
-        if let profile = session?.profile ?? connections.activeProfile {
+        if let profile = context?.profile ?? connections.activeProfile {
             connect(profile)
         }
     }
 
     func disconnect() {
         connectTask?.cancel()
+        context?.stopEvents()
         teardownRemoteSession()
-        session = nil
+        context = nil
+        connectStatus = nil
         phase = .connect
     }
 
     func showConnectScreen() {
         connectTask?.cancel()
+        context?.stopEvents()
         teardownRemoteSession()
-        session = nil
+        context = nil
+        connectStatus = nil
         phase = .connect
     }
 
     /// 显式断开/切换时通知服务端注销查看会话（best-effort；失败不阻塞 UI）。
     private func teardownRemoteSession() {
-        guard let session, session.isRemote else { return }
-        let api = session.api
+        guard let context, context.isRemote else { return }
+        let api = context.api
         Task {
             try? await api.delete("/api/v1/viewer/session")
         }
@@ -112,15 +118,20 @@ final class AppModel {
 
     func deleteProfile(_ profile: ConnectionProfile) {
         connections.remove(profile.id)
-        if session?.profile.id == profile.id {
+        if context?.profile.id == profile.id {
             disconnect()
         }
     }
 
+    func setBackgrounded(_ backgrounded: Bool) {
+        context?.setBackgrounded(backgrounded)
+    }
+
     #if DEBUG
         /// 本地冒烟：模拟器/真机自动化测试可通过环境变量预置一条连接，免去手动输入。
+        /// Keychain 里的旧连接不会随卸载清除，因此每次都覆盖同 id 记录并设为当前连接。
         private func seedDebugProfileIfNeeded() {
-            guard connections.profiles.isEmpty,
+            guard
                 let raw = ProcessInfo.processInfo.environment["HAWK_IOS_DEBUG_PROFILE"],
                 let data = raw.data(using: .utf8),
                 let profile = try? JSONDecoder().decode(ConnectionProfile.self, from: data)
@@ -132,7 +143,7 @@ final class AppModel {
         }
     #endif
 
-    private func errorMessage(_ error: Error) -> String {
+    private func errorMessage(_ error: any Error) -> String {
         if let localized = error as? LocalizedError, let description = localized.errorDescription {
             return description
         }

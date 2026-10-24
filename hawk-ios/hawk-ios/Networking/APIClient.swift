@@ -8,11 +8,85 @@ nonisolated struct APIError: LocalizedError, Sendable, Equatable {
     var errorDescription: String? { message }
     var isUnauthorized: Bool { status == 401 || code == "UNAUTHORIZED" }
     var isNotReady: Bool { code == "NOT_READY" || status == 503 }
+    var isLocked: Bool { code == "LOCKED" }
+    var isThrottled: Bool { code == "THROTTLED" || status == 429 }
+    var isReadOnly: Bool { code == "READ_ONLY" }
+    var isOffline: Bool { status == 0 }
 }
 
-nonisolated struct APIClient: Sendable {
+/// 会话凭证：token 在 401 时可由 refresher 重换（广域网 bt 短时效；
+/// 局域网凭证长期有效，refresher 为空即直接抛错）。
+nonisolated final class SessionCredentials: @unchecked Sendable {
+    private let lock = NSLock()
+    private var token: String
+    private var refreshTask: Task<Void, any Error>?
+    private let refresh: (@Sendable () async throws -> String)?
+
+    init(token: String, refresh: (@Sendable () async throws -> String)? = nil) {
+        self.token = token
+        self.refresh = refresh
+    }
+
+    func current() -> String {
+        lock.withLock { token }
+    }
+
+    /// 并发安全的一次性重换：多个请求同时 401 只触发一次登录。
+    func renew() async throws {
+        guard let refresh else {
+            throw APIError(code: "UNAUTHORIZED", message: "访问凭证已失效，请重新连接", status: 401)
+        }
+        let task: Task<Void, any Error> = lock.withLock {
+            if let existing = refreshTask {
+                return existing
+            }
+            let created = Task { [weak self] in
+                defer { self?.clearRefreshTask() }
+                let value = try await refresh()
+                self?.set(value)
+            }
+            refreshTask = created
+            return created
+        }
+        try await task.value
+    }
+
+    private func set(_ value: String) {
+        lock.withLock { token = value }
+    }
+
+    private func clearRefreshTask() {
+        lock.withLock { refreshTask = nil }
+    }
+}
+
+nonisolated final class APIClient: @unchecked Sendable {
     let baseURL: URL
-    let token: String
+    let credentials: SessionCredentials
+    let tickets: UnlockTicketStore
+    private let session: URLSession
+    /// SSE 长连接专用会话：必须由客户端持有，随请求销毁会让流被取消
+    private let streamSession: URLSession
+
+    init(
+        baseURL: URL,
+        credentials: SessionCredentials,
+        tickets: UnlockTicketStore = UnlockTicketStore()
+    ) {
+        self.baseURL = baseURL
+        self.credentials = credentials
+        self.tickets = tickets
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.waitsForConnectivity = false
+        self.session = URLSession(configuration: configuration)
+
+        let streaming = URLSessionConfiguration.default
+        streaming.timeoutIntervalForRequest = 3600
+        streaming.timeoutIntervalForResource = .infinity
+        streaming.requestCachePolicy = .reloadIgnoringLocalCacheData
+        self.streamSession = URLSession(configuration: streaming)
+    }
 
     // MARK: - Typed requests
 
@@ -29,26 +103,46 @@ nonisolated struct APIClient: Sendable {
         _ body: Body,
         timeout: TimeInterval = 60
     ) async throws -> Response {
-        let data = try await perform("POST", path, body: try encode(body), timeout: timeout)
-        let envelope = try decode(Envelope<Response>.self, from: data)
-        if envelope.status == "error" {
-            throw envelopeError(envelope.error, status: 200)
-        }
-        guard let value = envelope.data else {
-            throw APIError(code: "EMPTY_RESPONSE", message: "服务端返回为空", status: 200)
-        }
-        return value
+        try await send("POST", path, body: try encode(body), timeout: timeout)
     }
 
-    func delete(_ path: String, timeout: TimeInterval = 30) async throws {
-        let data = try await perform("DELETE", path, body: nil, timeout: timeout)
-        let envelope = try decode(StatusEnvelope.self, from: data)
-        if envelope.status == "error" {
-            throw envelopeError(envelope.error, status: 200)
-        }
+    func post<Body: Encodable & Sendable>(
+        _ path: String,
+        _ body: Body,
+        timeout: TimeInterval = 60
+    ) async throws {
+        let data = try await perform("POST", path, body: try encode(body), timeout: timeout)
+        try checkStatus(data)
+    }
+
+    func put<Body: Encodable & Sendable>(
+        _ path: String,
+        _ body: Body,
+        timeout: TimeInterval = 30
+    ) async throws {
+        let data = try await perform("PUT", path, body: try encode(body), timeout: timeout)
+        try checkStatus(data)
+    }
+
+    func delete(_ path: String, query: [URLQueryItem] = [], timeout: TimeInterval = 30) async throws
+    {
+        let data = try await perform("DELETE", path, query: query, body: nil, timeout: timeout)
+        try checkStatus(data)
     }
 
     // MARK: - Media
+
+    /// 缩略图 / 原图地址：token 与解锁票据都走查询参数（img 请求无法设头）。
+    func mediaURL(path: String, id: String) -> URL? {
+        var query = [
+            URLQueryItem(name: "id", value: id),
+            URLQueryItem(name: "token", value: credentials.current()),
+        ]
+        if let unlock = tickets.headerValue() {
+            query.append(URLQueryItem(name: "unlock", value: unlock))
+        }
+        return makeURL(path: path, query: query)
+    }
 
     func thumbnailURL(id: String) -> URL? {
         mediaURL(path: "/api/v1/item/thumbnail", id: id)
@@ -64,7 +158,7 @@ nonisolated struct APIClient: Sendable {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 120
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw APIError(code: "NETWORK", message: "网络响应无效", status: 0)
         }
@@ -76,6 +170,42 @@ nonisolated struct APIClient: Sendable {
         return data
     }
 
+    // MARK: - Event stream
+
+    /// SSE 订阅请求：token 走查询参数（与 web 一致，避免代理层差异），解锁票据同理。
+    func eventRequest() -> URLRequest? {
+        guard
+            let url = makeURL(
+                path: "/api/v1/events",
+                query: [
+                    URLQueryItem(name: "token", value: credentials.current()),
+                    URLQueryItem(name: "unlock", value: tickets.headerValue() ?? ""),
+                ]
+            )
+        else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3600
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        return request
+    }
+
+    func streamEvents() async throws -> URLSession.AsyncBytes {
+        guard let request = eventRequest() else { throw APIError.invalidURL }
+        let (bytes, response) = try await streamSession.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError(code: "NETWORK", message: "网络响应无效", status: 0)
+        }
+        guard http.statusCode == 200 else {
+            throw APIError(
+                code: "HTTP_\(http.statusCode)",
+                message: "订阅素材库变更失败（HTTP \(http.statusCode)）",
+                status: http.statusCode
+            )
+        }
+        return bytes
+    }
+
     // MARK: - Transport
 
     private func perform(
@@ -83,7 +213,8 @@ nonisolated struct APIClient: Sendable {
         _ path: String,
         query: [URLQueryItem] = [],
         body: Data?,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        allowsRenewal: Bool = true
     ) async throws -> Data {
         guard let url = makeURL(path: path, query: query) else {
             throw APIError(code: "INVALID_URL", message: "服务地址无效", status: 0)
@@ -92,8 +223,12 @@ nonisolated struct APIClient: Sendable {
         request.httpMethod = method
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let token = credentials.current()
         if !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let unlock = tickets.headerValue() {
+            request.setValue(unlock, forHTTPHeaderField: "X-Hawk-Unlock")
         }
         if let body {
             request.httpBody = body
@@ -103,7 +238,7 @@ nonisolated struct APIClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await session.data(for: request)
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch let error as URLError {
@@ -114,6 +249,12 @@ nonisolated struct APIClient: Sendable {
 
         guard let http = response as? HTTPURLResponse else {
             throw APIError(code: "NETWORK", message: "网络响应无效", status: 0)
+        }
+        if http.statusCode == 401, allowsRenewal {
+            // bt 过期：重换一次凭证后重放（局域网凭据不会 401，renew 会直接抛错）
+            try await credentials.renew()
+            return try await perform(
+                method, path, query: query, body: body, timeout: timeout, allowsRenewal: false)
         }
         guard (200..<300).contains(http.statusCode) else {
             let envelope = try? decode(ErrorEnvelope.self, from: data)
@@ -135,14 +276,21 @@ nonisolated struct APIClient: Sendable {
         timeout: TimeInterval = 30
     ) async throws -> Response {
         let data = try await perform(method, path, query: query, body: body, timeout: timeout)
-        let envelope = try decode(Envelope<Response>.self, from: data)
+        let envelope: Envelope<Response> = try decode(Envelope<Response>.self, from: data)
         if envelope.status == "error" {
-            throw envelopeError(envelope.error, status: 200)
+            throw envelopeError(envelope.error)
         }
         guard let value = envelope.data else {
             throw APIError(code: "EMPTY_RESPONSE", message: "服务端返回为空", status: 200)
         }
         return value
+    }
+
+    private func checkStatus(_ data: Data) throws {
+        let envelope: StatusEnvelope = try decode(StatusEnvelope.self, from: data)
+        if envelope.status == "error" {
+            throw envelopeError(envelope.error)
+        }
     }
 
     nonisolated private static func networkMessage(for error: URLError) -> String {
@@ -177,16 +325,6 @@ nonisolated struct APIClient: Sendable {
         return components.url
     }
 
-    private func mediaURL(path: String, id: String) -> URL? {
-        makeURL(
-            path: path,
-            query: [
-                URLQueryItem(name: "id", value: id),
-                URLQueryItem(name: "token", value: token),
-            ]
-        )
-    }
-
     private func encode<Body: Encodable>(_ body: Body) throws -> Data {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -207,11 +345,11 @@ nonisolated struct APIClient: Sendable {
         }
     }
 
-    private func envelopeError(_ error: ErrorPayload?, status: Int) -> APIError {
+    private func envelopeError(_ error: ErrorPayload?) -> APIError {
         APIError(
             code: error?.code ?? "INTERNAL",
             message: error?.message ?? "请求失败",
-            status: status
+            status: 200
         )
     }
 }

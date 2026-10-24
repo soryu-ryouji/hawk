@@ -3,32 +3,36 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("hawk.ios.thumbSize") private var thumbSize = 200.0
+    @AppStorage("hawk.ios.thumbSize") private var storedThumbSize = 0.0
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    let session: LibrarySession
+    let context: LibraryContext
 
-    private var store: LibraryStore { session.store }
+    private var defaultThumbSize: Double { horizontalSizeClass == .regular ? 240 : 130 }
+    private var thumbSize: Double { storedThumbSize > 0 ? storedThumbSize : defaultThumbSize }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("素材库", value: store.library?.name ?? session.label)
-                    LabeledContent("连接方式", value: session.isRemote ? "广域网（hawk-server）" : "局域网直连")
-                    LabeledContent("访问级别", value: session.accessLabel)
-                    if session.isRemote {
-                        if let device = session.targetDeviceName, !device.isEmpty {
-                            LabeledContent("目标设备", value: device)
-                        }
-                    }
-                    LabeledContent("服务地址", value: session.profile.url)
-                    LabeledContent("全部条目", value: store.countsLoading ? "…" : "\(store.counts.all)")
+                    LabeledContent("素材库", value: context.library?.name ?? context.title)
                     LabeledContent(
-                        "当前视图", value: "\(store.total) 项 · \(Format.bytes(store.totalSize))")
+                        "连接方式", value: context.isRemote ? "广域网（hawk-server）" : "局域网直连")
+                    LabeledContent("访问级别", value: context.accessLabel)
+                    if let device = context.targetDeviceName, !device.isEmpty, context.isRemote {
+                        LabeledContent("目标设备", value: device)
+                    }
+                    LabeledContent("服务地址", value: context.profile.url)
+                    LabeledContent(
+                        "素材数量",
+                        value: context.countsLoading ? "…" : "\(context.counts.all) 项")
+                    if let label = context.scanningLabel {
+                        LabeledContent("后台任务", value: label)
+                    }
                 } header: {
                     Text("当前连接")
                 } footer: {
-                    Text("iOS 客户端当前为只读浏览；导入、编辑与删除请在桌面端操作。")
+                    Text("iOS 客户端为只读浏览；导入、编辑与删除请在桌面端操作。")
                 }
 
                 Section("连接操作") {
@@ -42,7 +46,7 @@ struct SettingsView: View {
                         app.showConnectScreen()
                         dismiss()
                     } label: {
-                        Label("切换连接", systemImage: "rectangle.2.swap")
+                        Label("切换素材库", systemImage: "rectangle.2.swap")
                     }
                     Button(role: .destructive) {
                         app.disconnect()
@@ -53,29 +57,37 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    HStack {
-                        Text("缩略图尺寸")
-                        Spacer()
-                        Text("\(Int(thumbSize))")
-                            .foregroundStyle(HawkTheme.fg1)
-                            .monospacedDigit()
+                    LabeledContent("缩略图尺寸", value: "\(Int(thumbSize))")
+                    Slider(
+                        value: Binding(
+                            get: { thumbSize },
+                            set: { storedThumbSize = $0 }
+                        ), in: 90...300, step: 5
+                    )
+                    .tint(HawkTheme.accent)
+                    if storedThumbSize > 0 {
+                        Button("恢复默认尺寸") { storedThumbSize = 0 }
+                            .font(.footnote)
                     }
-                    Slider(value: $thumbSize, in: 120...280, step: 8)
-                        .tint(HawkTheme.accent)
-                    Text("贴近桌面端的齐行网格：数值是每行目标高度，不再是固定列数。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(HawkTheme.fg1)
                 } header: {
                     Text("外观")
+                } footer: {
+                    Text("数值是每行目标高度：网格按图片比例齐行，越大看得越清楚，越小一屏放得越多。")
                 }
 
                 Section("关于") {
                     LabeledContent("hawk iOS", value: clientVersion)
-                    if let version = store.library?.applicationVersion {
+                    if let version = context.library?.applicationVersion {
                         LabeledContent("桌面端版本", value: version)
                     }
-                    if let mode = store.library?.storageMode {
-                        LabeledContent("元数据存储", value: mode)
+                    if let mode = context.library?.storageMode {
+                        LabeledContent("元数据存储", value: storageLabel(mode))
+                    }
+                    if let scan = context.library?.scan {
+                        LabeledContent(
+                            "周期扫描",
+                            value: scan.periodic
+                                ? "开启\(scan.interval.map { "（\($0) 分钟）" } ?? "")" : "关闭")
                     }
                 }
             }
@@ -88,6 +100,14 @@ struct SettingsView: View {
                     Button("完成") { dismiss() }
                 }
             }
+        }
+    }
+
+    private func storageLabel(_ mode: String) -> String {
+        switch mode {
+        case "database": "SQLite 单库（metadata.db）"
+        case "toml": "TOML 文件（网盘同步友好）"
+        default: mode
         }
     }
 

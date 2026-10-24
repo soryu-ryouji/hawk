@@ -49,7 +49,8 @@ nonisolated struct PairingPayload: Decodable, Sendable {
             }
             return ConnectionProfile(kind: .lan, url: primary, urls: unique, token: token)
         case "remote":
-            guard let url, !url.isEmpty, let serviceKey, let key, !serviceKey.isEmpty, !key.isEmpty else {
+            guard let url, !url.isEmpty, let serviceKey, let key, !serviceKey.isEmpty, !key.isEmpty
+            else {
                 throw ConnectionError.message("配对二维码缺少访问密钥")
             }
             return ConnectionProfile(kind: .remote, url: url, serviceKey: serviceKey, appKey: key)

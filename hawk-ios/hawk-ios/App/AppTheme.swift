@@ -13,6 +13,11 @@ enum HawkTheme {
     static let border = Color(hex: "#3c3c3c")
     static let star = Color(hex: "#f5c518")
 
+    static let cornerRadius: CGFloat = 10
+    static let cardRadius: CGFloat = 8
+    static let screenPadding: CGFloat = 16
+    static let gridGap: CGFloat = 10
+
     /// 颜色筛选的常用色（与网页端调色板检索同一语义：CIE76 近似命中）。
     static let filterColors: [String] = [
         "#e5534b", "#e8a33d", "#e5d54b", "#4caf50", "#4a9eff",
@@ -52,5 +57,15 @@ extension Color {
 extension View {
     func hawkScreenBackground() -> some View {
         background(HawkTheme.bg0.ignoresSafeArea())
+    }
+
+    /// 分组容器：与桌面端卡片一致的深色块
+    func hawkCard(padding: CGFloat = 14) -> some View {
+        self.padding(padding)
+            .background(HawkTheme.bg1, in: RoundedRectangle(cornerRadius: HawkTheme.cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: HawkTheme.cornerRadius)
+                    .stroke(HawkTheme.border, lineWidth: 1)
+            )
     }
 }

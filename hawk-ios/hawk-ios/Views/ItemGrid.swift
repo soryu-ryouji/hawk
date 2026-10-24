@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 
+/// 远程图片：缩略图/原图都走 ImageStore 缓存与降采样。
+/// 新入库素材的缩略图由后台异步生成：首次 404 时短暂重试，避免网格留下永久占位。
 struct RemoteImage: View {
     let url: URL?
     var maxPixelSize: Int = 1024
@@ -11,20 +13,23 @@ struct RemoteImage: View {
 
     var body: some View {
         ZStack {
+            Rectangle()
+                .fill(HawkTheme.bg2)
+                .overlay {
+                    if failed {
+                        Image(systemName: "photo")
+                            .font(.title3)
+                            .foregroundStyle(HawkTheme.fg1.opacity(0.5))
+                    } else if image == nil {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(HawkTheme.fg1.opacity(0.6))
+                    }
+                }
             if let image {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
-            } else {
-                Rectangle()
-                    .fill(HawkTheme.bg2)
-                    .overlay {
-                        if failed {
-                            Image(systemName: "photo")
-                                .font(.system(size: 18))
-                                .foregroundStyle(HawkTheme.fg1.opacity(0.5))
-                        }
-                    }
             }
         }
         .clipped()
@@ -35,8 +40,7 @@ struct RemoteImage: View {
                 failed = true
                 return
             }
-            // 新入库素材的缩略图由后台异步生成：首次 404 时短暂重试，避免网格留下永久占位。
-            for attempt in 0..<4 {
+            for attempt in 0..<3 {
                 let loaded =
                     if maxPixelSize <= 1024 {
                         await ImageStore.shared.thumbnail(for: url)
@@ -45,10 +49,10 @@ struct RemoteImage: View {
                     }
                 guard !Task.isCancelled else { return }
                 if let loaded {
-                    image = loaded
+                    withAnimation(.easeOut(duration: 0.15)) { image = loaded }
                     return
                 }
-                if attempt < 3 {
+                if attempt < 2 {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     if Task.isCancelled { return }
                 }
@@ -58,90 +62,133 @@ struct RemoteImage: View {
     }
 }
 
+/// 网格卡片：缩略图 + 名称 + 尺寸；长按出系统菜单，点击进预览。
 struct ItemCard: View {
     let cell: GridLayout.Cell
-    let detail: Item?
+    let title: String
     let thumbnailURL: URL?
-    let onOpen: () -> Void
+    let starCount: Int
+    let metaHeight: CGFloat
+    var onOpen: () -> Void = {}
+    var onSave: () -> Void = {}
+    var onShare: () -> Void = {}
+    var onInfo: () -> Void = {}
+    var onCopyName: () -> Void = {}
 
-    private var title: String {
-        if let detail { return detail.displayName }
-        let name = ItemKey.baseName(path: cell.item.path)
-        let ext = ItemKey.ext(path: cell.item.path)
-        return ext.isEmpty ? name : "\(name).\(ext)"
+    private var thumbnail: some View {
+        RemoteImage(url: thumbnailURL)
+            .frame(width: cell.width, height: cell.height)
+            .overlay(alignment: .topTrailing) {
+                if starCount > 0 {
+                    Label("\(starCount)", systemImage: "star.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(HawkTheme.star)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.45), in: Capsule())
+                        .padding(5)
+                        .accessibilityLabel("\(starCount) 星")
+                }
+            }
     }
 
     var body: some View {
         Button(action: onOpen) {
             VStack(spacing: 0) {
-                RemoteImage(url: thumbnailURL)
-                    .frame(width: cell.width, height: cell.height)
-                    .overlay(alignment: .topTrailing) {
-                        if cell.item.star > 0 {
-                            Text("★\(cell.item.star)")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(HawkTheme.star)
-                                .padding(.horizontal, 4)
-                                .padding(.top, 4)
-                                .shadow(color: .black.opacity(0.8), radius: 2, y: 1)
-                        }
-                    }
+                thumbnail
 
-                VStack(spacing: 2) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 12))
+                        .font(.caption)
                         .foregroundStyle(HawkTheme.fg0)
                         .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, alignment: .top)
+                        .truncationMode(.middle)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     Text(Format.dimensions(width: cell.item.width, height: cell.item.height))
-                        .font(.system(size: 11))
+                        .font(.caption2)
                         .foregroundStyle(HawkTheme.fg1)
+                        .lineLimit(1)
                 }
                 .padding(.horizontal, 6)
-                .padding(.top, 5)
-                .frame(width: cell.width, height: GridLayout.metaHeight, alignment: .top)
+                .padding(.vertical, 4)
+                .frame(width: cell.width, height: metaHeight, alignment: .topLeading)
                 .background(HawkTheme.bg2)
             }
-            .frame(width: cell.width, height: cell.height + GridLayout.metaHeight)
+            .frame(width: cell.width, height: cell.height + metaHeight)
             .background(HawkTheme.bg2)
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: HawkTheme.cardRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: HawkTheme.cardRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title)，\(cell.item.width) × \(cell.item.height)")
         .accessibilityHint("打开预览")
+        .contextMenu {
+            Button("打开预览", systemImage: "arrow.up.left.and.arrow.down.right", action: onOpen)
+            Button("保存到相册", systemImage: "square.and.arrow.down", action: onSave)
+            Button("分享原图", systemImage: "square.and.arrow.up", action: onShare)
+            Button("素材信息", systemImage: "info.circle", action: onInfo)
+            Divider()
+            Button("复制名称", systemImage: "doc.on.doc", action: onCopyName)
+        } preview: {
+            RemoteImage(url: thumbnailURL)
+                .frame(width: min(cell.width * 1.6, 320), height: min(cell.height * 1.6, 320))
+        }
     }
 }
 
 struct ItemGridView: View {
-    let store: LibraryStore
+    let context: LibraryContext
+    let store: GridStore
     let targetHeight: CGFloat
-    let onOpen: (Int) -> Void
+    let zoomNamespace: Namespace.ID
+    var onOpen: (Int) -> Void
+    var onInfo: (Int) -> Void
+    var onSave: (SkeletonItem) -> Void
+    var onShare: (SkeletonItem, String) -> Void
+    var onCopyName: (String) -> Void
 
+    @ScaledMetric(relativeTo: .caption) private var metaHeight: CGFloat = 46
     @State private var rows: [GridLayout.Row] = []
 
     private struct LayoutKey: Hashable {
         let version: Int
         let width: Int
         let target: Int
+        let meta: Int
     }
 
     var body: some View {
         GeometryReader { proxy in
-            let contentWidth = max(1, proxy.size.width - 24)
+            let contentWidth = max(1, proxy.size.width - HawkTheme.screenPadding * 2)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: GridLayout.gap) {
+                LazyVStack(alignment: .leading, spacing: HawkTheme.gridGap) {
                     ForEach(rows) { row in
-                        HStack(alignment: .top, spacing: GridLayout.gap) {
+                        HStack(alignment: .top, spacing: HawkTheme.gridGap) {
                             ForEach(row.cells) { cell in
+                                let detail = store.detail(for: cell.item)
                                 ItemCard(
                                     cell: cell,
-                                    detail: store.details[cell.item.key],
-                                    thumbnailURL: store.api.thumbnailURL(id: cell.item.id)
-                                ) {
-                                    onOpen(cell.index)
-                                }
+                                    title: ItemKey.displayName(item: cell.item, detail: detail),
+                                    thumbnailURL: context.api.thumbnailURL(id: cell.item.id),
+                                    starCount: store.star(for: cell.item),
+                                    metaHeight: metaHeight,
+                                    onOpen: { onOpen(cell.index) },
+                                    onSave: { onSave(cell.item) },
+                                    onShare: {
+                                        onShare(
+                                            cell.item,
+                                            ItemKey.displayName(item: cell.item, detail: detail))
+                                    },
+                                    onInfo: { onInfo(cell.index) },
+                                    onCopyName: {
+                                        onCopyName(
+                                            ItemKey.displayName(item: cell.item, detail: detail))
+                                    }
+                                )
+                                .matchedTransitionSource(id: cell.item.key, in: zoomNamespace)
                             }
                             Spacer(minLength: 0)
                         }
@@ -149,95 +196,70 @@ struct ItemGridView: View {
                         .task(id: store.skeletonVersion) {
                             store.ensureWindow(row.indexRange)
                         }
+                        .id(row.id)
                     }
                 }
-                .padding(12)
+                .padding(HawkTheme.screenPadding)
+                .scrollTargetLayout()
             }
             .scrollIndicators(.hidden)
+            .contentMargins(.bottom, 56, for: .scrollContent)
+            .scrollPosition(
+                id: Binding(
+                    get: { store.scrollAnchor },
+                    set: { store.updateScrollAnchor($0) }
+                ), anchor: .top
+            )
             .refreshable {
-                await store.refreshAll()
+                await context.refreshAll()
             }
             .task(
                 id: LayoutKey(
                     version: store.layoutVersion, width: Int(contentWidth),
-                    target: Int(targetHeight))
+                    target: Int(targetHeight), meta: Int(metaHeight))
             ) {
                 let items = store.displayItems
                 let width = contentWidth
                 let target = targetHeight
+                let meta = metaHeight
                 rows = GridLayout.rows(items, width: width, targetHeight: target)
+                // 首屏内容到达后把记住的位置还回去
+                _ = meta
             }
             .overlay(alignment: .top) {
                 if store.loading, !store.displayItems.isEmpty {
                     ProgressView()
+                        .controlSize(.small)
                         .tint(HawkTheme.fg1)
-                        .padding(8)
-                        .background(HawkTheme.bg1.opacity(0.9), in: Capsule())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: Capsule())
                         .padding(.top, 8)
                 }
             }
             .overlay {
-                if store.displayItems.isEmpty {
-                    if store.loading || store.firstPageLoading {
-                        loadingGrid
-                    } else if store.error == nil {
-                        emptyState
-                    }
-                }
-            }
-            .overlay(alignment: .top) {
-                if let error = store.error {
-                    ErrorBanner(message: error)
-                        .padding(12)
+                if store.displayItems.isEmpty, !store.loading, !store.firstPageLoading,
+                    store.lockedTarget == nil
+                {
+                    emptyState
                 }
             }
         }
-        .background(HawkTheme.bg0)
-    }
-
-    private var loadingGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 144), spacing: 10)], spacing: 10) {
-                ForEach(0..<12, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(HawkTheme.bg2)
-                        .frame(height: [190.0, 150.0, 230.0][index % 3])
-                }
-            }
-            .padding(12)
-
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(HawkTheme.fg1)
-                Text("正在加载素材…")
-                    .font(.system(size: 12))
-                    .foregroundStyle(HawkTheme.fg1)
-            }
-            .padding(.bottom, 24)
-        }
-        .scrollIndicators(.hidden)
         .background(HawkTheme.bg0)
     }
 
     private var emptyState: some View {
         ContentUnavailableView {
             Label(
-                store.view == .trash ? "回收站为空" : "暂无素材",
+                store.view == .trash ? "回收站为空" : "没有素材",
                 systemImage: store.view == .trash ? "trash" : "photo.on.rectangle.angled")
         } description: {
-            if store.hasActiveFilters {
-                Text("当前筛选条件下没有素材，试试清除筛选。")
-            } else if !store.query.keywords.isEmpty {
-                Text("没有匹配「\(store.query.keywords.joined(separator: " "))」的素材")
-            } else {
-                Text("在桌面端导入素材后，这里会自动出现。")
-            }
+            Text(store.emptyDescription)
         } actions: {
             if store.hasActiveFilters || !store.query.keywords.isEmpty {
                 Button("清除筛选与搜索") {
-                    store.clearFilters()
                     store.searchText = ""
+                    store.clearFilters(keepingSearch: false)
                     store.submitSearch()
                 }
             }
