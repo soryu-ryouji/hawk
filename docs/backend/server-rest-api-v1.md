@@ -931,7 +931,7 @@ Item 对象，并附带 `already_existed` / `skipped` 标志：
 
 `POST /api/v1/item/upload`
 
-multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路径可引用（拖拽/文件选择器拿到的是 File 内容），经本端点以内容入库。写权限：admin 恒可用；viewer 需对应访问密钥 `write=true`（否则 403 `READ_ONLY`）。
+multipart/form-data 上传新 item（web 端 / iOS 分享扩展用）：客户端无本地文件路径可引用（拿到的是文件内容），经本端点以内容入库。写权限：admin 恒可用；viewer 需对应访问密钥 `write=true`（否则 403 `READ_ONLY`）。分类/标签可在同一个请求里带上，省去上传后再 `item/update` 的一次往返。
 
 #### 请求（multipart/form-data）
 
@@ -941,6 +941,8 @@ multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路
 | folder_path | text   | 否   | 目标文件夹路径，缺省为库根目录         |
 | name        | text   | 否   | 文件名（不含扩展名），缺省取 file 文件名 |
 | skip_existing | text | 否   | 传 `"true"` 时内容已在库内则跳过（同 item/add） |
+| tags        | text   | 否   | 标签：同一字段名重复出现多次（multipart 无数组类型） |
+| categories  | text   | 否   | 分类：同上；名称归一化去重（与 `item/add` 同语义） |
 
 #### 响应
 

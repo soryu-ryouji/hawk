@@ -1403,6 +1403,16 @@ async fn write_endpoints_match_schema() {
     let mut multipart = Vec::new();
     multipart.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"c.png\"\r\nContent-Type: image/png\r\n\r\n").as_bytes());
     multipart.extend_from_slice(&png_b);
+    // 分类/标签：同一字段名重复出现（multipart 无数组类型），入库时一并写入
+    for (name, value) in [
+        ("categories", "风景"),
+        ("categories", "海报"),
+        ("tags", "夏日"),
+    ] {
+        multipart.extend_from_slice(
+            format!("\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}").as_bytes(),
+        );
+    }
     multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     let (status, bytes) = call(
         &app.router,
@@ -1428,6 +1438,16 @@ async fn write_endpoints_match_schema() {
         errors.is_empty(),
         "item/upload 响应不符合契约:\n{}",
         errors.join("\n")
+    );
+    assert_eq!(
+        body_json["data"]["item"]["categories"],
+        json!(["风景", "海报"]),
+        "上传时附带的分类应写入元数据"
+    );
+    assert_eq!(
+        body_json["data"]["item"]["tags"],
+        json!(["夏日"]),
+        "上传时附带的标签应写入元数据"
     );
 }
 

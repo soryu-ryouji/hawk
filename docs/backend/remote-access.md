@@ -157,7 +157,7 @@ Connection {
 | -- | ------ | ---- |
 | hawk-server | hawk-app key 映射（HMAC 哈希） | 只有映射中带写权限的 key 能换发写作用域 bt；key 由目标设备 daemon 推送，吊销即失效 |
 | 目标设备 | `remote.writable` | 允许广域网写会话导入素材/新建文件夹（查看者 key 会话与同租户设备会话同受此开关约束）；默认关闭，每请求校验，关闭立即失效 |
-| 目标 daemon | 本地 key 映射执法 + `AccessLevel::RemoteWriter` 端点白名单 | 查看者会话按 key 验证子裁决；app 间会话（同租户设备）按本机 `remote.writable` 裁决（server 声称的 access 不采信）。只放行 GET、查询类 POST、`item/add`（禁止 `path`）、`item/upload` 与 `folder/create`；其余写端点 403 |
+| 目标 daemon | 本地 key 映射执法 + `AccessLevel::RemoteWriter` 端点白名单 | 查看者会话按 key 验证子裁决；app 间会话（同租户设备）按本机 `remote.writable` 裁决（server 声称的 access 不采信）。只放行 GET、查询类 POST、`item/add`（禁止 `path`）、`item/upload`（可附带分类/标签）与 `folder/create`；其余写端点 403 |
 
 局域网写权限 `[web]` 与以上链路完全独立：开启局域网写不会放开广域网写，反之亦然。
 

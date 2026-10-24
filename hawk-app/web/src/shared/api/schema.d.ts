@@ -713,9 +713,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * multipart/form-data 上传：浏览器无文件路径可引用（拖拽/文件选择器拿到的是内容），
+         * multipart/form-data 上传：浏览器/iOS 分享扩展无文件路径可引用（拿到的是内容），
          *     经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/
-         *     skip_existing（可选，内容已在库内时跳过）。
+         *     skip_existing（可选，内容已在库内时跳过）/ tags、categories（可选，可重复出现多次）。
          *     写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）
          */
         post: operations["item_upload"];
@@ -2052,6 +2052,8 @@ export interface components {
         };
         /** @description multipart 表单描述（仅用于 OpenAPI；实现为流式 Multipart 提取） */
         ItemUploadForm: {
+            /** @description 分类（可重复出现多次；缺省不设置） */
+            categories?: string[] | null;
             /**
              * Format: binary
              * @description 文件内容（必需；文件名只取末段防跨目录，扩展名决定类型）
@@ -2063,6 +2065,8 @@ export interface components {
             name?: string | null;
             /** @description 内容已在库内（不含回收站）时跳过 */
             skip_existing?: boolean | null;
+            /** @description 标签（可重复出现多次；缺省不设置） */
+            tags?: string[] | null;
         };
         ItemsAddedPayload: {
             ids: string[];

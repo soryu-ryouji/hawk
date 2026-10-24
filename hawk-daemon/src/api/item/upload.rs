@@ -17,11 +17,15 @@ struct ItemUploadForm {
     name: Option<String>,
     /// 内容已在库内（不含回收站）时跳过
     skip_existing: Option<bool>,
+    /// 标签（可重复出现多次；缺省不设置）
+    tags: Option<Vec<String>>,
+    /// 分类（可重复出现多次；缺省不设置）
+    categories: Option<Vec<String>>,
 }
 
-/// multipart/form-data 上传：浏览器无文件路径可引用（拖拽/文件选择器拿到的是内容），
+/// multipart/form-data 上传：浏览器/iOS 分享扩展无文件路径可引用（拿到的是内容），
 /// 经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/
-/// skip_existing（可选，内容已在库内时跳过）。
+/// skip_existing（可选，内容已在库内时跳过）/ tags、categories（可选，可重复出现多次）。
 /// 写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）
 #[utoipa::path(
     post,
@@ -38,6 +42,10 @@ pub(crate) async fn item_upload(
     let mut name_override: Option<String> = None;
     let mut skip_existing = false;
     let mut file: Option<(String, Vec<u8>)> = None;
+    let mut tags: Vec<String> = Vec::new();
+    let mut categories: Vec<String> = Vec::new();
+    let mut has_tags = false;
+    let mut has_categories = false;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -62,6 +70,27 @@ pub(crate) async fn item_upload(
                 skip_existing = field.text().await.map_err(|e| {
                     ApiError::invalid_param(format!("读取 skip_existing 失败: {e}"))
                 })? == "true";
+            }
+            // 分类/标签：同一字段名重复出现多次（multipart 无数组类型），空串忽略
+            "tags" => {
+                let value = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::invalid_param(format!("读取 tags 失败: {e}")))?;
+                if !value.trim().is_empty() {
+                    tags.push(value);
+                }
+                has_tags = true;
+            }
+            "categories" => {
+                let value = field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::invalid_param(format!("读取 categories 失败: {e}")))?;
+                if !value.trim().is_empty() {
+                    categories.push(value);
+                }
+                has_categories = true;
             }
             "file" => {
                 // 文件名只取最后一段（防跨目录写入），扩展名决定入库类型（与 path 导入同语义：不眼内容）
@@ -162,6 +191,28 @@ pub(crate) async fn item_upload(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::internal("索引失败"))?;
 
+    // 附带的分类/标签写入元数据（与 item/add 同语义：分类名归一化去重，标签原样）
+    if has_tags || has_categories {
+        let normalized_categories = if has_categories {
+            normalize_categories(Some(&categories))?
+        } else {
+            None
+        };
+        let tags = has_tags.then_some(tags);
+        lib.pipeline
+            .submit_metadata(hash.clone(), move |meta| {
+                if let Some(tags) = tags {
+                    meta.tags = tags;
+                }
+                if let Some(categories) = normalized_categories {
+                    meta.categories = categories;
+                }
+            })
+            .await
+            .map_err(ApiError::internal)?;
+    }
+
+    // 元数据可能刚经 submit_metadata 更新，响应以最新投影为准
     let dto = lib
         .index
         .get_dto(&hash)
