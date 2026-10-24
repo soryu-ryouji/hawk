@@ -15,7 +15,7 @@ use crate::core::config::WebSettings;
 use axum::extract::{Extension, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -375,6 +375,7 @@ pub async fn run_discovery_responder(state: SharedState) {
         tracing::warn!("加入局域网发现组播失败（仍尝试广播）: {error}");
     }
     let _ = socket.set_multicast_loop_v4(true);
+    tracing::info!("局域网发现响应器已启动: UDP {DISCOVERY_PORT}（组播 + 广播）");
     let mut buffer = [0u8; 2048];
     loop {
         let Ok((len, peer)) = socket.recv_from(&mut buffer).await else {
@@ -406,16 +407,94 @@ pub async fn run_discovery_responder(state: SharedState) {
 
 /// 探测同网段可配对的 hawk 设备（本机 daemon 发 UDP probe，目标 daemon 单播回复）。
 /// 不走服务器，也不依赖 mDNS 库：组播 + 全局广播覆盖常见家用/办公网段。
+/// 默认路由对应的本机 IPv4。多网卡机器（Wi-Fi + Hyper-V/VPN）不能只 bind 0.0.0.0：
+/// Windows 可能把全局广播从虚拟网卡发出，真实局域网上的设备永远收不到 probe。
+fn default_route_ipv4() -> Option<Ipv4Addr> {
+    // 只做 UDP connect 选路，不发送任何数据；目标不可达也不影响拿到本机出口地址。
+    for target in ["192.0.2.1:80", "8.8.8.8:80", "1.1.1.1:80"] {
+        let Ok(socket) = std::net::UdpSocket::bind(("0.0.0.0", 0)) else {
+            continue;
+        };
+        if socket.connect(target).is_err() {
+            continue;
+        }
+        if let Ok(std::net::SocketAddr::V4(addr)) = socket.local_addr() {
+            let ip = *addr.ip();
+            if !ip.is_unspecified() && !ip.is_loopback() {
+                return Some(ip);
+            }
+        }
+    }
+    None
+}
+
+/// 发现探测目标：组播之外同时发全局广播与常见 /24 子网定向广播。
+/// 组播/VLAN 隔离或 Windows 多网卡选路错误时，定向广播是必要的兜底。
+/// 本机全部可用 IPv4 候选：主机名解析（Windows 会返回所有网卡）∪ 默认路由出口。
+/// 过滤回环、未指定和 link-local，避免把 probe 发到无效接口。
+fn local_ipv4_candidates() -> Vec<Ipv4Addr> {
+    let mut candidates = Vec::new();
+    if let Ok(hostname) = gethostname::gethostname().into_string() {
+        if let Ok(addrs) = (hostname.as_str(), 0).to_socket_addrs() {
+            for addr in addrs {
+                if let SocketAddr::V4(addr) = addr {
+                    let ip = *addr.ip();
+                    if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_link_local() {
+                        candidates.push(ip);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(ip) = default_route_ipv4() {
+        candidates.push(ip);
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn discovery_targets(local_ip: Option<Ipv4Addr>) -> Vec<SocketAddrV4> {
+    let mut targets = vec![
+        SocketAddrV4::new(DISCOVERY_GROUP, DISCOVERY_PORT),
+        SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT),
+    ];
+    if let Some(ip) = local_ip {
+        let [a, b, c, _] = ip.octets();
+        let subnet_broadcast = SocketAddrV4::new(Ipv4Addr::new(a, b, c, 255), DISCOVERY_PORT);
+        if !targets.contains(&subnet_broadcast) {
+            targets.push(subnet_broadcast);
+        }
+    }
+    targets
+}
+
 async fn discover_peers(state: &SharedState) -> Result<Vec<LanPeerDto>, ApiError> {
-    let socket = UdpSocket::bind(("0.0.0.0", 0)).await.map_err(|error| {
-        ApiError::new(
+    let deadline = Instant::now() + DISCOVERY_PROBE_TIMEOUT;
+    let candidates = local_ipv4_candidates();
+    let bind_ips = if candidates.is_empty() {
+        vec![Ipv4Addr::UNSPECIFIED]
+    } else {
+        candidates
+    };
+    let mut sockets = Vec::new();
+    for ip in bind_ips {
+        match UdpSocket::bind(SocketAddrV4::new(ip, 0)).await {
+            Ok(socket) => {
+                let _ = socket.set_broadcast(true);
+                let _ = socket.set_multicast_loop_v4(true);
+                sockets.push((ip, socket));
+            }
+            Err(error) => tracing::warn!("局域网发现网卡 {ip} 绑定失败: {error}"),
+        }
+    }
+    if sockets.is_empty() {
+        return Err(ApiError::new(
             codes::INTERNAL,
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("局域网探测端口分配失败: {error}"),
-        )
-    })?;
-    let _ = socket.set_broadcast(true);
-    let _ = socket.set_multicast_loop_v4(true);
+            "局域网探测端口分配失败".to_string(),
+        ));
+    }
     let probe = serde_json::to_vec(&DiscoveryMessage {
         hawk: 1,
         op: "probe".to_string(),
@@ -426,30 +505,52 @@ async fn discover_peers(state: &SharedState) -> Result<Vec<LanPeerDto>, ApiError
         writable: false,
     })
     .expect("发现 probe 序列化失败");
-    let group = SocketAddrV4::new(DISCOVERY_GROUP, DISCOVERY_PORT);
-    let broadcast = SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT);
-    let _ = socket.send_to(&probe, group).await;
-    let _ = socket.send_to(&probe, broadcast).await;
+    let bind_summary = sockets.iter().map(|(ip, _)| *ip).collect::<Vec<_>>();
+    tracing::info!("局域网发现 probe: bind={bind_summary:?}");
+    // UDP 无重传；每个网卡连续发送三次，降低丢包概率。组播 + 全局广播 + /24 定向广播并行覆盖。
+    for attempt in 0..3 {
+        for (ip, socket) in &sockets {
+            for target in discovery_targets(Some(*ip)) {
+                let _ = socket.send_to(&probe, target).await;
+            }
+        }
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
+    }
 
     let local_id = state
         .library
         .as_ref()
         .map(|lib| local_peer_id(lib))
         .unwrap_or_default();
-    let deadline = Instant::now() + DISCOVERY_PROBE_TIMEOUT;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel::<(Vec<u8>, SocketAddr)>(64);
+    for (ip, socket) in sockets {
+        let sender = sender.clone();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 2048];
+            loop {
+                let now = Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                let Ok(Ok((len, peer))) =
+                    tokio::time::timeout(deadline - now, socket.recv_from(&mut buffer)).await
+                else {
+                    break;
+                };
+                if sender.send((buffer[..len].to_vec(), peer)).await.is_err() {
+                    break;
+                }
+            }
+            tracing::trace!("局域网发现接收任务结束: {ip}");
+        });
+    }
+    drop(sender);
+
     let mut found: std::collections::HashMap<String, LanPeerDto> = std::collections::HashMap::new();
-    let mut buffer = [0u8; 2048];
-    loop {
-        let now = Instant::now();
-        if now >= deadline {
-            break;
-        }
-        let Ok(Ok((len, peer))) =
-            tokio::time::timeout(deadline - now, socket.recv_from(&mut buffer)).await
-        else {
-            break;
-        };
-        let Ok(message) = serde_json::from_slice::<DiscoveryMessage>(&buffer[..len]) else {
+    while let Some((data, peer)) = receiver.recv().await {
+        let Ok(message) = serde_json::from_slice::<DiscoveryMessage>(&data) else {
             continue;
         };
         if message.hawk != 1
@@ -479,6 +580,15 @@ async fn discover_peers(state: &SharedState) -> Result<Vec<LanPeerDto>, ApiError
     }
     let mut peers: Vec<_> = found.into_values().collect();
     peers.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+    if peers.is_empty() {
+        tracing::info!("局域网发现未找到可配对设备（bind={bind_summary:?}）");
+    } else {
+        tracing::info!(
+            "局域网发现 {} 台设备: {:?}",
+            peers.len(),
+            peers.iter().map(|peer| &peer.id).collect::<Vec<_>>()
+        );
+    }
     Ok(peers)
 }
 
@@ -1054,6 +1164,17 @@ mod tests {
         };
         assert_eq!(desired_web_port(&web), None);
         assert_eq!(desired_peer_port(&web), Some(27375));
+    }
+
+    #[test]
+    fn discovery_targets_cover_multicast_global_and_subnet_broadcast() {
+        let targets = discovery_targets(Some(Ipv4Addr::new(192, 168, 31, 100)));
+        assert!(targets.contains(&SocketAddrV4::new(DISCOVERY_GROUP, DISCOVERY_PORT)));
+        assert!(targets.contains(&SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT)));
+        assert!(targets.contains(&SocketAddrV4::new(
+            Ipv4Addr::new(192, 168, 31, 255),
+            DISCOVERY_PORT
+        )));
     }
 
     #[test]
