@@ -12,7 +12,19 @@ npm run dev            # vite + electron 一键起（server 由 electron 拉起�
 npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_TOKEN 可纯浏览器调试
 npm run build          # vue-tsc --noEmit（web）+ tsc --noEmit（electron）+ vite build
 npm run test:unit      # Vitest 单测（web/src/**/*.spec.ts：纯函数/决策逻辑 + 组件渲染）
+npm run hooks:install  # 手动启用版本化 Git hooks（npm install / npm ci 已自动执行）
 ```
+
+## 提交前格式门禁
+
+仓库使用版本化 `.githooks/pre-commit`：`npm install` / `npm ci` 的 `prepare` 会自动把 `core.hooksPath` 指向 `.githooks`；也可手动执行 `npm run hooks:install`。
+
+提交时按暂存文件类型检查：
+
+- 暂存 `web/src` 或 `electron/src` 下的 TS/Vue/CSS：执行 `npm run format:check`
+- 暂存 `hawk-daemon` 或 `hawk-server` 下的 `.rs`：执行 `cargo fmt --check`
+
+检查失败会阻止提交。紧急情况下可用 `git commit --no-verify` 跳过本地 hook，但 CI 门禁仍会执行相同检查。
 
 开发态后端二进制取 `hawk-daemon/target/` 下的构建产物（本机 `release` 优先，其次 `--target` 交叉产物与 `debug`）；
 `HAWK_DAEMON_EXE` 环境变量可指向任意二进制覆盖。

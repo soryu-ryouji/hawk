@@ -1,0 +1,33 @@
+#!/bin/sh
+# 提交前格式门禁：只检查本次暂存涉及的代码，避免无关改动阻塞提交。
+# 前端/主进程复用 CI 的 npm run format:check；Rust 使用 cargo fmt --check。
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -n "$staged" ] || exit 0
+
+if printf '%s\n' "$staged" | grep -qE '^hawk-app/(web/src|electron/src)/.*\.(ts|vue|css)$'; then
+  if [ ! -f hawk-app/node_modules/.bin/prettier ] && [ ! -f hawk-app/node_modules/.bin/prettier.cmd ]; then
+    echo "[pre-commit] 未找到前端依赖，请先执行: cd hawk-app && npm ci" >&2
+    exit 1
+  fi
+  echo "[pre-commit] Prettier 格式检查…"
+  if ! (cd hawk-app && npm run format:check); then
+    echo "[pre-commit] 格式不符合规范，请执行: cd hawk-app && npm run format" >&2
+    exit 1
+  fi
+fi
+
+for crate in hawk-daemon hawk-server; do
+  if printf '%s\n' "$staged" | grep -qE "^$crate/.*\.rs$"; then
+    echo "[pre-commit] cargo fmt 检查 $crate…"
+    if ! (cd "$crate" && cargo fmt --check); then
+      echo "[pre-commit] 格式不符合规范，请执行: cd $crate && cargo fmt" >&2
+      exit 1
+    fi
+  fi
+done
+
+echo "[pre-commit] 格式检查通过"

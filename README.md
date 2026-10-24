@@ -98,6 +98,8 @@ cd hawk
 Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/hawk`，启动器写入 `~/.local/share/applications/hawk.desktop`（图标进 hicolor），GNOME 应用列表搜索 hawk 即可启动；构建产物同时留在 `out/`。
 开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；发版流程见 [docs/release.md](docs/release.md)（CI 定义在 [ci.yml](.github/workflows/ci.yml)）。
 
+提交前格式门禁：首次 `npm install` / `npm ci` 会自动启用版本化 Git hook（`.githooks/pre-commit`）。暂存前端代码时执行 Prettier 检查，暂存 Rust 代码时执行 `cargo fmt --check`；失败会阻止提交。
+
 ## 文档
 
 **总体**
