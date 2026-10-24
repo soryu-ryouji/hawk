@@ -25,6 +25,8 @@ export interface EventHandlers {
   onGlobalFilterChanged(filter: GlobalFilter): void;
   /** 锁集变更（设锁/解除/改密、级联跟随、外部同步重载）：负载为名称快照 */
   onLocksChanged(locks: Locks): void;
+  /** 当前连接的局域网/远端访问权限变化：重新请求 app/info 刷新 viewerMode */
+  onLanAccessChanged(): void;
   onReconnect(): void;
 }
 
@@ -57,6 +59,7 @@ export function connectEvents(handlers: EventHandlers): () => void {
   listen<LibraryInfo>('library.updated', handlers.onLibraryUpdated);
   listen<GlobalFilter>('global_filter.changed', handlers.onGlobalFilterChanged);
   listen<Locks>('locks.changed', handlers.onLocksChanged);
+  listen<{ changed: boolean }>('lan.access.changed', () => handlers.onLanAccessChanged());
 
   return () => source.close();
 }

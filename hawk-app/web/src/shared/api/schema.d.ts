@@ -2033,6 +2033,9 @@ export interface components {
         ItemsUpdatedPayload: {
             items: components["schemas"]["ItemDto"][];
         };
+        LanAccessChangedPayload: {
+            changed: boolean;
+        };
         LanAccessKeyDto: {
             /** Format: int64 */
             created_at_ms: number;
@@ -2370,6 +2373,8 @@ export interface components {
             "items.added": components["schemas"]["ItemsAddedPayload"];
             /** @description item.updated 的批量变体（调色板批量回写等） */
             "items.updated": components["schemas"]["ItemsUpdatedPayload"];
+            /** @description 局域网访问权限变化；客户端收到后重新请求 app/info 刷新 viewerMode */
+            "lan.access.changed": components["schemas"]["LanAccessChangedPayload"];
             /** @description 改库显示名广播，负载为完整 LibraryInfo（含新显示名） */
             "library.updated": components["schemas"]["LibraryInfo"];
             /** @description 锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照 */

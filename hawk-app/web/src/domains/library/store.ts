@@ -277,11 +277,21 @@ export const useLibraryStore = defineStore('library', () => {
    *  remote_writer=远端受限写（导入 + 新建文件夹）。设置面板的 admin 限定分区据此门禁 */
   const access = ref<'admin' | 'viewer' | 'remote_writer'>('admin');
 
-  async function init(validators: ViewValidators) {
-    const info = await api.appInfo();
+  /** app/info 的权限快照就地应用：局域网/远端密钥权限热更新时无需重新 boot。 */
+  function applyAccessInfo(info: { access: 'admin' | 'viewer' | 'remote_writer'; writable: boolean }): void {
     access.value = info.access;
     viewerMode.value = info.access === 'viewer' && !info.writable;
     limitedWrite.value = info.access === 'remote_writer';
+  }
+
+  /** 重新读取当前 token 的 access/writable（SSE lan.access.changed 触发）。 */
+  async function refreshAccess(): Promise<void> {
+    applyAccessInfo(await api.appInfo());
+  }
+
+  async function init(validators: ViewValidators) {
+    const info = await api.appInfo();
+    applyAccessInfo(info);
     library.value = await api.libraryInfo();
 
     // 换库/应用设置重启复用本入口：清掉上一库的会话状态，避免视图/预览/进度指示残留。
@@ -683,6 +693,7 @@ export const useLibraryStore = defineStore('library', () => {
     limitedWrite,
     editLocked,
     access,
+    refreshAccess,
     viewPrefs,
     lockedView,
     setLockedView,
