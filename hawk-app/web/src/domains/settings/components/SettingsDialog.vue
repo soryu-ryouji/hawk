@@ -13,7 +13,7 @@
 //   -webkit-app-region: drag 由 OS 命中测试优先消费，不禁用的话点遮罩盖住的标题栏会变成拖动窗口。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useEventListener } from '@vueuse/core';
-import { hasShell } from '@/shared/lib/platform';
+import { hasShell, isMac } from '@/shared/lib/platform';
 import { useLibraryStore } from '@/domains/library';
 import Icon from '@/shared/ui/Icon.vue';
 import SettingsAppearance from './SettingsAppearance.vue';
@@ -131,10 +131,15 @@ async function saveAdvanced(): Promise<void> {
     <div class="mask" @pointerdown="onMaskDown" @pointerup="onMaskUp">
       <div class="dialog" role="dialog" aria-modal="true" aria-label="设置">
         <header class="dialog-head">
-          <span class="dialog-title">设置</span>
-          <button class="icon-btn" title="关闭 (Esc)" @click="emit('close')">
+          <button v-if="isMac" class="icon-btn dialog-close" title="关闭 (Esc)" @click="emit('close')">
             <Icon name="close" :size="14" />
           </button>
+          <span v-else class="dialog-head-spacer" />
+          <span class="dialog-title">设置</span>
+          <button v-if="!isMac" class="icon-btn dialog-close" title="关闭 (Esc)" @click="emit('close')">
+            <Icon name="close" :size="14" />
+          </button>
+          <span v-else class="dialog-head-spacer" />
         </header>
 
         <div class="dialog-main">
@@ -234,15 +239,25 @@ async function saveAdvanced(): Promise<void> {
 }
 
 .dialog-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: 28px 1fr 28px;
   align-items: center;
-  justify-content: flex-end;
-  padding: 10px 12px 10px 16px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
 
 .dialog-title {
+  text-align: center;
   font-weight: 600;
+}
+
+.dialog-close {
+  justify-self: center;
+}
+
+.dialog-head-spacer {
+  width: 28px;
+  height: 28px;
 }
 
 /* ---- 左导航 + 右内容；窄屏折叠为顶部横向页签 ---- */
