@@ -28,6 +28,7 @@ import {
   lanForget,
   lanSpeedTest,
   lanPairRequests,
+  lanClients,
   lanDecidePairRequest,
 } from './remote';
 import type { LanPeer, RemoteConfig } from './ipc-contract';
@@ -233,6 +234,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.lanPeers, () => lanPeers());
   ipcMain.handle(IPC.lanSpeedTest, () => lanSpeedTest());
   ipcMain.handle(IPC.lanPairRequests, () => lanPairRequests());
+  ipcMain.handle(IPC.lanClients, () => lanClients());
   ipcMain.handle(IPC.lanDecidePairRequest, (_event, requestId: unknown, body: unknown) => {
     if (typeof requestId !== 'string' || !requestId || typeof body !== 'object' || body === null) {
       throw new Error('无效的配对请求');

@@ -1,15 +1,17 @@
 <script setup lang="ts">
 // 局域网互联（仅 Electron）：发现同网段其他 hawk-app，发起配对请求后等待目标端确认。
 // 目标端决定只读/可写权限，源端不经过 hawk-server；token 由主进程保存，本组件只见设备展示信息。
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useLanStore } from '@/domains/lan';
 import { ipcMessage, useConnectionLabel } from '@/domains/remote';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
-import type { LanPeer, LanPeerProfile } from '@/shared/types';
+import type { LanClient, LanPeer, LanPeerProfile } from '@/shared/types';
 
 const store = useLanStore();
 const connection = useConnectionLabel();
+const incomingClients = ref<LanClient[]>([]);
+let clientTimer: ReturnType<typeof setInterval> | null = null;
 const savedMessage = ref<string | null>(null);
 /** 手动配对兜底：广播/组播被访客网络隔离时，直接输入目标 hawk-app 直连地址。 */
 const manualOpen = ref(false);
@@ -36,9 +38,26 @@ watch(
   },
 );
 
+async function refreshClients(): Promise<void> {
+  try {
+    const { clients } = await shell.lanClients();
+    incomingClients.value = clients.filter((client) => client.online);
+  } catch {
+    // 本机 daemon 尚未就绪/正在重绑时静默；下一轮继续。
+  }
+}
+
 onMounted(() => {
   void store.refreshSaved();
   void store.scan();
+  void refreshClients();
+  clientTimer = setInterval(() => void refreshClients(), 4000);
+});
+
+onUnmounted(() => {
+  if (clientTimer) {
+    clearInterval(clientTimer);
+  }
 });
 
 async function requestPair(peer: LanPeer): Promise<boolean> {
@@ -121,6 +140,18 @@ async function forget(peer: LanPeerProfile): Promise<void> {
       <button :disabled="store.connectingId !== null" @click="connection.disconnect()">断开</button>
     </div>
 
+    <div v-if="incomingClients.length > 0" class="group">
+      <div class="group-title">正在连接的设备</div>
+      <div v-for="client in incomingClients" :key="client.key_id" class="peer-row">
+        <div class="peer-main">
+          <div class="peer-name">
+            {{ client.label }}
+            <span class="online-badge">在线</span>
+          </div>
+          <div class="peer-meta">此设备正在通过局域网连接你</div>
+        </div>
+      </div>
+    </div>
     <div v-if="store.error" class="error">{{ store.error }}</div>
     <div v-if="savedMessage" class="ok">{{ savedMessage }}</div>
 
@@ -181,7 +212,14 @@ async function forget(peer: LanPeerProfile): Promise<void> {
   </div>
 </template>
 
-<style src="./settings-shared.css"></style>
+<style src="./settings-shared.css">
+.online-badge {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 500;
+}
+</style>
 
 <style scoped>
 .lan-connect {
@@ -367,5 +405,11 @@ async function forget(peer: LanPeerProfile): Promise<void> {
 }
 .link-btn :deep(svg.open) {
   transform: rotate(180deg);
+}
+.online-badge {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 500;
 }
 </style>

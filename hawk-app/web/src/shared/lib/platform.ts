@@ -90,6 +90,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   lanForget: async () => {},
   lanSpeedTest: async () => ({ latency_ms: 0 }),
   lanPairRequests: async () => ({ requests: [] }),
+  lanClients: async () => ({ clients: [] }),
   lanDecidePairRequest: async () => ({ status: 'expired' }),
   onConnectionChanged: () => () => {},
 };

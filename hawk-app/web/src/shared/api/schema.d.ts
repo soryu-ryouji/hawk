@@ -1507,6 +1507,7 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanPairDecisionDto: {
             data?: {
+                peer?: null | components["schemas"]["LanPairedPeerDto"];
                 status: string;
             };
             status: string;
@@ -1555,9 +1556,12 @@ export interface components {
                 enabled: boolean;
                 error?: string | null;
                 keys: components["schemas"]["LanAccessKeyDto"][];
+                library_name: string;
+                name: string;
                 /** @description hawk-app 直连监听状态 */
                 peer_active: boolean;
                 peer_error?: string | null;
+                peer_id: string;
                 peer_keys: components["schemas"]["LanAccessKeyDto"][];
                 /** Format: int32 */
                 peer_port: number;
@@ -2017,6 +2021,7 @@ export interface components {
         };
         LanClientDto: {
             key_id: string;
+            label: string;
             /** Format: int64 */
             last_seen_ms: number;
             online: boolean;
@@ -2041,11 +2046,13 @@ export interface components {
             write?: boolean;
         };
         LanPairDecisionDto: {
+            peer?: null | components["schemas"]["LanPairedPeerDto"];
             status: string;
         };
         LanPairRequestCreateBody: {
             /** @description 源端设备名（仅用于目标端确认提示） */
             client_name: string;
+            reverse?: null | components["schemas"]["LanReversePeerDto"];
             /** @description 源端希望获得写权限；最终由目标端用户决定 */
             writable?: boolean;
         };
@@ -2073,6 +2080,14 @@ export interface components {
         LanPairRequestsDto: {
             requests: components["schemas"]["LanPairRequestDto"][];
         };
+        LanPairedPeerDto: {
+            id: string;
+            library_name: string;
+            name: string;
+            token: string;
+            url: string;
+            writable: boolean;
+        };
         /** @description 发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。 */
         LanPeerDto: {
             id: string;
@@ -2085,15 +2100,28 @@ export interface components {
         LanPeersDto: {
             peers: components["schemas"]["LanPeerDto"][];
         };
+        /** @description 源端为反向连接提供的设备信息；token 由源端为本机 daemon 新签发。 */
+        LanReversePeerDto: {
+            library_name: string;
+            name: string;
+            peer_id: string;
+            token: string;
+            /** @description 源端候选局域网地址（http://ip:peer_port） */
+            urls: string[];
+            writable?: boolean;
+        };
         LanSettingsDto: {
             /** @description 网站监听状态 */
             active: boolean;
             enabled: boolean;
             error?: string | null;
             keys: components["schemas"]["LanAccessKeyDto"][];
+            library_name: string;
+            name: string;
             /** @description hawk-app 直连监听状态 */
             peer_active: boolean;
             peer_error?: string | null;
+            peer_id: string;
             peer_keys: components["schemas"]["LanAccessKeyDto"][];
             /** Format: int32 */
             peer_port: number;

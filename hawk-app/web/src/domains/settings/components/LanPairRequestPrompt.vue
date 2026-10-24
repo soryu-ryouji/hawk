@@ -2,7 +2,10 @@
 // 目标端全局配对请求提示：轮询本机 daemon，收到请求后由用户选择只读/读写或拒绝。
 import { onMounted, onUnmounted, ref } from 'vue';
 import { hasShell, shell } from '@/shared/lib/platform';
+import { useLanStore } from '@/domains/lan';
 import type { LanPairRequest } from '@/shared/types';
+
+const lanStore = useLanStore();
 
 const current = ref<LanPairRequest | null>(null);
 const busy = ref(false);
@@ -37,6 +40,7 @@ async function decide(allow: boolean, write: boolean): Promise<void> {
   error.value = '';
   try {
     await shell.lanDecidePairRequest(current.value.id, { allow, write });
+    await lanStore.refreshSaved();
     current.value = null;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);

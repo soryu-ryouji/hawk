@@ -2,7 +2,6 @@
 // 目标端共享管理：已授权设备权限/撤销，以及移动端扫码授权。
 // 桌面 hawk-app 互连统一走配对请求；这里不再生成配对码或暴露密钥选择。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
@@ -29,7 +28,7 @@ function isOnline(id: string): boolean {
 
 async function refreshClients(): Promise<void> {
   try {
-    const { clients } = await api.appLanClients();
+    const { clients } = await shell.lanClients();
     clientActivity.value = Object.fromEntries(clients.map((client) => [client.key_id, client]));
   } catch {
     // 目标端可能正在保存/重绑端口；下一轮继续。

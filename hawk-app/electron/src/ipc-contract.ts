@@ -54,6 +54,7 @@ export const IPC = {
   lanForget: 'hawk:lan-forget',
   lanSpeedTest: 'hawk:lan-speed-test',
   lanPairRequests: 'hawk:lan-pair-requests',
+  lanClients: 'hawk:lan-clients',
   lanDecidePairRequest: 'hawk:lan-decide-pair-request',
   // ---- 主进程 → 渲染进程（webContents.send / ipcRenderer.on） ----
   winMaximized: 'hawk:win-maximized',
@@ -171,6 +172,14 @@ export interface LanPairRequest {
   client_name: string;
   requested_write: boolean;
   created_at_ms: number;
+}
+
+/** 当前活跃的局域网直连设备（目标端展示用；不含 token） */
+export interface LanClient {
+  key_id: string;
+  label: string;
+  last_seen_ms: number;
+  online: boolean;
 }
 
 /** 已配对并保存在本机的局域网设备（token 只在主进程配置中，不送往渲染层） */
@@ -383,6 +392,8 @@ export interface HawkShell {
   lanSpeedTest(): Promise<{ latency_ms: number }>;
   /** 本机 daemon 上待确认的自动配对请求（主进程始终连本地 daemon，不受当前浏览目标影响） */
   lanPairRequests(): Promise<{ requests: LanPairRequest[] }>;
+  /** 本机 daemon 当前活跃的局域网直连设备（目标端展示） */
+  lanClients(): Promise<{ clients: LanClient[] }>;
   /** 允许/拒绝自动配对请求，并决定只读或读写 */
   lanDecidePairRequest(requestId: string, body: { allow: boolean; write: boolean }): Promise<{ status: string }>;
   /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。

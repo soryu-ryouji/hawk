@@ -77,6 +77,7 @@ const shell: HawkShell = {
   lanForget: (peerId) => ipcRenderer.invoke(IPC.lanForget, peerId),
   lanSpeedTest: () => ipcRenderer.invoke(IPC.lanSpeedTest),
   lanPairRequests: () => ipcRenderer.invoke(IPC.lanPairRequests),
+  lanClients: () => ipcRenderer.invoke(IPC.lanClients),
   lanDecidePairRequest: (requestId, body) => ipcRenderer.invoke(IPC.lanDecidePairRequest, requestId, cloneForIpc(body)),
   onConnectionChanged: (cb) => subscribe(IPC.connectionChanged, cb),
 };
