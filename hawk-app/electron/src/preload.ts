@@ -3,6 +3,12 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import { IPC, type HawkShell } from './ipc-contract';
 
 /** on* 订阅通道的通用接线：注册监听并返回退订函数 */
+/** contextBridge 与 ipcRenderer 之间只传纯数据，避免 Vue Proxy 触发 DataCloneError。 */
+function cloneForIpc<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** on* 订阅通道的通用接线：注册监听并返回退订函数 */
 function subscribe<T extends unknown[]>(channel: string, cb: (...args: T) => void): () => void {
   const listener = (_event: IpcRendererEvent, ...args: unknown[]): void => cb(...(args as T));
   ipcRenderer.on(channel, listener);
@@ -65,7 +71,7 @@ const shell: HawkShell = {
   remotePatchKey: (id, patch) => ipcRenderer.invoke(IPC.remotePatchKey, id, patch),
   remoteDeleteKey: (id) => ipcRenderer.invoke(IPC.remoteDeleteKey, id),
   lanDiscover: () => ipcRenderer.invoke(IPC.lanDiscover),
-  lanPair: (input) => ipcRenderer.invoke(IPC.lanPair, input),
+  lanPair: (input) => ipcRenderer.invoke(IPC.lanPair, cloneForIpc(input)),
   lanConnect: (peerId) => ipcRenderer.invoke(IPC.lanConnect, peerId),
   lanPeers: () => ipcRenderer.invoke(IPC.lanPeers),
   lanForget: (peerId) => ipcRenderer.invoke(IPC.lanForget, peerId),

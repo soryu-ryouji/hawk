@@ -6,6 +6,18 @@ import { shell } from '@/shared/lib/platform';
 import { ipcMessage } from '@/domains/remote';
 import type { LanPeer, LanPeerProfile } from '@/shared/types';
 
+/** IPC 只接受可 structured-clone 的普通对象；绝不能把 Vue reactive Proxy 传给 Electron。 */
+function ipcPeer(peer: LanPeer): LanPeer {
+  return {
+    id: String(peer.id),
+    name: String(peer.name),
+    library_name: String(peer.library_name),
+    url: String(peer.url),
+    writable: Boolean(peer.writable),
+    requires_pairing: Boolean(peer.requires_pairing),
+  };
+}
+
 export const useLanStore = defineStore('lan', () => {
   const discovered = ref<LanPeer[]>([]);
   const saved = ref<LanPeerProfile[]>([]);
@@ -44,7 +56,7 @@ export const useLanStore = defineStore('lan', () => {
     connectingId.value = peer.id;
     error.value = null;
     try {
-      await shell.lanPair({ peer, code, writable });
+      await shell.lanPair({ peer: ipcPeer(peer), code: String(code), writable: Boolean(writable) });
       await refreshSaved();
       return true;
     } catch (e) {
