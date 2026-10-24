@@ -3,8 +3,30 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
+    @State private var preview = PreviewCoordinator()
 
     var body: some View {
+        ZStack {
+            content
+            // 预览在根层：网格、导航栏、Tab 栏都留在下面，下拉时遮罩淡出即可露出（相册行为）
+            if let session = preview.session {
+                PreviewView(session: session)
+                    .environment(preview)
+                    .zIndex(1)
+            }
+        }
+        .task { app.start() }
+        .onChange(of: scenePhase) { _, phase in
+            app.setBackgrounded(phase != .active)
+            if phase == .active {
+                Task { await app.context?.refreshIfStale() }
+            }
+        }
+        .environment(preview)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
             switch app.phase {
             case .launching:
@@ -19,13 +41,6 @@ struct RootView: View {
                 } else {
                     ConnectView()
                 }
-            }
-        }
-        .task { app.start() }
-        .onChange(of: scenePhase) { _, phase in
-            app.setBackgrounded(phase != .active)
-            if phase == .active {
-                Task { await app.context?.refreshIfStale() }
             }
         }
     }

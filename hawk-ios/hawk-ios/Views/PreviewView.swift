@@ -12,13 +12,17 @@ import UIKit
 ///   - 缩放 1：竖直拖动 = 下拉关闭
 /// 手势轴在拖动开始时锁定一次（水平/竖直），之后不再改判，避免相册里常见的抖动。
 struct PreviewView: View {
-    @Environment(\.dismiss) private var dismiss
-    let context: LibraryContext
-    let store: GridStore
+    /// 根层 overlay 的呈现协调器（关闭时清空 session）
+    @Environment(PreviewCoordinator.self) private var coordinator
+    let session: PreviewCoordinator.Session
+    private var context: LibraryContext { session.context }
+    private var store: GridStore { session.store }
     @State private var index: Int
     @State private var showsChrome = true
     @State private var showsInfo: Bool
     @State private var detail: Item?
+    /// hero 进度：0 = 停在源格子，1 = 全屏（入场/回场都由它驱动）
+    @State private var present: CGFloat = 0
     @State private var exporter = MediaExporter()
 
     // 缩放（只作用于当前页）
@@ -41,16 +45,17 @@ struct PreviewView: View {
     private static let maxScale: CGFloat = 4
     private static let doubleTapScale: CGFloat = 2.5
     /// 轮播翻页阈值（视口宽度比例）；放大后钉边拖动的阈值略高，避免轻微越界就翻页
+    /// 下拉关闭阈值：位移到这条线即判定关闭（scrim 同时刚好完全透明）
+    private static let dismissDistance: CGFloat = 160
     private static let pageDistanceRatio: CGFloat = 0.18
     private static let edgePageDistanceRatio: CGFloat = 0.3
     /// 甩动翻页阈值（预测位移占视口宽度的比例）：位移不够时靠速度也能翻，接近相册
     private static let pageFlickRatio: CGFloat = 0.45
 
-    init(context: LibraryContext, store: GridStore, startIndex: Int, showsInfo: Bool = false) {
-        self.context = context
-        self.store = store
-        _index = State(initialValue: startIndex)
-        _showsInfo = State(initialValue: showsInfo)
+    init(session: PreviewCoordinator.Session) {
+        self.session = session
+        _index = State(initialValue: session.index)
+        _showsInfo = State(initialValue: session.showsInfo)
     }
 
     private var items: [SkeletonItem] { store.displayItems }
@@ -60,29 +65,59 @@ struct PreviewView: View {
         return ItemKey.displayName(item: item, detail: detail)
     }
 
+    /// 下拉进度（0…1）：按关闭阈值归一，手感和「拖到底 = 背景全透明」对齐
+    private var dismissProgress: CGFloat {
+        min(1, max(0, dismissTranslation / Self.dismissDistance))
+    }
+
+    private var scrimOpacity: Double { Double(present) * (1 - Double(dismissProgress)) }
+
+    /// chrome 比 scrim 收得更快：开始下拉就淡出，避免文字压在半透明背景上
+    private var chromeOpacity: Double { Double(present) * Double(max(0, 1 - dismissProgress * 2)) }
+
+    /// 内容随下拉收向缩略图：到关闭阈值时缩到 60%（按需求调大「往回收」的幅度）
+    private var contentScale: CGFloat { 1 - 0.4 * dismissProgress }
+
+    /// 缩小的同时逐渐带上卡片圆角，和缩略图形态衔接
+    private var contentCornerRadius: CGFloat { 14 * dismissProgress }
+
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
+            let hero = heroTransform(size: size, origin: proxy.frame(in: .global).origin)
             ZStack {
+                // 背后的网格是真实视图（预览在根层 overlay，不是 modal）：scrim 渐隐即可露出
                 Color.black
-                    .opacity(1 - Double(min(dismissTranslation / 900, 0.4)))
+                    .opacity(scrimOpacity)
                     .ignoresSafeArea()
 
                 carousel(size: size)
-                    .offset(y: dismissTranslation)
-                    .scaleEffect(1 - min(dismissTranslation / 1600, 0.12))
+                    // 宽高分别插值：终点必然与格子逐像素重合（单一比例缩放遇到留白/方向不一致就会偏）
+                    .scaleEffect(
+                        x: hero.scaleX * contentScale, y: hero.scaleY * contentScale
+                    )
+                    .clipShape(
+                        RoundedRectangle(
+                            cornerRadius: contentCornerRadius, style: .continuous)
+                    )
+                    .offset(
+                        x: hero.offset.width,
+                        y: hero.offset.height + dismissTranslation
+                    )
 
                 if showsChrome {
                     VStack(spacing: 0) {
                         topBar
                         Spacer(minLength: 0)
                     }
+                    .opacity(chromeOpacity)
                     .transition(.opacity)
                 }
             }
             .overlay(alignment: .bottom) {
                 if showsChrome {
                     bottomBar
+                        .opacity(chromeOpacity)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -96,7 +131,9 @@ struct PreviewView: View {
                 withAnimation(.easeInOut(duration: 0.2)) { showsChrome.toggle() }
             }
         }
-        .background(Color.black)
+        .onAppear {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) { present = 1 }
+        }
         .statusBarHidden(!showsChrome)
         .task(id: index) { await loadDetail(for: index) }
         .task {
@@ -123,6 +160,41 @@ struct PreviewView: View {
             Button("好") { exporter.clearError() }
         } message: {
             Text(exporter.error ?? "")
+        }
+    }
+
+    /// hero 转场：present=1 时是全屏原始状态；present=0 时把当前图片缩到源格子大小并平移过去。
+    /// 无源格子（右键菜单打开）退化为轻微缩放淡入。
+    /// hero 落点：宽高分别插值到源格子矩形，避免「单一比例缩放 + 留白」算偏；
+    /// origin 用 overlay 的全局原点，抵消安全区造成的坐标偏移（否则会整体偏状态栏高度）。
+    private func heroTransform(size: CGSize, origin: CGPoint)
+        -> (scaleX: CGFloat, scaleY: CGFloat, offset: CGSize)
+    {
+        guard let frame = session.sourceFrame, frame.width > 1, size.width > 1,
+            let item = store.item(at: index)
+        else {
+            let shrink = 1 - 0.08 * (1 - present)
+            return (shrink, shrink, .zero)
+        }
+        let fitted = fittedSize(for: item.aspectRatio, in: size)
+        let targetX = frame.width / max(fitted.width, 1)
+        let targetY = frame.height / max(fitted.height, 1)
+        let scaleX = targetX + (1 - targetX) * present
+        let scaleY = targetY + (1 - targetY) * present
+        let dx = (frame.midX - (origin.x + size.width / 2)) * (1 - present)
+        let dy = (frame.midY - (origin.y + size.height / 2)) * (1 - present)
+        return (scaleX, scaleY, CGSize(width: dx, height: dy))
+    }
+
+    /// 关闭：hero 收向源格子 + 遮罩淡出。
+    /// 用无过冲的缓出（弹簧会在末尾回弹，落点对不上格子时会「顿一下再跳」），
+    /// 动画时长结束后再清空 session——缩略图恢复必须晚于最后一帧，否则会闪一下。
+    private func close() {
+        withAnimation(.easeOut(duration: 0.3)) {
+            present = 0
+            dismissTranslation = 0
+        } completion: {
+            coordinator.close()
         }
     }
 
@@ -232,10 +304,11 @@ struct PreviewView: View {
 
     private func endDismiss(_ value: DragGesture.Value) {
         let predicted = value.predictedEndTranslation.height
-        if dismissTranslation > 130 || predicted > 280 {
-            dismiss()
+        if dismissTranslation > Self.dismissDistance || predicted > 280 {
+            // 背景此刻已几乎透明：hero 收向源格子，等于相册里松手回位
+            close()
         } else {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) { dismissTranslation = 0 }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { dismissTranslation = 0 }
         }
     }
 
@@ -447,7 +520,7 @@ struct PreviewView: View {
     private var topBar: some View {
         HStack(alignment: .center, spacing: 12) {
             Button {
-                dismiss()
+                close()
             } label: {
                 Image(systemName: "xmark")
                     .font(.body.weight(.semibold))

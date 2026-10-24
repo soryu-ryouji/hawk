@@ -7,13 +7,12 @@ struct GridScreen: View {
     private let isRoot: Bool
 
     @State private var store: GridStore
-    @State private var previewTarget: PreviewTarget?
+    @Environment(PreviewCoordinator.self) private var preview
     @State private var showFilter = false
     @State private var showSettings = false
     @State private var exporter = MediaExporter()
     @AppStorage("hawk.ios.thumbSize") private var thumbSize = 0.0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Namespace private var zoomNamespace
 
     /// 未手工调过（0）时按设备给默认目标行高：手机约三列，iPad 更宽松
     private var targetHeight: CGFloat {
@@ -62,9 +61,8 @@ struct GridScreen: View {
                     context: context,
                     store: store,
                     targetHeight: targetHeight,
-                    zoomNamespace: zoomNamespace,
-                    onOpen: { openPreview($0) },
-                    onInfo: { openPreview($0, showsInfo: true) },
+                    onOpen: { openPreview($0, sourceFrame: $1) },
+                    onInfo: { openPreview($0, showsInfo: true, sourceFrame: nil) },
                     onSave: { item in Task { await exporter.save(item, api: context.api) } },
                     onShare: { item, name in
                         Task { await exporter.share(item, name: name, api: context.api) }
@@ -92,13 +90,6 @@ struct GridScreen: View {
         .sheet(item: Binding(get: { exporter.shareFile }, set: { exporter.shareFile = $0 })) {
             ShareSheet(url: $0.url)
         }
-        .fullScreenCover(item: $previewTarget) { target in
-            PreviewView(
-                context: context, store: store, startIndex: target.index,
-                showsInfo: target.showsInfo
-            )
-            .navigationTransition(.zoom(sourceID: target.key, in: zoomNamespace))
-        }
         .hawkToast($exporter.toast)
         .alert(
             "操作失败",
@@ -117,8 +108,8 @@ struct GridScreen: View {
                 // 本地冒烟：布局就绪后自动打开首图预览，用于检查预览与缩放布局
                 let env = ProcessInfo.processInfo.environment
                 let previewMode = env["HAWK_IOS_DEBUG_PREVIEW"]
-                if previewTarget == nil, previewMode != nil, !store.displayItems.isEmpty {
-                    openPreview(0, showsInfo: previewMode == "info")
+                if previewMode != nil, !store.displayItems.isEmpty {
+                    openPreview(0, showsInfo: previewMode == "info", sourceFrame: nil)
                 }
                 if env["HAWK_IOS_DEBUG_SHEET"] == "filter" { showFilter = true }
                 if env["HAWK_IOS_DEBUG_SHEET"] == "settings" { showSettings = true }
@@ -202,9 +193,10 @@ struct GridScreen: View {
 
     // MARK: - 动作
 
-    private func openPreview(_ index: Int, showsInfo: Bool = false) {
-        guard let item = store.item(at: index) else { return }
-        previewTarget = PreviewTarget(index: index, key: item.key, showsInfo: showsInfo)
+    private func openPreview(_ index: Int, showsInfo: Bool = false, sourceFrame: CGRect?) {
+        preview.open(
+            context: context, store: store, index: index, showsInfo: showsInfo,
+            sourceFrame: sourceFrame)
     }
 
     private func copyName(_ name: String) {
@@ -212,14 +204,6 @@ struct GridScreen: View {
         Haptics.success()
         exporter.toast = "已复制名称"
     }
-}
-
-struct PreviewTarget: Identifiable {
-    let index: Int
-    let key: String
-    var showsInfo: Bool = false
-
-    var id: String { "\(index)-\(key)" }
 }
 
 private struct ActiveFilterBar: View {

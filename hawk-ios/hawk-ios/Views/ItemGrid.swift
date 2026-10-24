@@ -69,82 +69,104 @@ struct ItemCard: View {
     let thumbnailURL: URL?
     let starCount: Int
     let metaHeight: CGFloat
-    var onOpen: () -> Void = {}
+    /// 预览打开期间隐藏缩略图：回位落进空格子（相册行为），否则图片会叠在同一个缩略图上
+    var thumbHidden: Bool = false
+    var onOpen: (CGRect?) -> Void = { _ in }
     var onSave: () -> Void = {}
     var onShare: () -> Void = {}
     var onInfo: () -> Void = {}
     var onCopyName: () -> Void = {}
 
     private var thumbnail: some View {
-        RemoteImage(url: thumbnailURL)
-            .frame(width: cell.width, height: cell.height)
-            .overlay(alignment: .topTrailing) {
-                if starCount > 0 {
-                    Label("\(starCount)", systemImage: "star.fill")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(HawkTheme.star)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 3)
-                        .background(.black.opacity(0.45), in: Capsule())
-                        .padding(5)
-                        .accessibilityLabel("\(starCount) 星")
-                }
+        Group {
+            if thumbHidden {
+                Rectangle().fill(HawkTheme.bg2)
+            } else {
+                RemoteImage(url: thumbnailURL)
             }
+        }
+        .frame(width: cell.width, height: cell.height)
+        .overlay(alignment: .topTrailing) {
+            if !thumbHidden, starCount > 0 {
+                Label("\(starCount)", systemImage: "star.fill")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(HawkTheme.star)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.45), in: Capsule())
+                    .padding(5)
+                    .accessibilityLabel("\(starCount) 星")
+            }
+        }
     }
 
     var body: some View {
-        Button(action: onOpen) {
-            VStack(spacing: 0) {
-                thumbnail
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.caption)
-                        .foregroundStyle(HawkTheme.fg0)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(Format.dimensions(width: cell.item.width, height: cell.item.height))
-                        .font(.caption2)
-                        .foregroundStyle(HawkTheme.fg1)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .frame(width: cell.width, height: metaHeight, alignment: .topLeading)
-                .background(HawkTheme.bg2)
+        GeometryReader { proxy in
+            Button {
+                // hero 的落点是缩略图区域（卡片上半部），不是含标题区的整卡
+                let card = proxy.frame(in: .global)
+                onOpen(CGRect(x: card.minX, y: card.minY, width: cell.width, height: cell.height))
+            } label: {
+                cardBody
             }
-            .frame(width: cell.width, height: cell.height + metaHeight)
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(title)，\(cell.item.width) × \(cell.item.height)")
+            .accessibilityHint("打开预览")
+            .contextMenu {
+                Button("打开预览", systemImage: "arrow.up.left.and.arrow.down.right") {
+                    onOpen(nil)
+                }
+                Button("保存到相册", systemImage: "square.and.arrow.down", action: onSave)
+                Button("分享原图", systemImage: "square.and.arrow.up", action: onShare)
+                Button("素材信息", systemImage: "info.circle", action: onInfo)
+                Divider()
+                Button("复制名称", systemImage: "doc.on.doc", action: onCopyName)
+            } preview: {
+                RemoteImage(url: thumbnailURL)
+                    .frame(width: min(cell.width * 1.6, 320), height: min(cell.height * 1.6, 320))
+            }
+        }
+        .frame(width: cell.width, height: cell.height + metaHeight)
+    }
+
+    private var cardBody: some View {
+        VStack(spacing: 0) {
+            thumbnail
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(HawkTheme.fg0)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(Format.dimensions(width: cell.item.width, height: cell.item.height))
+                    .font(.caption2)
+                    .foregroundStyle(HawkTheme.fg1)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .frame(width: cell.width, height: metaHeight, alignment: .topLeading)
             .background(HawkTheme.bg2)
-            .clipShape(RoundedRectangle(cornerRadius: HawkTheme.cardRadius, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: HawkTheme.cardRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title)，\(cell.item.width) × \(cell.item.height)")
-        .accessibilityHint("打开预览")
-        .contextMenu {
-            Button("打开预览", systemImage: "arrow.up.left.and.arrow.down.right", action: onOpen)
-            Button("保存到相册", systemImage: "square.and.arrow.down", action: onSave)
-            Button("分享原图", systemImage: "square.and.arrow.up", action: onShare)
-            Button("素材信息", systemImage: "info.circle", action: onInfo)
-            Divider()
-            Button("复制名称", systemImage: "doc.on.doc", action: onCopyName)
-        } preview: {
-            RemoteImage(url: thumbnailURL)
-                .frame(width: min(cell.width * 1.6, 320), height: min(cell.height * 1.6, 320))
-        }
+        .frame(width: cell.width, height: cell.height + metaHeight)
+        .background(HawkTheme.bg2)
+        .clipShape(RoundedRectangle(cornerRadius: HawkTheme.cardRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: HawkTheme.cardRadius, style: .continuous))
     }
 }
 
 struct ItemGridView: View {
+    @Environment(PreviewCoordinator.self) private var preview
     let context: LibraryContext
     let store: GridStore
     let targetHeight: CGFloat
-    let zoomNamespace: Namespace.ID
-    var onOpen: (Int) -> Void
+    /// 打开预览：带上格子当前的全屏矩形（hero 转场起点）
+    var onOpen: (Int, CGRect?) -> Void
     var onInfo: (Int) -> Void
     var onSave: (SkeletonItem) -> Void
     var onShare: (SkeletonItem, String) -> Void
@@ -175,7 +197,9 @@ struct ItemGridView: View {
                                     thumbnailURL: context.api.thumbnailURL(id: cell.item.id),
                                     starCount: store.star(for: cell.item),
                                     metaHeight: metaHeight,
-                                    onOpen: { onOpen(cell.index) },
+                                    thumbHidden: preview.hidesSource
+                                        && preview.session?.key == cell.item.key,
+                                    onOpen: { frame in onOpen(cell.index, frame) },
                                     onSave: { onSave(cell.item) },
                                     onShare: {
                                         onShare(
@@ -188,7 +212,6 @@ struct ItemGridView: View {
                                             ItemKey.displayName(item: cell.item, detail: detail))
                                     }
                                 )
-                                .matchedTransitionSource(id: cell.item.key, in: zoomNamespace)
                             }
                             Spacer(minLength: 0)
                         }
