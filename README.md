@@ -32,6 +32,7 @@
 - 2.0 版本
   - [x] 实现 hawk remote 协议，支持广域网素材库查看（自托管 hawk-server + QUIC 直连/中继 + 网页版）与插件远程保存（受限写）
   - [x] NAT 穿透栈：传输层为 iroh（打洞/中继/路径迁移/映射保活内建），中继为服务端可选组件（内嵌 iroh-relay，token 准入）
+  - [x] hawk-app 局域网互联：同网段设备发现 + 一次性配对码直连，免服务器
 - 3.0 版本
   - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
   - [ ] 实现 iOS 原生客户端（iPhone / iPad 查看，局域网直连 + 广域网查看，接入 Apple 智能生态），见 [iOS 客户端设计](docs/frontend/ios-app.md)。只读浏览（M1）已可用，离线索引与 Apple 智能待补
@@ -126,6 +127,7 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 - [远程访问设计](docs/backend/remote-access.md)：控制面/中继/网页版宿主、受限广域网写、连接模型与安全模型
 - [远程访问部署](docs/backend/remote-deployment.md)：编译输出、nginx 反代与 TLS
 - [远程访问协议](docs/backend/remote-protocol.md)：设备/心跳/会话/中继的接口契约
+- [局域网 hawk-app 互联](docs/backend/lan-interconnect.md)：UDP 发现、一次性配对码、连接模型与安全边界
 
 ## 许可证
 

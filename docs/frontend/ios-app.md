@@ -53,21 +53,21 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 
 | 形态 | 数据通路 | 鉴权 | 适用 | 代价 |
 | -- | -- | -- | -- | -- |
-| 局域网直连 | App → `http://<局域网IP>:<web.port>` → daemon | `[web]` 的 viewer / write token | 同网段，带宽最大、时延最低 | 需手动填地址或扫码；iOS 首次弹「本地网络」权限 |
+| 局域网直连 | App → `http://<局域网IP>:<web.port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） | 同网段，带宽最大、时延最低 | 需手动填地址或扫码；iOS 首次弹「本地网络」权限；扫码收到多个候选地址时自动逐个探测 |
 | 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | service-key + hawk-app key 换 `bt` | 任意网络，零后端改动 | 素材流量过自建服务器（带宽 + 服务端可见明文） |
 | 设备内 iroh 直连（M4 起评估） | App 内 iroh endpoint → 打洞/中继 → 目标 daemon | 手机作为池内设备注册（endpoint_id / 心跳 / WSS `session.request`） | 大量浏览、AI 高频小查询 | 需引入 iroh-ffi、实现 B 侧隧道 + HTTP/1.1 over 双向流、会话状态机 |
 
 三点约定：
 
 1. **M1–M3 只做前两条**，它们合起来已覆盖「在家里看」与「在外面看」。iroh 直连是带宽优化，不是功能前提。
-2. iOS 访问局域网明文 HTTP：需实测 ATS 行为（IP 字面量通常不受 ATS 约束），但**必须**在 Info.plist 声明 `NSLocalNetworkUsageDescription`；若将来支持 mDNS 发现，需加 `NSBonjourServices`（daemon 目前不广播 mDNS，需另行添加）。
+2. iOS 访问局域网明文 HTTP：需实测 ATS 行为（IP 字面量通常不受 ATS 约束），但**必须**在 Info.plist 声明 `NSLocalNetworkUsageDescription`；若将来支持 mDNS 发现，需加 `NSBonjourServices`（daemon 目前为桌面 hawk-app 互联提供 UDP 发现，未接入移动端，也不广播 mDNS）。
 3. App 进入后台后 QUIC/TCP 连接会被挂起，回前台一律重连；不申请后台模式。
 
 ## 鉴权与配对
 
-- 长期凭证存 Keychain（accessibility：`kSecAttrAccessibleAfterFirstUnlock`）：局域网 token、service-key、hawk-app key。`bt` 是短生命周期令牌，可只在内存持有（当前实现不落盘，重启重新登录）
+- 长期凭证存 Keychain（accessibility：`kSecAttrAccessibleAfterFirstUnlock`）：局域网直连 token、service-key、hawk-app key。`bt` 是短生命周期令牌，可只在内存持有（当前实现不落盘，重启重新登录）
 - 配对主路径是**桌面端出二维码**，App 扫码导入（桌面端设置面板已提供入口）：
-  - 局域网：`{ "v": 1, "kind": "lan", "url": "http://192.168.1.5:27372", "token": "..." }`
+  - 局域网：`{ "v": 1, "kind": "lan", "url": "http://192.168.1.5:27375", "urls": ["http://192.168.1.5:27375", "http://10.0.0.5:27375"], "token": "..." }`
   - 广域网：`{ "v": 1, "kind": "remote", "url": "https://hawk.example.com", "service_key": "hs_...", "key": "hk_..." }`
   - `v` 为载荷版本，解码失败给「二维码版本不支持，请升级」而不是静默失败
 - 手动输入地址 + token 作为兜底（无桌面端可用时）
@@ -155,7 +155,7 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 - **设备选择**：hawk-app key 在服务端只映射一台设备，`login` 返回的 `device_id` 即目标，客户端直接 `POST /viewer/session`。服务端的 `/viewer/devices` 仍服务于网页版选择器。
 - **会话重建**：每次连接都调用 `POST /viewer/session`（服务端对存活会话复用、对死会话重新撮合），不依赖 `GET /viewer/session`，避免旧隧道失效后卡死。
 - **实时性**：M1 不订阅 SSE；用下拉刷新与回前台节流刷新收敛。SSE 归入 M2 增量同步。
-- **bt 不落盘**：服务端换发的浏览器令牌只保存在内存，App 重启后重新走 `gate`/`login`；局域网 token、service-key 与 hawk-app key 存 Keychain。
+- **bt 不落盘**：服务端换发的浏览器令牌只保存在内存，App 重启后重新走 `gate`/`login`；局域网直连 token、service-key 与 hawk-app key 存 Keychain。
 - **bt 过期/401**：当前不自动重换，错误横幅提示后由用户「重新连接」重新走 `gate`/`login`；自动重换待补。
 - **二次启动/切换库秒开**：尚未做磁盘首屏快照缓存；当前在线首屏已先出（分页 + 占位），但每次启动/切库仍重新认证并重取首屏。
 - **导航**：未做桌面端的前进/后退栈；文件夹层级靠侧栏树与「返回上级」菜单。
@@ -176,9 +176,9 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 | 位置 | 改动 | 阶段 |
 | ---- | ---- | ---- |
 | `hawk-ios/` | 新增原生客户端（本文件的设计对象） | M0 |
-| `hawk-app`（桌面端） | 生成配对二维码（局域网 token / 广域网 service-key + hawk-app key），设置面板加入口 | M1 已完成 |
+| `hawk-app`（桌面端） | 生成配对二维码（局域网直连 token / 广域网 service-key + hawk-app key），设置面板加入口 | M1 已完成 |
 | `README.md` / `docs/tech-stack.md` / `docs/architecture.md` | 移动端条目与仓库结构 | 已随本文件更新 |
-| `hawk-daemon` | 可选：mDNS 广播（自动发现局域网库）；批量元数据端点（仅当全量分页成为瓶颈） | M2 / 视情况 |
+| `hawk-daemon` | 已提供桌面 hawk-app 的 UDP 局域网发现；移动端 mDNS/Bonjour 自动发现与批量元数据端点（仅当全量分页成为瓶颈） | M2 / 视情况 |
 | `.github/workflows/ci.yml` | 暂不纳入 iOS 构建（需要 macOS runner + 签名）；本地提交前跑 `xcodebuild build` | — |
 
 ## 风险

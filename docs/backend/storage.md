@@ -186,20 +186,31 @@ ignore = ["node_modules", "*.tmp"]
 periodic = true
 interval = 900
 
-# 局域网 web 查看（默认只读；桌面端设置面板读写,按库隔离,多库可同时开启互不冲突）
+# 局域网网站访问（桌面端设置面板读写，按库隔离，多库可同时开启互不冲突）
 [web]
-enabled = false      # 开启后 server 追加监听 0.0.0.0:<port>,并托管前端页面
+enabled = false      # 开启后监听 0.0.0.0:<port>，托管网页并只接受网站密钥
 port = 27372
-token = ""           # 访问 token;浏览器打开 http://<电脑IP>:<port> 后输入
-writable = false     # 允许写:开启后查看端可上传/删除/修改(与桌面端同等操作),请谨慎授权
-separate_write_token = false  # 拆分只读/可写 token:token 降为只读,write_token 可写(不拆分时 token 读写兼具)
-write_token = ""     # 拆分模式下的可写 token
+peer_port = 27375    # hawk-app 直连 API 端口，只接受 peer_keys，不托管网页
+# 网站访问密钥（浏览器/网页版；可多把，各自独立读/写权限）
+# [[web.keys]]
+# id = "key_a1b2"
+# label = "我的手机"
+# token = "<random-token>"
+# write = false
+# created_at_ms = 1760000000000
+# hawk-app 直连密钥（不依赖 enabled）
+# [[web.peer_keys]]
+# id = "peer_a1b2"
+# label = "另一台 hawk-app"
+# token = "<random-token>"
+# write = false
+# created_at_ms = 1760000000000
 
 ```
 
 `extensions`（可见扩展名白名单，空 = 不过滤）保存即热生效：变化触发一次强制重扫，白名单外的既有条目从索引移除（文件本身不动，非侵入式），新加入白名单的后缀随即入库；回收站不参与过滤（已回收的素材仍可见、可恢复）。入库入口（`item/add`、`item/upload`）对白名单外的格式直接拒绝。
 
-`[web]` 保存即热生效（文件监听 Reload → LAN 监听 supervisor 运行期重绑，见 server-code-structure.md 的 api/lan.rs；仅 token/writable 等权限字段变化不重绑连接——每请求经 current().web 判定）。token 能力分三档：`writable = false` 时一律只读（写端点 `403 READ_ONLY`，放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）；`writable = true` 且未拆分时 `token` 读写兼具；拆分时 `token` 只读、`write_token` 可写（仅在 `writable = true` 且拆分时才是合法 token）。web 端写能力由 `app/info` 的 `writable` 字段按当前 token 告知前端。
+`[web]` 保存即热生效（文件监听 Reload → LAN 监听 supervisor 运行期重绑，见 server-code-structure.md 的 api/lan.rs；仅新增/删除密钥或调整权限时不重绑连接——每请求经 `current().web` 判定）。LAN 使用两个独立监听：网站端口在「`enabled=true` 且有 `keys`」时启动；hawk-app 端口在存在 `peer_keys` 时启动。两者互不影响，网站关闭不影响 hawk-app 直连。网站密钥 `keys` 只在 `enabled=true` 时可用于浏览器；hawk-app 直连密钥 `peer_keys` 不受该开关影响。每把访问密钥独立 `write`：false 一律只读（写端点 `403 READ_ONLY`，放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）；true 允许上传/删除/修改等写操作。web 端写能力由 `app/info` 的 `writable` 字段按当前密钥告知前端。
 
 远程访问接入配置不在库内：应用级 `~/.config/hawk/remote.toml`（daemon 读写，跨素材库共享），设备身份在 `~/.config/hawk/remote/identity.json`，访问密钥（hawk-app key）验证子在同目录 `keys.json`（sha256 存储，0600，明文不落盘）。`writable` 与 `[web]` 完全独立：它只对经 hawk-server 隧道进入的会话生效，且仅开放导入（`item/add` base64 或 `item/upload` multipart）与 `folder/create`（删除/更新/管理仍 403）。写会话的授权分两路：查看者会话要求带写权限的访问密钥（daemon 按本地 key 映射执法）；同租户设备会话（app 浏览远端库）按本机 `writable` 总开关放行；`writable` 的变更每请求读取当前配置，关闭后立即失效，不重启信令。独立运行 daemon 时不传 `--remote-config`，回退到库内 `.hawk/remote.toml`。
 

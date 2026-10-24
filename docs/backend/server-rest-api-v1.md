@@ -46,6 +46,9 @@
 | GET  | `/api/v1/app/connection` | 当前连接描述符（本地库 / 正在浏览的远端库），生态客户端跟随目标用（admin 限定） |
 | GET  | `/api/v1/app/lan` | 读取局域网 web 查看配置与运行状态（admin 限定） |
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
+| POST | `/api/v1/app/lan/pair-code` | 生成一次性 hawk-app 局域网配对码（admin 限定） |
+| GET  | `/api/v1/app/lan/peers` | 探测同网段可配对的 hawk-app（admin 限定） |
+| POST | `/api/v1/app/lan/pair` | 局域网配对（免 Bearer，以目标端一次性配对码准入） |
 
 ### startup
 
@@ -134,7 +137,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "exec_path": "C:/Tools/hawk/hawk-daemon.exe",
     "access": "admin",
     "writable": true,
-    "lan": { "active": true, "port": 27372 }
+    "lan": { "active": true, "port": 27372, "peer_active": true, "peer_port": 27375 }
   }
 }
 ```
@@ -210,7 +213,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `GET /api/v1/app/lan`
 
-读取局域网 web 查看配置（`.hawk/config.toml` 的 `[web]` 段）与监听运行状态。**仅 admin 可用**：viewer（含可写）返回 403 `READ_ONLY`——响应含 token 字段，只读 viewer 拿到 write_token 即提权。
+读取局域网网站访问配置（`.hawk/config.toml` 的 `[web]` 段）与监听运行状态。**仅 admin 可用**：viewer 返回 403 `READ_ONLY`——响应含每把访问密钥的完整 token，只读 viewer 拿到可写密钥即提权。
 
 #### 响应
 
@@ -220,11 +223,15 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
   "data": {
     "enabled": true,
     "port": 27372,
-    "token": "<viewer-token>",
-    "writable": false,
-    "separate_write_token": false,
-    "write_token": "",
-    "active": true
+    "peer_port": 27375,
+    "keys": [
+      { "id": "key_a1b2", "label": "我的手机", "token": "<access-key>", "write": false, "created_at_ms": 1760000000000 }
+    ],
+    "peer_keys": [
+      { "id": "peer_c3d4", "label": "另一台 hawk-app", "token": "<peer-key>", "write": false, "created_at_ms": 1760000000000 }
+    ],
+    "active": true,
+    "peer_active": true
   }
 }
 ```
@@ -235,7 +242,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `PUT /api/v1/app/lan`
 
-写回 `[web]` 配置并热重绑局域网监听：daemon 权威写配置（toml_edit 就地改键值，文件其余段与注释保留，原子写）→ 唤醒 supervisor 重绑 → 等待本轮收敛后返回。绑定失败（端口占用等）**自动回滚旧配置**并返回错误，不重启进程、不断 SSE。仅 admin 可用。
+写回 `[web]` 配置并热重绑局域网监听：daemon 权威写配置（toml_edit 就地改写 `[web] enabled/port`、`[[web.keys]]` 与 `[[web.peer_keys]]`，原子写）→ 唤醒 supervisor 重绑 → 等待本轮收敛后返回。绑定失败（端口占用等）**自动回滚旧配置**并返回错误，不重启进程、不断 SSE。仅 admin 可用。
 
 #### 请求
 
@@ -243,14 +250,84 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 {
   "enabled": true,
   "port": 27372,
-  "token": "<viewer-token>",
-  "writable": false,
-  "separate_write_token": false,
-  "write_token": ""
+  "peer_port": 27375,
+  "keys": [
+    { "id": "key_a1b2", "label": "我的手机", "token": "<access-key>", "write": false, "created_at_ms": 1760000000000 }
+  ],
+  "peer_keys": [
+    { "id": "peer_c3d4", "label": "另一台 hawk-app", "token": "<peer-key>", "write": false, "created_at_ms": 1760000000000 }
+  ]
 }
 ```
 
-校验（`INVALID_PARAM`）：`enabled` 时 `token` 必填；`writable` 且 `separate_write_token` 时 `write_token` 必填；端口 1–65535。响应同 GET（收敛后的最新状态）。
+校验（`INVALID_PARAM`）：`port` 与 `peer_port` 均须为 1–65535 且不能相同；`enabled=true` 时至少一把网站访问密钥；同类密钥最多 32 把，id/token 全局非空且不重复。网站端口只接受 `keys` 并托管网页；直连端口只接受 `peer_keys` 且不提供静态页面，网站关闭时仍独立监听。若目标端口被其它进程占用，daemon 会从该端口向后自动选择最近的可用端口并在响应中返回实际值，避免用户手动排障。密钥 `write=true` 才允许上传/删除/修改等写操作。响应同 GET（收敛后的最新状态）。
+
+### 局域网互联（不经 hawk-server）
+
+daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + 广播），只在存在 `[web].peer_keys` 时应答，公告的是 `peer_port`。发现公告只含设备名、库名、端口与写权限提示，**不含任何 token**。
+
+`POST /api/v1/app/lan/pair-code`（admin 限定）
+
+为当前库指定一把 hawk-app 直连密钥（`[web].peer_keys`）并生成 8 位一次性配对码，覆盖旧码，TTL 300 秒。配对码兑换时精确返回该密钥；网站访问是否开启不影响此接口。
+
+请求：
+
+```json
+{ "key_id": "key_a1b2" }
+```
+
+响应：
+
+```json
+{ "status": "success", "data": { "code": "ABCD2345", "expires_in_seconds": 300 } }
+```
+
+`GET /api/v1/app/lan/peers`（admin 限定）
+
+向同网段发送 UDP probe 并收集目标 daemon 的公告，最多等待约 900ms：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "peers": [
+      {
+        "id": "9f2c1a7b4e8d0356",
+        "name": "studio-mac",
+        "library_name": "设计素材库",
+        "url": "http://192.168.1.5:27372",
+        "writable": true,
+        "requires_pairing": true
+      }
+    ]
+  }
+}
+```
+
+`POST /api/v1/app/lan/pair`
+
+目标端 LAN 端点，**不需 Bearer token**：以 `pair-code` 生成的一次性码作为准入凭证。仅当目标 `[web].enabled=true` 时可用；配对码单次消费，过期/错误返回 401 `UNAUTHORIZED`。
+
+```json
+{ "code": "ABCD2345", "writable": true, "client_name": "living-room-pc" }
+```
+
+返回配对码绑定的访问密钥 token（若密钥已不存在则优先按请求权限降级；响应中的 `writable` 为密钥实际权限）：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "token": "<viewer-or-write-token>",
+    "writable": true,
+    "peer_id": "9f2c1a7b4e8d0356",
+    "name": "studio-mac",
+    "library_name": "设计素材库"
+  }
+}
+```
+
+配对成功后，源端 app 保存 `url + token`，后续所有素材请求直接走目标 LAN HTTP API；这不改变远程访问协议，也不依赖 hawk-server。
 
 ## remote
 
@@ -896,7 +973,7 @@ Item 对象，并附带 `already_existed` / `skipped` 标志：
 
 `POST /api/v1/item/upload`
 
-multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路径可引用（拖拽/文件选择器拿到的是 File 内容），经本端点以内容入库。写权限：admin 恒可用；viewer 需 `[web].writable`（否则 403 `READ_ONLY`）。
+multipart/form-data 上传新 item（web 端用）：浏览器无本地文件路径可引用（拖拽/文件选择器拿到的是 File 内容），经本端点以内容入库。写权限：admin 恒可用；viewer 需对应访问密钥 `write=true`（否则 403 `READ_ONLY`）。
 
 #### 请求（multipart/form-data）
 

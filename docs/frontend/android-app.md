@@ -42,7 +42,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 
 | 形态 | 数据通路 | 鉴权 |
 | -- | -- | -- |
-| 局域网直连 | App → `http://<局域网IP>:<web.port>` → daemon | `[web]` 的 viewer / write token |
+| 局域网直连 | App → `http://<局域网IP>:<web.port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） |
 | 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | service-key + hawk-app key 换 `bt` |
 
 约定：
@@ -54,7 +54,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 ## 鉴权与配对
 
 - 配对载荷与 iOS 相同：
-  - 局域网 `{ "v": 1, "kind": "lan", "url": "...", "token": "..." }`
+  - 局域网 `{ "v": 1, "kind": "lan", "url": "...", "urls": ["..."], "token": "..." }`
   - 广域网 `{ "v": 1, "kind": "remote", "url": "...", "service_key": "...", "key": "..." }`
 - `v` 不等于 1 时提示升级，不静默失败
 - 扫码（CameraX + ZXing）为主路径，手动输入地址 + token 兜底；局域网支持直接粘贴带 `?token=` 的查看器地址
@@ -134,7 +134,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 | `README.md` / `docs/tech-stack.md` / `docs/architecture.md` | 移动端条目与仓库结构 | 已随本文件更新 |
 | `tools/build-android.ps1` / `build-android.sh` | 一键构建 APK 并归置到 `out/`（默认 debug，`--release` 产出未签名包） | M1 已完成 |
 | `docs/release.md` / CI | Android 构建暂不进 CI（同 iOS，需 SDK + 签名），本地提交前跑构建/lint/单测 | — |
-| `hawk-daemon` | 可选：mDNS 自动发现、批量元数据端点（与 iOS 同步收益，M2 评估） | M2 |
+| `hawk-daemon` | 已提供桌面 hawk-app 的 UDP 局域网发现；移动端自动发现与批量元数据端点（与 iOS 同步收益，M2 评估） | M2 |
 
 ## 风险
 
