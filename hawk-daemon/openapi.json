@@ -944,35 +944,6 @@
         ],
         "type": "object"
       },
-      "Envelope_LanPairCodeDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "code": {
-                "type": "string"
-              },
-              "expires_in_seconds": {
-                "format": "int64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "code",
-              "expires_in_seconds"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
       "Envelope_LanPairDecisionDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -1093,45 +1064,6 @@
             },
             "required": [
               "requests"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_LanPairResultDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "library_name": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "peer_id": {
-                "type": "string"
-              },
-              "token": {
-                "type": "string"
-              },
-              "writable": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "token",
-              "writable",
-              "peer_id",
-              "name",
-              "library_name"
             ],
             "type": "object"
           },
@@ -2871,55 +2803,6 @@
         ],
         "type": "object"
       },
-      "LanPairBody": {
-        "properties": {
-          "client_name": {
-            "description": "源端设备名（日志/后续审计用，不参与鉴权）",
-            "type": "string"
-          },
-          "code": {
-            "description": "目标端设置面板展示的一次性配对码",
-            "type": "string"
-          },
-          "writable": {
-            "description": "源端希望获得的写权限；目标端 [web].writable=false 时自动降级为只读",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "code"
-        ],
-        "type": "object"
-      },
-      "LanPairCodeBody": {
-        "properties": {
-          "key_id": {
-            "description": "目标设备上选定的访问密钥 id；用于让 pairing code 精确绑定权限",
-            "type": "string"
-          }
-        },
-        "required": [
-          "key_id"
-        ],
-        "type": "object"
-      },
-      "LanPairCodeDto": {
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "expires_in_seconds": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "code",
-          "expires_in_seconds"
-        ],
-        "type": "object"
-      },
       "LanPairDecisionBody": {
         "properties": {
           "allow": {
@@ -3056,33 +2939,6 @@
         },
         "required": [
           "requests"
-        ],
-        "type": "object"
-      },
-      "LanPairResultDto": {
-        "properties": {
-          "library_name": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "peer_id": {
-            "type": "string"
-          },
-          "token": {
-            "type": "string"
-          },
-          "writable": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "token",
-          "writable",
-          "peer_id",
-          "name",
-          "library_name"
         ],
         "type": "object"
       },
@@ -4285,71 +4141,6 @@
           }
         },
         "summary": "写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误",
-        "tags": [
-          "app"
-        ]
-      }
-    },
-    "/api/v1/app/lan/pair": {
-      "post": {
-        "operationId": "lan_pair",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LanPairBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_LanPairResultDto"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "401": {
-            "description": "配对码无效或已过期"
-          }
-        },
-        "summary": "局域网配对（目标端 LAN 端点，免 Bearer token：以一次性配对码作为准入凭证）。\n只返回 viewer/write token 与展示信息；配对码一次性消费，过期后失效。",
-        "tags": [
-          "app"
-        ]
-      }
-    },
-    "/api/v1/app/lan/pair-code": {
-      "post": {
-        "operationId": "create_lan_pair_code",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LanPairCodeBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_LanPairCodeDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "生成一次性局域网配对码（admin 限定）：目标端 haw-app 设置面板读取并展示。",
         "tags": [
           "app"
         ]

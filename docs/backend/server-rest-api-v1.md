@@ -46,9 +46,7 @@
 | GET  | `/api/v1/app/connection` | 当前连接描述符（本地库 / 正在浏览的远端库），生态客户端跟随目标用（admin 限定） |
 | GET  | `/api/v1/app/lan` | 读取局域网 web 查看配置与运行状态（admin 限定） |
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
-| POST | `/api/v1/app/lan/pair-code` | 生成一次性 hawk-app 局域网配对码（admin 限定） |
 | GET  | `/api/v1/app/lan/peers` | 探测同网段可配对的 hawk-app（admin 限定） |
-| POST | `/api/v1/app/lan/pair` | 局域网配对（免 Bearer，以目标端一次性配对码准入） |
 
 ### startup
 
@@ -265,69 +263,6 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 ### 局域网互联（不经 hawk-server）
 
 daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + 广播），只在存在 `[web].peer_keys` 时应答，公告的是 `peer_port`。发现公告只含设备名、库名、端口与写权限提示，**不含任何 token**。
-
-`POST /api/v1/app/lan/pair-code`（admin 限定）
-
-为当前库指定一把 hawk-app 直连密钥（`[web].peer_keys`）并生成 8 位一次性配对码，覆盖旧码，TTL 300 秒。配对码兑换时精确返回该密钥；网站访问是否开启不影响此接口。
-
-请求：
-
-```json
-{ "key_id": "key_a1b2" }
-```
-
-响应：
-
-```json
-{ "status": "success", "data": { "code": "ABCD2345", "expires_in_seconds": 300 } }
-```
-
-`GET /api/v1/app/lan/peers`（admin 限定）
-
-向同网段发送 UDP probe 并收集目标 daemon 的公告，最多等待约 900ms：
-
-```json
-{
-  "status": "success",
-  "data": {
-    "peers": [
-      {
-        "id": "9f2c1a7b4e8d0356",
-        "name": "studio-mac",
-        "library_name": "设计素材库",
-        "url": "http://192.168.1.5:27372",
-        "writable": true,
-        "requires_pairing": true
-      }
-    ]
-  }
-}
-```
-
-`POST /api/v1/app/lan/pair`
-
-目标端 LAN 端点，**不需 Bearer token**：以 `pair-code` 生成的一次性码作为准入凭证。仅当目标 `[web].enabled=true` 时可用；配对码单次消费，过期/错误返回 401 `UNAUTHORIZED`。
-
-```json
-{ "code": "ABCD2345", "writable": true, "client_name": "living-room-pc" }
-```
-
-返回配对码绑定的访问密钥 token（若密钥已不存在则优先按请求权限降级；响应中的 `writable` 为密钥实际权限）：
-
-```json
-{
-  "status": "success",
-  "data": {
-    "token": "<viewer-or-write-token>",
-    "writable": true,
-    "peer_id": "9f2c1a7b4e8d0356",
-    "name": "studio-mac",
-    "library_name": "设计素材库"
-  }
-}
-```
-
-配对成功后，源端 app 保存 `url + token`，后续所有素材请求直接走目标 LAN HTTP API；这不改变远程访问协议，也不依赖 hawk-server。
 
 ## remote
 

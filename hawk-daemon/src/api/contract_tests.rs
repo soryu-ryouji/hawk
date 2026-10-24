@@ -133,10 +133,8 @@ const WRITE_SCRIPT: &[(&str, &str)] = &[
 /// 只校验路由存在的端点：app/lan PUT 需运行中的 LAN supervisor 收敛，不在测试内成功调用
 const ROUTE_ONLY: &[(&str, &str)] = &[
     ("PUT", "/api/v1/app/lan"),
-    // 局域网发现/配对依赖真实网卡与目标设备；配对码生成要求 [web] 已启用
+    // 局域网发现依赖真实网卡与目标设备；自动配对请求/轮询由双端串联验证
     ("GET", "/api/v1/app/lan/peers"),
-    ("POST", "/api/v1/app/lan/pair-code"),
-    // 自动配对请求/轮询由真实双端串联验证（见 put_lan_auto_pair_request_flow）
     ("POST", "/api/v1/app/lan/pair-requests"),
     ("GET", "/api/v1/app/lan/pair-requests"),
     ("GET", "/api/v1/app/lan/pair-requests/{request_id}"),
@@ -144,8 +142,6 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
         "POST",
         "/api/v1/app/lan/pair-requests/{request_id}/decision",
     ),
-    // 目标端以一次性配对码准入（免 Bearer），契约测试不预置目标配对码
-    ("POST", "/api/v1/app/lan/pair"),
     // 依赖存活的 hawk-server（转发调用），契约环境无服务端可连
     ("GET", "/api/v1/remote/devices"),
     ("POST", "/api/v1/remote/session"),
@@ -326,102 +322,6 @@ impl TestApp {
             .expect("upsert 被防抖延迟（mtime 已拨回，不应发生）");
         result.item.id
     }
-}
-
-/// 局域网配对：admin 生成一次性码，目标端点消费一次后即失效；请求写权限时按 [web] 配置授予。
-#[tokio::test]
-async fn lan_pair_code_is_one_time_and_grants_configured_access() {
-    let app = test_app("lan-pair");
-    let lib = app.state.library.as_ref().unwrap();
-    lib.config
-        .update_web(&WebSettings {
-            // 网站访问关闭，仅 hawk-app 直连密钥存在：配对码仍必须可用
-            enabled: false,
-            port: 27372,
-            peer_port: 27375,
-            keys: vec![],
-            peer_keys: vec![
-                WebAccessKey {
-                    id: "read".into(),
-                    label: "只读".into(),
-                    token: "lan-read".into(),
-                    write: false,
-                    created_at_ms: 0,
-                },
-                WebAccessKey {
-                    id: "write".into(),
-                    label: "可写".into(),
-                    token: "lan-write".into(),
-                    write: true,
-                    created_at_ms: 0,
-                },
-            ],
-        })
-        .unwrap();
-    app.state.lan.mark_peer_active_for_test(27375);
-    let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
-
-    let (status, body) = call_json(
-        &peer_router,
-        "POST",
-        "/api/v1/app/lan/pair-code",
-        Some(json!({ "key_id": "read" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let code = serde_json::from_slice::<Value>(&body).unwrap()["data"]["code"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    // 配对码绑定只读密钥：即使源端请求写，也只能拿到只读权限
-    let pair_body = json!({ "code": code, "writable": true, "client_name": "contract-peer" });
-    let (status, body) = call_json(
-        &peer_router,
-        "POST",
-        "/api/v1/app/lan/pair",
-        Some(pair_body.clone()),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let data = serde_json::from_slice::<Value>(&body).unwrap();
-    assert_eq!(data["data"]["token"], "lan-read");
-    assert_eq!(data["data"]["writable"], false);
-
-    // 一次性：同一码第二次必须失败
-    let (status, _) = call_json(
-        &peer_router,
-        "POST",
-        "/api/v1/app/lan/pair",
-        Some(pair_body),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-
-    // 绑定可写密钥时返回写权限
-    let (status, body) = call_json(
-        &peer_router,
-        "POST",
-        "/api/v1/app/lan/pair-code",
-        Some(json!({ "key_id": "write" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let code = serde_json::from_slice::<Value>(&body).unwrap()["data"]["code"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let (status, body) = call_json(
-        &peer_router,
-        "POST",
-        "/api/v1/app/lan/pair",
-        Some(json!({ "code": code, "writable": false, "client_name": "contract-peer" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let data = serde_json::from_slice::<Value>(&body).unwrap();
-    assert_eq!(data["data"]["token"], "lan-write");
-    assert_eq!(data["data"]["writable"], true);
 }
 
 /// 网站端口与 hawk-app 直连端口必须各自只接受本命名空间的密钥。

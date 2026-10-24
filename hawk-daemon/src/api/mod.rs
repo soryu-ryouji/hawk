@@ -267,18 +267,15 @@ async fn auth(
     if path == "/api/v1/app/token" && req.method() == axum::http::Method::GET {
         return next.run(req).await;
     }
-    // 局域网配对免 Bearer：
-    // - 桌面自动配对：源端创建请求、随后用随机 request_id 轮询目标端决策；
-    // - 旧配对码：移动端/二维码仍以一次性码作为准入凭证。
+    // 局域网自动配对免 Bearer：源端创建请求、随后用随机 request_id 轮询目标端决策。
     // 这些 handler 内部都限定只在 hawk-app 直连端口（Peer）生效。
-    let is_pair_code = path == "/api/v1/app/lan/pair" && req.method() == axum::http::Method::POST;
     let is_pair_request_create =
         path == "/api/v1/app/lan/pair-requests" && req.method() == axum::http::Method::POST;
     let is_pair_request_status = req.method() == axum::http::Method::GET
         && path
             .strip_prefix("/api/v1/app/lan/pair-requests/")
             .is_some_and(|id| !id.is_empty() && !id.contains('/'));
-    if is_pair_code || is_pair_request_create || is_pair_request_status {
+    if is_pair_request_create || is_pair_request_status {
         return next.run(req).await;
     }
 

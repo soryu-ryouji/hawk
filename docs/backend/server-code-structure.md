@@ -50,7 +50,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 
 | 文件 | 职责 |
 | ---- | ---- |
-| `src/api/lan.rs` | LAN 双监听 supervisor（各自期望态收敛）：网站端口（`enabled && keys`）与 hawk-app 直连端口（`peer_keys` 非空）分别持有一个 0.0.0.0 监听，启动即按现有配置绑定时，并同时监听 ConfigChanged 与 2s 周期 tick 做自愈收敛；仅密钥新增/删除/权限变化为 no-op（每请求经 `current().web` 校验天然热）；单个端口绑定失败只影响自身状态（app/info 暴露），不崩进程。同文件还承载 hawk-app 局域网发现/配对：UDP 27374 probe/announce（有直连密钥时启停）、一次性 8 位配对码状态、`app/lan/peers`、`app/lan/pair-code` 与免 Bearer 的 `app/lan/pair`（仅直连端口可访问，配对码准入后按 `[web].peer_keys` 权限返回直连密钥） |
+| `src/api/lan.rs` | LAN 双监听 supervisor（网站端口与 hawk-app 直连端口独立收敛，启动即绑定并每 2s 自愈）；hawk-app 端口常驻以接收自动配对请求；发现响应器通过 UDP 27374 应答 probe；自动配对请求保存在内存中，目标端用户确认后动态创建独立 peer key；权限变更通过 SSE lan.access.changed 通知已连接客户端。 |
 | `src/api/mod.rs` | `AppState` 共享状态与 `build_router`；中间件链 cors → auth → ready_gate（axum 中后注册的 layer 在外层，请求依次经过）；auth 双 token：admin（进程 token，全权限）与 viewer（局域网访问密钥；路由器按 `ListenerMode` 分端口校验：网站端口只认 `keys` 且仅 `enabled=true`，直连端口只认 `peer_keys`；每把密钥独立 `write` 权限，`AccessLevel::Viewer { writable }` 每请求按 `current().web` 查找判定，热生效），`/api/v1/events`、`item/thumbnail`、`item/file` 三个无法设请求头的 GET 端点放行 `?token=`；ready_gate 未就绪时 `/api/*` 一律 503 `NOT_READY`，仅放行 `app/startup`；全局 DefaultBodyLimit 256MB（upload 整文件与 replace 的 base64 超出 axum 默认 2MB）；最外层 CatchPanicLayer 把 handler panic 转 500 |
 | `src/api/envelope.rs` | 统一成功/错误信封、错误码常量、`ApiError` → 响应的 `IntoResponse`；`JsonBody` 提取器把 JSON 解析失败统一转为 `INVALID_PARAM` |
 | `src/api/app.rs` | `health`（就绪前 503，无需 token）、`startup`（starting 带进度 / ready / error）、`status`（积压快照 + 观测字段：最近扫描统计 / 队列溢出 / 配置错误 / SSE lag 次数，轮询型客户端用）、`info`（版本/平台/可执行路径/access 级别）、`token`（token 发现：Host 限定环回地址防 DNS rebinding，响应不带 CORS 头） |

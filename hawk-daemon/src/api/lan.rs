@@ -30,23 +30,10 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 pub const DISCOVERY_PORT: u16 = 27374;
 const DISCOVERY_GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 72, 75);
 const DISCOVERY_PROBE_TIMEOUT: Duration = Duration::from_millis(900);
-const PAIRING_CODE_TTL: Duration = Duration::from_secs(300);
-const PAIRING_CODE_LEN: usize = 8;
 /// 桌面端自动配对请求的等待窗口；超时后目标端自动丢弃，无需人工清理。
 const PAIR_REQUEST_TTL: Duration = Duration::from_secs(90);
 /// 待处理请求上限，避免局域网内脚本刷爆目标端提示框。
 const MAX_PENDING_PAIR_REQUESTS: usize = 8;
-/// 去掉易混淆字符（0/O、1/I）的 32 字母表：8 位约 40 bit 熵，配 5 分钟 TTL 足以抵御在线穷举。
-const PAIRING_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-#[derive(Clone)]
-struct PairingTicket {
-    code: String,
-    expires_at: Instant,
-    /// 生成时选定的访问密钥：pair 时精确返回该密钥，而不是按权限猜一把
-    key_id: Option<String>,
-}
-
 /// 自动配对请求的状态机。
 #[derive(Clone)]
 enum PairRequestState {
@@ -86,9 +73,6 @@ pub struct LanSupervisor {
     /// (收敛代数, 两个监听器状态)：每轮收敛完成（含 no-op 轮）代数 +1，
     /// PUT app/lan 据此等待「本轮」结果，避免读到 wake 之前的旧状态误判
     status: Mutex<(u64, LanStatuses)>,
-    /// 一次性局域网配对码：由本机 admin 生成，源端随后在目标机 LAN 端点出示。
-    /// 只在内存中保存，5 分钟过期；成功后立即消费，不能重放。
-    pairing: Mutex<Option<PairingTicket>>,
     /// 桌面端自动配对请求：源端创建后等待目标端用户确认；只在内存中保存。
     pair_requests: Mutex<Vec<PairRequestTicket>>,
     /// 两个监听器与发现任务的实际持有者；后台 run 与 PUT 的直接 reconcile 共用同一把锁。
@@ -100,48 +84,9 @@ impl LanSupervisor {
         Arc::new(LanSupervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new((0, LanStatuses::default())),
-            pairing: Mutex::new(None),
             pair_requests: Mutex::new(Vec::new()),
             listeners: tokio::sync::Mutex::new(LanListeners::default()),
         })
-    }
-
-    /// 生成本轮配对码（覆盖旧码）。目标端设置面板展示给另一台 hawk-app 输入。
-    fn issue_pairing_code(&self, key_id: Option<String>) -> LanPairCodeDto {
-        let mut bytes = [0u8; PAIRING_CODE_LEN];
-        getrandom::fill(&mut bytes).expect("生成局域网配对码失败");
-        let code: String = bytes
-            .iter()
-            .map(|b| PAIRING_ALPHABET[*b as usize % PAIRING_ALPHABET.len()] as char)
-            .collect();
-        *self.pairing.lock().unwrap() = Some(PairingTicket {
-            code: code.clone(),
-            expires_at: Instant::now() + PAIRING_CODE_TTL,
-            key_id,
-        });
-        LanPairCodeDto {
-            code,
-            expires_in_seconds: PAIRING_CODE_TTL.as_secs(),
-        }
-    }
-
-    /// 校验并消费配对码（大小写不敏感、单次使用、过期即失效）。
-    /// 返回生成时绑定的访问密钥 id（可能为空，调用方按权限降级）。
-    fn consume_pairing_code(&self, candidate: &str) -> Option<Option<String>> {
-        let candidate = candidate.trim().to_ascii_uppercase();
-        let mut guard = self.pairing.lock().unwrap();
-        let ticket = guard.as_ref()?;
-        if Instant::now() >= ticket.expires_at
-            || !constant_time_eq(ticket.code.as_bytes(), candidate.as_bytes())
-        {
-            if Instant::now() >= ticket.expires_at {
-                *guard = None;
-            }
-            return None;
-        }
-        let key_id = ticket.key_id.clone();
-        *guard = None;
-        Some(key_id)
     }
 
     /// 创建/复用一条待确认的自动配对请求。同一设备名已有 pending 请求时直接复用，
@@ -435,17 +380,6 @@ fn unix_ms_now() -> u64 {
         .as_millis() as u64
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 /// 局域网公告：只暴露展示所需字段。token 不广播，配对成功后才由目标端返回。
 #[derive(Serialize, Deserialize)]
 struct DiscoveryMessage {
@@ -735,8 +669,6 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(list_lan_pair_requests))
         .routes(routes!(get_lan_pair_request_status))
         .routes(routes!(decide_lan_pair_request))
-        .routes(routes!(create_lan_pair_code))
-        .routes(routes!(lan_pair))
 }
 
 /// 发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。
@@ -1024,39 +956,6 @@ async fn decide_lan_pair_request(
     })))
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
-struct LanPairCodeDto {
-    code: String,
-    expires_in_seconds: u64,
-}
-
-#[derive(Deserialize, utoipa::ToSchema)]
-struct LanPairCodeBody {
-    /// 目标设备上选定的访问密钥 id；用于让 pairing code 精确绑定权限
-    key_id: String,
-}
-
-#[derive(Deserialize, utoipa::ToSchema)]
-struct LanPairBody {
-    /// 目标端设置面板展示的一次性配对码
-    code: String,
-    /// 源端希望获得的写权限；目标端 [web].writable=false 时自动降级为只读
-    #[serde(default)]
-    writable: bool,
-    /// 源端设备名（日志/后续审计用，不参与鉴权）
-    #[serde(default)]
-    client_name: String,
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-struct LanPairResultDto {
-    token: String,
-    writable: bool,
-    peer_id: String,
-    name: String,
-    library_name: String,
-}
-
 /// 探测局域网内可配对的 hawk 设备（admin 限定；源端 app 经本机 daemon 调用）。
 #[utoipa::path(
     get,
@@ -1071,138 +970,6 @@ async fn discover_lan_peers(
     require_admin(&access)?;
     Ok(Json(Envelope::ok(LanPeersDto {
         peers: discover_peers(&state).await?,
-    })))
-}
-
-/// 生成一次性局域网配对码（admin 限定）：目标端 haw-app 设置面板读取并展示。
-#[utoipa::path(
-    post,
-    path = "/api/v1/app/lan/pair-code",
-    tags = ["app"],
-    request_body = LanPairCodeBody,
-    responses((status = 200, description = "OK", body = Envelope<LanPairCodeDto>))
-)]
-async fn create_lan_pair_code(
-    State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
-    Json(body): Json<LanPairCodeBody>,
-) -> Result<Json<Envelope<LanPairCodeDto>>, ApiError> {
-    require_admin(&access)?;
-    let lib = state.require_library()?;
-    let web = lib.config.current().web;
-    if web.peer_keys.is_empty() {
-        return Err(ApiError::new(
-            codes::INVALID_PARAM,
-            axum::http::StatusCode::BAD_REQUEST,
-            "请先创建 hawk-app 直连访问密钥",
-        ));
-    }
-    let key_id = body.key_id.trim();
-    if !web.peer_keys.iter().any(|key| key.id == key_id) {
-        return Err(ApiError::new(
-            codes::INVALID_PARAM,
-            axum::http::StatusCode::BAD_REQUEST,
-            "指定的直连访问密钥不存在",
-        ));
-    }
-    let lan = state.lan.snapshot();
-    if !lan.peer.active || lan.peer.port != Some(web.peer_port) {
-        return Err(ApiError::new(
-            codes::INTERNAL,
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            lan.peer
-                .error
-                .unwrap_or_else(|| "hawk-app 直连监听尚未就绪".to_string()),
-        ));
-    }
-    Ok(Json(Envelope::ok(
-        state.lan.issue_pairing_code(Some(key_id.to_string())),
-    )))
-}
-
-/// 取配对码绑定的访问密钥；若绑定 id 已不存在（例如在生成后删除了密钥），按请求权限降级。
-fn select_pair_token(
-    web: &WebSettings,
-    key_id: Option<&str>,
-    request_writable: bool,
-) -> Option<(String, bool)> {
-    if let Some(key_id) = key_id {
-        if let Some(key) = web.peer_keys.iter().find(|key| key.id == key_id) {
-            return Some((key.token.clone(), key.write));
-        }
-    }
-    let preferred = web
-        .peer_keys
-        .iter()
-        .find(|key| key.write == request_writable)
-        .or_else(|| web.peer_keys.first())?;
-    Some((preferred.token.clone(), preferred.write))
-}
-
-/// 局域网配对（目标端 LAN 端点，免 Bearer token：以一次性配对码作为准入凭证）。
-/// 只返回 viewer/write token 与展示信息；配对码一次性消费，过期后失效。
-#[utoipa::path(
-    post,
-    path = "/api/v1/app/lan/pair",
-    tags = ["app"],
-    request_body = LanPairBody,
-    responses(
-        (status = 200, description = "OK", body = Envelope<LanPairResultDto>),
-        (status = 401, description = "配对码无效或已过期")
-    )
-)]
-async fn lan_pair(
-    State(state): State<SharedState>,
-    Extension(mode): Extension<super::ListenerMode>,
-    Json(body): Json<LanPairBody>,
-) -> Result<Json<Envelope<LanPairResultDto>>, ApiError> {
-    if mode != super::ListenerMode::Peer {
-        return Err(ApiError::new(
-            codes::INVALID_PARAM,
-            axum::http::StatusCode::NOT_FOUND,
-            "配对端点仅在 hawk-app 直连端口可用",
-        ));
-    }
-    let lib = state.require_library()?;
-    let web = lib.config.current().web;
-    if web.peer_keys.is_empty() {
-        return Err(ApiError::new(
-            codes::INVALID_PARAM,
-            axum::http::StatusCode::BAD_REQUEST,
-            "没有可用的 hawk-app 直连访问密钥",
-        ));
-    }
-    let Some(key_id) = state.lan.consume_pairing_code(&body.code) else {
-        return Err(ApiError::new(
-            codes::UNAUTHORIZED,
-            axum::http::StatusCode::UNAUTHORIZED,
-            "配对码无效或已过期，请在目标设备重新生成",
-        ));
-    };
-    let Some((token, writable)) = select_pair_token(&web, key_id.as_deref(), body.writable) else {
-        return Err(ApiError::new(
-            codes::INVALID_PARAM,
-            axum::http::StatusCode::BAD_REQUEST,
-            "目标设备未配置可用的访问密钥",
-        ));
-    };
-    let client_name = body.client_name.trim();
-    tracing::info!(
-        "局域网配对成功: {}请求 writable={}，授予 writable={}",
-        if client_name.is_empty() {
-            "未知设备 ".to_string()
-        } else {
-            format!("{client_name} ")
-        },
-        body.writable,
-        writable
-    );
-    Ok(Json(Envelope::ok(LanPairResultDto {
-        token,
-        writable,
-        peer_id: local_peer_id(lib),
-        name: gethostname::gethostname().to_string_lossy().to_string(),
-        library_name: local_library_name(lib),
     })))
 }
 
@@ -1591,78 +1358,5 @@ mod tests {
             Ipv4Addr::new(192, 168, 31, 255),
             DISCOVERY_PORT
         )));
-    }
-
-    #[test]
-    fn pairing_code_is_single_use_and_case_insensitive() {
-        let supervisor = LanSupervisor::new();
-        let issued = supervisor.issue_pairing_code(Some("key_a".into()));
-        assert_eq!(issued.code.len(), PAIRING_CODE_LEN);
-        assert!(issued.expires_in_seconds > 0);
-        assert_eq!(
-            supervisor.consume_pairing_code(&issued.code.to_ascii_lowercase()),
-            Some(Some("key_a".into()))
-        );
-        assert_eq!(supervisor.consume_pairing_code(&issued.code), None);
-    }
-
-    #[test]
-    fn pair_token_downgrades_when_target_disables_write() {
-        let web = WebSettings {
-            enabled: false,
-            port: 27372,
-            peer_port: 27375,
-            keys: vec![],
-            peer_keys: vec![
-                crate::core::config::WebAccessKey {
-                    id: "read".into(),
-                    label: "只读".into(),
-                    token: "read".into(),
-                    write: false,
-                    created_at_ms: 0,
-                },
-                crate::core::config::WebAccessKey {
-                    id: "write".into(),
-                    label: "可写".into(),
-                    token: "write".into(),
-                    write: true,
-                    created_at_ms: 0,
-                },
-            ],
-        };
-        assert_eq!(
-            select_pair_token(&web, Some("write"), false),
-            Some(("write".into(), true))
-        );
-        assert_eq!(
-            select_pair_token(&web, None, false),
-            Some(("read".into(), false))
-        );
-        assert_eq!(
-            select_pair_token(&web, None, true),
-            Some(("write".into(), true))
-        );
-    }
-
-    #[test]
-    fn pair_token_uses_split_write_token_only_when_requested() {
-        let web = WebSettings {
-            enabled: false,
-            port: 27372,
-            peer_port: 27375,
-            keys: vec![],
-            peer_keys: vec![crate::core::config::WebAccessKey {
-                id: "write".into(),
-                label: "可写".into(),
-                token: "write".into(),
-                write: true,
-                created_at_ms: 0,
-            }],
-        };
-        // 只有可写密钥时，只读请求也只能降级使用它（密钥本身具备写权限）
-        assert_eq!(
-            select_pair_token(&web, None, false),
-            Some(("write".into(), true))
-        );
     }
 }
