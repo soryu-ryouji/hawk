@@ -102,8 +102,11 @@ const SORT_OPTIONS: { label: string; orderBy: QueryState['orderBy']; order: 'asc
 
 const currentSortLabel = computed(() => SORT_OPTIONS.find((o) => o.orderBy === store.query.orderBy && o.order === store.query.order)?.label ?? '');
 
-/** 侧栏隐藏时远程徽标的悬停提示：设备名 + 当前写能力（断开入口在侧栏库名下拉里） */
-const remoteChipTitle = computed(() => `远程浏览：${connection.label.value}（${store.viewerMode ? '只读' : store.limitedWrite ? '仅导入' : '可读写'}）`);
+/** 侧栏隐藏时远端徽标的悬停提示：来源 + 设备名 + 当前写能力（断开入口在侧栏库名下拉里） */
+const remoteChipTitle = computed(
+  () =>
+    `${connection.isLan.value ? '局域网直连' : '远程浏览'}：${connection.label.value}（${store.viewerMode ? '只读' : store.limitedWrite ? '仅导入' : '可读写'}）`,
+);
 
 /** 排序按钮：弹出菜单设置字段与方向（锚点模式：从按钮下方展开，不遮挡按钮）；有自有设置时附「跟随父级/恢复默认」 */
 function openSortMenu(e: MouseEvent) {
@@ -182,12 +185,12 @@ function onDblClick(e: MouseEvent) {
 
       <span v-if="store.selection.length" class="selected-count">已选 {{ store.selection.length }} 项</span>
 
-      <!-- 远程浏览标识：来源区分是安全与认知底线（不可省略）。常规布局落在侧栏库名按钮上
-           （「库名 [远程]」，见 LibraryDropdown）；侧栏隐藏时库名按钮不在视野，由这条紧凑徽标兜住。
-           悬停提示带写能力：远端库是否可写由目标设备的「允许广域网保存素材」决定 -->
-      <span v-if="connection.isRemote.value && !store.sidebarVisible" class="remote-chip" :title="remoteChipTitle">
+      <!-- 远端标识：来源区分是安全与认知底线（不可省略）。常规布局落在侧栏库名按钮上
+           （「库名 [远程/局域网]」，见 LibraryDropdown）；侧栏隐藏时由这条紧凑徽标兜住。
+           悬停提示带写能力：局域网写权限由目标 [web].writable 决定，广域网由 remote.writable 决定 -->
+      <span v-if="connection.isPeer.value && !store.sidebarVisible" class="remote-chip" :title="remoteChipTitle">
         <Icon name="globe" :size="12" />
-        <span>远程</span>
+        <span>{{ connection.isLan.value ? '局域网' : '远程' }}</span>
       </span>
     </div>
 

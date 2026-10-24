@@ -8,9 +8,9 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { APP_DIR, DAEMON_LOG_FILE, REMOTE_CONFIG_FILE } from './paths';
 import { getMainWindow } from './window';
-import { API_PORT_RANGE, getApiPort, getLibraryRoot, getRemoteTarget, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
+import { API_PORT_RANGE, getApiPort, getLanTarget, getLibraryRoot, getRemoteTarget, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
 import { IPC, PORT_IN_USE, type ServerConn, type ServerFailure } from './ipc-contract';
-import { onServerReady, onServerStopped, restoreRemoteSession } from './remote';
+import { onServerReady, onServerStopped, restoreLanSession, restoreRemoteSession } from './remote';
 
 const isDev = !app.isPackaged;
 
@@ -132,6 +132,15 @@ async function notifyReady(): Promise<void> {
     // 不能停在上一轮的扫描文案上
     getMainWindow()?.webContents.send(IPC.serverProgress, { phase: 'restore-remote', processed: 0, total: 0 });
     if (await restoreRemoteSession()) {
+      return;
+    }
+    if (startedConn !== conn) {
+      return;
+    }
+  } else if (getLanTarget()) {
+    // 局域网直连不依赖服务器：上一轮浏览另一台 hawk-app 时优先恢复同一目标。
+    getMainWindow()?.webContents.send(IPC.serverProgress, { phase: 'restore-lan', processed: 0, total: 0 });
+    if (await restoreLanSession()) {
       return;
     }
     if (startedConn !== conn) {

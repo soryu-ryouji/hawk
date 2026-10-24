@@ -58,6 +58,9 @@ export const api = {
   appLan: () => request<components['schemas']['LanSettingsDto']>('GET', '/api/v1/app/lan'),
   /** 保存 [web] 配置并热重绑监听（失败 daemon 侧自动回滚并返回错误） */
   saveAppLan: (body: components['schemas']['PutLanBody']) => request<components['schemas']['LanSettingsDto']>('PUT', '/api/v1/app/lan', { body }),
+  /** 生成一次性局域网配对码（admin 限定；目标端展示给另一台 hawk-app） */
+  createLanPairCode: (body: components['schemas']['LanPairCodeBody']) =>
+    request<components['schemas']['LanPairCodeDto']>('POST', '/api/v1/app/lan/pair-code', { body }),
   libraryInfo: () => request<LibraryInfo>('GET', '/api/v1/library/info'),
   /** 改库显示名（写库内 config.toml 的 name，daemon 热更并广播 library.updated 事件）；返回更新后的库信息 */
   libraryRename: (name: string) => request<LibraryInfo>('PATCH', '/api/v1/library/info', { body: { name } }),

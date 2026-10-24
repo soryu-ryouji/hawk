@@ -5,7 +5,7 @@
 // （writable / 允许其他设备访问——没有本地素材可服务）。
 import { ref } from 'vue';
 import { hasShell, shell } from '@/shared/lib/platform';
-import { SettingsRemote } from '@/domains/settings';
+import { SettingsLanConnect, SettingsRemote } from '@/domains/settings';
 
 /** 远程分区错误条（v-model:error 约定同设置对话框） */
 const error = ref<string | null>(null);
@@ -23,10 +23,13 @@ async function openLibrary() {
     <div class="head">
       <!-- 动态绑定避免 vite 按模块解析；icon.png 来自 publicDir（build/） -->
       <img class="logo" :src="'./icon.png'" alt="hawk" />
-      <div class="title">远程查看</div>
-      <p class="hint">当前无本地素材库。接入服务端后可浏览池内其他设备的素材库；素材不落本机。</p>
+      <div class="title">连接素材库</div>
+      <p class="hint">当前无本地素材库。可直接连接同一局域网内的 hawk-app，或经 hawk-server 远程浏览；素材不落本机。</p>
     </div>
     <div class="panel">
+      <h3 class="section-title">局域网互联</h3>
+      <SettingsLanConnect />
+      <h3 class="section-title">远程查看</h3>
       <SettingsRemote v-model:error="error" libraryless />
       <div v-if="error" class="error">{{ error }}</div>
     </div>
@@ -80,6 +83,13 @@ async function openLibrary() {
   padding: 4px 16px;
   border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
   border-radius: 10px;
+}
+
+.section-title {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #aaa);
 }
 
 .error {

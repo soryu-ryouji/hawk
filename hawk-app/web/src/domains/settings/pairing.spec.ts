@@ -3,8 +3,14 @@ import { encodePairingPayload, lanPairingPayload, PAIRING_PAYLOAD_VERSION, remot
 
 describe('pairing payload', () => {
   it('局域网载荷使用 snake_case 协议字段', () => {
-    const payload = lanPairingPayload('http://192.168.1.5:27372', 'tok');
-    expect(payload).toEqual({ v: PAIRING_PAYLOAD_VERSION, kind: 'lan', url: 'http://192.168.1.5:27372', token: 'tok' });
+    const payload = lanPairingPayload(['http://192.168.1.5:27372', 'http://10.0.0.5:27372'], 'tok');
+    expect(payload).toEqual({
+      v: PAIRING_PAYLOAD_VERSION,
+      kind: 'lan',
+      url: 'http://192.168.1.5:27372',
+      urls: ['http://192.168.1.5:27372', 'http://10.0.0.5:27372'],
+      token: 'tok',
+    });
     expect(JSON.parse(encodePairingPayload(payload))).toEqual(payload);
   });
 

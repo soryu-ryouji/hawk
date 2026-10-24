@@ -47,6 +47,12 @@ export const IPC = {
   remoteCreateKey: 'hawk:remote-create-key',
   remotePatchKey: 'hawk:remote-patch-key',
   remoteDeleteKey: 'hawk:remote-delete-key',
+  lanDiscover: 'hawk:lan-discover',
+  lanPair: 'hawk:lan-pair',
+  lanConnect: 'hawk:lan-connect',
+  lanPeers: 'hawk:lan-peers',
+  lanForget: 'hawk:lan-forget',
+  lanSpeedTest: 'hawk:lan-speed-test',
   // ---- 主进程 → 渲染进程（webContents.send / ipcRenderer.on） ----
   winMaximized: 'hawk:win-maximized',
   serverProgress: 'hawk:server-progress',
@@ -126,15 +132,46 @@ export interface ApiPortInfo {
   range: readonly [number, number];
 }
 
-/** 连接描述符：前端唯一面对的连接语义（api_base + token + 展示名），本地库/远程库同构 */
+/** 连接形态：local=本机库；remote=经 hawk-server 的广域网远端；lan=局域网直连的另一台 hawk-app */
+export type ConnectionKind = 'local' | 'remote' | 'lan';
+
+/** 连接描述符：前端唯一面对的连接语义（api_base + token + 展示名），本地库/远端库同构 */
 export interface ConnectionDescriptor {
   api_base: string;
   token: string;
   /** 「我的库」| 远端设备名 */
   label: string;
+  /** 非本机连接（remote/lan）；保留布尔字段给既有展示逻辑，细分来源用 kind */
   remote: boolean;
-  /** 当前浏览的远端设备 id（remote=true 时存在；换库下拉打勾依据） */
+  kind: ConnectionKind;
+  /** 当前浏览的远端设备 id（kind=remote 时存在；换库下拉打勾依据） */
   device_id?: string;
+  /** 当前浏览的局域网设备 id（kind=lan 时存在） */
+  peer_id?: string;
+}
+
+/** 局域网发现结果：只含展示信息与配对入口，不含访问 token */
+export interface LanPeer {
+  id: string;
+  /** 设备主机名 */
+  name: string;
+  library_name: string;
+  /** http://<局域网 IP>:<web.port> */
+  url: string;
+  /** 目标设备是否允许局域网写操作 */
+  writable: boolean;
+  requires_pairing: boolean;
+}
+
+/** 已配对并保存在本机的局域网设备（token 只在主进程配置中，不送往渲染层） */
+export interface LanPeerProfile {
+  id: string;
+  name: string;
+  library_name: string;
+  url: string;
+  writable: boolean;
+  /** 最近成功连接时间（Unix ms；仅展示排序用） */
+  last_connected_at_ms: number;
 }
 
 /** 远程访问接入配置（读写 daemon /remote 的载荷；应用级，跨素材库共享） */
@@ -295,7 +332,7 @@ export interface HawkShell {
   onServerProgress(cb: (progress: ServerProgress) => void): () => void;
   /** 订阅最大化状态变化（含 Aero Snap 等系统途径），返回退订函数 */
   onWindowMaximized(cb: (maximized: boolean) => void): () => void;
-  /** 当前活动连接描述符（本地库或远程会话代理）；server 未就绪返回 null */
+  /** 当前活动连接描述符（本地库 / 远程会话代理 / 局域网直连）；server 未就绪返回 null */
   remoteGetConnection(): Promise<ConnectionDescriptor | null>;
   /** 远程接入配置与信令运行状态（daemon /remote） */
   remoteStatus(): Promise<RemoteDto>;
@@ -322,6 +359,18 @@ export interface HawkShell {
   remotePatchKey(id: string, patch: { label?: string; read?: boolean; write?: boolean }): Promise<{ key: RemoteKeyEntry; synced: boolean }>;
   /** 吊销访问密钥 */
   remoteDeleteKey(id: string): Promise<{ synced: boolean }>;
+  /** 探测同网段可配对的 hawk 设备（经本机 daemon 的 UDP 发现） */
+  lanDiscover(): Promise<{ peers: LanPeer[] }>;
+  /** 用目标设备的一次性配对码建立局域网直连，保存连接并切换到目标库 */
+  lanPair(input: { peer: LanPeer; code: string; writable: boolean }): Promise<ConnectionDescriptor>;
+  /** 连接已保存的局域网设备（刷新目标 app/info 后切换连接） */
+  lanConnect(peerId: string): Promise<ConnectionDescriptor>;
+  /** 已保存的局域网设备列表（不含 token） */
+  lanPeers(): Promise<{ peers: LanPeerProfile[] }>;
+  /** 忘记已保存的局域网设备 */
+  lanForget(peerId: string): Promise<void>;
+  /** 测试当前局域网连接延迟（连续请求目标 app/info，返回中位数毫秒） */
+  lanSpeedTest(): Promise<{ latency_ms: number }>;
   /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。
    *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 remoteGetConnection 拉取兜底 */
   onConnectionChanged(cb: (conn: ConnectionDescriptor) => void): () => void;

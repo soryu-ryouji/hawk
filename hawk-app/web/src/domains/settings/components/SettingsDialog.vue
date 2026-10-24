@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // 设置面板壳：左侧导航 + 右侧分区（子组件）的两栏结构（窄屏折叠为顶部横向页签）。
-// 分区实现各自独立：SettingsAppearance（外观，实时生效）/ SettingsLocalService + SettingsLan +
-// SettingsRemote（「网络」分区的三块：本地端口 / 局域网 / 远程）/ SettingsUpdate（更新，仅 Electron）/
-// SettingsConnection（连接，仅局域网 web 端）。分区切换用 v-show 保活：LAN 编辑中字段与
-// 更新下载进度在切换分区后不丢。
+// 分区实现各自独立：SettingsAppearance（外观，实时生效）/ 网络分区内再分三个标签页
+// （本机服务 / 局域网访问 / 远程访问）/ SettingsStorage / SettingsUpdate（仅 Electron）/
+// SettingsConnection（连接，仅局域网 web 端）。外层分区与网络内标签都用 v-show 保活：
+// LAN 编辑中字段、发现结果与更新下载进度在切换后不丢。
 // 交互要点：
 // - 遮罩「按下与抬起都落在遮罩上」才关闭：在端口输入框里拖动选择文本、拖动滑杆时滑出面板松开，
 //   click 事件落在 mousedown/mouseup 目标的共同祖先（遮罩）上，按 click.self 判定会误关面板丢失未保存
@@ -19,7 +19,9 @@ import Icon from '@/shared/ui/Icon.vue';
 import SettingsAppearance from './SettingsAppearance.vue';
 import SettingsHiding from './SettingsHiding.vue';
 import SettingsLan from './SettingsLan.vue';
-import SettingsLocalService from './SettingsLocalService.vue';
+import SettingsLanConnect from './SettingsLanConnect.vue';
+import SettingsLanPairActions from './SettingsLanPairActions.vue';
+import SettingsAdvanced from './SettingsAdvanced.vue';
 import SettingsRemote from './SettingsRemote.vue';
 import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
@@ -27,9 +29,24 @@ import SettingsConnection from './SettingsConnection.vue';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
-/** 当前分区：外观 / 隐藏项 / 网络（Electron：本地端口 + 局域网 + 远程）/ 存储 / 更新 /
- *  连接（局域网 web 端，含 token 注销） */
+/** 当前分区：外观 / 隐藏项 / 网络 / 存储 / 更新 / 连接（局域网 web 端，含 token 注销） */
 const section = ref<'appearance' | 'hiding' | 'network' | 'storage' | 'update' | 'connection'>('appearance');
+
+/** 网络分区内的二级标签：局域网访问 / 远程访问 / 高级（端口等低频配置放最右侧） */
+type NetworkTab = 'lan-access' | 'remote' | 'advanced';
+const networkTab = ref<NetworkTab>('lan-access');
+const networkTabs = computed<{ id: NetworkTab; label: string }[]>(() => [
+  { id: 'lan-access', label: '局域网访问' },
+  { id: 'remote', label: '远程访问' },
+  { id: 'advanced', label: '高级' },
+]);
+const visibleNetworkTabs = computed(() => networkTabs.value);
+
+function selectNetworkTab(tab: NetworkTab): void {
+  networkTab.value = tab;
+  // 错误条可能来自上一个标签页；切 tab 时清掉，避免在无关页面看到旧错误
+  error.value = null;
+}
 /** 错误条（各分区经 v-model:error 写入；LAN 分区的读取/校验/保存错误） */
 const error = ref<string | null>(null);
 
@@ -38,7 +55,11 @@ const store = useLibraryStore();
  *  避免只读 token 调管理端点 403（viewer token cannot access admin settings） */
 const isAdmin = computed(() => store.access === 'admin');
 
-/** 「网络」分区的 LAN 块实例（v-show 保活，footer 保存按钮委托其 save；本地端口块自带重启按钮） */
+/** 「局域网访问」里的共享设置需要 footer 保存；访问其他设备、本机端口与远程均为内联操作 */
+const showLanSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'lan-access');
+const closeLabel = computed(() => (showLanSave.value ? '取消' : '关闭'));
+
+/** 「网络 → 局域网访问 → 共享本机素材库」块实例（v-show 保活，footer 保存按钮委托其 save） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
 /** footer 按钮禁用：LAN 分区加载/保存中 */
 function lanBusy(): boolean {
@@ -92,8 +113,9 @@ async function save() {
   const ok = await lanPane.value.save();
   if (ok) {
     emit('close');
-  } else if (section.value !== 'network') {
+  } else {
     section.value = 'network';
+    networkTab.value = 'lan-access';
   }
 }
 </script>
@@ -124,16 +146,37 @@ async function save() {
           <!-- 分区保活挂载（v-show）：网络分区的字段编辑与更新下载进度切分区不丢；web 端不挂载网络/更新 -->
           <SettingsAppearance v-show="section === 'appearance'" />
           <SettingsHiding v-show="section === 'hiding'" />
-          <!-- 网络：本地服务端口（壳层）、局域网（库级 [web]，admin 限定）、远程（应用级 remote.toml） -->
-          <div v-if="hasShell" v-show="section === 'network'" class="pane">
-            <h3 class="section-title">本地服务</h3>
-            <SettingsLocalService />
-            <template v-if="isAdmin">
-              <h3 class="section-title">局域网</h3>
-              <SettingsLan ref="lanPane" v-model:error="error" embedded />
-            </template>
-            <h3 class="section-title">远程</h3>
-            <SettingsRemote v-model:error="error" embedded />
+          <!-- 网络：二级标签隔离四块配置，避免本机端口 / LAN 共享 / LAN 互联 / 远程访问堆在一页 -->
+          <div v-if="hasShell" v-show="section === 'network'" class="pane network-pane">
+            <div class="subnav" role="tablist" aria-label="网络设置">
+              <button
+                v-for="tab in visibleNetworkTabs"
+                :key="tab.id"
+                type="button"
+                role="tab"
+                class="subnav-item"
+                :class="{ active: networkTab === tab.id }"
+                :aria-selected="networkTab === tab.id"
+                @click="selectNetworkTab(tab.id)"
+              >
+                {{ tab.label }}
+              </button>
+            </div>
+            <div v-show="networkTab === 'lan-access'" class="tab-content lan-access" role="tabpanel">
+              <h3 class="section-title">访问其他设备</h3>
+              <SettingsLanConnect />
+              <SettingsLanPairActions v-if="isAdmin" />
+              <template v-if="isAdmin">
+                <h3 class="section-title">局域网网站访问</h3>
+                <SettingsLan ref="lanPane" v-model:error="error" embedded />
+              </template>
+            </div>
+            <div v-show="networkTab === 'remote'" class="tab-content" role="tabpanel">
+              <SettingsRemote v-model:error="error" embedded />
+            </div>
+            <div v-show="networkTab === 'advanced'" class="tab-content" role="tabpanel">
+              <SettingsAdvanced />
+            </div>
           </div>
           <SettingsStorage v-if="hasShell" v-show="section === 'storage'" />
           <SettingsUpdate v-if="hasShell" v-show="section === 'update'" />
@@ -143,8 +186,8 @@ async function save() {
         <div v-if="error" class="dialog-error">{{ error }}</div>
 
         <footer class="actions">
-          <button :disabled="lanBusy()" @click="emit('close')">{{ hasShell && isAdmin ? '取消' : '关闭' }}</button>
-          <button v-if="hasShell && isAdmin" class="primary" :disabled="lanBusy()" @click="save">保存</button>
+          <button :disabled="showLanSave && lanBusy()" @click="emit('close')">{{ closeLabel }}</button>
+          <button v-if="showLanSave" class="primary" :disabled="lanBusy()" @click="save">保存网站设置</button>
         </footer>
       </div>
     </div>
@@ -249,6 +292,70 @@ async function save() {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+/* ---- 网络分区内的二级标签：独立滚动的仍是 .pane，标签是内容区首行 ---- */
+.network-pane {
+  gap: 12px;
+  /* 手动配对展开触发纵向滚动时预留滚动条宽度，避免内容区横向抖动 */
+  scrollbar-gutter: stable;
+}
+
+.subnav {
+  flex: none;
+  display: flex;
+  gap: 18px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 标签不足一屏时不要出现滚动条；窄屏仍可横向滚动 */
+  scrollbar-width: none;
+}
+
+.subnav::-webkit-scrollbar {
+  display: none;
+}
+
+.subnav-item {
+  flex: none;
+  margin-bottom: -1px;
+  padding: 2px 0 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-1);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .subnav-item:hover {
+    color: var(--fg-0);
+  }
+}
+
+.subnav-item.active {
+  color: var(--fg-0);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.tab-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lan-access .section-title {
+  padding-top: 10px;
+  font-size: 12px;
+  color: var(--fg-1);
+}
+
+.lan-access .section-title:first-child {
+  padding-top: 0;
 }
 
 /* 窄屏（手机竖屏）：导航折叠为顶部横向页签，内容占满剩余宽度 */

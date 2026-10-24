@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parse, stringify } from 'smol-toml';
 import { CONFIG_DIR } from './paths';
-import type { CloseAction, LibraryHistoryItem, UpdateChannel } from './ipc-contract';
+import type { CloseAction, LanPeerProfile, LibraryHistoryItem, UpdateChannel } from './ipc-contract';
 
 interface AppConfig {
   libraryPath?: string;
@@ -13,6 +13,10 @@ interface AppConfig {
   remoteViewer?: boolean;
   /** 上次浏览的远端设备 id：冷启动 daemon 就绪后尝试恢复会话；显式断开/切回本地库时清除 */
   remoteTarget?: string;
+  /** 已配对的局域网 hawk-app（token 只在本文件，渲染层只会拿到不含 token 的 profile） */
+  lanPeers?: StoredLanPeer[];
+  /** 上次浏览的局域网设备 id：冷启动 daemon 就绪后直接恢复直连；显式断开/切回本地库时清除 */
+  lanTarget?: string;
   /** 全局缓存父目录（所有库共用，子目录按库名+哈希区分）；未设置时用系统缓存目录 */
   cacheParent?: string;
   /** 应用更新通道；未设置时视为 stable */
@@ -28,7 +32,21 @@ export interface LibraryList {
   libraries: LibraryHistoryItem[];
 }
 
+/** 主进程内部保存的局域网设备（含长期访问 token）；列表对外一律剥掉 token */
+interface StoredLanPeer extends LanPeerProfile {
+  token: string;
+}
+
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.toml');
+
+/** 配置文件含局域网设备访问 token：Unix 下收紧为 0600（Windows 由用户 ACL 管；失败不阻断） */
+function tightenConfigPermissions(): void {
+  try {
+    fs.chmodSync(CONFIG_FILE, 0o600);
+  } catch {
+    // 平台不支持/文件不存在：忽略
+  }
+}
 
 /** 本地 daemon 的 API 端口默认值与候选段。
  *  候选段是**跨仓库契约**：浏览器插件的本地模式按这一段顺序探活（`hawk-browser-extension/lib/api.ts`
@@ -52,6 +70,7 @@ function ensureConfigFile(): void {
     }
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
     fs.writeFileSync(CONFIG_FILE, stringify(DEFAULT_CONFIG));
+    tightenConfigPermissions();
   } catch {
     // 写失败按无配置继续启动（readConfig 回退默认值），不阻断主流程
   }
@@ -76,6 +95,7 @@ export function setLibraryRoot(root: string | null): void {
 
 export function readConfig(): AppConfig {
   ensureConfigFile();
+  tightenConfigPermissions();
 
   // 防止以下情况发生
   // 1. 文件存在，但解析异常，配置文件损坏
@@ -91,6 +111,7 @@ export function readConfig(): AppConfig {
 export function writeConfig(patch: Partial<AppConfig>): void {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_FILE, stringify(pruneUndefined({ ...readConfig(), ...patch })));
+  tightenConfigPermissions();
 }
 
 /** 更新通道偏好（config.toml 持久化；未设置/损坏回退默认值） */
@@ -129,6 +150,56 @@ export function getRemoteTarget(): string | null {
 /** 记住/忘记上次浏览的远端设备：建立会话成功时记住，用户显式断开或切回本地库时忘记 */
 export function setRemoteTarget(deviceId: string | null): void {
   writeConfig({ remoteTarget: deviceId ?? undefined });
+}
+
+/** 已配对局域网设备（最近连接在前；只返回展示字段，token 不出主进程） */
+export function listLanPeers(): LanPeerProfile[] {
+  return storedLanPeers()
+    .map(({ id, name, library_name, url, writable, last_connected_at_ms }) => ({ id, name, library_name, url, writable, last_connected_at_ms }))
+    .sort((a, b) => b.last_connected_at_ms - a.last_connected_at_ms);
+}
+
+function storedLanPeers(): StoredLanPeer[] {
+  const peers = readConfig().lanPeers;
+  if (!Array.isArray(peers)) {
+    return [];
+  }
+  return peers.filter(
+    (peer): peer is StoredLanPeer =>
+      !!peer &&
+      typeof peer === 'object' &&
+      typeof (peer as StoredLanPeer).id === 'string' &&
+      typeof (peer as StoredLanPeer).url === 'string' &&
+      typeof (peer as StoredLanPeer).token === 'string',
+  );
+}
+
+/** 按 id 取完整连接凭证（仅主进程连接/恢复时使用） */
+export function getStoredLanPeer(id: string): StoredLanPeer | null {
+  return storedLanPeers().find((peer) => peer.id === id) ?? null;
+}
+
+/** 新增/更新一条已配对设备；按 id 覆盖并置顶最近使用 */
+export function upsertLanPeer(peer: StoredLanPeer): void {
+  const others = storedLanPeers().filter((item) => item.id !== peer.id);
+  writeConfig({ lanPeers: [peer, ...others].slice(0, 20) });
+}
+
+/** 忘记一条设备并清除自动恢复目标 */
+export function removeStoredLanPeer(id: string): void {
+  writeConfig({ lanPeers: storedLanPeers().filter((peer) => peer.id !== id) });
+  if (getLanTarget() === id) {
+    setLanTarget(null);
+  }
+}
+
+/** 上次浏览的局域网设备 id（null = 未记录）；恢复失败不清除，下次启动继续试 */
+export function getLanTarget(): string | null {
+  return readConfig().lanTarget ?? null;
+}
+
+export function setLanTarget(peerId: string | null): void {
+  writeConfig({ lanTarget: peerId ?? undefined });
 }
 
 /** 库显示名：优先读库内 .hawk/config.toml 的 name（与 daemon library/info 同源），缺失/异常回退目录名 */

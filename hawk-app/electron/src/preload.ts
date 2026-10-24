@@ -64,6 +64,12 @@ const shell: HawkShell = {
   remoteCreateKey: (input) => ipcRenderer.invoke(IPC.remoteCreateKey, input),
   remotePatchKey: (id, patch) => ipcRenderer.invoke(IPC.remotePatchKey, id, patch),
   remoteDeleteKey: (id) => ipcRenderer.invoke(IPC.remoteDeleteKey, id),
+  lanDiscover: () => ipcRenderer.invoke(IPC.lanDiscover),
+  lanPair: (input) => ipcRenderer.invoke(IPC.lanPair, input),
+  lanConnect: (peerId) => ipcRenderer.invoke(IPC.lanConnect, peerId),
+  lanPeers: () => ipcRenderer.invoke(IPC.lanPeers),
+  lanForget: (peerId) => ipcRenderer.invoke(IPC.lanForget, peerId),
+  lanSpeedTest: () => ipcRenderer.invoke(IPC.lanSpeedTest),
   onConnectionChanged: (cb) => subscribe(IPC.connectionChanged, cb),
 };
 

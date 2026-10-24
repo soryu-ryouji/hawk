@@ -4,7 +4,7 @@ import { app, clipboard, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
-import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction, setRemoteTarget } from './app-config';
+import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction, setLanTarget, setRemoteTarget } from './app-config';
 import { openLibraryAt, startRemoteViewer, pickLibrary, getStartedConn, getServerFailure, restartCurrent, retryServerPort } from './server';
 import { API_PORT_RANGE, getApiPort, setApiPort } from './app-config';
 import {
@@ -21,8 +21,14 @@ import {
   remotePutConfig,
   remoteRotate,
   remoteStatus,
+  lanDiscover,
+  lanPair,
+  lanConnect,
+  lanPeers,
+  lanForget,
+  lanSpeedTest,
 } from './remote';
-import type { RemoteConfig } from './ipc-contract';
+import type { LanPeer, RemoteConfig } from './ipc-contract';
 import { changeCacheParent, currentCacheParent } from './cache';
 import { lanAddresses } from './lan';
 import { IPC } from './ipc-contract';
@@ -64,8 +70,9 @@ export function registerIpc(): void {
     if (!selected) {
       return false;
     }
-    // 用户显式选本地库：忘记上次的远端目标，下次启动不再自动恢复远程会话
+    // 用户显式选本地库：忘记上次的远端/局域网目标，下次启动不再自动恢复浏览会话
     setRemoteTarget(null);
+    setLanTarget(null);
     try {
       // 端口/token 即选即生成；页面切应用内启动屏，就绪经 hawk:server-started 通知
       await openLibraryAt(selected);
@@ -95,8 +102,9 @@ export function registerIpc(): void {
     if (typeof libPath !== 'string' || !listLibraries().libraries.some((l) => l.path === libPath)) {
       return false;
     }
-    // 同 selectLibrary：切到本地库即忘记上次的远端目标
+    // 同 selectLibrary：切到本地库即忘记上次的远端/局域网目标
     setRemoteTarget(null);
+    setLanTarget(null);
     try {
       await openLibraryAt(libPath);
       return true;
@@ -211,6 +219,23 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.remoteRotate, () => remoteRotate());
   ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string) => remoteConnect(targetDeviceId));
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
+  // ---- 局域网互联：发现/配对/连接经本机 daemon + 目标 LAN 端点；token 只在主进程 ----
+  ipcMain.handle(IPC.lanDiscover, () => lanDiscover());
+  ipcMain.handle(IPC.lanPair, (_event, input: { peer: LanPeer; code: string; writable: boolean }) => lanPair(input));
+  ipcMain.handle(IPC.lanConnect, (_event, peerId: unknown) => {
+    if (typeof peerId !== 'string' || !peerId) {
+      throw new Error('无效的局域网设备');
+    }
+    return lanConnect(peerId);
+  });
+  ipcMain.handle(IPC.lanPeers, () => lanPeers());
+  ipcMain.handle(IPC.lanSpeedTest, () => lanSpeedTest());
+  ipcMain.handle(IPC.lanForget, (_event, peerId: unknown) => {
+    if (typeof peerId === 'string' && peerId) {
+      return lanForget(peerId);
+    }
+    return Promise.resolve();
+  });
 
   // 访问密钥管理（透传 daemon；id 只接受字符串）
   ipcMain.handle(IPC.remoteKeys, () => remoteKeys());

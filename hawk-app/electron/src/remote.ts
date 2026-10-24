@@ -1,12 +1,15 @@
 // 远程访问接线枢纽：连接描述符（当前活动连接）+ 本地 daemon SSE 订阅（remote.session 断线回切）。
 // 渲染进程切到远程后其 API base 已指向会话代理，远程管理面（状态/设备/会话）必须留在主进程：
 // 主进程始终持有本地 daemon 的地址与 admin token，经正规 REST 调用（不经 IPC 传业务数据之外的状态）。
+import os from 'node:os';
 import { getStartedConn } from './server';
 import { getMainWindow } from './window';
-import { getRemoteTarget, setRemoteTarget } from './app-config';
+import { getLanTarget, getRemoteTarget, getStoredLanPeer, listLanPeers, removeStoredLanPeer, setLanTarget, setRemoteTarget, upsertLanPeer } from './app-config';
 import {
   IPC,
   type ConnectionDescriptor,
+  type LanPeer,
+  type LanPeerProfile,
   type RemoteConfig,
   type RemoteDevice,
   type RemoteDto,
@@ -17,6 +20,8 @@ import {
 
 /** 当前远程连接（null = 本地库）。渲染进程拿到的是完整描述符（api_base + token + label） */
 let remoteConn: ConnectionDescriptor | null = null;
+/** 当前局域网直连（不经本机 daemon 会话代理；token 是目标 LAN web 的 viewer/write token） */
+let lanConn: ConnectionDescriptor | null = null;
 /** 冷启动恢复远端库进行中：期间不外泄本地库描述符（渲染进程挂载时的拉取兜底
  *  不得先注水本地库，否则会闪一下本地库再切远端） */
 let restoring = false;
@@ -26,12 +31,12 @@ let sseAbort: AbortController | null = null;
 /** 本地库描述符（label 恒为「我的库」） */
 function localDescriptor(): ConnectionDescriptor | null {
   const conn = getStartedConn();
-  return conn ? { api_base: conn.address, token: conn.token, label: '我的库', remote: false } : null;
+  return conn ? { api_base: conn.address, token: conn.token, label: '我的库', remote: false, kind: 'local' } : null;
 }
 
-/** 当前活动连接描述符：远程会话代理优先，其次本地库 */
+/** 当前活动连接描述符：远程/局域网直连优先，其次本地库 */
 export function currentDescriptor(): ConnectionDescriptor | null {
-  return remoteConn ?? (restoring ? null : localDescriptor());
+  return remoteConn ?? lanConn ?? (restoring ? null : localDescriptor());
 }
 
 /** 推送连接变更：渲染进程统一执行切换重置（abort 请求/SSE → 清 store → 重新注水） */
@@ -41,10 +46,12 @@ function emitConnection(descriptor: ConnectionDescriptor): void {
 
 /** 回切本地库（主动断开与断线回切共用）；本就本地时为空操作 */
 function switchToLocal(): void {
-  if (remoteConn === null) {
+  if (remoteConn === null && lanConn === null) {
     return;
   }
   remoteConn = null;
+  lanConn = null;
+  stopLanMonitor();
   const local = localDescriptor();
   if (local) {
     emitConnection(local);
@@ -148,11 +155,15 @@ export async function remoteConnect(targetDeviceId: string): Promise<ConnectionD
   const session = await daemonCall<RemoteSessionDto>('POST', '/api/v1/remote/session', {
     target_device_id: targetDeviceId,
   });
+  lanConn = null;
+  stopLanMonitor();
+  setLanTarget(null);
   remoteConn = {
     api_base: `http://127.0.0.1:${session.proxy_port}`,
     token: session.token,
     label: session.target_name,
     remote: true,
+    kind: 'remote',
     device_id: session.target_device_id,
   };
   // 记住远端目标：下次启动（daemon 就绪后）直接尝试恢复同一远端库
@@ -161,15 +172,206 @@ export async function remoteConnect(targetDeviceId: string): Promise<ConnectionD
   return remoteConn;
 }
 
-/** 断开远程会话并回切本地库（幂等）。用户显式断开即忘记远端目标，下次启动不再自动恢复 */
+/** 断开当前远端/局域网连接并回切本地库（幂等）。显式断开即忘记自动恢复目标 */
 export async function remoteDisconnect(): Promise<ConnectionDescriptor | null> {
   try {
-    await daemonCall('DELETE', '/api/v1/remote/session');
+    if (remoteConn) {
+      await daemonCall('DELETE', '/api/v1/remote/session');
+    }
   } finally {
     setRemoteTarget(null);
+    setLanTarget(null);
     switchToLocal();
   }
   return currentDescriptor();
+}
+
+// ---------- 局域网直连（不经 hawk-server） ----------
+
+/** 直连目标的普通 HTTP 调用：目标 LAN web 已开 CORS，Bearer token 走 viewer/write token */
+async function directCall<T>(base: string, path: string, token: string, method = 'GET', body?: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(6000),
+    });
+  } catch {
+    throw new Error('无法连接局域网设备（确认在同一网络且目标已启用局域网查看）');
+  }
+  const envelope = (await res.json().catch(() => null)) as {
+    status: string;
+    data?: T;
+    error?: { message?: string };
+  } | null;
+  if (!res.ok || !envelope || envelope.status === 'error') {
+    throw new Error(envelope?.error?.message ?? `HTTP ${res.status}`);
+  }
+  return envelope.data as T;
+}
+
+/** 目标库 app/info 的最小校验（连接前确认 token 有效且确为素材库） */
+interface TargetAppInfo {
+  has_library: boolean;
+  access: 'viewer' | 'admin' | 'remote_writer';
+  writable: boolean;
+}
+
+function normalizeLanURL(url: string): string {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('局域网设备地址必须使用 http/https');
+  }
+  return parsed.toString().replace(/\/+$/, '');
+}
+
+/** 探测同网段可配对的 hawk 设备（本机 daemon 发 UDP 组播/广播） */
+export async function lanDiscover(): Promise<{ peers: LanPeer[] }> {
+  return daemonCall<{ peers: LanPeer[] }>('GET', '/api/v1/app/lan/peers');
+}
+
+/** 已配对设备列表（剥掉 token） */
+export async function lanPeers(): Promise<{ peers: LanPeerProfile[] }> {
+  return { peers: listLanPeers() };
+}
+
+/** 当前局域网连接延迟：1 次预热 + 5 次 app/info 往返，取中位数毫秒 */
+export async function lanSpeedTest(): Promise<{ latency_ms: number }> {
+  const peerId = lanConn?.peer_id;
+  if (!peerId) {
+    throw new Error('当前未连接局域网设备');
+  }
+  const profile = getStoredLanPeer(peerId);
+  if (!profile) {
+    throw new Error('局域网设备记录不存在，请重新配对');
+  }
+  await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+  const samples: number[] = [];
+  for (let i = 0; i < 5; i += 1) {
+    const started = Date.now();
+    await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+    samples.push(Date.now() - started);
+  }
+  samples.sort((a, b) => a - b);
+  return { latency_ms: samples[Math.floor(samples.length / 2)] };
+}
+
+/** 忘记一台已配对设备（若正在浏览则先回本地库） */
+export async function lanForget(peerId: string): Promise<void> {
+  if (lanConn?.peer_id === peerId) {
+    setLanTarget(null);
+    switchToLocal();
+  }
+  removeStoredLanPeer(peerId);
+}
+
+/** 用目标端一次性配对码建立直连并切换连接。目标返回的是目标 LAN web 的 viewer/write token。 */
+export async function lanPair(input: { peer: LanPeer; code: string; writable: boolean }): Promise<ConnectionDescriptor> {
+  const base = normalizeLanURL(input.peer.url);
+  const paired = await directCall<{ token: string; writable: boolean; peer_id: string; name: string; library_name: string }>(
+    base,
+    '/api/v1/app/lan/pair',
+    '',
+    'POST',
+    {
+      code: input.code.trim(),
+      writable: input.writable,
+      client_name: os.hostname(),
+    },
+  );
+  const info = await directCall<TargetAppInfo>(base, '/api/v1/app/info', paired.token);
+  if (!info.has_library) {
+    throw new Error('目标设备未打开素材库');
+  }
+  const peerId = paired.peer_id || input.peer.id;
+  upsertLanPeer({
+    id: peerId,
+    name: paired.name || input.peer.name,
+    library_name: paired.library_name || input.peer.library_name,
+    url: base,
+    writable: paired.writable,
+    token: paired.token,
+    last_connected_at_ms: Date.now(),
+  });
+  return connectLanPeer(peerId);
+}
+
+/** 读取已配对设备并切换当前连接描述符 */
+export async function lanConnect(peerId: string): Promise<ConnectionDescriptor> {
+  return connectLanPeer(peerId);
+}
+
+async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
+  const profile = getStoredLanPeer(peerId);
+  if (!profile) {
+    throw new Error('局域网设备记录不存在，请重新配对');
+  }
+  const info = await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+  if (!info.has_library) {
+    throw new Error('目标设备未打开素材库');
+  }
+  // 切到局域网直连前，结束本地 daemon 上可能存在的远程会话（失败不阻断）
+  if (remoteConn) {
+    try {
+      await daemonCall('DELETE', '/api/v1/remote/session');
+    } catch {
+      // 已断开的远程会话无需处理
+    }
+  }
+  setRemoteTarget(null);
+  remoteConn = null;
+  upsertLanPeer({ ...profile, last_connected_at_ms: Date.now() });
+  lanConn = {
+    api_base: profile.url,
+    token: profile.token,
+    label: `${profile.name}（${profile.library_name}）`,
+    remote: true,
+    kind: 'lan',
+    peer_id: profile.id,
+  };
+  setLanTarget(profile.id);
+  startLanMonitor(profile);
+  emitConnection(lanConn);
+  return lanConn;
+}
+
+// ---------- 局域网连接健康检查：目标关闭/网络切换时无声回本地库 ----------
+let lanMonitorTimer: ReturnType<typeof setInterval> | null = null;
+let lanMonitorFailures = 0;
+
+function stopLanMonitor(): void {
+  if (lanMonitorTimer) {
+    clearInterval(lanMonitorTimer);
+    lanMonitorTimer = null;
+  }
+  lanMonitorFailures = 0;
+}
+
+function startLanMonitor(profile: ReturnType<typeof getStoredLanPeer>): void {
+  stopLanMonitor();
+  if (!profile) {
+    return;
+  }
+  lanMonitorTimer = setInterval(() => {
+    void (async () => {
+      try {
+        await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+        lanMonitorFailures = 0;
+      } catch {
+        lanMonitorFailures += 1;
+        // 留一次重试给目标短暂重启/休眠；连续失败才回切，避免 wifi 抖动时反复闪断
+        if (lanMonitorFailures >= 2 && lanConn?.peer_id === profile.id) {
+          setLanTarget(null);
+          switchToLocal();
+        }
+      }
+    })();
+  }, 5000);
 }
 
 // ---------- 冷启动恢复上次浏览的远端库 ----------
@@ -233,6 +435,22 @@ export async function restoreRemoteSession(): Promise<ConnectionDescriptor | nul
       // 隧道/服务端失败：回退本地库，记录保留（下次启动再试）
       return null;
     }
+  } finally {
+    restoring = false;
+  }
+}
+
+/** 冷启动恢复上次浏览的局域网设备；失败回 null（记录保留，下次启动再试） */
+export async function restoreLanSession(): Promise<ConnectionDescriptor | null> {
+  const target = getLanTarget();
+  if (!target || !getStoredLanPeer(target)) {
+    return null;
+  }
+  restoring = true;
+  try {
+    return await connectLanPeer(target);
+  } catch {
+    return null;
   } finally {
     restoring = false;
   }

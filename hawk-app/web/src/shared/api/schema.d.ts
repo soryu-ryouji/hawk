@@ -59,6 +59,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/lan/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 局域网配对（目标端 LAN 端点，免 Bearer token：以一次性配对码作为准入凭证）。
+         *     只返回 viewer/write token 与展示信息；配对码一次性消费，过期后失效。
+         */
+        post: operations["lan_pair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/lan/pair-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 生成一次性局域网配对码（admin 限定）：目标端 haw-app 设置面板读取并展示。 */
+        post: operations["create_lan_pair_code"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/app/lan/peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 探测局域网内可配对的 hawk 设备（admin 限定；源端 app 经本机 daemon 调用）。 */
+        get: operations["discover_lan_peers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/startup": {
         parameters: {
             query?: never;
@@ -1409,18 +1463,48 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanPairCodeDto: {
+            data?: {
+                code: string;
+                /** Format: int64 */
+                expires_in_seconds: number;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanPairResultDto: {
+            data?: {
+                library_name: string;
+                name: string;
+                peer_id: string;
+                token: string;
+                writable: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanPeersDto: {
+            data?: {
+                peers: components["schemas"]["LanPeerDto"][];
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanSettingsDto: {
             data?: {
-                /** @description 运行状态（热重绑实况）：active=监听中，error=绑定失败原因 */
+                /** @description 网站监听状态 */
                 active: boolean;
                 enabled: boolean;
                 error?: string | null;
+                keys: components["schemas"]["LanAccessKeyDto"][];
+                /** @description hawk-app 直连监听状态 */
+                peer_active: boolean;
+                peer_error?: string | null;
+                peer_keys: components["schemas"]["LanAccessKeyDto"][];
+                /** Format: int32 */
+                peer_port: number;
                 /** Format: int32 */
                 port: number;
-                separate_write_token: boolean;
-                token: string;
-                writable: boolean;
-                write_token: string;
             };
             status: string;
         };
@@ -1861,23 +1945,77 @@ export interface components {
         ItemsUpdatedPayload: {
             items: components["schemas"]["ItemDto"][];
         };
+        LanAccessKeyDto: {
+            /** Format: int64 */
+            created_at_ms: number;
+            id: string;
+            label: string;
+            /** @description 完整 token 仅 admin 可读；设置面板负责打码展示与复制 */
+            token: string;
+            write: boolean;
+        };
         LanInfo: {
+            /** @description 网站端口监听状态 */
             active: boolean;
             error?: string | null;
+            /** @description hawk-app 直连端口监听状态 */
+            peer_active: boolean;
+            peer_error?: string | null;
+            /** Format: int32 */
+            peer_port?: number | null;
             /** Format: int32 */
             port?: number | null;
         };
+        LanPairBody: {
+            /** @description 源端设备名（日志/后续审计用，不参与鉴权） */
+            client_name?: string;
+            /** @description 目标端设置面板展示的一次性配对码 */
+            code: string;
+            /** @description 源端希望获得的写权限；目标端 [web].writable=false 时自动降级为只读 */
+            writable?: boolean;
+        };
+        LanPairCodeBody: {
+            /** @description 目标设备上选定的访问密钥 id；用于让 pairing code 精确绑定权限 */
+            key_id: string;
+        };
+        LanPairCodeDto: {
+            code: string;
+            /** Format: int64 */
+            expires_in_seconds: number;
+        };
+        LanPairResultDto: {
+            library_name: string;
+            name: string;
+            peer_id: string;
+            token: string;
+            writable: boolean;
+        };
+        /** @description 发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。 */
+        LanPeerDto: {
+            id: string;
+            library_name: string;
+            name: string;
+            requires_pairing: boolean;
+            url: string;
+            writable: boolean;
+        };
+        LanPeersDto: {
+            peers: components["schemas"]["LanPeerDto"][];
+        };
         LanSettingsDto: {
-            /** @description 运行状态（热重绑实况）：active=监听中，error=绑定失败原因 */
+            /** @description 网站监听状态 */
             active: boolean;
             enabled: boolean;
             error?: string | null;
+            keys: components["schemas"]["LanAccessKeyDto"][];
+            /** @description hawk-app 直连监听状态 */
+            peer_active: boolean;
+            peer_error?: string | null;
+            peer_keys: components["schemas"]["LanAccessKeyDto"][];
+            /** Format: int32 */
+            peer_port: number;
             /** Format: int32 */
             port: number;
-            separate_write_token: boolean;
-            token: string;
-            writable: boolean;
-            write_token: string;
         };
         LibraryInfo: {
             application_version: string;
@@ -1944,12 +2082,20 @@ export interface components {
         };
         PutLanBody: {
             enabled: boolean;
+            keys?: components["schemas"]["PutLanKey"][];
+            peer_keys?: components["schemas"]["PutLanKey"][];
+            /** Format: int32 */
+            peer_port: number;
             /** Format: int32 */
             port: number;
-            separate_write_token?: boolean;
-            token?: string | null;
-            writable: boolean;
-            write_token?: string | null;
+        };
+        PutLanKey: {
+            /** Format: int64 */
+            created_at_ms?: number;
+            id: string;
+            label: string;
+            token: string;
+            write?: boolean;
         };
         PutRemoteBody: {
             enabled: boolean;
@@ -2276,6 +2422,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_LanSettingsDto"];
+                };
+            };
+        };
+    };
+    lan_pair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanPairBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanPairResultDto"];
+                };
+            };
+            /** @description 配对码无效或已过期 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_lan_pair_code: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LanPairCodeBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanPairCodeDto"];
+                };
+            };
+        };
+    };
+    discover_lan_peers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanPeersDto"];
                 };
             };
         };

@@ -81,8 +81,14 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   }),
   remoteDeleteDevice: async () => {},
   remoteRotate: async () => ({ endpoint_id: '' }),
-  remoteConnect: async () => ({ api_base: '', token: '', label: '', remote: false }),
+  remoteConnect: async () => ({ api_base: '', token: '', label: '', remote: false, kind: 'local' }),
   remoteDisconnect: async () => null,
+  lanDiscover: async () => ({ peers: [] }),
+  lanPair: async () => ({ api_base: '', token: '', label: '', remote: false, kind: 'local' }),
+  lanConnect: async () => ({ api_base: '', token: '', label: '', remote: false, kind: 'local' }),
+  lanPeers: async () => ({ peers: [] }),
+  lanForget: async () => {},
+  lanSpeedTest: async () => ({ latency_ms: 0 }),
   onConnectionChanged: () => () => {},
 };
 

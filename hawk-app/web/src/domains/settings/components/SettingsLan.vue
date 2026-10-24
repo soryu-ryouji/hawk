@@ -1,162 +1,64 @@
 <script setup lang="ts">
-// 局域网查看分区（仅 Electron）：开关/端口/token/本机地址，按库隔离存于 .hawk/config.toml 的 [web] 段。
-// 配置读写直连 daemon REST（GET/PUT /api/v1/app/lan，admin 限定），保存 = daemon 写配置并热重绑监听
-// （不重启进程），绑定失败 daemon 侧自动回滚并返回错误；本机地址列表经 preload（主进程网卡信息）。
-// 状态自管（加载/校验/保存）；主组件 footer 的保存按钮经 expose 的 save() 委托到这里，
-// 分区切换用 v-show 保活（编辑中的字段不丢）。错误条在主组件（v-model:error）。
+// 局域网网站访问：开关、访问地址与多把访问密钥。配置状态与「访问其他设备」「高级」共享
+// useLanSettingsStore，创建/删除 key 后配对入口立即同步，不再各自加载出现陈旧状态。
 import { computed, onMounted, ref } from 'vue';
 import { useClipboard } from '@vueuse/core';
-import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
 import { useLibraryStore } from '@/domains/library';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
-import PairingQrDialog from './PairingQrDialog.vue';
-import { encodePairingPayload, lanPairingPayload } from '../pairing';
+import { useLanSettingsStore } from '../lanSettings';
 
 const store = useLibraryStore();
+const lan = useLanSettingsStore();
 const error = defineModel<string | null>('error', { default: null });
-/** embedded：作为合并分区（网络）内的一块渲染（不自带滚动容器），见 settings-shared.css 的 .pane.embedded */
 const props = defineProps<{ embedded?: boolean }>();
 
-const loading = ref(true);
-const saving = ref(false);
-const enabled = ref(false);
-const port = ref('27372');
-const token = ref('');
-const writable = ref(false);
-const separate = ref(false);
-const writeToken = ref('');
 const addresses = ref<string[]>([]);
-const selectedAddress = ref('');
-const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
+const keyLabel = ref('');
+const keyWrite = ref(false);
 const { copy: copyText } = useClipboard({ legacy: true });
 
 onMounted(async () => {
+  await lan.load();
+  error.value = lan.error;
   try {
-    const s = await api.appLan();
-    enabled.value = s.enabled;
-    port.value = String(s.port);
-    token.value = s.token;
-    writable.value = s.writable;
-    separate.value = s.separate_write_token;
-    writeToken.value = s.write_token;
     addresses.value = await shell.lanAddresses();
-    selectedAddress.value = addresses.value[0] ?? '';
   } catch (e) {
-    error.value = `读取设置失败：${errorText(e)}`;
-  } finally {
-    loading.value = false;
+    error.value = `读取本机地址失败：${errorText(e)}`;
   }
 });
 
-// ---- 端口校验：纯数字且 1–65535；不合法就地标红提示，保存拦截 ----
-const portValid = computed(() => /^\d+$/.test(port.value.trim()) && Number(port.value) >= 1 && Number(port.value) <= 65535);
-const PORT_ERROR = '端口须为 1–65535 之间的数字';
+const portValid = computed(() => lan.portValid);
 
-/** 保存用的端口值：合法取解析值；未启用局域网时输入框不可见，静默回退默认端口 */
-function portValue() {
-  return portValid.value ? Number(port.value.trim()) : 27372;
+function addKey(): void {
+  lan.addKey(keyLabel.value, keyWrite.value);
+  keyLabel.value = '';
+  keyWrite.value = false;
+  error.value = null;
 }
 
-/** 生成随机 token（32 字节 hex） */
-function randomToken() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+function removeKey(id: string): void {
+  lan.removeKey(id);
 }
 
-function regenerateToken() {
-  token.value = randomToken();
-}
-
-function regenerateWriteToken() {
-  writeToken.value = randomToken();
-}
-
-/** 切换拆分模式：开启且可写 token 为空时自动签发一个 */
-function toggleSeparate(on: boolean) {
-  separate.value = on;
-  if (on && !writeToken.value.trim()) {
-    writeToken.value = randomToken();
-  }
-}
-
-/** 复制文本并给全局 toast 反馈（token/访问地址，发给手机侧粘贴用） */
-function copy(value: string) {
+function copy(value: string): void {
   void copyText(value);
   store.showToast('已复制到剪贴板');
 }
 
-/** 配对二维码可用条件：启用、有 token、至少一个局域网地址 */
-const canPair = computed(() => enabled.value && addresses.value.length > 0 && token.value.trim().length > 0 && portValid.value);
-
-/** 保存当前配置并生成 iOS 配对二维码（二维码使用保存后的端口与 token） */
-async function openPairing(): Promise<void> {
-  if (!canPair.value || saving.value) {
-    return;
-  }
-  const ok = await save();
-  if (!ok) {
-    return;
-  }
-  const ip = selectedAddress.value || addresses.value[0];
-  if (!ip) {
-    error.value = '未检测到局域网 IPv4 地址';
-    return;
-  }
-  const url = `http://${ip}:${portValue()}`;
-  pairing.value = {
-    payload: encodePairingPayload(lanPairingPayload(url, token.value.trim())),
-    details: [
-      { label: '地址', value: url },
-      { label: '访问 token', value: token.value.trim() },
-    ],
-    warning: writable.value && !separate.value ? '当前访问 token 同时具备写权限；iOS 客户端只读浏览，但请只在信任的设备上配对。' : '',
-  };
+function maskedToken(token: string): string {
+  return `${token.slice(0, 6)}••••${token.slice(-4)}`;
 }
 
-/** 保存 [web] 配置（主组件 footer 保存按钮的委托入口）：成功返回 true（主组件据此关闭对话框） */
 async function save(): Promise<boolean> {
-  if (saving.value) {
-    return false;
-  }
-  if (enabled.value && !token.value.trim()) {
-    error.value = '启用局域网查看需要填写访问 token';
-    return false;
-  }
-  if (enabled.value && writable.value && separate.value && !writeToken.value.trim()) {
-    error.value = '拆分只读/可写 token 需要填写可写 token';
-    return false;
-  }
-  if (enabled.value && !portValid.value) {
-    error.value = PORT_ERROR;
-    return false;
-  }
-  saving.value = true;
-  error.value = null;
-  try {
-    await api.saveAppLan({
-      enabled: enabled.value,
-      port: portValue(),
-      token: token.value.trim(),
-      writable: writable.value,
-      separate_write_token: separate.value,
-      write_token: writeToken.value.trim(),
-    });
-    // 成功：LAN 监听已热重绑（daemon 侧确认收敛，失败已自动回滚）
-    return true;
-  } catch (e) {
-    error.value = `应用失败：${errorText(e)}`;
-    return false;
-  } finally {
-    saving.value = false;
-  }
+  const ok = await lan.save();
+  error.value = lan.error;
+  return ok;
 }
 
-/** footer 按钮禁用状态（加载/保存中） */
 function busy(): boolean {
-  return loading.value || saving.value;
+  return lan.loading || lan.saving;
 }
 
 defineExpose({ save, busy });
@@ -166,119 +68,69 @@ defineExpose({ save, busy });
   <div class="pane" :class="{ embedded: props.embedded }">
     <div class="switch-row">
       <div>
-        <div class="switch-label">启用局域网 web 查看</div>
-        <p class="hint">同一局域网的设备可用浏览器只读浏览本素材库。</p>
+        <div class="switch-label">启用局域网网站访问</div>
+        <p class="hint">同一局域网的设备可用浏览器打开本素材库；首次启用并保存时会自动创建一把只读密钥，也可在下方自行创建。</p>
       </div>
-      <label class="switch" title="启用局域网 web 查看">
-        <input v-model="enabled" type="checkbox" />
+      <label class="switch" title="启用局域网网站访问">
+        <input v-model="lan.enabled" type="checkbox" />
         <span class="track" />
       </label>
     </div>
 
-    <div v-if="loading" class="hint">读取设置中…</div>
+    <div v-if="lan.loading" class="hint">读取设置中…</div>
     <template v-else>
-      <!-- 未启用时收起细节字段，减少噪音 -->
-      <div v-show="enabled" class="lan-detail">
-        <div class="switch-row">
-          <div>
-            <div class="switch-label">允许修改素材库</div>
-            <p class="hint">开启后查看端可上传、删除、修改素材；请谨慎签发可写 token。</p>
-          </div>
-          <label class="switch" title="允许局域网查看端执行写操作">
-            <input v-model="writable" type="checkbox" />
-            <span class="track" />
-          </label>
-        </div>
-
-        <!-- token 模式：二合一（单 token 读写）/拆分（只读 token + 可写 token），
-             类似双频 WiFi 的合频/分频；仅写权限开启后有意义 -->
-        <div v-if="writable" class="switch-row">
-          <div>
-            <div class="switch-label">拆分只读与可写 token</div>
-            <p class="hint">关闭时访问 token 兼具读写权限；开启后访问 token 仅可浏览，修改需另签发可写 token。</p>
-          </div>
-          <label class="switch" title="拆分只读 token 与可写 token">
-            <input :checked="separate" type="checkbox" @change="toggleSeparate(($event.target as HTMLInputElement).checked)" />
-            <span class="track" />
-          </label>
-        </div>
-
+      <div v-show="lan.enabled" class="lan-detail">
         <div class="field column">
-          <span class="field-label">端口</span>
-          <input
-            v-model="port"
-            class="port-input"
-            :class="{ invalid: !portValid }"
-            type="text"
-            inputmode="numeric"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="1 – 65535"
-          />
-          <p v-if="!portValid" class="field-error">{{ PORT_ERROR }}</p>
-        </div>
-
-        <div class="field column">
-          <span class="field-label">访问 token{{ separate ? '（只读）' : '' }}</span>
-          <div class="token-row">
-            <input v-model="token" type="text" autocomplete="off" spellcheck="false" />
-            <button class="icon-btn" title="复制 token" @click="copy(token)">
-              <Icon name="copy" :size="13" />
-            </button>
-            <button title="重新生成随机 token" @click="regenerateToken">重新生成</button>
-          </div>
-        </div>
-
-        <div v-if="separate" class="field column">
-          <span class="field-label">可写 token</span>
-          <div class="token-row">
-            <input v-model="writeToken" type="text" autocomplete="off" spellcheck="false" />
-            <button class="icon-btn" title="复制可写 token" @click="copy(writeToken)">
-              <Icon name="copy" :size="13" />
-            </button>
-            <button title="重新生成随机 token" @click="regenerateWriteToken">重新生成</button>
-          </div>
-        </div>
-
-        <div class="field column">
-          <span class="field-label">访问地址</span>
+          <span class="field-label">访问地址列表</span>
           <ul class="addrs">
             <li v-for="ip in addresses" :key="ip">
-              <a :href="portValid ? `http://${ip}:${port.trim()}` : undefined" target="_blank" rel="noreferrer">http://{{ ip }}:{{ port }}</a>
-              <button class="icon-btn" :disabled="!portValid" title="复制地址" @click="copy(`http://${ip}:${port.trim()}`)">
+              <a :href="portValid ? `http://${ip}:${lan.port}` : undefined" target="_blank" rel="noreferrer">http://{{ ip }}:{{ lan.port }}</a>
+              <button class="icon-btn" :disabled="!portValid" title="复制地址" @click="copy(`http://${ip}:${lan.port}`)">
                 <Icon name="copy" :size="13" />
               </button>
             </li>
             <li v-if="addresses.length === 0" class="hint">未检测到局域网 IPv4 地址（检查本机网络连接）</li>
           </ul>
-          <p class="hint">在浏览器打开地址并输入访问 token 即可查看；首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。</p>
+          <p class="hint">首次启用时 Windows 可能弹出防火墙授权框，请选择「允许」。端口在「高级」中配置。</p>
         </div>
 
-        <label v-if="addresses.length > 1" class="field column">
-          <span class="field-label">配对二维码使用的地址</span>
-          <select v-model="selectedAddress">
-            <option v-for="ip in addresses" :key="ip" :value="ip">{{ ip }}</option>
-          </select>
-        </label>
+        <div class="field column key-section">
+          <span class="field-label">创建访问密钥 KEY</span>
+          <div class="key-create">
+            <input v-model="keyLabel" type="text" autocomplete="off" spellcheck="false" placeholder="备注，例如：我的手机" />
+            <label class="key-write">
+              <input v-model="keyWrite" type="checkbox" />
+              允许写入
+            </label>
+            <button :disabled="lan.loading" @click="addKey">创建</button>
+          </div>
+          <p class="hint">只读密钥仅能浏览；可写密钥可上传、删除和修改素材。创建后点击底部「保存网站设置」生效。</p>
+        </div>
 
-        <div class="pair-row">
-          <button class="primary" :disabled="!canPair || saving" @click="openPairing">
-            {{ saving ? '保存中…' : '保存并生成配对二维码' }}
-          </button>
-          <span class="hint">用 hawk iOS 客户端扫码接入；会先保存当前局域网配置，二维码包含访问 token。</span>
+        <div class="field column">
+          <span class="field-label">密钥列表</span>
+          <div v-if="lan.keys.length > 0" class="key-list">
+            <div v-for="key in lan.keys" :key="key.id" class="key-row">
+              <div class="key-main">
+                <div class="key-label">{{ key.label }}</div>
+                <div class="key-token">{{ maskedToken(key.token) }}</div>
+              </div>
+              <span class="perm read">读</span>
+              <span v-if="key.write" class="perm write">写</span>
+              <div class="key-actions">
+                <button class="icon-btn" title="复制完整密钥" @click="copy(key.token)">
+                  <Icon name="copy" :size="13" />
+                </button>
+                <button class="icon-btn" title="删除访问密钥" @click="removeKey(key.id)">
+                  <Icon name="trash" :size="13" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <p v-else class="hint">还没有访问密钥。创建一把后保存，才能通过浏览器或其他 hawk-app 访问。</p>
         </div>
       </div>
     </template>
-
-    <PairingQrDialog
-      v-if="pairing"
-      title="局域网配对"
-      :payload="pairing.payload"
-      :details="pairing.details"
-      note="用 hawk iOS 客户端扫码连接同一局域网内的素材库。"
-      :warning="pairing.warning"
-      @close="pairing = null"
-    />
   </div>
 </template>
 
@@ -292,24 +144,6 @@ defineExpose({ save, busy });
   margin-top: 4px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
-}
-
-.port-input.invalid {
-  border-color: var(--danger);
-}
-
-.token-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.token-row input {
-  flex: 1;
-  min-width: 0;
-  padding: 5px 8px;
-  font-family: monospace;
-  font-size: 12px;
 }
 
 .addrs {
@@ -333,11 +167,93 @@ defineExpose({ save, busy });
   overflow-wrap: anywhere;
 }
 
-.pair-row {
+.key-section {
+  gap: 8px;
+}
+
+.key-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.key-create > input[type='text'] {
+  flex: 1;
+  min-width: 130px;
+  padding: 5px 8px;
+}
+
+.key-write {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-1);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.key-write input {
+  accent-color: var(--accent);
+}
+
+.key-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
-  padding-top: 4px;
+}
+
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.key-row:last-child {
+  border-bottom: none;
+}
+
+.key-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-label {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-token {
+  margin-top: 1px;
+  color: var(--fg-1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.perm {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.perm.read {
+  color: var(--fg-1);
+}
+
+.perm.write {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.key-actions {
+  display: flex;
+  gap: 2px;
+  flex: none;
 }
 </style>
