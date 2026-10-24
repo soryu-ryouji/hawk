@@ -204,14 +204,21 @@ struct PreviewView: View {
     /// 关闭：hero 收向源格子 + 遮罩淡出。
     /// 用无过冲的缓出（弹簧会在末尾回弹，落点对不上格子时会「顿一下再跳」），
     /// 动画时长结束后再清空 session——缩略图恢复必须晚于最后一帧，否则会闪一下。
-    private func close() {
+    /// releaseSpeed：松手时的竖向预测位移（pt）。折算成弹簧初速度，
+    /// 让回场动画延续手指的速度，而不是从 0 起步（这是「丝滑」的关键）
+    private func close(releaseSpeed: CGFloat = 0) {
         // 当前图的格子不在可视区：先让网格滚过去，等布局把帧表填好再开始 hero
         let key = store.item(at: index)?.key
         let needsScroll = key.map { coordinator.cellFrames[$0] == nil } ?? false
         if needsScroll, let key { coordinator.requestCenterScroll(key) }
         Task { @MainActor in
             if needsScroll { try? await Task.sleep(nanoseconds: 250_000_000) }
-            withAnimation(.easeOut(duration: 0.3)) {
+            let velocity = max(
+                -2.5, min(2.5, (releaseSpeed - dismissTranslation) / Self.dismissDistance))
+            withAnimation(
+                .interpolatingSpring(
+                    mass: 1, stiffness: 260, damping: 26, initialVelocity: velocity)
+            ) {
                 present = 0
                 dismissTranslation = 0
             } completion: {
