@@ -78,6 +78,10 @@ struct PreviewView: View {
     /// 内容随下拉收向缩略图：到关闭阈值时缩到 60%（按需求调大「往回收」的幅度）
     private var contentScale: CGFloat { 1 - 0.4 * dismissProgress }
 
+    /// 翻页时间隔：静止时 0（图片满幅），拖动后按位移渐入到 14pt，
+    /// 避免相邻两张图在滑动过程中贴在一起
+    private var pageGap: CGFloat { 14 * min(1, abs(pageDrag) / 60) }
+
     /// 缩小的同时逐渐带上卡片圆角，和缩略图形态衔接
     private var contentCornerRadius: CGFloat { 14 * dismissProgress }
 
@@ -234,7 +238,11 @@ struct PreviewView: View {
 
     private func pageView(at slot: Int, size: CGSize) -> some View {
         let item = items[slot]
-        let fitted = fittedSize(for: item.aspectRatio, in: size)
+        // 按扣除间隔后的可用宽度做适配：两张图之间就有可见空隙（静止时间隔为 0）
+        let gap = pageGap
+        let fitted = fittedSize(
+            for: item.aspectRatio,
+            in: CGSize(width: max(1, size.width - gap * 2), height: size.height))
         let isCurrent = slot == index
         return RemoteImage(
             url: context.api.fileURL(id: item.id), maxPixelSize: 4096, contentMode: .fill
