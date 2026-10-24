@@ -49,7 +49,17 @@ watch(
 async function refreshClients(): Promise<void> {
   try {
     const { clients } = await shell.lanClients();
-    incomingClients.value = clients.filter((client) => client.online);
+    const profiles = new Map(store.saved.map((profile) => [profile.id, profile]));
+    incomingClients.value = clients
+      .filter((client) => client.online)
+      .map((client) => {
+        const profile = client.peer_id ? profiles.get(client.peer_id) : undefined;
+        return {
+          ...client,
+          library_name: client.library_name || profile?.library_name || null,
+          url: client.url || profile?.url || null,
+        };
+      });
   } catch {
     // 本机 daemon 尚未就绪/正在重绑时静默；下一轮继续。
   }
