@@ -42,7 +42,7 @@ struct PreviewView: View {
     /// 拖动模式：拖动开始时按缩放状态与主轴锁定
     private enum DragMode { case idle, page, image, dismiss }
 
-    private static let maxScale: CGFloat = 4
+    private static let maxScale: CGFloat = 6
     private static let doubleTapScale: CGFloat = 2.5
     /// 轮播翻页阈值（视口宽度比例）；放大后钉边拖动的阈值略高，避免轻微越界就翻页
     /// 下拉关闭阈值：位移到这条线即判定关闭（scrim 同时刚好完全透明）
@@ -452,7 +452,8 @@ struct PreviewView: View {
                 guard !pageAnimating else { return }
                 pinching = true
                 dragMode = .idle
-                let target = min(Self.maxScale, max(1, baseScale * value.magnification))
+                // 超上限/低于 1 时用阻尼继续跟手（相册的「灵动」感），松手再弹回
+                let target = Self.rubberBandedScale(baseScale * value.magnification)
                 let anchor = CGPoint(
                     x: value.startLocation.x - size.width / 2,
                     y: value.startLocation.y - size.height / 2)
@@ -465,11 +466,19 @@ struct PreviewView: View {
             }
             .onEnded { _ in
                 pinching = false
-                baseScale = scale
-                if scale <= 1.01 {
+                let settled = min(Self.maxScale, max(1, scale))
+                if abs(settled - scale) > 0.01 {
+                    // 越界松手：弹回可放范围
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                        scale = settled
+                        imageOffset = clampedImageOffset(imageOffset, scale: settled)
+                    }
+                }
+                baseScale = settled
+                if settled <= 1.01 {
                     resetZoom()
                 } else {
-                    let fixed = clampedImageOffset(imageOffset)
+                    let fixed = clampedImageOffset(imageOffset, scale: settled)
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                         imageOffset = fixed
                     }
@@ -530,6 +539,13 @@ struct PreviewView: View {
         return CGSize(
             width: Self.clamp(value.width, limit: limits.width),
             height: Self.clamp(value.height, limit: limits.height))
+    }
+
+    /// 捏合倍率的橡皮筋：上限外按 18% 阻尼继续放大，下限 1 以下按 30% 阻尼继续缩小
+    private static func rubberBandedScale(_ raw: CGFloat) -> CGFloat {
+        if raw > maxScale { return maxScale + (raw - maxScale) * 0.18 }
+        if raw < 1 { return 1 - (1 - raw) * 0.3 }
+        return raw
     }
 
     private static func clamp(_ value: CGFloat, limit: CGFloat) -> CGFloat {
