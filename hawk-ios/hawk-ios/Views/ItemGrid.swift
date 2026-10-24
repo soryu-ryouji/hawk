@@ -244,6 +244,14 @@ struct ItemGridView: View {
             .refreshable {
                 await context.refreshAll()
             }
+            .onChange(of: preview.scrollRequest) { _, key in
+                guard let key,
+                    let row = rows.first(where: { $0.cells.contains { $0.item.key == key } })
+                else { return }
+                // 复用 scrollPosition 绑定：把目标行滚进视口（预览遮罩还在，用户看不到滚动过程）
+                store.updateScrollAnchor(row.id)
+                preview.clearScrollRequest()
+            }
             .task(
                 id: LayoutKey(
                     version: store.layoutVersion, width: Int(contentWidth),

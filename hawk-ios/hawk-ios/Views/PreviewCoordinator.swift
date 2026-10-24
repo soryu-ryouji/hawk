@@ -29,6 +29,17 @@ final class PreviewCoordinator {
     func reportCellFrame(_ frame: CGRect, key: String) {
         cellFrames[key] = frame
     }
+
+    /// 回场目标不在可视区时，请网格把该 item 所在行滚进视口（随后帧表会被重新填充）
+    var scrollRequest: String?
+
+    func requestCenterScroll(_ key: String) {
+        scrollRequest = key
+    }
+
+    func clearScrollRequest() {
+        scrollRequest = nil
+    }
     /// 是否隐藏源格子缩略图：回场一开始就置 false，让缩略图在图片飞回期间提前重新就位
     private(set) var hidesSource = true
 

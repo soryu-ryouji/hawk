@@ -192,11 +192,18 @@ struct PreviewView: View {
     /// 用无过冲的缓出（弹簧会在末尾回弹，落点对不上格子时会「顿一下再跳」），
     /// 动画时长结束后再清空 session——缩略图恢复必须晚于最后一帧，否则会闪一下。
     private func close() {
-        withAnimation(.easeOut(duration: 0.3)) {
-            present = 0
-            dismissTranslation = 0
-        } completion: {
-            coordinator.close()
+        // 当前图的格子不在可视区：先让网格滚过去，等布局把帧表填好再开始 hero
+        let key = store.item(at: index)?.key
+        let needsScroll = key.map { coordinator.cellFrames[$0] == nil } ?? false
+        if needsScroll, let key { coordinator.requestCenterScroll(key) }
+        Task { @MainActor in
+            if needsScroll { try? await Task.sleep(nanoseconds: 250_000_000) }
+            withAnimation(.easeOut(duration: 0.3)) {
+                present = 0
+                dismissTranslation = 0
+            } completion: {
+                coordinator.close()
+            }
         }
     }
 
