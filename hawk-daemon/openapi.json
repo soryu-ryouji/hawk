@@ -2785,6 +2785,17 @@
         ],
         "type": "object"
       },
+      "LanAccessChangedPayload": {
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changed"
+        ],
+        "type": "object"
+      },
       "LanAccessKeyDto": {
         "properties": {
           "created_at_ms": {
@@ -3884,6 +3895,10 @@
             "$ref": "#/components/schemas/ItemsUpdatedPayload",
             "description": "item.updated 的批量变体（调色板批量回写等）"
           },
+          "lan.access.changed": {
+            "$ref": "#/components/schemas/LanAccessChangedPayload",
+            "description": "局域网访问权限变化；客户端收到后重新请求 app/info 刷新 viewerMode"
+          },
           "library.updated": {
             "$ref": "#/components/schemas/LibraryInfo",
             "description": "改库显示名广播，负载为完整 LibraryInfo（含新显示名）"
@@ -3918,7 +3933,8 @@
           "global_filter.changed",
           "locks.changed",
           "remote.session",
-          "remote.status"
+          "remote.status",
+          "lan.access.changed"
         ],
         "type": "object"
       },

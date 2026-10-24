@@ -48,6 +48,14 @@ impl LibraryEvents {
     pub const UPDATED: &'static str = "library.updated";
 }
 
+/// 局域网访问权限变更事件：目标端调整某把 peer key 的 write / 删除设备 / 保存网站设置后广播。
+/// 载荷不含任何凭证，收到后客户端重新请求 app/info 刷新自身读写能力。
+pub struct LanEvents;
+
+impl LanEvents {
+    pub const ACCESS_CHANGED: &'static str = "lan.access.changed";
+}
+
 /// 后台任务进度快照(task.progress 事件与 app/status 端点共用)。
 /// phase/processed/total 仅 index 任务在扫描期间携带；非扫描期间省略（None）
 #[derive(Clone, serde::Serialize, utoipa::ToSchema)]

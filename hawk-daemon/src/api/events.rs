@@ -100,6 +100,15 @@ pub struct SseEvents {
     /// 信令状态变化（connecting/online/error），app 远程设置面板免轮询
     #[serde(rename = "remote.status")]
     remote_status: crate::remote::RemoteStatus,
+    /// 局域网访问权限变化；客户端收到后重新请求 app/info 刷新 viewerMode
+    #[serde(rename = "lan.access.changed")]
+    lan_access_changed: LanAccessChangedPayload,
+}
+
+#[allow(dead_code)]
+#[derive(utoipa::ToSchema)]
+pub struct LanAccessChangedPayload {
+    changed: bool,
 }
 
 #[allow(dead_code)]

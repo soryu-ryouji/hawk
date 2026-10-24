@@ -1483,6 +1483,7 @@ async fn sse_events_match_schema() {
         crate::core::locks::LOCKS_CHANGED,
         crate::remote::session::REMOTE_SESSION_EVENT,
         crate::remote::REMOTE_STATUS_EVENT,
+        crate::core::events::LanEvents::ACCESS_CHANGED,
     ]
     .map(str::to_string)
     .into_iter()

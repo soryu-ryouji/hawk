@@ -1326,3 +1326,5 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 - GET /api/v1/app/lan/pair-requests：目标端待确认请求列表（admin）
 - GET /api/v1/app/lan/pair-requests/{request_id}：源端轮询结果（免 Bearer，request_id 为随机凭证）
 - POST /api/v1/app/lan/pair-requests/{request_id}/decision：目标端确认/拒绝并选择读写权限（admin）
+- lan.access.changed：局域网 peer key 权限/设备列表变更，客户端收到后重新请求 app/info 刷新读写能力。
+

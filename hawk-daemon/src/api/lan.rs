@@ -1010,6 +1010,10 @@ async fn decide_lan_pair_request(
             writable: body.write,
         },
     );
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
     tracing::info!(
         "局域网配对请求已允许: {}（request={request_id}, write={}）",
         request.client_name,
@@ -1536,6 +1540,10 @@ async fn put_lan(
             format!("局域网监听未生效：{err}（已回滚原配置）"),
         ));
     }
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
     Ok(Json(Envelope::ok(lan_dto(&state, lib))))
 }
 
