@@ -29,6 +29,8 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:resizeableActivity="true"
             android:theme="@style/Theme.Hawk"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

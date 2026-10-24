@@ -20,10 +20,12 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.automirrored.outlined.LabelOff
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,6 +57,7 @@ fun SidebarContent(
     store: LibraryStore,
     session: LibrarySession,
     onNavigate: () -> Unit,
+    onOpenSettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by store.state.collectAsStateWithLifecycle()
@@ -155,6 +158,32 @@ fun SidebarContent(
                             store.select(LibraryView.Tag(tag.name))
                             onNavigate()
                         },
+                    )
+                }
+            }
+        }
+
+        if (onOpenSettings != null) {
+            item(key = "settings") {
+                HorizontalDivider(color = HawkColors.Border)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenSettings)
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Info,
+                        contentDescription = null,
+                        tint = HawkColors.Fg1,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "连接信息",
+                        color = HawkColors.Fg0,
+                        fontSize = 13.sp,
                     )
                 }
             }

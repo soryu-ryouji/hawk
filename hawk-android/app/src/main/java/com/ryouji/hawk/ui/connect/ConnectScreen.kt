@@ -1,5 +1,8 @@
 package com.ryouji.hawk.ui.connect
 
+import android.content.ClipboardManager
+import androidx.compose.ui.platform.LocalContext
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,12 +15,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
@@ -67,6 +72,25 @@ fun ConnectScreen(viewModel: AppViewModel) {
     var formTarget by remember { mutableStateOf<ProfileFormTarget?>(null) }
     var showScanner by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val clipboard = context.getSystemService(ClipboardManager::class.java)
+
+    fun handlePairingCode(code: String) {
+        try {
+            viewModel.saveAndConnect(PairingPayload.decode(code).toProfile())
+        } catch (error: ConnectionException) {
+            scanError = error.message
+        }
+    }
+
+    fun importClipboard() {
+        val text = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()?.trim().orEmpty()
+        if (text.isEmpty()) {
+            scanError = "剪贴板中没有配对信息"
+        } else {
+            handlePairingCode(text)
+        }
+    }
 
     Scaffold(
         containerColor = HawkColors.Bg0,
@@ -86,30 +110,37 @@ fun ConnectScreen(viewModel: AppViewModel) {
             )
         },
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+        Box(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            Header()
-            appState.lastError?.let { error ->
-                ErrorBanner(message = error, onDismiss = viewModel::clearLastError)
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 620.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Header()
+                appState.lastError?.let { error ->
+                    ErrorBanner(message = error, onDismiss = viewModel::clearLastError)
+                }
+                ConnectionActions(
+                    onScan = { showScanner = true },
+                    onPaste = ::importClipboard,
+                    onLan = { formTarget = ProfileFormTarget(ConnectionKind.Lan, null) },
+                    onRemote = { formTarget = ProfileFormTarget(ConnectionKind.Remote, null) },
+                )
+                ProfileList(
+                    profiles = bookmark.profiles,
+                    activeId = bookmark.activeId,
+                    onConnect = viewModel::connect,
+                    onEdit = { formTarget = ProfileFormTarget(it.kind, it) },
+                    onDelete = viewModel::deleteProfile,
+                )
             }
-            Actions(
-                onLan = { formTarget = ProfileFormTarget(ConnectionKind.Lan, null) },
-                onRemote = { formTarget = ProfileFormTarget(ConnectionKind.Remote, null) },
-            )
-            ProfileList(
-                profiles = bookmark.profiles,
-                activeId = bookmark.activeId,
-                onConnect = viewModel::connect,
-                onEdit = { formTarget = ProfileFormTarget(it.kind, it) },
-                onDelete = viewModel::deleteProfile,
-            )
         }
     }
 
@@ -130,11 +161,7 @@ fun ConnectScreen(viewModel: AppViewModel) {
             onDismiss = { showScanner = false },
             onCode = { code ->
                 showScanner = false
-                try {
-                    viewModel.saveAndConnect(PairingPayload.decode(code).toProfile())
-                } catch (error: ConnectionException) {
-                    scanError = error.message
-                }
+                handlePairingCode(code)
             },
         )
     }
@@ -147,7 +174,7 @@ fun ConnectScreen(viewModel: AppViewModel) {
                     Text("好")
                 }
             },
-            title = { Text("二维码无法识别") },
+            title = { Text("无法导入配对信息") },
             text = { Text(message) },
             containerColor = HawkColors.Bg2,
         )
@@ -173,7 +200,7 @@ private fun Header() {
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    text = "在 Android 设备上浏览你的素材库",
+                    text = "在 Android 手机和平板上浏览你的素材库",
                     color = HawkColors.Fg1,
                     fontSize = 13.sp,
                 )
@@ -188,26 +215,56 @@ private fun Header() {
 }
 
 @Composable
-private fun Actions(onLan: () -> Unit, onRemote: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun ConnectionActions(
+    onScan: () -> Unit,
+    onPaste: () -> Unit,
+    onLan: () -> Unit,
+    onRemote: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
-            onClick = onLan,
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(8.dp),
+            onClick = onScan,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
         ) {
-            Icon(Icons.Outlined.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("局域网")
+            Icon(Icons.Outlined.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("扫描配对二维码")
         }
         OutlinedButton(
-            onClick = onRemote,
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(8.dp),
+            onClick = onPaste,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
         ) {
-            Icon(Icons.Outlined.Public, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("广域网")
+            Icon(Icons.Outlined.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("从剪贴板导入配对信息")
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = onLan,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Icon(Icons.Outlined.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("局域网")
+            }
+            OutlinedButton(
+                onClick = onRemote,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Icon(Icons.Outlined.Public, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("广域网")
+            }
+        }
+        Text(
+            text = "桌面端生成二维码后直接扫码连接；也可以手动填写地址与凭证。",
+            color = HawkColors.Fg1,
+            fontSize = 11.sp,
+        )
     }
 }
 

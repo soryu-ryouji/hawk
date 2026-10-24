@@ -1,5 +1,6 @@
 package com.ryouji.hawk.ui.library
 
+import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -26,19 +28,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -58,6 +65,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -75,14 +83,21 @@ import com.ryouji.hawk.ui.theme.HawkColors
 import com.ryouji.hawk.ui.theme.fromHex
 import kotlinx.coroutines.launch
 
+private enum class PhoneTab { Library, Browse }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(viewModel: AppViewModel, session: LibrarySession) {
     val store = session.store
     val state by store.state.collectAsStateWithLifecycle()
     val thumbSize by viewModel.thumbSize.collectAsStateWithLifecycle()
+    val configuration = LocalConfiguration.current
+    val isTablet = configuration.smallestScreenWidthDp >= 600
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val permanentSidebar = isTablet && isLandscape
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    var phoneTab by remember { mutableStateOf(PhoneTab.Library) }
 
     var previewIndex by remember { mutableStateOf<Int?>(null) }
     var showFilter by remember { mutableStateOf(false) }
@@ -104,58 +119,103 @@ fun LibraryScreen(viewModel: AppViewModel, session: LibrarySession) {
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(HawkColors.Bg0)) {
-        val wide = maxWidth >= 840.dp
-        if (wide) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                SidebarContent(
-                    store = store,
-                    session = session,
-                    onNavigate = {},
-                    modifier = Modifier.width(280.dp).fillMaxHeight(),
-                )
-                VerticalDivider(color = HawkColors.Border)
-                LibraryPane(
-                    session = session,
-                    state = state,
-                    thumbSize = thumbSize,
-                    showSidebarButton = false,
-                    onOpenSidebar = {},
-                    onOpenPreview = { previewIndex = it },
-                    onOpenFilter = { showFilter = true },
-                    onOpenSettings = { showSettings = true },
-                    onDisconnect = viewModel::disconnect,
-                    modifier = Modifier.weight(1f),
-                )
+        when {
+            permanentSidebar -> {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    SidebarContent(
+                        store = store,
+                        session = session,
+                        onNavigate = {},
+                        onOpenSettings = { showSettings = true },
+                        modifier = Modifier
+                            .width(300.dp)
+                            .fillMaxHeight()
+                            .statusBarsPadding(),
+                    )
+                    VerticalDivider(color = HawkColors.Border)
+                    LibraryPane(
+                        session = session,
+                        state = state,
+                        thumbSize = thumbSize,
+                        showSidebarButton = false,
+                        onOpenSidebar = {},
+                        onOpenPreview = { previewIndex = it },
+                        onOpenFilter = { showFilter = true },
+                        onOpenSettings = { showSettings = true },
+                        onSwitchLibrary = viewModel::showConnectScreen,
+                        onDisconnect = viewModel::disconnect,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
-        } else {
-            ModalNavigationDrawer(
-                drawerState = drawerState,
-                drawerContent = {
-                    ModalDrawerSheet(
-                        drawerState = drawerState,
-                        drawerContainerColor = HawkColors.Bg1,
-                        modifier = Modifier.width(300.dp),
-                    ) {
-                        SidebarContent(
-                            store = store,
-                            session = session,
-                            onNavigate = { scope.launch { drawerState.close() } },
-                            modifier = Modifier.fillMaxHeight(),
+
+            isTablet -> {
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        ModalDrawerSheet(
+                            drawerState = drawerState,
+                            drawerContainerColor = HawkColors.Bg1,
+                            modifier = Modifier.width(300.dp),
+                        ) {
+                            SidebarContent(
+                                store = store,
+                                session = session,
+                                onNavigate = { scope.launch { drawerState.close() } },
+                                onOpenSettings = { showSettings = true },
+                                modifier = Modifier.fillMaxHeight(),
+                            )
+                        }
+                    },
+                ) {
+                    LibraryPane(
+                        session = session,
+                        state = state,
+                        thumbSize = thumbSize,
+                        showSidebarButton = true,
+                        onOpenSidebar = { scope.launch { drawerState.open() } },
+                        onOpenPreview = { previewIndex = it },
+                        onOpenFilter = { showFilter = true },
+                        onOpenSettings = { showSettings = true },
+                        onSwitchLibrary = viewModel::showConnectScreen,
+                        onDisconnect = viewModel::disconnect,
+                    )
+                }
+            }
+
+            else -> {
+                Scaffold(
+                    containerColor = HawkColors.Bg0,
+                    bottomBar = {
+                        LibraryBottomBar(
+                            selected = phoneTab,
+                            onSelect = { phoneTab = it },
                         )
+                    },
+                ) { padding ->
+                    Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+                        when (phoneTab) {
+                            PhoneTab.Library -> LibraryPane(
+                                session = session,
+                                state = state,
+                                thumbSize = thumbSize,
+                                showSidebarButton = false,
+                                onOpenSidebar = {},
+                                onOpenPreview = { previewIndex = it },
+                                onOpenFilter = { showFilter = true },
+                                onOpenSettings = { showSettings = true },
+                                onSwitchLibrary = viewModel::showConnectScreen,
+                                onDisconnect = viewModel::disconnect,
+                            )
+
+                            PhoneTab.Browse -> BrowsePane(
+                                session = session,
+                                onOpenSettings = { showSettings = true },
+                                onNavigate = { phoneTab = PhoneTab.Library },
+                            )
+                        }
                     }
-                },
-            ) {
-                LibraryPane(
-                    session = session,
-                    state = state,
-                    thumbSize = thumbSize,
-                    showSidebarButton = true,
-                    onOpenSidebar = { scope.launch { drawerState.open() } },
-                    onOpenPreview = { previewIndex = it },
-                    onOpenFilter = { showFilter = true },
-                    onOpenSettings = { showSettings = true },
-                    onDisconnect = viewModel::disconnect,
-                )
+                }
             }
         }
     }
@@ -172,6 +232,67 @@ fun LibraryScreen(viewModel: AppViewModel, session: LibrarySession) {
     }
 }
 
+@Composable
+private fun LibraryBottomBar(selected: PhoneTab, onSelect: (PhoneTab) -> Unit) {
+    NavigationBar(containerColor = HawkColors.Bg1, tonalElevation = 0.dp) {
+        NavigationBarItem(
+            selected = selected == PhoneTab.Library,
+            onClick = { onSelect(PhoneTab.Library) },
+            icon = { Icon(Icons.Outlined.PhotoLibrary, contentDescription = null) },
+            label = { Text("素材") },
+        )
+        NavigationBarItem(
+            selected = selected == PhoneTab.Browse,
+            onClick = { onSelect(PhoneTab.Browse) },
+            icon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
+            label = { Text("浏览") },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BrowsePane(
+    session: LibrarySession,
+    onOpenSettings: () -> Unit,
+    onNavigate: () -> Unit,
+) {
+    val state by session.store.state.collectAsStateWithLifecycle()
+    Scaffold(
+        containerColor = HawkColors.Bg0,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "素材库",
+                        color = HawkColors.Fg0,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                },
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            Icons.Outlined.Info,
+                            contentDescription = "连接信息",
+                            tint = HawkColors.Fg0,
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = HawkColors.Bg0),
+            )
+        },
+    ) { padding ->
+        SidebarContent(
+            store = session.store,
+            session = session,
+            onNavigate = onNavigate,
+            onOpenSettings = onOpenSettings,
+            modifier = Modifier.fillMaxSize().padding(padding),
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryPane(
@@ -183,13 +304,14 @@ private fun LibraryPane(
     onOpenPreview: (Int) -> Unit,
     onOpenFilter: () -> Unit,
     onOpenSettings: () -> Unit,
+    onSwitchLibrary: () -> Unit,
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val store = session.store
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
-    var sortMenuOpen by remember { mutableStateOf(false) }
+    var filterSortOpen by remember { mutableStateOf(false) }
     var moreMenuOpen by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -217,32 +339,33 @@ private fun LibraryPane(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onOpenFilter) {
-                        Icon(
-                            imageVector = Icons.Outlined.FilterList,
-                            contentDescription = "筛选",
-                            tint = if (state.query.hasActiveFilters) {
-                                HawkColors.Accent
-                            } else {
-                                HawkColors.Fg0
-                            },
-                        )
-                    }
                     Box {
-                        IconButton(onClick = { sortMenuOpen = true }) {
+                        IconButton(onClick = { filterSortOpen = true }) {
                             Icon(
-                                Icons.Outlined.SwapVert,
-                                contentDescription = "排序",
-                                tint = HawkColors.Fg0,
+                                imageVector = Icons.Outlined.FilterList,
+                                contentDescription = "排序与筛选",
+                                tint = if (state.query.hasActiveFilters) {
+                                    HawkColors.Accent
+                                } else {
+                                    HawkColors.Fg0
+                                },
                             )
                         }
-                        SortMenu(
-                            expanded = sortMenuOpen,
+                        FilterSortMenu(
+                            expanded = filterSortOpen,
                             state = state,
-                            onDismiss = { sortMenuOpen = false },
-                            onSelect = {
+                            onDismiss = { filterSortOpen = false },
+                            onSelectSort = {
                                 store.setSort(it)
-                                sortMenuOpen = false
+                                filterSortOpen = false
+                            },
+                            onOpenFilter = {
+                                filterSortOpen = false
+                                onOpenFilter()
+                            },
+                            onClearFilters = {
+                                store.clearFilters()
+                                filterSortOpen = false
                             },
                         )
                     }
@@ -269,6 +392,14 @@ private fun LibraryPane(
                             onSettings = {
                                 moreMenuOpen = false
                                 onOpenSettings()
+                            },
+                            onSwitchLibrary = {
+                                moreMenuOpen = false
+                                onSwitchLibrary()
+                            },
+                            onDisconnect = {
+                                moreMenuOpen = false
+                                onDisconnect()
                             },
                         )
                     }
@@ -433,17 +564,26 @@ private fun FilterChip(
 }
 
 @Composable
-private fun SortMenu(
+private fun FilterSortMenu(
     expanded: Boolean,
     state: LibraryUiState,
     onDismiss: () -> Unit,
-    onSelect: (SortChoice) -> Unit,
+    onSelectSort: (SortChoice) -> Unit,
+    onOpenFilter: () -> Unit,
+    onClearFilters: () -> Unit,
 ) {
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
         containerColor = HawkColors.Bg2,
     ) {
+        Text(
+            text = "排序",
+            color = HawkColors.Fg1,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
         SortChoice.all.forEach { choice ->
             DropdownMenuItem(
                 text = { Text(choice.label, fontSize = 13.sp) },
@@ -459,7 +599,26 @@ private fun SortMenu(
                         Spacer(modifier = Modifier.size(16.dp))
                     }
                 },
-                onClick = { onSelect(choice) },
+                onClick = { onSelectSort(choice) },
+            )
+        }
+        HorizontalDivider(color = HawkColors.Border)
+        DropdownMenuItem(
+            text = { Text("筛选…", fontSize = 13.sp) },
+            leadingIcon = {
+                Icon(
+                    Icons.Outlined.FilterList,
+                    contentDescription = null,
+                    tint = HawkColors.Fg1,
+                    modifier = Modifier.size(16.dp),
+                )
+            },
+            onClick = onOpenFilter,
+        )
+        if (state.query.hasActiveFilters) {
+            DropdownMenuItem(
+                text = { Text("清除筛选", color = HawkColors.Danger, fontSize = 13.sp) },
+                onClick = onClearFilters,
             )
         }
     }
@@ -473,25 +632,36 @@ private fun MoreMenu(
     onNavigateUp: () -> Unit,
     onRefresh: () -> Unit,
     onSettings: () -> Unit,
+    onSwitchLibrary: () -> Unit,
+    onDisconnect: () -> Unit,
 ) {
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
         containerColor = HawkColors.Bg2,
     ) {
-        if (state.view != LibraryView.All) {
-            DropdownMenuItem(
-                text = { Text("返回上级", fontSize = 13.sp) },
-                onClick = onNavigateUp,
-            )
-        }
         DropdownMenuItem(
             text = { Text("刷新素材库", fontSize = 13.sp) },
             onClick = onRefresh,
         )
+        if (state.view != LibraryView.All) {
+            DropdownMenuItem(
+                text = { Text("返回上层", fontSize = 13.sp) },
+                onClick = onNavigateUp,
+            )
+        }
+        HorizontalDivider(color = HawkColors.Border)
         DropdownMenuItem(
             text = { Text("连接信息", fontSize = 13.sp) },
             onClick = onSettings,
+        )
+        DropdownMenuItem(
+            text = { Text("切换素材库", fontSize = 13.sp) },
+            onClick = onSwitchLibrary,
+        )
+        DropdownMenuItem(
+            text = { Text("断开连接", color = HawkColors.Danger, fontSize = 13.sp) },
+            onClick = onDisconnect,
         )
     }
 }

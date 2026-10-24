@@ -62,7 +62,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(AppUiState())
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
-    private val _thumbSize = MutableStateFlow(prefs.getFloat(KEY_THUMB_SIZE, 160f))
+    private val defaultThumbSize = if (application.resources.configuration.smallestScreenWidthDp >= 600) 240f else 150f
+    private val _thumbSize = MutableStateFlow(prefs.getFloat(KEY_THUMB_SIZE, defaultThumbSize))
     val thumbSize: StateFlow<Float> = _thumbSize.asStateFlow()
 
     private var connectJob: Job? = null
