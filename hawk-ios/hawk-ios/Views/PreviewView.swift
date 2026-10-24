@@ -137,6 +137,7 @@ struct PreviewView: View {
         }
         .onAppear {
             coordinator.setActiveKey(store.item(at: index)?.key)
+            prefetchNeighbours(index)
             withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) { present = 1 }
         }
         .onChange(of: index) { _, _ in
@@ -145,6 +146,7 @@ struct PreviewView: View {
             let key = store.item(at: index)?.key
             coordinator.setActiveKey(key)
             if let key { coordinator.requestCenterScroll(key) }
+            prefetchNeighbours(index)
         }
         .statusBarHidden(!showsChrome)
         .task(id: index) { await loadDetail(for: index) }
