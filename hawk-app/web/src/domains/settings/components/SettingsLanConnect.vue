@@ -226,30 +226,30 @@ async function forget(peer: LanPeerProfile): Promise<void> {
           </button>
         </div>
       </div>
+    </div>
 
-      <Teleport to="body">
-        <div v-if="pairPermission" class="pair-perm-mask" @click.self="pairPermission = null">
-          <div class="pair-perm-dialog" role="dialog" aria-modal="true" aria-labelledby="pair-perm-title">
-            <div id="pair-perm-title" class="pair-perm-title">设备密钥权限</div>
-            <p class="pair-perm-copy">将为本机创建「{{ pairPermission.name }}」的设备密钥，用于对方反向访问此素材库。</p>
-            <div class="pair-perm-options">
-              <label class="pair-perm-option" :class="{ active: !pairWrite }">
-                <input v-model="pairWrite" type="radio" :value="false" />
-                <span><strong>仅读取</strong></span>
-              </label>
-              <label class="pair-perm-option" :class="{ active: pairWrite }">
-                <input v-model="pairWrite" type="radio" :value="true" />
-                <span><strong>可读写</strong></span>
-              </label>
-            </div>
-            <div class="pair-perm-actions">
-              <button @click="pairPermission = null">取消</button>
-              <button class="primary" @click="confirmPairPermission">申请配对</button>
-            </div>
+    <Teleport to="body">
+      <div v-if="pairPermission" class="pair-perm-mask" @click.self="pairPermission = null">
+        <div class="pair-perm-dialog" role="dialog" aria-modal="true" aria-labelledby="pair-perm-title">
+          <div id="pair-perm-title" class="pair-perm-title">设备密钥权限</div>
+          <p class="pair-perm-copy">将为本机创建「{{ pairPermission.name }}」的设备密钥，用于对方反向访问此素材库。</p>
+          <div class="pair-perm-options">
+            <label class="pair-perm-option" :class="{ active: !pairWrite }">
+              <input v-model="pairWrite" type="radio" :value="false" />
+              <span><strong>仅读取</strong></span>
+            </label>
+            <label class="pair-perm-option" :class="{ active: pairWrite }">
+              <input v-model="pairWrite" type="radio" :value="true" />
+              <span><strong>可读写</strong></span>
+            </label>
+          </div>
+          <div class="pair-perm-actions">
+            <button @click="pairPermission = null">取消</button>
+            <button class="primary" @click="confirmPairPermission">申请配对</button>
           </div>
         </div>
-      </Teleport>
-    </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
