@@ -58,7 +58,6 @@ const isAdmin = computed(() => store.access === 'admin');
 /** 「局域网访问」与「高级」共用 footer 保存；访问其他设备与远程仍为内联操作。 */
 const showLanSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'lan-access');
 const showAdvancedSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'advanced');
-const closeLabel = computed(() => (showLanSave.value ? '取消' : '关闭'));
 
 /** 「网络 → 局域网访问 → 共享本机素材库」块实例（v-show 保活，footer 保存按钮委托其 save） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
@@ -115,10 +114,7 @@ async function saveLan() {
   if (!lanPane.value) {
     return;
   }
-  const ok = await lanPane.value.save();
-  if (ok) {
-    emit('close');
-  } else {
+  if (!(await lanPane.value.save())) {
     section.value = 'network';
     networkTab.value = 'lan-access';
   }
@@ -196,16 +192,13 @@ async function saveAdvanced(): Promise<void> {
 
         <div v-if="error" class="dialog-error">{{ error }}</div>
 
-        <footer class="actions">
-          <div class="actions-left">
-            <button v-if="showAdvancedSave" class="primary" :disabled="advancedBusy || !advancedDirty" @click="saveAdvanced">
-              {{ advancedBusy ? '保存中…' : '保存' }}
-            </button>
-          </div>
-          <div class="actions-right">
-            <button :disabled="showLanSave && lanBusy()" @click="emit('close')">{{ closeLabel }}</button>
-            <button v-if="showLanSave" class="primary" :disabled="lanBusy()" @click="saveLan">保存网站设置</button>
-          </div>
+        <footer v-if="showLanSave || showAdvancedSave" class="actions">
+          <button v-if="showAdvancedSave" class="primary" :disabled="advancedBusy || !advancedDirty" @click="saveAdvanced">
+            {{ advancedBusy ? '保存中…' : '保存' }}
+          </button>
+          <button v-else class="primary" :disabled="lanBusy()" @click="saveLan">
+            {{ lanBusy() ? '保存中…' : '保存' }}
+          </button>
         </footer>
       </div>
     </div>
@@ -243,7 +236,7 @@ async function saveAdvanced(): Promise<void> {
 .dialog-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 10px 12px 10px 16px;
   border-bottom: 1px solid var(--border);
 }
@@ -301,16 +294,10 @@ async function saveAdvanced(): Promise<void> {
 .actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
-}
-
-.actions-left,
-.actions-right {
-  display: flex;
-  gap: 8px;
 }
 
 .primary {

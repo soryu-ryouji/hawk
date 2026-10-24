@@ -17,6 +17,7 @@ const props = defineProps<{ embedded?: boolean }>();
 const addresses = ref<string[]>([]);
 const keyLabel = ref('');
 const keyWrite = ref(false);
+const notice = ref('');
 const { copy: copyText } = useClipboard({ legacy: true });
 
 onMounted(async () => {
@@ -52,8 +53,17 @@ function maskedToken(token: string): string {
 }
 
 async function save(): Promise<boolean> {
+  notice.value = '';
   const ok = await lan.save();
   error.value = lan.error;
+  if (ok) {
+    notice.value = '网站设置已保存';
+    window.setTimeout(() => {
+      if (notice.value === '网站设置已保存') {
+        notice.value = '';
+      }
+    }, 3000);
+  }
   return ok;
 }
 
@@ -74,6 +84,7 @@ defineExpose({ save, busy });
       </label>
     </div>
 
+    <p v-if="notice" class="settings-message ok">{{ notice }}</p>
     <div v-if="lan.loading" class="hint">读取设置中…</div>
     <template v-else>
       <div v-show="lan.enabled" class="lan-detail">
