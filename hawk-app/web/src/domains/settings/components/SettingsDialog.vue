@@ -55,12 +55,15 @@ const store = useLibraryStore();
  *  避免只读 token 调管理端点 403（viewer token cannot access admin settings） */
 const isAdmin = computed(() => store.access === 'admin');
 
-/** 「局域网访问」与「高级」共用 footer 保存；访问其他设备与远程仍为内联操作。 */
+/** 可保存标签共用 footer 保存入口。 */
 const showLanSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'lan-access');
 const showAdvancedSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'advanced');
+const showRemoteSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'remote');
 
 /** 「网络 → 局域网访问 → 局域网网站访问」块实例（v-show 保活，footer 保存按钮委托其 save） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
+/** 「远程访问」块实例：footer 保存委托其 save */
+const remotePane = ref<InstanceType<typeof SettingsRemote> | null>(null);
 /** 「高级」块实例：本地 API 端口与局域网端口统一保存 */
 const advancedPane = ref<InstanceType<typeof SettingsAdvanced> | null>(null);
 /** footer 按钮禁用：对应分区加载/保存中 */
@@ -69,6 +72,13 @@ function lanBusy(): boolean {
 }
 const advancedBusy = computed(() => advancedPane.value?.busy ?? false);
 const advancedDirty = computed(() => advancedPane.value?.dirty ?? false);
+function remoteBusy(): boolean {
+  return remotePane.value?.busy() ?? false;
+}
+
+async function saveRemote(): Promise<void> {
+  await remotePane.value?.save();
+}
 
 onMounted(() => {
   document.body.classList.add('dialog-open');
@@ -182,7 +192,7 @@ async function saveAdvanced(): Promise<void> {
               </template>
             </div>
             <div v-show="networkTab === 'remote'" class="tab-content" role="tabpanel">
-              <SettingsRemote v-model:error="error" embedded />
+              <SettingsRemote ref="remotePane" v-model:error="error" embedded />
             </div>
             <div v-show="networkTab === 'advanced'" class="tab-content" role="tabpanel">
               <SettingsAdvanced ref="advancedPane" />
@@ -195,9 +205,12 @@ async function saveAdvanced(): Promise<void> {
 
         <div v-if="error" class="dialog-error">{{ error }}</div>
 
-        <footer v-if="showLanSave || showAdvancedSave" class="actions">
+        <footer v-if="showLanSave || showRemoteSave || showAdvancedSave" class="actions">
           <button v-if="showAdvancedSave" class="primary" :disabled="advancedBusy || !advancedDirty" @click="saveAdvanced">
             {{ advancedBusy ? '保存中…' : '保存' }}
+          </button>
+          <button v-else-if="showRemoteSave" class="primary" :disabled="remoteBusy()" @click="saveRemote">
+            {{ remoteBusy() ? '保存中…' : '保存' }}
           </button>
           <button v-else class="primary" :disabled="lanBusy()" @click="saveLan">
             {{ lanBusy() ? '保存中…' : '保存' }}

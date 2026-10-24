@@ -3,12 +3,13 @@
 // 设备列表与会话入口。凭证模型：service-key（池门禁，server 侧 tenant add 生成）准入后，
 //  hawk-app key（本机签发，逐把读/写权限）分发给网页版/插件等外部查看者。
 // 配置读写/设备列表/密钥管理/会话动作全部经 IPC 委托主进程（切到远程后渲染进程的 API base 已指向
-// 会话代理，管理面必须在主进程）。状态自管：保存按钮内联（不占用主组件 footer）；打开期间轮询信令状态。
+// 会话代理，管理面必须在主进程）。设置面板内保存由 footer 委托，RemoteScreen 保留内联保存；打开期间轮询信令状态。
 // 错误条在主组件（v-model:error）；分区切换 v-show 保活（编辑中的字段不丢）。
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRemoteStore, useConnectionLabel } from '@/domains/remote';
 import { useLibraryStore } from '@/domains/library';
 import PairingQrDialog from './PairingQrDialog.vue';
+import Icon from '@/shared/ui/Icon.vue';
 import { encodePairingPayload, remotePairingPayload } from '../pairing';
 import type { RemoteKeyCreated } from '@/shared/types';
 
@@ -34,10 +35,10 @@ const rotating = ref(false);
 
 // ---- 访问密钥管理 ----
 const keyLabel = ref('');
-const keyRead = ref(true);
-const keyWrite = ref(false);
+const keyPermission = ref<'read' | 'write'>('read');
 const keyCustom = ref('');
 const creating = ref(false);
+const keyCreateOpen = ref(false);
 /** 刚签发的密钥（明文只在创建响应里，展示到用户关闭为止） */
 const createdKey = ref<RemoteKeyCreated | null>(null);
 const copied = ref('');
@@ -78,6 +79,29 @@ const statusText = computed(() => {
   }
 });
 
+const statusLabel = computed(() => {
+  if (!enabled.value) {
+    return '未启用';
+  }
+  return statusText.value ?? (store.dto?.enabled ? '等待接入' : '未启用');
+});
+
+const statusTone = computed(() => {
+  if (!enabled.value || !store.dto?.enabled) {
+    return 'off';
+  }
+  switch (store.dto.status.state) {
+    case 'online':
+      return 'online';
+    case 'connecting':
+      return 'connecting';
+    case 'error':
+      return 'error';
+    default:
+      return 'off';
+  }
+});
+
 /** 本机设备（设备列表中 device_id 与信令状态一致的一台） */
 const selfDevice = computed(() => store.devices.find((d) => d.device_id === store.dto?.status.device_id) ?? null);
 
@@ -102,6 +126,12 @@ async function save(): Promise<boolean> {
   }
   return ok;
 }
+
+function busy(): boolean {
+  return saving.value || pairingBusy.value || creating.value || rotating.value;
+}
+
+defineExpose({ save, busy });
 
 /** 配对二维码可用条件：启用、服务端地址与服务密钥已填写（保存由按钮动作完成） */
 const canPair = computed(() => enabled.value && url.value.trim().length > 0 && serviceKey.value.trim().length > 0);
@@ -149,14 +179,23 @@ async function openPairing(): Promise<void> {
 
 // ---- 访问密钥动作 ----
 
+function openKeyCreate(): void {
+  error.value = null;
+  createdKey.value = null;
+  keyLabel.value = '';
+  keyCustom.value = '';
+  keyPermission.value = 'read';
+  keyCreateOpen.value = true;
+}
+
 async function createKey() {
   error.value = null;
   createdKey.value = null;
   creating.value = true;
   const created = await store.createKey({
     label: keyLabel.value.trim() || undefined,
-    read: keyRead.value,
-    write: keyWrite.value,
+    read: true,
+    write: keyPermission.value === 'write',
     custom: keyCustom.value.trim() || undefined,
   });
   creating.value = false;
@@ -165,9 +204,10 @@ async function createKey() {
     return;
   }
   createdKey.value = created;
+  keyCreateOpen.value = false;
   keyLabel.value = '';
   keyCustom.value = '';
-  keyWrite.value = false;
+  keyPermission.value = 'read';
 }
 
 /** 复制文本（密钥/分享串）；button 文案短暂反馈 */
@@ -190,9 +230,13 @@ function shareText(key: string): string {
   return [`服务器：${store.dto?.url ?? ''}`, `服务密钥：${store.dto?.service_key ?? ''}`, `访问密钥：${key}`].join('\n');
 }
 
-async function toggleKeyPerm(id: string, perm: 'read' | 'write', value: boolean) {
+function keyPermissionValue(key: { write: boolean }): 'read' | 'write' {
+  return key.write ? 'write' : 'read';
+}
+
+async function setKeyPermission(id: string, value: string) {
   error.value = null;
-  const ok = await store.patchKey(id, { [perm]: value });
+  const ok = await store.patchKey(id, { read: true, write: value === 'write' });
   if (!ok) {
     error.value = store.error;
   }
@@ -259,167 +303,183 @@ async function removeDevice(deviceId: string, name: string) {
 </script>
 
 <template>
-  <div class="pane" :class="{ embedded: props.embedded }">
-    <div class="switch-row">
-      <div class="switch-label">启用远程访问</div>
+  <div class="pane remote-pane" :class="{ embedded: props.embedded }">
+    <div class="remote-head">
+      <div class="remote-head-copy">
+        <div class="remote-title">远程访问</div>
+        <div class="remote-status">
+          <span class="status-dot" :class="statusTone" />
+          <span class="status-label">{{ statusLabel }}</span>
+        </div>
+      </div>
       <label class="switch" title="启用远程访问">
         <input v-model="enabled" type="checkbox" />
         <span class="track" />
       </label>
     </div>
 
-    <div v-show="enabled" class="remote-detail">
-      <div class="field column">
-        <span class="field-label">服务端地址</span>
-        <input v-model="url" type="text" placeholder="https://hawk.example.com" autocomplete="off" spellcheck="false" />
-      </div>
-      <div class="field column">
-        <span class="field-label">服务密钥（service-key）</span>
-        <input v-model="serviceKey" type="password" placeholder="hawk-server tenant add 生成的 hs_ 密钥" autocomplete="off" spellcheck="false" />
-      </div>
-      <div v-if="!props.libraryless" class="switch-row">
-        <div class="switch-label">允许广域网保存素材</div>
-        <label class="switch" title="允许广域网会话导入素材">
-          <input v-model="writable" type="checkbox" />
-          <span class="track" />
-        </label>
-      </div>
-
-      <div class="actions-left">
-        <button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存并接入' }}</button>
-        <span v-if="statusText" class="hint">{{ statusText }}</span>
-      </div>
-
-      <hr class="divider" />
-
-      <!-- 访问密钥管理：分发给网页版/插件等外部查看者（与池门禁的 service-key 不同物） -->
-      <div class="keys">
-        <div class="switch-label">访问密钥</div>
-
-        <div v-if="!props.libraryless" class="pair-entry">
-          <button class="primary" :disabled="!canPair || saving || pairingBusy" @click="openPairing">
-            {{ pairingBusy ? '签发中…' : '保存并生成 iOS 配对二维码' }}
-          </button>
-        </div>
-
-        <!-- 签发结果：明文展示一次 -->
-        <div v-if="createdKey" class="created-key">
-          <code class="created-key-code">{{ createdKey.key }}</code>
-          <div class="actions-left">
-            <button @click="copyText(createdKey!.key, 'key')">{{ copied === 'key' ? '已复制' : '复制密钥' }}</button>
-            <button @click="copyText(shareText(createdKey!.key), 'share')">{{ copied === 'share' ? '已复制' : '复制分享串' }}</button>
-            <button @click="createdKey = null">我已保存</button>
-          </div>
-          <p class="hint">{{ createdKey.synced ? '已同步到服务端' : '远程未在线，待自动同步' }}</p>
-        </div>
-
-        <!-- 签发表单 -->
-        <div class="key-form">
-          <input v-model="keyLabel" type="text" placeholder="标签（如 iPhone 插件）" autocomplete="off" />
-          <input v-model="keyCustom" type="text" placeholder="自定义密钥（留空自动生成）" autocomplete="off" spellcheck="false" />
-          <div class="actions-left">
-            <label class="perm"><input v-model="keyRead" type="checkbox" :disabled="keyRead && !keyWrite" /> 可读</label>
-            <label class="perm"><input v-model="keyWrite" type="checkbox" :disabled="!keyRead && keyWrite" /> 可写</label>
-            <button class="primary" :disabled="creating || (!keyRead && !keyWrite)" @click="createKey">{{ creating ? '签发中…' : '签发' }}</button>
-          </div>
-        </div>
-
-        <!-- 已有密钥列表 -->
-        <div v-if="store.keys.length === 0" class="hint">尚未签发访问密钥。</div>
-        <div v-for="k in store.keys" :key="k.id" class="key-row">
-          <div class="key-info">
-            <div class="key-label">
-              {{ k.label || '未命名' }} <code class="key-prefix">{{ k.prefix }}…</code>
-            </div>
-          </div>
-          <label class="perm" title="只读浏览">
-            <input
-              type="checkbox"
-              :checked="k.read"
-              :disabled="k.read && !k.write"
-              @change="toggleKeyPerm(k.id, 'read', ($event.target as HTMLInputElement).checked)"
-            />
-            读
+    <div v-show="enabled" class="remote-content">
+      <section class="settings-section">
+        <div class="settings-section-title">接入</div>
+        <div class="settings-group">
+          <label class="remote-field">
+            <span class="remote-field-label">服务器地址</span>
+            <input v-model="url" class="settings-input" type="text" placeholder="https://hawk.example.com" autocomplete="off" spellcheck="false" />
           </label>
-          <label class="perm" title="广域网导入素材/新建文件夹">
+          <label class="remote-field">
+            <span class="remote-field-label">服务密钥</span>
             <input
-              type="checkbox"
-              :checked="k.write"
-              :disabled="!k.read && k.write"
-              @change="toggleKeyPerm(k.id, 'write', ($event.target as HTMLInputElement).checked)"
+              v-model="serviceKey"
+              class="settings-input"
+              type="password"
+              placeholder="hawk-server tenant add 生成的 hs_ 密钥"
+              autocomplete="off"
+              spellcheck="false"
             />
-            写
           </label>
-          <button class="key-revoke" @click="revokeKey(k.id, k.label)">吊销</button>
-        </div>
-      </div>
-
-      <template v-if="store.dto?.status.state === 'online'">
-        <hr class="divider" />
-
-        <!-- 本机设备：改名 / 远程开关 / 证书轮换 -->
-        <div v-if="selfDevice" class="self-device">
-          <div class="field column">
-            <span class="field-label">本机显示名</span>
-            <div class="actions-left">
-              <input v-model="selfName" type="text" :placeholder="selfDevice.name" autocomplete="off" />
-              <button :disabled="renaming || !selfName.trim()" @click="saveSelfName">改名</button>
-            </div>
-          </div>
-          <div v-if="!props.libraryless" class="switch-row">
-            <div class="switch-label">允许其他设备访问本库</div>
-            <label class="switch" title="允许其他设备访问本库">
-              <input :checked="selfDevice.allow_remote" type="checkbox" @change="toggleAllowRemote(($event.target as HTMLInputElement).checked)" />
+          <div v-if="!props.libraryless" class="remote-switch-row">
+            <span class="remote-field-label">允许广域网保存素材</span>
+            <label class="switch" title="允许广域网会话导入素材">
+              <input v-model="writable" type="checkbox" />
               <span class="track" />
             </label>
           </div>
-          <div class="actions-left">
-            <button :disabled="rotating" @click="rotate">{{ rotating ? '轮换中…' : '轮换设备证书' }}</button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <div class="settings-section-title">访问密钥</div>
+        <div class="settings-group">
+          <div class="remote-actions-row">
+            <button v-if="!props.libraryless" class="remote-button" :disabled="!canPair || saving || pairingBusy" @click="openPairing">
+              {{ pairingBusy ? '生成中…' : '生成配对二维码' }}
+            </button>
+            <button class="remote-button" @click="openKeyCreate">新建访问密钥</button>
+          </div>
+
+          <div v-if="createdKey" class="created-key">
+            <div class="created-key-title">新访问密钥</div>
+            <code class="created-key-code">{{ createdKey.key }}</code>
+            <div class="created-key-actions">
+              <button class="remote-button" @click="copyText(createdKey.key, 'key')">{{ copied === 'key' ? '已复制' : '复制密钥' }}</button>
+              <button class="remote-button" @click="copyText(shareText(createdKey.key), 'share')">{{ copied === 'share' ? '已复制' : '复制分享串' }}</button>
+              <button class="remote-button" @click="createdKey = null">完成</button>
+            </div>
+            <div class="row-meta">{{ createdKey.synced ? '已同步到服务端' : '远程未在线，待自动同步' }}</div>
+          </div>
+
+          <div v-if="store.keys.length === 0" class="empty-row">暂无访问密钥</div>
+          <div v-for="k in store.keys" :key="k.id" class="remote-row">
+            <div class="row-main">
+              <div class="row-title">{{ k.label || '未命名' }}</div>
+              <div class="row-meta">{{ k.prefix }}…</div>
+            </div>
+            <select class="permission-select" :value="keyPermissionValue(k)" @change="setKeyPermission(k.id, ($event.target as HTMLSelectElement).value)">
+              <option value="read">仅读取</option>
+              <option value="write">可读写</option>
+            </select>
+            <button class="icon-btn" title="吊销访问密钥" @click="revokeKey(k.id, k.label)">
+              <Icon name="trash" :size="13" />
+            </button>
           </div>
         </div>
+      </section>
 
-        <hr class="divider" />
-
-        <!-- 设备列表与会话入口 -->
-        <div v-if="connection.isRemote.value" class="actions-left current-remote">
-          <span class="hint">
-            当前浏览：{{ connection.label.value
-            }}{{ library.viewerMode ? '（只读：目标未开启广域网保存素材）' : library.limitedWrite ? '（仅导入）' : '（可读写）' }}
-          </span>
-          <button @click="disconnect">断开并回到我的库</button>
-        </div>
-        <div class="switch-row">
-          <div class="switch-label">使用中继</div>
-          <label class="switch" title="直连失败时经服务端使用中继">
-            <input :checked="store.relayEnabled" type="checkbox" @change="store.setRelayEnabled(($event.target as HTMLInputElement).checked)" />
-            <span class="track" />
-          </label>
-        </div>
-
-        <div v-if="peerDevices.length === 0" class="hint">暂无其他设备</div>
-        <div v-for="device in peerDevices" :key="device.device_id" class="device-row">
-          <span class="dot" :class="{ online: device.online }" />
-          <div class="device-info">
-            <div class="device-name">{{ device.name }}</div>
-            <div class="hint">
-              {{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}{{ device.allow_write ? ' · 允许远程写入' : ''
-              }}{{ device.online ? (device.reachable === true ? ' · 可直连' : device.reachable === false ? ' · 仅中继' : '') : '' }}
+      <template v-if="store.dto?.status.state === 'online'">
+        <section v-if="selfDevice" class="settings-section">
+          <div class="settings-section-title">此设备</div>
+          <div class="settings-group">
+            <div class="remote-field remote-field-action">
+              <span class="remote-field-label">显示名称</span>
+              <input v-model="selfName" class="settings-input" type="text" :placeholder="selfDevice.name" autocomplete="off" />
+              <button class="remote-button" :disabled="renaming || !selfName.trim()" @click="saveSelfName">保存</button>
+            </div>
+            <div v-if="!props.libraryless" class="remote-switch-row">
+              <span class="remote-field-label">允许其他设备访问本库</span>
+              <label class="switch" title="允许其他设备访问本库">
+                <input :checked="selfDevice.allow_remote" type="checkbox" @change="toggleAllowRemote(($event.target as HTMLInputElement).checked)" />
+                <span class="track" />
+              </label>
+            </div>
+            <div class="remote-row">
+              <div class="row-main">
+                <div class="row-title">设备证书</div>
+                <div class="row-meta">用于远程信令与设备认证</div>
+              </div>
+              <button class="remote-button" :disabled="rotating" @click="rotate">{{ rotating ? '轮换中…' : '轮换' }}</button>
             </div>
           </div>
-          <button v-if="device.online && device.allow_remote" class="primary" :disabled="store.connectingId !== null" @click="connect(device.device_id)">
-            {{ store.connectingId === device.device_id ? '连接中…' : '浏览素材库' }}
-          </button>
-          <span v-else class="hint">{{ device.online ? '不可访问' : '离线' }}</span>
-          <button
-            class="device-remove"
-            title="从列表移除该设备记录（其进行中的会话与访问密钥映射一并失效）"
-            @click="removeDevice(device.device_id, device.name)"
-          >
-            移除
-          </button>
-        </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section-title">设备</div>
+          <div class="settings-group">
+            <div v-if="connection.isRemote.value" class="remote-session">
+              <div class="row-main">
+                <div class="row-title">已连接 {{ connection.label.value }}</div>
+                <div class="row-meta">
+                  {{ library.viewerMode ? '只读' : library.limitedWrite ? '仅导入' : '可读写' }}
+                </div>
+              </div>
+              <button class="remote-button" @click="disconnect">断开</button>
+            </div>
+            <div class="remote-switch-row">
+              <span class="remote-field-label">使用中继</span>
+              <label class="switch" title="直连失败时经服务端使用中继">
+                <input :checked="store.relayEnabled" type="checkbox" @change="store.setRelayEnabled(($event.target as HTMLInputElement).checked)" />
+                <span class="track" />
+              </label>
+            </div>
+            <div v-if="peerDevices.length === 0" class="empty-row">暂无其他设备</div>
+            <div v-for="device in peerDevices" :key="device.device_id" class="remote-row">
+              <span class="device-dot" :class="{ online: device.online }" />
+              <div class="row-main">
+                <div class="row-title">{{ device.name }}</div>
+                <div class="row-meta">
+                  {{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}{{ device.allow_write ? ' · 允许写入' : ''
+                  }}{{ device.online ? (device.reachable === true ? ' · 直连' : device.reachable === false ? ' · 中继' : '') : '' }}
+                </div>
+              </div>
+              <button v-if="device.online && device.allow_remote" class="primary" :disabled="store.connectingId !== null" @click="connect(device.device_id)">
+                {{ store.connectingId === device.device_id ? '连接中…' : '浏览' }}
+              </button>
+              <span v-else class="row-status">{{ device.online ? '不可访问' : '离线' }}</span>
+              <button class="icon-btn" title="移除设备记录" @click="removeDevice(device.device_id, device.name)">
+                <Icon name="trash" :size="13" />
+              </button>
+            </div>
+          </div>
+        </section>
       </template>
+
+      <div v-if="props.libraryless" class="inline-save">
+        <button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存并接入' }}</button>
+      </div>
     </div>
+
+    <Teleport to="body">
+      <div v-if="keyCreateOpen" class="modal-mask" @click.self="keyCreateOpen = false">
+        <div class="modal">
+          <div class="modal-title">新建访问密钥</div>
+          <label class="modal-field">
+            <span>名称</span>
+            <input v-model="keyLabel" class="settings-input" type="text" placeholder="例如：iPad 插件" autocomplete="off" />
+          </label>
+          <label class="modal-field">
+            <span>自定义密钥</span>
+            <input v-model="keyCustom" class="settings-input" type="text" placeholder="留空自动生成" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="permission-toggle">
+            <button :class="{ active: keyPermission === 'read' }" @click="keyPermission = 'read'">仅读取</button>
+            <button :class="{ active: keyPermission === 'write' }" @click="keyPermission = 'write'">可读写</button>
+          </div>
+          <div class="modal-actions">
+            <button @click="keyCreateOpen = false">取消</button>
+            <button class="primary" :disabled="creating" @click="createKey">{{ creating ? '签发中…' : '签发' }}</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <PairingQrDialog
       v-if="pairing"
@@ -432,125 +492,318 @@ async function removeDevice(deviceId: string, name: string) {
     />
   </div>
 </template>
-
 <style src="./settings-shared.css"></style>
 
 <style scoped>
-.remote-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 12px;
-}
-.actions-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.divider {
-  border: none;
-  border-top: 1px solid var(--border, rgba(128, 128, 128, 0.3));
-  margin: 4px 0;
-}
-.device-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.device-info {
-  flex: 1;
-  min-width: 0;
-}
-.device-name {
-  font-size: 13px;
-}
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-tertiary, #999);
-  flex-shrink: 0;
-}
-.dot.online {
-  background: #4caf50;
-}
-.current-remote {
-  padding: 8px 10px;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
-  border-radius: 8px;
+.remote-pane {
+  gap: 16px;
 }
 
-/* ---- 访问密钥管理 ---- */
-.keys {
+.remote-head {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.pair-entry {
-  display: flex;
-  flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 1px 2px 3px;
 }
-.created-key {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-}
-.created-key-code {
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
-  word-break: break-all;
-  user-select: all;
-}
-.key-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.key-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.key-info {
-  flex: 1;
+
+.remote-head-copy {
   min-width: 0;
 }
-.key-label {
-  font-size: 13px;
+
+.remote-title {
+  color: var(--fg-0);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.remote-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+
+.status-label {
   overflow: hidden;
+  max-width: 360px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.key-prefix {
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
-  color: var(--text-tertiary, #999);
-}
-.perm {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--fg-1);
-  flex-shrink: 0;
-}
-.key-revoke {
-  flex-shrink: 0;
-  color: var(--danger);
-}
-.device-remove {
-  flex-shrink: 0;
-  color: var(--fg-1);
+
+.status-dot,
+.device-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--fg-1);
+  opacity: 0.35;
 }
 
-@media (hover: hover) {
-  .device-remove:hover {
-    color: var(--danger);
+.status-dot.online,
+.device-dot.online {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.status-dot.connecting {
+  background: #f5a623;
+  opacity: 1;
+}
+
+.status-dot.error {
+  background: var(--danger);
+  opacity: 1;
+}
+
+.remote-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-group > * + * {
+  border-top: 1px solid var(--border);
+}
+
+.remote-field {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.remote-field-label {
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
+.remote-field .settings-input {
+  justify-self: stretch;
+}
+
+.remote-field-action {
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+}
+
+.remote-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 12px;
+}
+
+.remote-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px 12px;
+}
+
+.remote-button {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-size: 12px;
+}
+
+.remote-button:hover:not(:disabled) {
+  border-color: var(--fg-1);
+}
+
+.created-key {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.created-key-title {
+  color: var(--fg-0);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.created-key-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.created-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.empty-row {
+  padding: 11px 12px;
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
+.remote-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 12px;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  overflow: hidden;
+  color: var(--fg-0);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta {
+  margin-top: 2px;
+  color: var(--fg-1);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.row-status {
+  flex: none;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+
+.permission-select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-size: 11px;
+}
+
+.remote-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.inline-save {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 230;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.52);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(380px, 100%);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-1);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+}
+
+.modal-title {
+  color: var(--fg-0);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+
+.permission-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+
+.permission-toggle button {
+  height: 27px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
+.permission-toggle button.active {
+  background: var(--bg-1);
+  color: var(--fg-0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.modal-actions button {
+  min-width: 64px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-2);
+  color: var(--fg-0);
+  font-size: 12px;
+}
+
+@media (max-width: 520px) {
+  .remote-field {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .remote-field-action {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .remote-field-action .remote-field-label {
+    grid-column: 1 / -1;
   }
 }
 </style>
