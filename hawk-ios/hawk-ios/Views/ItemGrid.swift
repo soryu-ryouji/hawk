@@ -193,94 +193,98 @@ struct ItemGridView: View {
     var body: some View {
         GeometryReader { proxy in
             let contentWidth = max(1, proxy.size.width - HawkTheme.screenPadding * 2)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: HawkTheme.gridGap) {
-                    ForEach(rows) { row in
-                        HStack(alignment: .top, spacing: HawkTheme.gridGap) {
-                            ForEach(row.cells) { cell in
-                                let detail = store.detail(for: cell.item)
-                                ItemCard(
-                                    cell: cell,
-                                    title: ItemKey.displayName(item: cell.item, detail: detail),
-                                    thumbnailURL: context.api.thumbnailURL(id: cell.item.id),
-                                    starCount: store.star(for: cell.item),
-                                    metaHeight: metaHeight,
-                                    thumbHidden: preview.hidesSource
-                                        && preview.activeKey == cell.item.key,
-                                    onOpen: { frame in onOpen(cell.index, frame) },
-                                    onSave: { onSave(cell.item) },
-                                    onShare: {
-                                        onShare(
-                                            cell.item,
-                                            ItemKey.displayName(item: cell.item, detail: detail))
-                                    },
-                                    onInfo: { onInfo(cell.index) },
-                                    onCopyName: {
-                                        onCopyName(
-                                            ItemKey.displayName(item: cell.item, detail: detail))
-                                    }
-                                )
+            ScrollViewReader { scroller in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: HawkTheme.gridGap) {
+                        ForEach(rows) { row in
+                            HStack(alignment: .top, spacing: HawkTheme.gridGap) {
+                                ForEach(row.cells) { cell in
+                                    let detail = store.detail(for: cell.item)
+                                    ItemCard(
+                                        cell: cell,
+                                        title: ItemKey.displayName(item: cell.item, detail: detail),
+                                        thumbnailURL: context.api.thumbnailURL(id: cell.item.id),
+                                        starCount: store.star(for: cell.item),
+                                        metaHeight: metaHeight,
+                                        thumbHidden: preview.hidesSource
+                                            && preview.activeKey == cell.item.key,
+                                        onOpen: { frame in onOpen(cell.index, frame) },
+                                        onSave: { onSave(cell.item) },
+                                        onShare: {
+                                            onShare(
+                                                cell.item,
+                                                ItemKey.displayName(item: cell.item, detail: detail)
+                                            )
+                                        },
+                                        onInfo: { onInfo(cell.index) },
+                                        onCopyName: {
+                                            onCopyName(
+                                                ItemKey.displayName(item: cell.item, detail: detail)
+                                            )
+                                        }
+                                    )
+                                }
+                                Spacer(minLength: 0)
                             }
-                            Spacer(minLength: 0)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .task(id: store.skeletonVersion) {
+                                store.ensureWindow(row.indexRange)
+                            }
+                            .id(row.id)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .task(id: store.skeletonVersion) {
-                            store.ensureWindow(row.indexRange)
-                        }
-                        .id(row.id)
+                    }
+                    .padding(HawkTheme.screenPadding)
+                    .scrollTargetLayout()
+                }
+                .scrollIndicators(.hidden)
+                .contentMargins(.bottom, 56, for: .scrollContent)
+                .scrollPosition(
+                    id: Binding(
+                        get: { store.scrollAnchor },
+                        set: { store.updateScrollAnchor($0) }
+                    ), anchor: .top
+                )
+                .refreshable {
+                    await context.refreshAll()
+                }
+                .onChange(of: preview.scrollRequest) { _, key in
+                    guard let key,
+                        let row = rows.first(where: { $0.cells.contains { $0.item.key == key } })
+                    else { return }
+                    // 滚到屏幕中间（预览遮罩还在，用户看不到滚动过程）
+                    scroller.scrollTo(row.id, anchor: .center)
+                    preview.clearScrollRequest()
+                }
+                .task(
+                    id: LayoutKey(
+                        version: store.layoutVersion, width: Int(contentWidth),
+                        target: Int(targetHeight), meta: Int(metaHeight))
+                ) {
+                    let items = store.displayItems
+                    let width = contentWidth
+                    let target = targetHeight
+                    let meta = metaHeight
+                    rows = GridLayout.rows(items, width: width, targetHeight: target)
+                    // 首屏内容到达后把记住的位置还回去
+                    _ = meta
+                }
+                .overlay(alignment: .top) {
+                    if store.loading, !store.displayItems.isEmpty {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(HawkTheme.fg1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(.top, 8)
                     }
                 }
-                .padding(HawkTheme.screenPadding)
-                .scrollTargetLayout()
-            }
-            .scrollIndicators(.hidden)
-            .contentMargins(.bottom, 56, for: .scrollContent)
-            .scrollPosition(
-                id: Binding(
-                    get: { store.scrollAnchor },
-                    set: { store.updateScrollAnchor($0) }
-                ), anchor: .top
-            )
-            .refreshable {
-                await context.refreshAll()
-            }
-            .onChange(of: preview.scrollRequest) { _, key in
-                guard let key,
-                    let row = rows.first(where: { $0.cells.contains { $0.item.key == key } })
-                else { return }
-                // 复用 scrollPosition 绑定：把目标行滚进视口（预览遮罩还在，用户看不到滚动过程）
-                store.updateScrollAnchor(row.id)
-                preview.clearScrollRequest()
-            }
-            .task(
-                id: LayoutKey(
-                    version: store.layoutVersion, width: Int(contentWidth),
-                    target: Int(targetHeight), meta: Int(metaHeight))
-            ) {
-                let items = store.displayItems
-                let width = contentWidth
-                let target = targetHeight
-                let meta = metaHeight
-                rows = GridLayout.rows(items, width: width, targetHeight: target)
-                // 首屏内容到达后把记住的位置还回去
-                _ = meta
-            }
-            .overlay(alignment: .top) {
-                if store.loading, !store.displayItems.isEmpty {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(HawkTheme.fg1)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .padding(.top, 8)
-                }
-            }
-            .overlay {
-                if store.displayItems.isEmpty, !store.loading, !store.firstPageLoading,
-                    store.lockedTarget == nil
-                {
-                    emptyState
+                .overlay {
+                    if store.displayItems.isEmpty, !store.loading, !store.firstPageLoading,
+                        store.lockedTarget == nil
+                    {
+                        emptyState
+                    }
                 }
             }
         }
