@@ -46,11 +46,19 @@ Push-Location $AppDir
 try {
     if (-not (Test-Path 'node_modules')) {
         npm install
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm install 失败（exit $LASTEXITCODE）"
+        }
     }
     if ($Unpacked) {
         npm run pack:dir # install 只需要未打包目录，跳过 zip 压缩
     } else {
         npm run pack
+    }
+    # PowerShell 7 默认不会因原生命令非零退出码中止（且旧版没有该行为）；
+    # 必须在调用点显式检查，否则 npm 构建失败后仍会继续复制上一次的 dist/，伪装成安装成功。
+    if ($LASTEXITCODE -ne 0) {
+        throw "hawk-app 打包失败（exit $LASTEXITCODE）"
     }
 } finally {
     Pop-Location
