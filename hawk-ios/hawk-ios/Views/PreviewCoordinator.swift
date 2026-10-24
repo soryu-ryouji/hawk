@@ -30,6 +30,13 @@ final class PreviewCoordinator {
         cellFrames[key] = frame
     }
 
+    /// 当前预览的图片（翻页后跟着变）：源格子置空与回场目标都按它走
+    private(set) var activeKey: String?
+
+    func setActiveKey(_ key: String?) {
+        activeKey = key
+    }
+
     /// 回场目标不在可视区时，请网格把该 item 所在行滚进视口（随后帧表会被重新填充）
     var scrollRequest: String?
 
@@ -56,6 +63,7 @@ final class PreviewCoordinator {
 
     func close() {
         session = nil
+        activeKey = nil
         hidesSource = true
     }
 }

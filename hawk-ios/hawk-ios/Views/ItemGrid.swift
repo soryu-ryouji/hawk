@@ -206,7 +206,7 @@ struct ItemGridView: View {
                                     starCount: store.star(for: cell.item),
                                     metaHeight: metaHeight,
                                     thumbHidden: preview.hidesSource
-                                        && preview.session?.key == cell.item.key,
+                                        && preview.activeKey == cell.item.key,
                                     onOpen: { frame in onOpen(cell.index, frame) },
                                     onSave: { onSave(cell.item) },
                                     onShare: {
