@@ -26,17 +26,28 @@ const speedMs = ref<number | null>(null);
 const isLanConnected = computed(() => connection.isLan.value);
 const currentPeer = computed(() => store.saved.find((peer) => peer.id === connection.peerId.value) ?? null);
 /** 当前已连接的设备不再出现在发现列表里，避免重复显示和误点申请。 */
+function sameDeviceName(a: string, b: string): boolean {
+  const normalize = (name: string) =>
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/\.local$/, '')
+      .replace(/^局域网设备[：:]\s*/, '');
+  return normalize(a) === normalize(b);
+}
 const connectablePeers = computed(() =>
   store.saved.filter(
     (profile) =>
       !(connection.isLan.value && connection.peerId.value === profile.id) &&
-      store.discovered.some((peer) => peer.id === profile.id || peer.name === profile.name),
+      store.discovered.some((peer) => peer.id === profile.id || sameDeviceName(peer.name, profile.name)),
   ),
 );
 const visibleDiscovered = computed(() =>
   store.discovered.filter((peer) => {
     const current = connection.isLan.value && peer.id === connection.peerId.value;
-    const paired = store.saved.some((saved) => saved.id === peer.id || saved.name === peer.name) || lanSettings.peerKeys.some((key) => key.label === peer.name);
+    const paired =
+      store.saved.some((saved) => saved.id === peer.id || sameDeviceName(saved.name, peer.name)) ||
+      lanSettings.peerKeys.some((key) => sameDeviceName(key.label, peer.name));
     return !current && !paired;
   }),
 );

@@ -42,7 +42,12 @@ let clientTimer: ReturnType<typeof setInterval> | null = null;
 const devices = computed<DeviceRow[]>(() => {
   const rows = new Map<string, DeviceRow>();
   const byName = new Map<string, DeviceRow>();
-  const identity = (name: string) => name.trim().toLowerCase();
+  const identity = (name: string) =>
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/\\.local$/, '')
+      .replace(/^局域网设备[：:]\\s*/, '');
   for (const profile of lanStore.saved) {
     const row: DeviceRow = {
       id: profile.id,
