@@ -55,6 +55,8 @@ if (want.app) {
     execFileSync(npm, ['version', want.app, '--no-git-tag-version', '--allow-same-version'], {
       cwd: dir,
       stdio: 'inherit',
+      // Node 22+ 在 Windows 上不再允许直接 spawn .cmd/.bat，npm.cmd 需经 shell 启动
+      shell: process.platform === 'win32',
     });
     changes.push(`hawk-app/package.json  ${before} → ${want.app}`);
   }
