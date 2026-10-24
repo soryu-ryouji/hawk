@@ -55,16 +55,21 @@ const store = useLibraryStore();
  *  避免只读 token 调管理端点 403（viewer token cannot access admin settings） */
 const isAdmin = computed(() => store.access === 'admin');
 
-/** 「局域网访问」里的共享设置需要 footer 保存；访问其他设备、本机端口与远程均为内联操作 */
+/** 「局域网访问」与「高级」共用 footer 保存；访问其他设备与远程仍为内联操作。 */
 const showLanSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'lan-access');
+const showAdvancedSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'advanced');
 const closeLabel = computed(() => (showLanSave.value ? '取消' : '关闭'));
 
 /** 「网络 → 局域网访问 → 共享本机素材库」块实例（v-show 保活，footer 保存按钮委托其 save） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
-/** footer 按钮禁用：LAN 分区加载/保存中 */
+/** 「高级」块实例：本地 API 端口与局域网端口统一保存 */
+const advancedPane = ref<InstanceType<typeof SettingsAdvanced> | null>(null);
+/** footer 按钮禁用：对应分区加载/保存中 */
 function lanBusy(): boolean {
   return lanPane.value?.busy() ?? false;
 }
+const advancedBusy = computed(() => advancedPane.value?.busy ?? false);
+const advancedDirty = computed(() => advancedPane.value?.dirty ?? false);
 
 onMounted(() => {
   document.body.classList.add('dialog-open');
@@ -105,8 +110,8 @@ useEventListener(
   { capture: true },
 );
 
-/** 保存：委托 LAN 块（footer 保存的唯一语义所在）；失败切到网络分区暴露错误字段 */
-async function save() {
+/** 保存 LAN 网站设置：成功后关闭面板，失败留在当前分区暴露错误。 */
+async function saveLan() {
   if (!lanPane.value) {
     return;
   }
@@ -117,6 +122,11 @@ async function save() {
     section.value = 'network';
     networkTab.value = 'lan-access';
   }
+}
+
+/** 保存高级设置：本地 API 端口只落盘，提示重启后生效；局域网端口保存后立即生效。 */
+async function saveAdvanced(): Promise<void> {
+  await advancedPane.value?.save();
 }
 </script>
 
@@ -176,7 +186,7 @@ async function save() {
               <SettingsRemote v-model:error="error" embedded />
             </div>
             <div v-show="networkTab === 'advanced'" class="tab-content" role="tabpanel">
-              <SettingsAdvanced />
+              <SettingsAdvanced ref="advancedPane" />
             </div>
           </div>
           <SettingsStorage v-if="hasShell" v-show="section === 'storage'" />
@@ -187,8 +197,15 @@ async function save() {
         <div v-if="error" class="dialog-error">{{ error }}</div>
 
         <footer class="actions">
-          <button :disabled="showLanSave && lanBusy()" @click="emit('close')">{{ closeLabel }}</button>
-          <button v-if="showLanSave" class="primary" :disabled="lanBusy()" @click="save">保存网站设置</button>
+          <div class="actions-left">
+            <button v-if="showAdvancedSave" class="primary" :disabled="advancedBusy || !advancedDirty" @click="saveAdvanced">
+              {{ advancedBusy ? '保存中…' : '保存' }}
+            </button>
+          </div>
+          <div class="actions-right">
+            <button :disabled="showLanSave && lanBusy()" @click="emit('close')">{{ closeLabel }}</button>
+            <button v-if="showLanSave" class="primary" :disabled="lanBusy()" @click="saveLan">保存网站设置</button>
+          </div>
         </footer>
       </div>
     </div>
@@ -283,10 +300,17 @@ async function save() {
 
 .actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
+}
+
+.actions-left,
+.actions-right {
+  display: flex;
+  gap: 8px;
 }
 
 .primary {

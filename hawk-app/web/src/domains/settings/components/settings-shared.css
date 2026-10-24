@@ -12,7 +12,7 @@
 }
 
 /* 嵌入到合并分区（网络）内的分组：沿用字段间距，但不再自带 padding/滚动——
-   滚动容器是外层分区，否则嵌套出两个滚动条。给 SettingsLan/SettingsRemote/SettingsLocalService 用 */
+   滚动容器是外层分区，否则嵌套出两个滚动条。给 SettingsLan/SettingsRemote 用 */
 .pane.embedded {
   flex: none;
   overflow: visible;
