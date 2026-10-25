@@ -40,24 +40,14 @@ struct RemoteImage: View {
                 failed = true
                 return
             }
-            for attempt in 0..<3 {
-                let loaded =
-                    if maxPixelSize <= 1024 {
-                        await ImageStore.shared.thumbnail(for: url)
-                    } else {
-                        await ImageStore.shared.original(for: url, maxPixelSize: maxPixelSize)
-                    }
-                guard !Task.isCancelled else { return }
-                if let loaded {
-                    withAnimation(.easeOut(duration: 0.15)) { image = loaded }
-                    return
-                }
-                if attempt < 2 {
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    if Task.isCancelled { return }
-                }
+            let loaded = await ImageStore.shared.loadWithRetry(
+                for: url, maxPixelSize: maxPixelSize)
+            guard !Task.isCancelled else { return }
+            if let loaded {
+                withAnimation(.easeOut(duration: 0.15)) { image = loaded }
+            } else {
+                failed = true
             }
-            failed = true
         }
     }
 }

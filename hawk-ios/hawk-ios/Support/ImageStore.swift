@@ -66,6 +66,25 @@ final class ImageStore {
         return image
     }
 
+    /// 带重试的加载：新入库素材的缩略图/原图可能短暂 404，失败后稍等再试，
+    /// 避免网格与预览留下永久占位
+    func loadWithRetry(for url: URL, maxPixelSize: Int) async -> UIImage? {
+        for attempt in 0..<3 {
+            let image =
+                if maxPixelSize <= 1024 {
+                    await thumbnail(for: url)
+                } else {
+                    await original(for: url, maxPixelSize: maxPixelSize)
+                }
+            if Task.isCancelled { return nil }
+            if let image { return image }
+            if attempt < 2 {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+            }
+        }
+        return nil
+    }
+
     /// 预取相邻页的原图（左右滑动前先落缓存），失败静默
     func prefetchOriginals(_ urls: [URL], maxPixelSize: Int = 4096) {
         for url in urls {

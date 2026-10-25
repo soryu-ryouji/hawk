@@ -1,15 +1,14 @@
 import SwiftUI
 import UIKit
 
-/// 全屏预览（相册式）：横向翻页跟手、双击/双指缩放（围绕触点/捏合起点）、放大后拖到图片边缘
-/// 继续拖时「图片钉边、相邻图跟手滑入」，未放大时下拉关闭；顶部标题与底部玻璃工具条（保存/分享/信息）。
+/// 全屏预览（相册式）：横向翻页跟手、双击/双指缩放、放大后单指平移，未放大时下拉关闭；
+/// 顶部标题与底部玻璃工具条（保存/分享/信息）。
 ///
 /// 为什么自绘轮播而不是 ScrollView 分页：iOS 26 起放在滚动内容里的 DragGesture 会取消 ScrollView 的 pan
-/// （rdar://FB10091372），而放大后的边缘翻页需要在同一个手势里从「图片平移」交接给「整页轮播」，
-/// ScrollView 做不到这种交接。这里用三段式画面（上一张/当前/下一张）+ 单个 DragGesture 统一编排：
-///   - 缩放 1：水平拖动 = 轮播位移（首尾页橡皮筋抵抗），松手按位移/甩动决定翻页或回弹
-///   - 缩放 > 1：拖动 = 图片平移（边界内 1:1 跟手）；越界部分转成轮播位移，图片钉在边缘、相邻图滑入
-///   - 缩放 1：竖直拖动 = 下拉关闭
+/// （rdar://FB10091372），而翻页与下拉关闭需要在同一个手势里按主轴锁定。
+/// 这里用三段式画面（上一张/当前/下一张）+ 单个 DragGesture 编排：
+///   - 未放大：水平拖动 = 轮播位移（首尾页橡皮筋抵抗），竖直拖动 = 下拉关闭
+///   - 放大：缩放与平移交给当前页的 UIScrollView（ZoomableImage），外层手势整体让出
 /// 手势轴在拖动开始时锁定一次（水平/竖直），之后不再改判，避免相册里常见的抖动。
 struct PreviewView: View {
     /// 根层 overlay 的呈现协调器（关闭时清空 session）
@@ -25,30 +24,22 @@ struct PreviewView: View {
     @State private var present: CGFloat = 0
     @State private var exporter = MediaExporter()
 
-    // 缩放（只作用于当前页）
-    @State private var scale: CGFloat = 1
-    @State private var baseScale: CGFloat = 1
-    @State private var imageOffset: CGSize = .zero
-    @State private var baseImageOffset: CGSize = .zero
+    // 当前页的缩放层：收场前归零，缩放状态用于让出外层单指手势
+    @State private var zoom = ZoomController()
+    @State private var zoomed = false
 
     // 手势过程态
     @State private var dragMode: DragMode = .idle
     @State private var pageDrag: CGFloat = 0
     @State private var dismissTranslation: CGFloat = 0
     @State private var pageAnimating = false
-    @State private var pinching = false
-    @State private var viewSize: CGSize = .zero
 
-    /// 拖动模式：拖动开始时按缩放状态与主轴锁定
-    private enum DragMode { case idle, page, image, dismiss }
+    /// 拖动模式：拖动开始时按主轴锁定
+    private enum DragMode { case idle, page, dismiss }
 
-    private static let maxScale: CGFloat = 6
-    private static let doubleTapScale: CGFloat = 2.5
-    /// 轮播翻页阈值（视口宽度比例）；放大后钉边拖动的阈值略高，避免轻微越界就翻页
-    /// 下拉关闭阈值：位移到这条线即判定关闭（scrim 同时刚好完全透明）
+    /// 轮播翻页阈值（视口宽度比例）；下拉关闭阈值：位移到这条线即判定关闭（scrim 同时刚好完全透明）
     private static let dismissDistance: CGFloat = 160
     private static let pageDistanceRatio: CGFloat = 0.18
-    private static let edgePageDistanceRatio: CGFloat = 0.3
     /// 甩动翻页阈值（预测位移占视口宽度的比例）：位移不够时靠速度也能翻，接近相册
     private static let pageFlickRatio: CGFloat = 0.45
 
@@ -125,14 +116,8 @@ struct PreviewView: View {
                 }
             }
             .contentShape(Rectangle())
-            .onAppear { viewSize = size }
-            .onChange(of: size) { _, value in viewSize = value }
-            .gesture(dragGesture(size: size))
-            .simultaneousGesture(magnifyGesture(size: size))
-            .simultaneousGesture(doubleTapGesture(size: size))
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.2)) { showsChrome.toggle() }
-            }
+            // 放大时整体让出单指手势：平移与缩放交给当前页的 UIScrollView
+            .gesture(dragGesture(size: size), including: zoomed ? .none : .all)
         }
         .onAppear {
             coordinator.setActiveKey(store.item(at: index)?.key)
@@ -191,7 +176,7 @@ struct PreviewView: View {
             let shrink = 1 - 0.08 * (1 - present)
             return (shrink, shrink, .zero)
         }
-        let fitted = fittedSize(for: item.aspectRatio, in: size)
+        let fitted = ZoomableImage.fittedSize(for: item.aspectRatio, in: size)
         let targetX = frame.width / max(fitted.width, 1)
         let targetY = frame.height / max(fitted.height, 1)
         let scaleX = targetX + (1 - targetX) * present
@@ -207,6 +192,10 @@ struct PreviewView: View {
     /// releaseSpeed：松手时的竖向预测位移（pt）。折算成弹簧初速度，
     /// 让回场动画延续手指的速度，而不是从 0 起步（这是「丝滑」的关键）
     private func close(releaseSpeed: CGFloat = 0) {
+        // 先把缩放层归零（无动画）：hero 只做「全屏 → 源格子」这一层变换，
+        // 否则内层缩放/平移会与外层 hero 叠乘，落点对不上。
+        zoom.reset()
+        zoomed = false
         // 当前图的格子不在可视区：先让网格滚过去，等布局把帧表填好再开始 hero
         let key = store.item(at: index)?.key
         let needsScroll = key.map { coordinator.cellFrames[$0] == nil } ?? false
@@ -229,8 +218,8 @@ struct PreviewView: View {
 
     // MARK: - 轮播
 
-    /// 三段式画面：上一张 / 当前 / 下一张。当前页承载缩放与平移，相邻页保持原始比例，
-    /// 放大后钉边拖动时相邻图就在旁边跟手滑入（与相册一致）。
+    /// 三段式画面：上一张 / 当前 / 下一张。每页都是独立的缩放视图，
+    /// 只有当前页会把缩放状态回传给外层（用于让出手势）。
     private func carousel(size: CGSize) -> some View {
         let slots = [index - 1, index, index + 1].filter(items.indices.contains)
         return ZStack(alignment: .leading) {
@@ -247,28 +236,25 @@ struct PreviewView: View {
 
     private func pageView(at slot: Int, size: CGSize) -> some View {
         let item = items[slot]
-        let fitted = fittedSize(for: item.aspectRatio, in: size)
         let isCurrent = slot == index
-        return RemoteImage(
-            url: context.api.fileURL(id: item.id), maxPixelSize: 4096, contentMode: .fill
+        return ZoomableImage(
+            url: context.api.fileURL(id: item.id),
+            aspectRatio: item.aspectRatio,
+            zoomController: isCurrent ? zoom : nil,
+            onZoomChanged: { value in
+                guard isCurrent else { return }
+                zoomed = value
+                // 单指拖动中途加入第二根手指时外层 drag 可能已经走了一段：放大后归零，避免页面/下拉停在半路
+                if value {
+                    pageDrag = 0
+                    dismissTranslation = 0
+                    dragMode = .idle
+                }
+            },
+            onSingleTap: toggleChrome
         )
-        .frame(width: fitted.width, height: fitted.height)
-        .scaleEffect(isCurrent ? scale : 1)
-        .offset(isCurrent ? imageOffset : .zero)
         .frame(width: size.width, height: size.height)
-        .clipped()
         .contentShape(Rectangle())
-    }
-
-    /// `scaledToFit` 的尺寸：按原图比例塞进可用区域，宽高都确定，避免容器 proposal 不确定时被拉伸
-    private func fittedSize(for aspectRatio: Double, in size: CGSize) -> CGSize {
-        guard size.width > 0, size.height > 0 else { return size }
-        let aspect = aspectRatio > 0 ? CGFloat(aspectRatio) : 1
-        let viewAspect = size.width / size.height
-        if aspect > viewAspect {
-            return CGSize(width: size.width, height: size.width / aspect)
-        }
-        return CGSize(width: size.height * aspect, height: size.height)
     }
 
     // MARK: - 拖动
@@ -276,26 +262,23 @@ struct PreviewView: View {
     private func dragGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 6)
             .onChanged { value in
-                guard !pageAnimating, !pinching else { return }
+                guard !pageAnimating, !zoomed else { return }
                 if dragMode == .idle {
                     dragMode = mode(for: value.translation)
                 }
                 switch dragMode {
                 case .page: updatePageDrag(value.translation.width, size: size)
-                case .image: updateImageDrag(value.translation, size: size)
                 case .dismiss: dismissTranslation = max(0, value.translation.height)
                 case .idle: break
                 }
             }
             .onEnded { value in
-                guard !pageAnimating, !pinching else {
+                guard !pageAnimating, !zoomed else {
                     dragMode = .idle
-                    pinching = false  // 兜底：捏合被意外中断时不把拖动永久锁死
                     return
                 }
                 switch dragMode {
                 case .page: endPageDrag(value, size: size)
-                case .image: endImageDrag(value, size: size)
                 case .dismiss: endDismiss(value)
                 case .idle: break
                 }
@@ -303,10 +286,9 @@ struct PreviewView: View {
             }
     }
 
-    /// 主轴在拖动开始时锁定：放大后竖直拖动归图片平移（不平移整页、不关闭），未放大竖拖关闭
+    /// 主轴在拖动开始时锁定：水平翻页、竖直下拉关闭（放大时外层手势已经让出）
     private func mode(for translation: CGSize) -> DragMode {
         let horizontal = abs(translation.width) > abs(translation.height)
-        if scale > 1.01 { return .image }
         return horizontal ? .page : .dismiss
     }
 
@@ -342,51 +324,7 @@ struct PreviewView: View {
         }
     }
 
-    // MARK: 图片平移 + 钉边交接
-
-    private func updateImageDrag(_ translation: CGSize, size: CGSize) {
-        let limits = imageOffsetLimits(for: scale)
-        let raw = CGSize(
-            width: baseImageOffset.width + translation.width,
-            height: baseImageOffset.height + translation.height)
-        let clamped = CGSize(
-            width: Self.clamp(raw.width, limit: limits.width),
-            height: Self.clamp(raw.height, limit: limits.height))
-        imageOffset = clamped
-        // 横向越界转成轮播位移：图片钉在边缘，相邻图跟手滑入（相册行为）；
-        // 首尾页没有相邻图时退化为橡皮筋。纵向越界不交给任何手势（放大时不下拉关闭）。
-        let overflow = raw.width - clamped.width
-        guard overflow != 0 else {
-            pageDrag = 0
-            return
-        }
-        pageDrag =
-            canPage(towards: overflow)
-            ? overflow : Self.rubberBand(overflow, dimension: size.width)
-    }
-
-    private func endImageDrag(_ value: DragGesture.Value, size: CGSize) {
-        // 只有真的拖到图片边缘（pageDrag 有值）才可能翻页；图片内部快速拖动不应误翻页
-        if pageDrag != 0 {
-            let remaining = value.predictedEndTranslation.width - value.translation.width
-            let projected = pageDrag + remaining
-            if let direction = pageDirection(
-                drag: pageDrag, predicted: projected, size: size,
-                ratio: Self.edgePageDistanceRatio)
-            {
-                commitPageChange(by: direction, size: size, predicted: projected)
-                return
-            }
-        }
-        let fixed = clampedImageOffset(imageOffset)
-        withAnimation(Self.settleAnimation(from: pageDrag, to: 0, predicted: pageDrag)) {
-            imageOffset = fixed
-            pageDrag = 0
-        }
-        baseImageOffset = fixed
-    }
-
-    // MARK: - 翻页 / 缩放
+    // MARK: - 翻页
 
     /// 当前拖动方向是否还有相邻页可翻
     private func canPage(towards offset: CGFloat) -> Bool {
@@ -417,9 +355,11 @@ struct PreviewView: View {
         withAnimation(Self.settleAnimation(from: pageDrag, to: destination, predicted: predicted)) {
             pageDrag = destination
         } completion: {
+            // 翻页前把旧页的缩放归零：它马上变成相邻页，不能带着残留的缩放/平移
+            zoom.reset()
+            zoomed = false
             index = target
             pageDrag = 0
-            resetZoom()
             pageAnimating = false
             prefetchNeighbours(target)
         }
@@ -437,119 +377,6 @@ struct PreviewView: View {
             abs(remaining) > 1
             ? max(-3, min(3, (predicted - current) / remaining)) : 0
         return .interpolatingSpring(mass: 1, stiffness: 320, damping: 30, initialVelocity: velocity)
-    }
-
-    private func resetZoom() {
-        scale = 1
-        baseScale = 1
-        imageOffset = .zero
-        baseImageOffset = .zero
-    }
-
-    private func magnifyGesture(size: CGSize) -> some Gesture {
-        MagnifyGesture(minimumScaleDelta: 0.01)
-            .onChanged { value in
-                guard !pageAnimating else { return }
-                pinching = true
-                dragMode = .idle
-                // 超上限/低于 1 时用阻尼继续跟手（相册的「灵动」感），松手再弹回
-                let target = Self.rubberBandedScale(baseScale * value.magnification)
-                let anchor = CGPoint(
-                    x: value.startLocation.x - size.width / 2,
-                    y: value.startLocation.y - size.height / 2)
-                let ratio = target / baseScale
-                let proposed = CGSize(
-                    width: anchor.x - (anchor.x - baseImageOffset.width) * ratio,
-                    height: anchor.y - (anchor.y - baseImageOffset.height) * ratio)
-                scale = target
-                imageOffset = clampedImageOffset(proposed)
-            }
-            .onEnded { _ in
-                pinching = false
-                let settled = min(Self.maxScale, max(1, scale))
-                if abs(settled - scale) > 0.01 {
-                    // 越界松手：弹回可放范围
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                        scale = settled
-                        imageOffset = clampedImageOffset(imageOffset, scale: settled)
-                    }
-                }
-                baseScale = settled
-                if settled <= 1.01 {
-                    resetZoom()
-                } else {
-                    let fixed = clampedImageOffset(imageOffset, scale: settled)
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                        imageOffset = fixed
-                    }
-                    baseImageOffset = fixed
-                }
-            }
-    }
-
-    /// 双击缩放：围绕触点放大到固定倍率，再次双击回到原始比例
-    private func doubleTapGesture(size: CGSize) -> some Gesture {
-        SpatialTapGesture(count: 2)
-            .onEnded { value in
-                guard !pageAnimating else { return }
-                Haptics.tap()
-                if scale > 1.01 {
-                    baseScale = 1
-                    baseImageOffset = .zero
-                    withAnimation(.easeOut(duration: 0.22)) {
-                        scale = 1
-                        imageOffset = .zero
-                    }
-                    return
-                }
-                let target = Self.doubleTapScale
-                let anchor = CGPoint(
-                    x: value.location.x - size.width / 2,
-                    y: value.location.y - size.height / 2)
-                let proposed = CGSize(
-                    width: -anchor.x * (target - 1), height: -anchor.y * (target - 1))
-                let fixed = clampedImageOffset(proposed, scale: target)
-                baseScale = target
-                baseImageOffset = fixed
-                withAnimation(.easeOut(duration: 0.24)) {
-                    scale = target
-                    imageOffset = fixed
-                }
-            }
-    }
-
-    // MARK: 缩放几何
-
-    private var imageOffsetLimits: CGSize { imageOffsetLimits(for: scale) }
-
-    /// 可平移上限（图片显示尺寸超出视口部分的一半）；未放大或未知尺寸时为零
-    private func imageOffsetLimits(for scale: CGFloat) -> CGSize {
-        guard scale > 1.01, viewSize.width > 0, viewSize.height > 0,
-            let item = currentItem
-        else { return .zero }
-        let display = fittedSize(for: item.aspectRatio, in: viewSize)
-        return CGSize(
-            width: max(0, (display.width * scale - viewSize.width) / 2),
-            height: max(0, (display.height * scale - viewSize.height) / 2))
-    }
-
-    private func clampedImageOffset(_ value: CGSize, scale scaleOverride: CGFloat? = nil) -> CGSize
-    {
-        let limits = imageOffsetLimits(for: scaleOverride ?? scale)
-        return CGSize(
-            width: Self.clamp(value.width, limit: limits.width),
-            height: Self.clamp(value.height, limit: limits.height))
-    }
-
-    /// 捏合倍率的橡皮筋：上限外按 18% 阻尼继续放大，下限 1 以下按 30% 阻尼继续缩小
-    private static func rubberBandedScale(_ raw: CGFloat) -> CGFloat {
-        if raw > maxScale { return maxScale + (raw - maxScale) * 0.18 }
-        if raw < 1 { return 1 - (1 - raw) * 0.3 }
-        return raw
-    }
-
-    private static func clamp(_ value: CGFloat, limit: CGFloat) -> CGFloat {
-        min(limit, max(-limit, value))
     }
 
     /// UIScrollView 式橡皮筋：越拖越沉，渐近到 dimension 的一半
@@ -662,6 +489,10 @@ struct PreviewView: View {
         .buttonStyle(.plain)
         .disabled(busy)
         .accessibilityLabel(title)
+    }
+
+    private func toggleChrome() {
+        withAnimation(.easeInOut(duration: 0.2)) { showsChrome.toggle() }
     }
 
     private func loadDetail(for index: Int) async {
