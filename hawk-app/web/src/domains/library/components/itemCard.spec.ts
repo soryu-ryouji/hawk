@@ -7,9 +7,10 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 
 // api 层整体 mock（组件测试只关心交互分支）
-vi.mock('@/shared/api/endpoints', () => ({ api: { thumbnailUrl: () => 'thumb', fileUrl: () => 'file' } }));
+vi.mock('@/shared/api/endpoints', () => ({ api: { thumbnailUrl: vi.fn(() => 'thumb'), fileUrl: vi.fn(() => 'file') } }));
 
 import ItemCard from './ItemCard.vue';
+import { api } from '@/shared/api/endpoints';
 import type { Item } from '@/shared/types';
 
 const item = {
@@ -40,6 +41,14 @@ async function pressAndHold(wrapper: ReturnType<typeof mountCard>, pointerType =
   vi.advanceTimersByTime(500);
   await wrapper.vm.$nextTick();
 }
+
+describe('ItemCard 缩略图', () => {
+  it('网格固定使用 512 档', () => {
+    setActivePinia(createPinia());
+    mountCard();
+    expect(api.thumbnailUrl).toHaveBeenCalledWith(item.id, 512);
+  });
+});
 
 describe('ItemCard 长按', () => {
   beforeEach(() => {

@@ -4,7 +4,7 @@
 import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { useMediaQuery } from '@vueuse/core';
-import { api } from '@/shared/api/endpoints';
+import { api, type AppInfo } from '@/shared/api/endpoints';
 import { createViewNavigation, type ViewValidators } from './navigation';
 import {
   isGlobalViewKind,
@@ -25,9 +25,6 @@ import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
 import { debounce, errorText } from '@/shared/lib/storeUtil';
 import { ApiError } from '@/shared/api/client';
 import type { GlobalFilter, Item, ItemListRequest, LibraryInfo, Locks, QueryState, SkeletonItem, ViewPrefs, ViewState } from '@/shared/types';
-
-/** 首屏窗口大小（条目数）：覆盖首屏 + 少量预取；之后按视口区间补数据 */
-const INITIAL_WINDOW = 150;
 
 /** 分类维度刷新钩子：taxonomy store 创建时注册（子 → 主方向 import，主 store 不反向引用 taxonomy）。
  *  两个入口内部均防抖——SSE 事件爆发期合并刷新；本地批量操作后调用同样收敛到 300ms 内一次 */
@@ -276,12 +273,15 @@ export const useLibraryStore = defineStore('library', () => {
   /** 当前连接的访问级别（app/info.access）：admin=本地库全权限；viewer=局域网/远程只读查看；
    *  remote_writer=远端受限写（导入 + 新建文件夹）。设置面板的 admin 限定分区据此门禁 */
   const access = ref<'admin' | 'viewer' | 'remote_writer'>('admin');
+  /** 当前请求是否经广域网隧道（app/info.remote）：只据此降低预览流量，本地/LAN 保持原图预览 */
+  const remoteTransport = ref(false);
 
-  /** app/info 的权限快照就地应用：局域网/远端密钥权限热更新时无需重新 boot。 */
-  function applyAccessInfo(info: { access: 'admin' | 'viewer' | 'remote_writer'; writable: boolean }): void {
+  /** app/info 的权限与传输快照就地应用：局域网/远端密钥权限热更新时无需重新 boot。 */
+  function applyAccessInfo(info: Pick<AppInfo, 'access' | 'writable' | 'remote'>): void {
     access.value = info.access;
     viewerMode.value = info.access === 'viewer' && !info.writable;
     limitedWrite.value = info.access === 'remote_writer';
+    remoteTransport.value = info.remote;
   }
 
   /** 重新读取当前 token 的 access/writable（SSE lan.access.changed 触发）。 */
@@ -289,10 +289,11 @@ export const useLibraryStore = defineStore('library', () => {
     applyAccessInfo(await api.appInfo());
   }
 
-  async function init(validators: ViewValidators) {
-    const info = await api.appInfo();
+  async function init(validators: ViewValidators, info: AppInfo) {
     applyAccessInfo(info);
-    library.value = await api.libraryInfo();
+    // 库信息与视图偏好互不依赖；并行拉取，减少高延迟链路上的串行往返
+    const [libraryInfo] = await Promise.all([api.libraryInfo(), loadViewPrefs()]);
+    library.value = libraryInfo;
 
     // 换库/应用设置重启复用本入口：清掉上一库的会话状态，避免视图/预览/进度指示残留。
     // 视图回退由 restoreView 负责（无记忆时回默认视图），这里只清与库无关的记忆
@@ -303,7 +304,6 @@ export const useLibraryStore = defineStore('library', () => {
     taskBacklog.value = null;
     indexProgress.value = null;
 
-    await loadViewPrefs();
     restoreView(validators);
     applySortForView(view.value); // 恢复的视图应用其记忆的排序
     // 历史栈以恢复后的视图为起点
@@ -362,6 +362,12 @@ export const useLibraryStore = defineStore('library', () => {
   async function resetList() {
     const version = ++skeletonVersion;
     loading.value = true;
+    // 主动切视图/查询：立即撤掉上一视图的卡片、锁占位和滚动总高，远程等待期间不展示旧成员。
+    // SSE 后台对齐走 reloadSkeleton，保留现有列表，不经过这条清空路径。
+    skeleton.value = [];
+    totalSize.value = 0;
+    details.value = new Map();
+    lockedView.value = null;
     try {
       const res = await api.itemSkeleton(listParams());
       if (version !== skeletonVersion) {
@@ -371,8 +377,11 @@ export const useLibraryStore = defineStore('library', () => {
       totalSize.value = Number(res.total_size);
       details.value = new Map();
       lockedView.value = null; // 查询成功：视图未被锁（或已解锁），锁占位界面退场
-      await ensureWindow(0, INITIAL_WINDOW);
+      // 不预取固定数量的不可见详情；ItemGrid 挂载/可见区间变化后按实际视口 ensureWindow
     } catch (e) {
+      if (version !== skeletonVersion) {
+        return; // 旧视图的失败/锁响应同样不得覆盖新视图
+      }
       if (e instanceof ApiError && e.code === 'LOCKED') {
         // 进入未解锁的锁定维度视图（或被其他客户端刚上锁）：清空残留内容，
         // taxonomy hook 解析覆盖锁条目后置 lockedView → 内容区切锁占位界面
@@ -385,7 +394,10 @@ export const useLibraryStore = defineStore('library', () => {
         showToast(errorText(e));
       }
     } finally {
-      loading.value = false;
+      // 连续切换/后台重载会产生更新版本；旧请求不能提前撤掉新请求的加载态
+      if (version === skeletonVersion) {
+        loading.value = false;
+      }
     }
   }
 
@@ -479,6 +491,9 @@ export const useLibraryStore = defineStore('library', () => {
         }
       }
     } catch (e) {
+      if (version !== skeletonVersion) {
+        return;
+      }
       if (e instanceof ApiError && e.code === 'LOCKED') {
         // 「锁定回去」等场景：当前视图重新被锁 → 回到锁占位界面
         skeleton.value = [];
@@ -489,6 +504,11 @@ export const useLibraryStore = defineStore('library', () => {
         return;
       }
       // 其他失败：下次事件或 SSE 重连再对齐
+    } finally {
+      // 若后台重载接替了仍在等待的 resetList，由当前请求负责结束其整表加载态
+      if (version === skeletonVersion) {
+        loading.value = false;
+      }
     }
   }
 
@@ -693,6 +713,7 @@ export const useLibraryStore = defineStore('library', () => {
     limitedWrite,
     editLocked,
     access,
+    remoteTransport,
     refreshAccess,
     viewPrefs,
     lockedView,

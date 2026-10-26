@@ -44,11 +44,14 @@ export function useBoot() {
       }
       // 分类维度先行：主 store init 的 restoreView 校验依赖 taxonomy 数据（validators 注入，保持 store 间 DAG）
       await taxonomy.refreshAll();
-      await store.init({
-        folderExists: taxonomy.folderExists,
-        categoryExists: taxonomy.categoryExists,
-        tagExists: taxonomy.tagExists,
-      });
+      await store.init(
+        {
+          folderExists: taxonomy.folderExists,
+          categoryExists: taxonomy.categoryExists,
+          tagExists: taxonomy.tagExists,
+        },
+        info,
+      );
       disconnectEvents?.();
       disconnectEvents = connectEvents({
         onAdded: (item) => store.applyEvent('item.added', item),

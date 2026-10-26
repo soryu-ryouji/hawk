@@ -7,7 +7,7 @@
 
 管线两阶段（缩略图为惰性缓存，读取端触发）：
   1. 入库 + 调色板即时生成（颜色搜索依赖全量 palette，wait_idle 等待完成）
-  2. 逐个请求 /item/thumbnail 触发缩略图后台生成（未命中先回源原图并入队）
+  2. 逐个请求 /item/thumbnail 触发全部缺失尺寸后台生成（未命中返回 404 并入队）
 
 指标:
   - img_per_s        全管线吞吐（调色板 + 缩略图两阶段合计）
@@ -62,8 +62,8 @@ def main():
         # 调色板批量回写按 2s 时限冲刷：积压归零后再等一拍，确保暂存的回写落盘后再统计
         time.sleep(2.5)
 
-        # 阶段2：缩略图惰性生成——逐个请求端点触发（未命中回源原图并入队，in-flight 去重）。
-        # 404 是合法占位（不可渲染且不可解码的素材），计入不中断
+        # 阶段2：缩略图惰性生成——逐个请求端点触发（未命中 404 并入队，in-flight 去重）。
+        # 404 是生成中/不可解码的合法占位，计入不中断
         listed = srv.api("/api/v1/item/list", {"limit": args.count + 1000, "in_trash": False})["data"]
         expected = [it["id"] for it in listed["items"]]
         http_404 = 0
@@ -75,7 +75,7 @@ def main():
             )
             try:
                 with urlopen(req, timeout=60) as r:
-                    r.read()  # 响应为原图（未命中回源）或已生成 webp，丢弃即可
+                    r.read()  # 已生成 WebP，读取后丢弃即可
             except urllib.error.HTTPError as e:
                 if e.code != 404:
                     raise
@@ -99,11 +99,15 @@ def main():
     # 直读派生缓存统计（索引镜像行数 / 已提炼调色板数 / 缩略图数）
     stats = index_db_stats(cache_dir)
     thumbs_dir = os.path.join(cache_dir, "thumbnails", "1024")
+    grid_dir = os.path.join(cache_dir, "thumbnails", "512")
     thumbs_n = len(os.listdir(thumbs_dir)) if os.path.isdir(thumbs_dir) else 0
+    grid_n = len(os.listdir(grid_dir)) if os.path.isdir(grid_dir) else 0
 
     ratios = {}
     if os.path.isdir(thumbs_dir):
         ratios["webp_ratio"] = round(dir_bytes(thumbs_dir) / max(src_bytes, 1), 3)
+    if os.path.isdir(grid_dir):
+        ratios["grid_webp_ratio"] = round(dir_bytes(grid_dir) / max(src_bytes, 1), 3)
 
     shutil.rmtree(WORK_ROOT, ignore_errors=True)
     shutil.rmtree(cache_dir, ignore_errors=True)
@@ -120,6 +124,7 @@ def main():
         "thumb_expected": len(expected),
         "thumb_http_404": http_404,
         "thumbs_missing": len(expected) - thumbs_n,
+        "grid_thumbs_missing": len(expected) - grid_n,
         "decode_failures": decode_failures,
         "batch_write_failures": batch_failures,
     })

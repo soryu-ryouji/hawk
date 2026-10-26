@@ -294,7 +294,9 @@ function onMenu(item: Item, e: MouseEvent) {
   <div ref="gridRef" class="grid-scroll" @scroll.passive="onScroll">
     <!-- 锁定视图占位：优先于空态与网格（骨架已被清空），密码正确后替换为实际内容 -->
     <LockScreen v-if="store.lockedView" />
-    <EmptyState v-else-if="!store.loading && store.total === 0" :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'" />
+    <!-- 主动切换视图已清空旧骨架：远程等待期间显示明确加载态，不继续展示上一视图卡片 -->
+    <EmptyState v-else-if="store.loading" text="加载中…" />
+    <EmptyState v-else-if="store.total === 0" :text="store.isTrash ? '回收站为空' : '暂无素材，拖入文件开始'" />
 
     <div v-if="totalHeight > 0" class="grid" :style="{ height: `${totalHeight}px`, '--grid-gap': `${GRID_GAP}px` }">
       <div v-for="row in renderedRows" :key="row.key" class="row" :style="{ transform: `translateY(${row.y}px)` }">

@@ -219,6 +219,8 @@ pub fn build_router_for(state: SharedState, mode: ListenerMode) -> axum::Router 
         ))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth))
         .layer(axum::middleware::from_fn(cors))
+        // 按 Accept-Encoding 压缩 JSON/文本；默认判定已排除图片与 SSE，远程代理原样转发编码响应
+        .layer(tower_http::compression::CompressionLayer::new())
         // 最外层兜底：handler/中间件 panic 转 500，不拖垮进程（进程级 panic 隔离见 main 的 panic hook）
         .layer(tower_http::catch_panic::CatchPanicLayer::new())
         // 请求扩展供 auth / pair handler 判断当前端口类型

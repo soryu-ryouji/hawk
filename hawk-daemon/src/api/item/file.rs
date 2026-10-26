@@ -13,6 +13,8 @@ use axum::extract::Extension;
 pub(crate) struct ThumbnailQuery {
     /// item id（内容 BLAKE3 哈希 hex）
     id: String,
+    /// 缩略图边长：512（网格）或 1024（检查器/预览），缺省 1024
+    size: Option<u32>,
 }
 
 /// 锁闸门：item 级可见性判定（位置 OR + 分类/标签 AND）。不可见 → 403 LOCKED。
@@ -33,18 +35,19 @@ fn check_item_lock(
     Ok(())
 }
 
-/// 缩略图：单一尺寸 1024 的 webp 缓存，Cache-Control immutable。
-/// 未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ 直接回源原图（200，后台入队生成缓存）；
-/// 不可渲染格式（tiff 等）生成中 404（经 item.updated 重建后可用）
+/// 缩略图：固定 512/1024 两档 WebP 缓存，Cache-Control immutable。
+/// 未命中时后台入队生成并返回 404，完成经 item.updated 通知客户端重试；
+/// 不回源原图，避免低带宽下一张卡片下载整份原图，也避免 immutable 缓存钉住回退响应。
 #[utoipa::path(
     get,
     path = "/api/v1/item/thumbnail",
     tags = ["item"],
     params(ThumbnailQuery),
     responses(
-        (status = 200, description = "缩略图（webp）或回源原图（Content-Type 按源格式）", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 200, description = "指定尺寸的 WebP 缩略图", content_type = "application/octet-stream", body = Vec<u8>),
+        (status = 400, description = "size 不是受支持的尺寸"),
         (status = 403, description = "内容位于未解锁的锁覆盖内（LOCKED）"),
-        (status = 404, description = "不可渲染格式，生成中")
+        (status = 404, description = "缩略图生成中或源图不可解码")
     )
 )]
 pub(crate) async fn item_thumbnail(
@@ -57,29 +60,27 @@ pub(crate) async fn item_thumbnail(
         return Err(ApiError::item_not_found(&q.id));
     }
     check_item_lock(lib, &guard, &q.id)?;
-    let file = lib.thumbs.get_path(&q.id);
+    let size = q
+        .size
+        .unwrap_or(crate::core::thumbnail::DEFAULT_THUMBNAIL_SIZE);
+    if !crate::core::thumbnail::is_supported_size(size) {
+        return Err(ApiError::invalid_param(
+            "size 仅支持 512 或 1024".to_string(),
+        ));
+    }
+    let file = lib.thumbs.get_path_with_size(&q.id, size);
     if std::path::Path::new(&file).is_file() {
-        return serve_file(file, "image/webp".to_string(), true).await;
+        return serve_file(file, "image/webp".to_string()).await;
     }
 
-    // 未命中（缩略图为惰性缓存，入库/对账不生成）：
-    // - 浏览器可渲染且可解码 → 直接回源原图（首次查看零等待），同时后台入队生成缓存
-    // - 不可渲染格式（tiff 等）→ 后台生成后以 404 占位，经 item.updated 重建（现有闭环）
+    // 未命中（增量入库的缩略图为惰性缓存）：入队生成全部缺失档，前端经 item.updated 重试。
     // 入队以 identify（只解码头）为闸，避免不可解码内容被反复入队空转
     let source = lib
         .index
         .main_source_abs(&q.id, &lib.paths)
         .filter(|p| std::path::Path::new(p).is_file())
         .ok_or_else(|| ApiError::item_not_found(format!("thumbnail {}", q.id)))?;
-    let decodable = ThumbnailService::identify(&source).is_some();
-    if ThumbnailService::is_browser_renderable(&source) && decodable {
-        lib.worker.enqueue_thumbs(&q.id, &source);
-        let content_type = mime_guess::from_path(&source)
-            .first_or_octet_stream()
-            .to_string();
-        return serve_file(source, content_type, true).await;
-    }
-    if decodable {
+    if ThumbnailService::identify(&source).is_some() {
         lib.worker.enqueue_thumbs(&q.id, &source);
     }
     Err(ApiError::item_not_found(format!("thumbnail {}", q.id)))
@@ -113,14 +114,10 @@ pub(crate) async fn item_file(
     let content_type = mime_guess::from_path(&file)
         .first_or_octet_stream()
         .to_string();
-    serve_file(file, content_type, true).await
+    serve_file(file, content_type).await
 }
 
-async fn serve_file(
-    file: String,
-    content_type: String,
-    immutable: bool,
-) -> Result<Response, ApiError> {
+async fn serve_file(file: String, content_type: String) -> Result<Response, ApiError> {
     use tokio::io::AsyncReadExt;
     let f = tokio::fs::File::open(&file)
         .await
@@ -141,14 +138,13 @@ async fn serve_file(
             }
         }
     };
-    let mut builder = Response::builder()
+    // item id 是内容哈希，且缩略图命中后表示固定尺寸，响应均可永久缓存
+    Ok(Response::builder()
         .status(axum::http::StatusCode::OK)
-        .header("content-type", content_type);
-    if immutable {
-        // item id 是内容哈希，内容永不变，客户端可永久缓存
-        builder = builder.header("cache-control", "public, max-age=31536000, immutable");
-    }
-    Ok(builder.body(axum::body::Body::from_stream(stream)).unwrap())
+        .header("content-type", content_type)
+        .header("cache-control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap())
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]

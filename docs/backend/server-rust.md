@@ -19,7 +19,8 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
   - 查询路径不克隆完整 DTO：排序在轻量键上进行，`item/list` 只投影分页窗口、`item/skeleton` 只投影轻量骨架（大库下 skeleton 持锁时间降低一个量级，UI 重连重同步不再卡死读路径）
   - 调色板回写按批冲刷（≥500 条或滞留 2s）：TOML 逐条落盘、SQLite 单事务、事件按批平滑补发——全库重提炼（缓存重建）时无 `item.updated` 洪峰
   - 缩略图 worker 无界队列 + 周期对账自愈：队列无界（任务 ~100B、in-flight 去重后内存有界），周期对账扫描 palette 缺失项与宽高为 0 的项并派发补齐任务（缩略图不在对账中批量生成；宽高另有读取端自愈：`item/list`/`item/skeleton` 响应中发现 0 宽高即派发）
-  - **缩略图为惰性缓存**：入库/启动对账只生成调色板（颜色搜索依赖全量）；缩略图由读取端触发——`/item/thumbnail` 未命中时直接回源原图（浏览器可渲染格式）并后台入队生成，命中后返回 webp。首次查看零等待，未查看的素材零成本
+  - **缩略图固定 512/1024 两档**：网格用 512，检查器与广域网预览用 1024；扫描导入单次解码生成全部缺失档，旧库仅缺 512 时从已有 1024 缓存补出。增量入库/启动对账只生成调色板，缩略图由读取端触发——`/item/thumbnail` 未命中返回 404 并后台入队，完成经 `item.updated` 重试；不回源原图，避免低带宽下把整份源文件当缩略图传输
+  - **HTTP 响应压缩**：通过 tower-http 按 `Accept-Encoding` 协商 gzip，降低 skeleton/list 等 JSON 的广域网传输量；图片与 SSE 默认排除，远程代理透传编码响应
   - 启动注水经 TOML 全量回退时上报进度（每 1000 文件一帧，phase=sync），大库首次启动启动屏有实时反馈
 
 ## 技术选型
@@ -69,6 +70,8 @@ python3 tools/bench-startup.py --items 5000     # 启动：热启动就绪 / 冷
 python3 tools/bench-ingest.py --files 2000      # 入库：watcher 批量入库吞吐、洪峰期读 p99、reindex 全量 vs 复用
 python3 tools/bench-images.py --count 500       # 图像管线（默认采样 D:/Materials 真实照片）：
                                                 #   img/s、每图 CPU 毫秒、webp 压缩率、palette 覆盖率、丢失数
+python3 tools/bench-wan.py --items 50          # 低带宽：实测各图片档位/原图与 skeleton gzip 字节数，
+                                                #   换算 3 Mb/s 下网格和三图预览的理论传输时间
 python3 tools/bench-scale.py --items 30000      # 大库全链路：启动→索引→缩略图→查询延迟（排序变体/颜色检索）
 ```
 

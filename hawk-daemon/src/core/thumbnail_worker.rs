@@ -240,9 +240,7 @@ fn process_job(job: &ThumbJob, deps: &WorkerDeps, thumbs: &ThumbnailService, bus
     // PaletteOnly 不生成缩略图（缩略图是惰性缓存，由读取端派发）
     let generated = match &job.kind {
         ThumbJobKind::PaletteOnly => false,
-        ThumbJobKind::Repair => {
-            !thumbs.exists(&job.hash) && thumbs.generate(&job.hash, &job.source_abs, false)
-        }
+        ThumbJobKind::Repair => thumbs.generate(&job.hash, &job.source_abs, false),
         ThumbJobKind::ForceRebuild => thumbs.generate(&job.hash, &job.source_abs, true),
     };
 

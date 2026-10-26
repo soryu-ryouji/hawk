@@ -17,6 +17,10 @@ import type {
 
 /** server 启动状态（GET /app/startup，浏览器无 IPC 时由前端轮询） */
 type StartupInfo = components['schemas']['StartupInfo'];
+export type AppInfo = Omit<components['schemas']['AppInfo'], 'access'> & {
+  access: 'viewer' | 'admin' | 'remote_writer';
+};
+export type ThumbnailSize = 512 | 1024;
 
 export interface ItemPatch {
   name?: string;
@@ -41,18 +45,7 @@ export interface ItemBatchPatch {
 }
 
 export const api = {
-  appInfo: () =>
-    request<{
-      version: string;
-      platform: string;
-      exec_path: string;
-      /** viewer=局域网/远程查看 token；writable=当前 token 可写（admin 恒 true，viewer 为 [web].writable） */
-      access: 'viewer' | 'admin' | 'remote_writer';
-      /** 本地素材库是否就位（false = 远程查看模式：库端点不可用） */
-      has_library: boolean;
-      writable: boolean;
-      lan: { active: boolean; port?: number; error?: string };
-    }>('GET', '/api/v1/app/info'),
+  appInfo: () => request<AppInfo>('GET', '/api/v1/app/info'),
   startupStatus: () => request<StartupInfo>('GET', '/api/v1/app/startup'),
   /** 局域网 web 查看配置与运行状态（admin 限定，daemon 权威读写） */
   appLan: () => request<components['schemas']['LanSettingsDto']>('GET', '/api/v1/app/lan'),
@@ -169,10 +162,11 @@ export const api = {
   viewPreferenceReset: (scope: string) => request<void>('DELETE', '/api/v1/view/preference', { query: { scope } }),
 
   /** 缩略图 URL：<img> 无法带请求头，token/unlock 走查询参数（后端已放行该端点） */
-  thumbnailUrl(id: string): string {
+  thumbnailUrl(id: string, size?: ThumbnailSize): string {
     const { api: base, token } = apiConfig();
     const unlock = unlockQueryValue();
-    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
+    const sizeQuery = size ? `&size=${size}` : '';
+    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}${sizeQuery}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
   },
 
   /** 原图 URL：预览浮层用；token/unlock 同样走查询参数 */

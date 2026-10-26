@@ -199,6 +199,8 @@ struct AppInfo {
     /// 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
     /// （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
     writable: bool,
+    /// 当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网
+    remote: bool,
     lan: LanInfo,
 }
 
@@ -213,6 +215,7 @@ struct AppInfo {
 async fn info(
     State(state): State<SharedState>,
     Extension(access): Extension<AccessLevel>,
+    tunnel: Option<Extension<crate::remote::data::TunneledPeer>>,
 ) -> Json<Envelope<AppInfo>> {
     let (access, writable) = match access {
         AccessLevel::Admin => ("admin", true),
@@ -237,6 +240,7 @@ async fn info(
         access,
         has_library: state.library.is_some(),
         writable,
+        remote: tunnel.is_some(),
         lan: LanInfo {
             active: lan.web.active,
             port: lan.web.port,

@@ -673,9 +673,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 缩略图：单一尺寸 1024 的 webp 缓存，Cache-Control immutable。
-         *     未命中且浏览器可渲染（jpg/png/gif/webp/bmp）→ 直接回源原图（200，后台入队生成缓存）；
-         *     不可渲染格式（tiff 等）生成中 404（经 item.updated 重建后可用）
+         * 缩略图：固定 512/1024 两档 WebP 缓存，Cache-Control immutable。
+         *     未命中时后台入队生成并返回 404，完成经 item.updated 通知客户端重试；
+         *     不回源原图，避免低带宽下一张卡片下载整份原图，也避免 immutable 缓存钉住回退响应。
          */
         get: operations["item_thumbnail"];
         put?: never;
@@ -1268,6 +1268,8 @@ export interface components {
             has_library: boolean;
             lan: components["schemas"]["LanInfo"];
             platform: string;
+            /** @description 当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网 */
+            remote: boolean;
             version: string;
             /**
              * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
@@ -1372,6 +1374,8 @@ export interface components {
                 has_library: boolean;
                 lan: components["schemas"]["LanInfo"];
                 platform: string;
+                /** @description 当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网 */
+                remote: boolean;
                 version: string;
                 /**
                  * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
@@ -3504,6 +3508,8 @@ export interface operations {
             query: {
                 /** @description item id（内容 BLAKE3 哈希 hex） */
                 id: string;
+                /** @description 缩略图边长：512（网格）或 1024（检查器/预览），缺省 1024 */
+                size?: number;
             };
             header?: never;
             path?: never;
@@ -3511,7 +3517,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 缩略图（webp）或回源原图（Content-Type 按源格式） */
+            /** @description 指定尺寸的 WebP 缩略图 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3520,6 +3526,13 @@ export interface operations {
                     "application/octet-stream": number[];
                 };
             };
+            /** @description size 不是受支持的尺寸 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description 内容位于未解锁的锁覆盖内（LOCKED） */
             403: {
                 headers: {
@@ -3527,7 +3540,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description 不可渲染格式，生成中 */
+            /** @description 缩略图生成中或源图不可解码 */
             404: {
                 headers: {
                     [name: string]: unknown;

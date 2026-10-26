@@ -341,7 +341,7 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
     }
     p.hash = Some(hash.clone());
 
-    let need_thumb = !ctx.thumbs.exists(&hash);
+    let need_thumb = !ctx.thumbs.has_all(&hash);
     let need_palette = needs_palette_work(ctx, &hash);
     if !need_thumb && !need_palette {
         return;

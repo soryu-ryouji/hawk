@@ -212,6 +212,42 @@ describe('applyUpdatedItem 编排', () => {
 // ---- 加载竞争（skeletonVersion / in-flight 合并） ----
 
 describe('加载竞争', () => {
+  it('主动 resetList 在等待远程响应前立即清除上一视图内容与锁占位', async () => {
+    const store = useLibraryStore();
+    const key = itemKey('old', 'old.png');
+    store.skeleton = [skel('old', 'old.png')];
+    store.details = new Map([[key, detail('old', 'old.png')]]);
+    store.totalSize = 100;
+    store.lockedView = { dimension: 'folder', name: '旧文件夹' };
+    const pending = deferred<{ items: SkeletonItem[]; total_size: number }>();
+    mocks.itemSkeleton.mockImplementationOnce(() => pending.promise);
+
+    const request = store.resetList();
+    expect(store.skeleton).toEqual([]);
+    expect(store.details.size).toBe(0);
+    expect(store.totalSize).toBe(0);
+    expect(store.lockedView).toBeNull();
+    expect(store.loading).toBe(true);
+
+    pending.resolve({ items: [], total_size: 0 });
+    await request;
+    expect(store.loading).toBe(false);
+  });
+
+  it('resetList 只取骨架，完整详情由实际视口 ensureWindow 按需补拉', async () => {
+    const store = useLibraryStore();
+    mocks.itemSkeleton.mockResolvedValueOnce({ items: [skel('a', 'a.png')], total_size: 100 });
+
+    await store.resetList();
+    expect(mocks.itemList).not.toHaveBeenCalled();
+    expect(store.details.size).toBe(0);
+
+    mocks.itemList.mockResolvedValueOnce({ items: [detail('a', 'a.png')], total: 1, offset: 0, limit: 1, total_size: 100 });
+    await store.ensureWindow(0, 1);
+    expect(mocks.itemList).toHaveBeenCalledWith(expect.objectContaining({ offset: 0, limit: 1 }));
+    expect(store.details.size).toBe(1);
+  });
+
   it('resetList 丢弃过期响应（期间又发起的重载使旧结果作废）', async () => {
     const store = useLibraryStore();
     const d1 = deferred<{ items: SkeletonItem[]; total_size: number }>();
@@ -221,10 +257,32 @@ describe('加载竞争', () => {
     const p1 = store.resetList();
     const p2 = store.resetList();
     d1.resolve({ items: [skel('old', 'old.png')], total_size: 1 });
+    await p1;
+
+    expect(store.loading).toBe(true); // 旧请求完成不能提前撤掉新请求加载态
+    expect(store.skeleton).toEqual([]); // 旧响应也不回填上一视图
     d2.resolve({ items: [skel('new', 'new.png')], total_size: 1 });
-    await Promise.all([p1, p2]);
+    await p2;
 
     expect(store.skeleton.map((s) => s.id)).toEqual(['new']); // 旧响应被版本守卫丢弃
+    expect(store.loading).toBe(false);
+  });
+
+  it('后台 reload 接替 reset 时由最新请求结束整表加载态', async () => {
+    const store = useLibraryStore();
+    const resetPending = deferred<{ items: SkeletonItem[]; total_size: number }>();
+    const reloadPending = deferred<{ items: SkeletonItem[]; total_size: number }>();
+    mocks.itemSkeleton.mockImplementationOnce(() => resetPending.promise).mockImplementationOnce(() => reloadPending.promise);
+
+    const resetting = store.resetList();
+    const reloading = store.reloadSkeleton();
+    resetPending.resolve({ items: [skel('old', 'old.png')], total_size: 1 });
+    await resetting;
+    expect(store.loading).toBe(true);
+
+    reloadPending.resolve({ items: [skel('current', 'current.png')], total_size: 1 });
+    await reloading;
+    expect(store.skeleton.map((s) => s.id)).toEqual(['current']);
     expect(store.loading).toBe(false);
   });
 

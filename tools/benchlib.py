@@ -79,7 +79,7 @@ def report(name, metrics):
 class Server:
     """hawk-daemon 子进程生命周期 + API 客户端 + 资源采样"""
 
-    def __init__(self, lib_dir, port=None, token="bench-token", stdout=subprocess.DEVNULL):
+    def __init__(self, lib_dir, port=None, token="bench-token", stdout=subprocess.DEVNULL, cache_parent=None):
         self.lib_dir = os.path.abspath(lib_dir)
         self.port = port or free_port()
         self.token = token
@@ -87,6 +87,7 @@ class Server:
         self.bin = find_server_bin()
         self.proc = None
         self.stdout = stdout
+        self.cache_parent = os.path.abspath(cache_parent) if cache_parent else None
 
     def __enter__(self):
         self.start()
@@ -96,8 +97,11 @@ class Server:
         self.stop()
 
     def start(self, timeout_s=300):
+        args = [self.bin, "--library", self.lib_dir, "--port", str(self.port)]
+        if self.cache_parent:
+            args += ["--cache-parent", self.cache_parent]
         self.proc = subprocess.Popen(
-            [self.bin, "--library", self.lib_dir, "--port", str(self.port)],
+            args,
             stdout=self.stdout,
             stderr=subprocess.STDOUT,
             env={**os.environ, "HAWK_TOKEN": self.token},

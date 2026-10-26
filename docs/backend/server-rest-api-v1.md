@@ -33,6 +33,7 @@
 
 - 时间戳均为 Unix 毫秒
 - 分页参数：`offset`（默认 0）、`limit`（默认 50）
+- 客户端携带 `Accept-Encoding: gzip` 时，JSON/文本响应使用 gzip 压缩；图片与 SSE 不压缩。远程隧道与网页版代理原样转发 `Content-Encoding`
 - 桌面版默认监听 `27371` 端口（用户可在设置面板「网络 → 本地服务」配置；端口被占用时**不会**静默换端口——daemon 以退出码 4 + `PORT_IN_USE <port>` 退出，app 在启动屏询问换端口），所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 与 `<img>` 直链（thumbnail、file）无法设置请求头，改用查询参数 `?token=`
 
 ## app
@@ -142,7 +143,9 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "platform": "windows",
     "exec_path": "C:/Tools/hawk/hawk-daemon.exe",
     "access": "admin",
+    "has_library": true,
     "writable": true,
+    "remote": false,
     "lan": { "active": true, "port": 27372, "peer_active": true, "peer_port": 27375 }
   }
 }
@@ -154,7 +157,9 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
 | access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看器或远程只读会话）/ `remote_writer`（广域网受限写会话） |
+| has_library | boolean | 当前 daemon 是否打开本地素材库；false 为无库远程查看形态 |
 | writable  | boolean | 当前 token 是否可执行写操作：admin 恒 true；viewer 取决于 `[web]` 的写权限配置；remote_writer 仅限导入/建文件夹 |
+| remote | boolean | 当前请求是否经广域网隧道（由 daemon 的受托标记判定）；前端据此使用低流量预览，本地与局域网为 false |
 | lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。配置读写走 `app/lan`（PUT 内置收敛等待），此字段供状态展示 |
 
 ### connection
@@ -1060,21 +1065,24 @@ multipart/form-data 上传新 item（web 端 / iOS 分享扩展用）：客户�
 
 ### thumbnail
 
-`GET /api/v1/item/thumbnail?id=<hash>`
+`GET /api/v1/item/thumbnail?id=<hash>&size=512`
 
-缩略图为缓存（**扫描导入即时生成**：首扫并行阶段单次解码同出缩略图+调色板+宽高，item 入库即可完整显示；增量/对账不生成，由读取端兜底），响应分三种：
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| id | string | 是 | item 内容哈希 |
+| size | number | 否 | `512`（网格）或 `1024`（检查器/预览），缺省 `1024`；其他值返回 400 |
 
-1. **命中缓存** → 缩略图二进制（`image/webp`）
-2. **未命中且原图浏览器可渲染**（jpg/png/gif/webp/bmp）→ **直接回源原图**（200，Content-Type 为原图类型），同时后台入队生成缩略图缓存，下次请求即命中 webp
-3. **未命中且不可渲染**（tiff 等）→ 404（后台生成中，生成完成后经 `item.updated` 事件重建，前端已有占位重试闭环）
+缩略图为固定 512/1024 两档 WebP 缓存（等比缩入边长内，不放大）。**扫描导入即时生成**：首扫并行阶段单次解码同出全部缺失尺寸+调色板+宽高；增量/对账不生成，由读取端兜底。旧库已有 1024 档时，补 512 档直接解码 1024 缓存，无需重读原图。
 
-缩略图为单一尺寸 1024（等比缩入边长内，不放大）。响应带 `Cache-Control: immutable`——item id 是内容哈希，内容永不变，客户端可永久缓存。注意：情形 2 的原图响应同样带 immutable，客户端可能长期持有原图字节而不升级到 webp（视觉无损）。
+- **命中请求尺寸** → 200，返回对应 `image/webp`，带 `Cache-Control: public, max-age=31536000, immutable`
+- **未命中** → 后台入队生成全部缺失档并返回 404；完成后经 `item.updated` 通知客户端重建 `<img>` 重试
+- **不回源原图**：缩略图端点只返回 WebP，避免低带宽下按卡片下载整份原图，也避免 immutable 缓存永久钉住原图回退响应
 
 ### file
 
 `GET /api/v1/item/file?id=<hash>`
 
-返回原图文件二进制，Content-Type 按扩展名推断（无法识别时为 `application/octet-stream`）。桌面端预览浮层用它展示原图（缩略图是压缩过的 WebP）。文件位置取 item 主位置（优先非回收站位置）；文件已缺失时返回 404。与缩略图同理带 `Cache-Control: immutable`。`<img>` 直链无法设置请求头，与 thumbnail 一样放行查询参数 `?token=`。
+返回原图文件二进制，Content-Type 按扩展名推断（无法识别时为 `application/octet-stream`）。本地/局域网预览浮层直接用它；广域网默认使用 1024 缩略图，仅在放大、保存、复制或编辑时请求原图。文件位置取 item 主位置（优先非回收站位置）；文件已缺失时返回 404。与缩略图同理带 `Cache-Control: immutable`。`<img>` 直链无法设置请求头，与 thumbnail 一样放行查询参数 `?token=`。
 
 ### refresh_thumbnail
 

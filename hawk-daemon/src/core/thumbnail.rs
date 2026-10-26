@@ -1,15 +1,16 @@
 //! 缩略图服务：解码（image crate）+ 缩放（fast_image_resize）+ 有损 WebP 编码
 //! （webp/libwebp，quality 80）。
-//! 存储于库外缓存目录（<系统缓存>/hawk/cache/<库标识>/thumbnails/1024/<hash>.webp），
-//! 本地缓存可重建。单一尺寸 1024（等比缩入边长内，不放大），小图由浏览器缩小显示；
-//! 目录名沿用历史多尺寸布局，旧库已生成的 1024 缓存直接复用。
+//! 存储于库外缓存目录（<系统缓存>/hawk/cache/<库标识>/thumbnails/<尺寸>/<hash>.webp），
+//! 本地缓存可重建。固定 512/1024 两档（等比缩入边长内，不放大）：512 供网格，
+//! 1024 供检查器与广域网预览；旧库已生成的 1024 缓存直接复用。
 //!
 //! 生成策略：
 //! - 首扫/全量重扫的导入通道（pipeline 扫描并行阶段）在哈希后单次解码，
 //!   同出 调色板 + 缩略图 + 宽高，item 入库即完整可显示
 //! - 增量入库（监听事件/API）不生成缩略图，仅按需补调色板；缩略图由读取端惰性派发
-//! - 读取端 /item/thumbnail 未命中时回源原图并派发后台生成（thumbnail_worker）兜底
-//! - 不可渲染格式（tiff 等）必须生成缩略图转换，否则 <img> 无法显示
+//! - 读取端 /item/thumbnail 未命中时返回 404 并派发后台生成（thumbnail_worker），
+//!   完成后经 item.updated 重试；不回源原图，避免低带宽下按卡片下载整份源文件
+//! - 浏览器不可直接渲染的格式（tiff 等）同样经生成的 WebP 显示
 //!
 //! 共享读打开、不放大小图。
 
@@ -21,25 +22,36 @@ pub struct ThumbnailService {
     paths: Arc<crate::core::paths::LibraryPaths>,
 }
 
-/// 唯一缩略图边长（等比缩入上限，不放大）
-pub const THUMBNAIL_SIZE: i32 = 1024;
+/// 网格缩略图边长（等比缩入上限，不放大）
+pub const GRID_THUMBNAIL_SIZE: u32 = 512;
+/// 检查器与广域网预览边长，也是未指定 size 时的默认档
+pub const DEFAULT_THUMBNAIL_SIZE: u32 = 1024;
+/// 有界尺寸集合：一次解码生成全部缺失档，避免任意宽度导致缓存键膨胀
+pub const THUMBNAIL_SIZES: [u32; 2] = [GRID_THUMBNAIL_SIZE, DEFAULT_THUMBNAIL_SIZE];
 
-/// 浏览器 <img> 可直接渲染的扩展名。之外的可解码格式（tiff 等）必须走缩略图转换
-const DIRECT_ORIGINAL_EXTS: [&str; 6] = ["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+pub fn is_supported_size(size: u32) -> bool {
+    THUMBNAIL_SIZES.contains(&size)
+}
 
 impl ThumbnailService {
     pub fn new(paths: Arc<crate::core::paths::LibraryPaths>) -> ThumbnailService {
         ThumbnailService { paths }
     }
 
+    /// 默认档路径：调色板提炼优先复用这份较大的已解码缓存
     pub fn get_path(&self, hash: &str) -> String {
-        format!(
-            "{}/{}/{}.webp",
-            self.paths.thumbnails_dir, THUMBNAIL_SIZE, hash
-        )
+        self.get_path_with_size(hash, DEFAULT_THUMBNAIL_SIZE)
     }
-    pub fn exists(&self, hash: &str) -> bool {
-        std::path::Path::new(&self.get_path(hash)).is_file()
+
+    pub fn get_path_with_size(&self, hash: &str, size: u32) -> String {
+        format!("{}/{}/{}.webp", self.paths.thumbnails_dir, size, hash)
+    }
+
+    /// 所有派生档是否齐备；缺任一档时需要一次解码补齐
+    pub fn has_all(&self, hash: &str) -> bool {
+        THUMBNAIL_SIZES
+            .iter()
+            .all(|size| std::path::Path::new(&self.get_path_with_size(hash, *size)).is_file())
     }
 
     /// 读取图像尺寸(只解头部)。非图像或解码失败返回 None。
@@ -75,11 +87,6 @@ impl ThumbnailService {
         image::guess_format(&head[..n]).is_ok()
     }
 
-    /// 原图能否被浏览器直接渲染（决定读取端未命中时能否回源原图）
-    pub fn is_browser_renderable(abs_path: &str) -> bool {
-        DIRECT_ORIGINAL_EXTS.contains(&crate::core::paths::LibraryPaths::ext_of(abs_path).as_str())
-    }
-
     /// 解码原图为 RGBA8 动态图。供惰性生成与扫描导入通道共用——导入通道一次解码后
     /// 共享给 调色板/缩略图/宽高。解码失败返回 None（调用方走对账重试/惰性兜底）。
     /// with_guessed_format：按内容喷探格式，扩展名错位文件同样可解码
@@ -93,13 +100,14 @@ impl ThumbnailService {
         Some(image::DynamicImage::ImageRgba8(image.to_rgba8()))
     }
 
-    /// 为指定内容生成缩略图；已存在且非 force 时跳过。
-    /// 源文件不是图像或已消失时静默跳过——缩略图是尽力而为的缓存。返回是否实际生成了文件
+    /// 为指定内容生成全部缺失缩略图；force 时重建全部档。
+    /// 源文件不是图像或已消失时静默跳过——缩略图是尽力而为的缓存。返回是否实际生成了文件。
+    /// 仅缺小图且默认档已存在时从默认档解码，避免再次读取和解码大尺寸原图。
     pub fn generate(&self, hash: &str, source_abs: &str, force: bool) -> bool {
         if !std::path::Path::new(source_abs).is_file() {
             return false;
         }
-        if !force && self.exists(hash) {
+        if !force && self.has_all(hash) {
             return false;
         }
         // 非图像文件（内容喷探）：解码必然失败，不读文件不告警——调色板/宽高的
@@ -109,60 +117,82 @@ impl ThumbnailService {
             return false;
         }
 
-        let image = match Self::decode(source_abs) {
+        let default_file = self.get_path(hash);
+        let decode_source = if !force && std::path::Path::new(&default_file).is_file() {
+            default_file
+        } else {
+            source_abs.to_string()
+        };
+        let image = match Self::decode(&decode_source) {
             Some(i) => i,
             None => {
                 // 解码失败需要可见：此类素材的缩略图/调色板会永久缺失，靠周期对账自愈重试（手动换图后自动恢复）
-                tracing::warn!("缩略图解码失败 {source_abs}");
+                tracing::warn!("缩略图解码失败 {decode_source}");
                 return false;
             }
         };
-        self.generate_from_image(hash, &image)
+        self.generate_from_image_inner(hash, &image, force)
     }
 
-    /// 从已解码图像生成缩略图（解码与生成拆分，扫描导入通道单解码共享同一份位图）。
-    /// 返回是否实际写出了文件
+    /// 从已解码图像生成全部缺失缩略图（扫描导入通道单解码共享同一份位图）。
     pub fn generate_from_image(&self, hash: &str, image: &image::DynamicImage) -> bool {
-        let (src_w, src_h) = (image.width(), image.height());
-        let mut resizer = fr::Resizer::new();
-
-        // Max：等比缩放到边长内，不放大小图
-        let scale = (THUMBNAIL_SIZE as f64 / src_w as f64)
-            .min(THUMBNAIL_SIZE as f64 / src_h as f64)
-            .min(1.0);
-        let dst_w = ((src_w as f64 * scale).round() as u32).max(1);
-        let dst_h = ((src_h as f64 * scale).round() as u32).max(1);
-        let mut dst = fr::images::Image::new(dst_w, dst_h, fr::PixelType::U8x4);
-        if let Err(e) = resizer.resize(
-            image,
-            &mut dst,
-            &fr::ResizeOptions::new()
-                .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)),
-        ) {
-            tracing::debug!("缩略图缩放失败 {hash}: {e}");
-            return false;
-        }
-        let rgba = image::RgbaImage::from_raw(dst_w, dst_h, dst.buffer().to_vec())
-            .expect("缩略图缓冲尺寸一致");
-        let encoder = webp::Encoder::from_rgba(&rgba, dst_w, dst_h);
-        let encoded = encoder.encode(80.0);
-        let target = self.get_path(hash);
-        if let Some(parent) = std::path::Path::new(&target).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::write(&target, &*encoded) {
-            // 写失败可见（占用/杀毒拦截等瞬时错误）：读取端未命中会重试生成，但对账不会主动补缩略图
-            tracing::warn!("缩略图写入失败 {target}: {e}");
-            return false;
-        }
-        true
+        self.generate_from_image_inner(hash, image, false)
     }
 
-    /// 删除某内容的缩略图
+    fn generate_from_image_inner(
+        &self,
+        hash: &str,
+        image: &image::DynamicImage,
+        force: bool,
+    ) -> bool {
+        let (src_w, src_h) = (image.width(), image.height());
+        let mut generated = false;
+        for size in THUMBNAIL_SIZES {
+            let target = self.get_path_with_size(hash, size);
+            if !force && std::path::Path::new(&target).is_file() {
+                continue;
+            }
+            let mut resizer = fr::Resizer::new();
+            // Max：等比缩放到边长内，不放大小图
+            let scale = (size as f64 / src_w as f64)
+                .min(size as f64 / src_h as f64)
+                .min(1.0);
+            let dst_w = ((src_w as f64 * scale).round() as u32).max(1);
+            let dst_h = ((src_h as f64 * scale).round() as u32).max(1);
+            let mut dst = fr::images::Image::new(dst_w, dst_h, fr::PixelType::U8x4);
+            if let Err(e) = resizer.resize(
+                image,
+                &mut dst,
+                &fr::ResizeOptions::new()
+                    .resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3)),
+            ) {
+                tracing::debug!("缩略图缩放失败 {hash}: {e}");
+                continue;
+            }
+            let rgba = image::RgbaImage::from_raw(dst_w, dst_h, dst.buffer().to_vec())
+                .expect("缩略图缓冲尺寸一致");
+            let encoder = webp::Encoder::from_rgba(&rgba, dst_w, dst_h);
+            let encoded = encoder.encode(80.0);
+            if let Some(parent) = std::path::Path::new(&target).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&target, &*encoded) {
+                // 写失败可见（占用/杀毒拦截等瞬时错误）：读取端未命中会重试生成，但对账不会主动补缩略图
+                tracing::warn!("缩略图写入失败 {target}: {e}");
+                continue;
+            }
+            generated = true;
+        }
+        generated
+    }
+
+    /// 删除某内容的全部缩略图
     pub fn delete(&self, hash: &str) {
-        let file = self.get_path(hash);
-        if std::path::Path::new(&file).is_file() {
-            let _ = std::fs::remove_file(&file);
+        for size in THUMBNAIL_SIZES {
+            let file = self.get_path_with_size(hash, size);
+            if std::path::Path::new(&file).is_file() {
+                let _ = std::fs::remove_file(&file);
+            }
         }
     }
 }
@@ -181,4 +211,63 @@ fn format_to_ext(format: image::ImageFormat) -> Option<String> {
         }
         .to_string(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generates_bounded_sizes_and_repairs_missing_grid_from_default() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("library");
+        let cache = temp.path().join("cache");
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = crate::core::paths::LibraryPaths::new(
+            &root.to_string_lossy(),
+            Some(cache.to_string_lossy().to_string()),
+        );
+        paths.ensure_layout();
+        let source = root.join("source.png");
+        image::RgbImage::from_pixel(1600, 900, image::Rgb([20, 40, 60]))
+            .save(&source)
+            .unwrap();
+        let service = ThumbnailService::new(Arc::new(paths));
+        let source = source.to_string_lossy().to_string();
+
+        assert!(service.generate("hash", &source, false));
+        assert!(service.has_all("hash"));
+        assert!(!service.generate("hash", &source, false));
+        for (size, expected) in [(512, (512, 288)), (1024, (1024, 576))] {
+            let file = service.get_path_with_size("hash", size);
+            assert_eq!(ThumbnailService::identify(&file), Some(expected));
+        }
+
+        // 旧库只有 1024 档时，仅补 512；默认档字节保持不变，且无需重读原图
+        let grid = service.get_path_with_size("hash", GRID_THUMBNAIL_SIZE);
+        let default_file = service.get_path("hash");
+        let default_before = std::fs::read(&default_file).unwrap();
+        std::fs::remove_file(&grid).unwrap();
+        // 原图换成 1×1：若错误回读原图，不放大规则会产生 1×1，而不是预期的 512×288
+        image::RgbImage::from_pixel(1, 1, image::Rgb([0, 0, 0]))
+            .save(&source)
+            .unwrap();
+        assert!(service.generate("hash", &source, false));
+        assert_eq!(ThumbnailService::identify(&grid), Some((512, 288)));
+        assert_eq!(std::fs::read(default_file).unwrap(), default_before);
+
+        service.delete("hash");
+        assert!(!service.has_all("hash"));
+        for size in THUMBNAIL_SIZES {
+            assert!(!std::path::Path::new(&service.get_path_with_size("hash", size)).exists());
+        }
+    }
+
+    #[test]
+    fn only_fixed_sizes_are_accepted() {
+        assert!(is_supported_size(512));
+        assert!(is_supported_size(1024));
+        assert!(!is_supported_size(256));
+        assert!(!is_supported_size(0));
+    }
 }

@@ -1179,6 +1179,89 @@ async fn cleanup_survives_restart() {
     );
 }
 
+/// 缩略图未命中只派发后台生成，不把原图字节作为卡片/预览响应。
+#[tokio::test]
+async fn thumbnail_miss_does_not_fall_back_to_original() {
+    let app = test_app("thumbnail-no-original-fallback");
+    let id = app.add_test_item("uncached.png", [1, 2, 3]).await;
+    assert!(!app.lib().thumbs.has_all(&id));
+    let original = std::fs::read(app.library_root().join("uncached.png")).unwrap();
+    let (status, bytes) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/thumbnail?id={id}&size=512"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(bytes, original);
+}
+
+/// 广域网标记来自进程内受托扩展，而不是 token 或客户端自报参数。
+#[tokio::test]
+async fn app_info_marks_tunneled_transport() {
+    let app = test_app("app-info-remote");
+    let (_, bytes) = call_json(&app.router, "GET", "/api/v1/app/info", None).await;
+    let local: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(local["data"]["remote"], json!(false));
+
+    let mut req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/app/info")
+        .header("host", "hawk-remote.tunnel")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(TunneledPeer { writable: false });
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let remote: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(remote["data"]["remote"], json!(true));
+}
+
+/// gzip 只压缩可压缩文本；图片保持原始字节流，SSE 由 tower-http 默认判定排除。
+#[tokio::test]
+async fn gzip_is_negotiated_for_json_but_not_images() {
+    let app = test_app("gzip-negotiation");
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/item/skeleton")
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("host", "127.0.0.1")
+        .header("content-type", "application/json")
+        .header("accept-encoding", "gzip")
+        .body(Body::from("{}"))
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers().get("content-encoding").unwrap(), "gzip");
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+
+    let id = app.add_test_item("image.png", [10, 20, 30]).await;
+    assert!(app.lib().thumbs.generate(
+        &id,
+        &app.library_root().join("image.png").to_string_lossy(),
+        false,
+    ));
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/v1/item/thumbnail?id={id}&size=512"))
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("host", "127.0.0.1")
+        .header("accept-encoding", "gzip")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().get("content-encoding").is_none());
+}
+
 /// 写端点剧本：准备真实 item 后按依赖顺序调用全部写端点，校验 200 与响应 schema
 #[tokio::test]
 async fn write_endpoints_match_schema() {
@@ -1186,7 +1269,7 @@ async fn write_endpoints_match_schema() {
     let spec = spec();
     let id = app.add_test_item("a.png", [200, 30, 30]).await;
 
-    // 读：详情 / 原图 / 缩略图（回源原图）
+    // 读：详情 / 原图 / 缩略图（预生成缓存；未命中不回源原图）
     expect_ok(
         &app,
         &spec,
@@ -1204,6 +1287,11 @@ async fn write_endpoints_match_schema() {
     .await;
     assert_eq!(status, StatusCode::OK, "item/file");
     assert!(!bytes.is_empty(), "item/file 响应为空");
+    assert!(app.lib().thumbs.generate(
+        &id,
+        &app.library_root().join("a.png").to_string_lossy(),
+        false,
+    ));
     let (status, bytes) = call(
         &app.router,
         "GET",
@@ -1213,6 +1301,23 @@ async fn write_endpoints_match_schema() {
     .await;
     assert_eq!(status, StatusCode::OK, "item/thumbnail");
     assert!(!bytes.is_empty(), "item/thumbnail 响应为空");
+    let (status, grid) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/thumbnail?id={id}&size=512"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "item/thumbnail size=512");
+    assert!(!grid.is_empty(), "网格缩略图响应为空");
+    let (status, _) = call(
+        &app.router,
+        "GET",
+        &format!("/api/v1/item/thumbnail?id={id}&size=256"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "非法缩略图尺寸");
 
     // 元数据写
     expect_ok(
