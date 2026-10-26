@@ -1,8 +1,8 @@
-//! 派生数据回写：worker 提炼的调色板批量回写与宽高补全。
-//! 回写走队列回流（Job::Palette/FixDim），应用发生在消费循环（单写者）。
+//! 派生数据回写：调色板/pHash 按批落 SQLite，宽高单条补全。
+//! 所有应用都发生在消费循环（单写者）；worker 只计算并经 JobSender 回流。
 
 use crate::core::item::PaletteColor;
-use crate::core::metadata::ItemMetadata;
+use crate::core::metadata::{ItemMetadata, PerceptualHash};
 use crate::core::taxonomy::ItemEvents;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,101 +10,117 @@ use std::time::Duration;
 use super::ctx::PipelineCtx;
 use super::upsert::palette_to_entries;
 
-/// 调色板批量回写：达到该条数立即冲刷（SQLite 事务开销从 N 降到 1，
-/// 事件按批平滑补发，避免全库重提炼时的 item.updated 洪峰）
-const PALETTE_BATCH: usize = 500;
-/// 调色板批量回写的时间冲刷阈值：滞留超时时即使未达批大小也冲刷
-const PALETTE_FLUSH_AFTER: Duration = Duration::from_millis(2000);
+const DERIVED_BATCH: usize = 500;
+const DERIVED_FLUSH_AFTER: Duration = Duration::from_millis(2000);
 
-/// 暂存调色板提炼结果（同 hash 以最新为准），达批大小立即冲刷；
-/// 未达批大小时 spawn 一次性定时任务（PALETTE_FLUSH_AFTER 后入队 PaletteFlush 冲刷）——
-/// 安静期（无后续 job）也能落盘，不依赖消费循环的任务到达
 pub(crate) fn stage_palette(ctx: &Arc<PipelineCtx>, hash: String, palette: Vec<PaletteColor>) {
-    let mut pending = ctx.palette_pending.lock().unwrap();
-    if let Some(entry) = pending.iter_mut().find(|(h, _)| *h == hash) {
-        entry.1 = palette;
-        return;
-    }
-    if pending.is_empty() {
-        *ctx.palette_oldest.lock().unwrap() = Some(std::time::Instant::now());
-    }
-    pending.push((hash, palette));
-    let full = pending.len() >= PALETTE_BATCH;
-    drop(pending);
+    let full = {
+        let mut pending = ctx.palette_pending.lock().unwrap();
+        if let Some(entry) = pending.iter_mut().find(|(h, _)| *h == hash) {
+            entry.1 = palette;
+        } else {
+            pending.push((hash, palette));
+        }
+        pending.len() >= DERIVED_BATCH
+    };
+    arm_flush(ctx, full);
+}
+
+pub(crate) fn stage_phash(ctx: &Arc<PipelineCtx>, hash: String, phash: PerceptualHash) {
+    let full = {
+        let mut pending = ctx.phash_pending.lock().unwrap();
+        if let Some(entry) = pending.iter_mut().find(|(h, _)| *h == hash) {
+            entry.1 = phash;
+        } else {
+            pending.push((hash, phash));
+        }
+        pending.len() >= DERIVED_BATCH
+    };
+    arm_flush(ctx, full);
+}
+
+/// 达批立即冲刷；否则记录最早暂存时间并只安排一个唤醒任务
+fn arm_flush(ctx: &Arc<PipelineCtx>, full: bool) {
     if full {
-        flush_palette_batch(ctx);
+        flush_derived_batches(ctx);
         return;
     }
+    let mut oldest = ctx.derived_oldest.lock().unwrap();
+    if oldest.is_none() {
+        *oldest = Some(std::time::Instant::now());
+    }
+    drop(oldest);
     if !ctx
-        .palette_timer
+        .derived_timer
         .swap(true, std::sync::atomic::Ordering::SeqCst)
     {
         let ctx2 = ctx.clone();
         let runtime = ctx.runtime.clone();
         runtime.spawn(async move {
-            tokio::time::sleep(PALETTE_FLUSH_AFTER).await;
-            // 到点仍由消费循环执行冲刷（单写者）；定时任务只负责唤醒
-            ctx2.sender.fire(super::Job::PaletteFlush);
+            tokio::time::sleep(DERIVED_FLUSH_AFTER).await;
+            ctx2.sender.fire(super::Job::DerivedFlush);
         });
     }
 }
 
-/// 消费循环每处理完一个 job 检查一次：滞留超时即使未达批大小也冲刷（事件平滑发出）
-pub(crate) fn maybe_flush_palette(ctx: &PipelineCtx) {
-    let oldest = *ctx.palette_oldest.lock().unwrap();
-    if let Some(t) = oldest {
-        if t.elapsed() >= PALETTE_FLUSH_AFTER {
-            flush_palette_batch(ctx);
-        }
+pub(crate) fn maybe_flush_derived(ctx: &PipelineCtx) {
+    let oldest = *ctx.derived_oldest.lock().unwrap();
+    if oldest.is_some_and(|time| time.elapsed() >= DERIVED_FLUSH_AFTER) {
+        flush_derived_batches(ctx);
     }
 }
 
-/// 冲刷暂存的调色板回写：逐条落 TOML（铁律：权威层先行），随后内存副本与 SQLite 单事务统一应用，
-/// 最后逐 item 同步索引并补发 item.updated。meta 已随漂移/删除消失时丢弃
-pub(crate) fn flush_palette_batch(ctx: &PipelineCtx) {
-    let batch: Vec<(String, Vec<PaletteColor>)> = {
-        let mut pending = ctx.palette_pending.lock().unwrap();
-        if pending.is_empty() {
-            return;
-        }
-        *ctx.palette_oldest.lock().unwrap() = None;
-        std::mem::take(&mut *pending)
-    };
+pub(crate) fn flush_derived_batches(ctx: &PipelineCtx) {
+    let palette = std::mem::take(&mut *ctx.palette_pending.lock().unwrap());
+    let phash = std::mem::take(&mut *ctx.phash_pending.lock().unwrap());
+    *ctx.derived_oldest.lock().unwrap() = None;
 
-    let batch_len = batch.len();
-    let mut to_write: Vec<(String, ItemMetadata)> = Vec::with_capacity(batch_len);
-    for (hash, palette) in batch {
-        let Some(mut meta) = ctx.store.try_get(&hash) else {
-            continue;
-        };
-        meta.palette = Some(palette_to_entries(&palette));
-        to_write.push((hash, meta));
+    let palette_entries: Vec<(String, ItemMetadata)> = palette
+        .into_iter()
+        .filter_map(|(hash, palette)| {
+            let mut meta = ctx.store.try_get(&hash)?;
+            meta.palette = Some(palette_to_entries(&palette));
+            Some((hash, meta))
+        })
+        .collect();
+    persist_and_publish(ctx, palette_entries, "调色板");
+
+    let phash_entries: Vec<(String, ItemMetadata)> = phash
+        .into_iter()
+        .filter_map(|(hash, phash)| {
+            let mut meta = ctx.store.try_get(&hash)?;
+            meta.phash = Some(phash);
+            Some((hash, meta))
+        })
+        .collect();
+    persist_and_publish(ctx, phash_entries, "pHash");
+}
+
+/// 单事务落盘 + 内存/索引同步 + 合并事件。meta 已随漂移/删除消失的项在组装阶段丢弃
+fn persist_and_publish(ctx: &PipelineCtx, to_write: Vec<(String, ItemMetadata)>, label: &str) {
+    if to_write.is_empty() {
+        return;
     }
-    // 权威层先行（两模式分发：Db 单事务 / Toml 并行小文件）
+    let batch_len = to_write.len();
     let (applied, failed) = ctx.store.persist_batch(&to_write);
     if !failed.is_empty() {
         tracing::warn!(
-            "调色板批量冲刷：{} 条落盘失败（下轮重提炼补齐）",
+            "{label}批量回写：{} 条落盘失败（下轮维护重试）",
             failed.len()
         );
     }
     if applied.is_empty() {
         return;
     }
-
-    ctx.store.apply_batch(&applied);
     tracing::info!(
-        "调色板批量冲刷 {} 条（暂存 {} 条）",
-        applied.len(),
-        batch_len
+        "{label}批量回写 {} 条（暂存 {batch_len} 条）",
+        applied.len()
     );
 
-    // 合并为一条 items.updated 发出：一批最多 500 条，逐条 item.updated 会冲爆 SSE 订阅者
-    let mut dtos: Vec<crate::core::item::ItemDto> = Vec::with_capacity(applied.len());
-    for (hash, meta, _) in &applied {
+    let mut dtos = Vec::with_capacity(applied.len());
+    for (hash, meta) in &applied {
         if ctx.index.contains(hash) {
             ctx.index.with_item_mut(hash, |item| item.sync_from(meta));
-            // 锁保守过滤：不可见条目不进批量事件（防元数据经 SSE 泄漏）
             if ItemEvents::lock_gates(&ctx.locks, &ctx.index, hash) {
                 if let Some(dto) = ctx.index.get_dto(hash) {
                     dtos.push(dto);
@@ -121,7 +137,7 @@ pub(crate) fn flush_palette_batch(ctx: &PipelineCtx) {
 }
 
 /// 宽高回写（worker ensure_dim 派发）：仅补 0 值——幂等守卫，任务在途期间 upsert/其他任务
-/// 可能已写入正确值，不覆盖。索引与 TOML 同步更新后发 item.updated，前端据此重建骨架/卡片（0 × 0 → 实际尺寸）
+/// 可能已写入正确值，不覆盖。索引与 SQLite 同步更新后发 item.updated，前端据此重建骨架/卡片
 pub(crate) fn do_fix_dim(ctx: &PipelineCtx, hash: &str, w: i32, h: i32) {
     let applied = ctx
         .index
@@ -143,7 +159,7 @@ pub(crate) fn do_fix_dim(ctx: &PipelineCtx, hash: &str, w: i32, h: i32) {
             meta.width = w;
             meta.height = h;
             if ctx.store.save(hash, &meta).is_err() {
-                tracing::warn!("宽高回写 TOML 失败 {hash}");
+                tracing::warn!("宽高回写 SQLite 失败 {hash}");
             }
         }
     }

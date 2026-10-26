@@ -47,7 +47,7 @@ def png_gray_noise(w, h):
 lib = sys.argv[1]
 open(os.path.join(lib, 'sunset.png'), 'wb').write(png(4, 2, (255, 0, 0)))
 open(os.path.join(lib, '海报', 'cat.png'), 'wb').write(png(2, 4, (0, 255, 0)))
-# 大图：缩略图惰性生成的测试对象（未命中回源原图 + 后台生成）
+# 大图：缩略图惰性生成的测试对象（未命中 404 + 后台生成）
 open(os.path.join(lib, '海报', 'logo.png'), 'wb').write(png_gray_noise(800, 800))
 PYEOF
 
@@ -85,6 +85,19 @@ post_json() { # post_json <url> <json-body> [额外 curl 参数...]：JSON 体�
   curl -s -H "$AUTH" -X POST "$url" -H 'Content-Type: application/json' --data-binary @- "$@" <<< "$body"
 }
 
+db_query() { # db_query <SQL>：直接读取 SQLite 权威库（查询/更新均可）
+  python3 - "$LIB/.hawk/metadata.db" "$1" <<'PY'
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+try:
+    row = conn.execute(sys.argv[2]).fetchone()
+    conn.commit()
+    print("" if row is None else row[0])
+finally:
+    conn.close()
+PY
+}
+
 # --- app / 鉴权 ---
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) EXPECT_PLATFORM=windows ;;
@@ -118,7 +131,7 @@ check "update tags 生效" "$(echo "$DETAIL" | jq -r '.data.tags | join(",")')" 
 check "update star 生效" "$(echo "$DETAIL" | jq -r '.data.star')" 4
 check "按 tags 过滤" "$(post_json "$BASE/api/v1/item/list" '{"tags":["nature"]}' | jq -r .data.total)" 1
 check "按 keywords 过滤" "$(post_json "$BASE/api/v1/item/list" '{"keywords":["beautiful"]}' | jq -r .data.total)" 1
-check "元数据文件已落盘" "$(ls "$LIB/.hawk/metadata/$SUNSET_ID.toml" >/dev/null 2>&1 && echo yes)" yes
+check "元数据已写入 SQLite" "$(db_query "SELECT COUNT(*) FROM items WHERE hash='$SUNSET_ID'")" 1
 
 # --- 分类(Category,扁平名字) ---
 CAT_API="$BASE/api/v1/category"
@@ -142,30 +155,30 @@ check "标签重命名跟随 item" "$(post_json "$TAG_API/update" '{"name":"suns
 check "排除标签过滤" "$(post_json "$BASE/api/v1/item/list" '{"exclude_tags":["nature"]}' | jq -r .data.total)" 2
 check "标签删除同步清除" "$(post_json "$TAG_API/delete" '{"name":"晚霞"}' >/dev/null; curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$SUNSET_ID" | jq -r '.data.tags | join(",")')" "nature"
 
-# --- 缩略图（惰性生成：未命中回源原图并后台入队，大小图同逻辑） ---
+# --- 缩略图（惰性生成：未命中 404 并后台入队，完成经 WebP 命中，大小图同逻辑） ---
 # 删缓存制造「未命中」前提：reindex 全量导入通道会同步生成缩略图（item 入库即完整可显示），
 # 不删的话断言与后台生成存在时序竞态（flaky）
-rm -f "$CACHE/thumbnails/256/$LOGO_ID.webp" "$CACHE/thumbnails/512/$LOGO_ID.webp" "$CACHE/thumbnails/1024/$LOGO_ID.webp"
-# 大图未命中 → 直接回源原图（200 + image/png），同时后台入队生成
-LOGO_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256")
-check "thumbnail 未命中先回源原图" "$LOGO_CT" "image/png"
+rm -f "$CACHE/thumbnails/512/$LOGO_ID.webp" "$CACHE/thumbnails/1024/$LOGO_ID.webp"
+# 大图未命中 → 404 + 后台入队生成，不回源原图
+LOGO_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=512")
+check "thumbnail 未命中返回 404" "$LOGO_STATUS" "404"
 # 轮询至后台生成完毕（webp 缓存就绪）
 for _ in $(seq 1 40); do
-  LOGO_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256")
+  LOGO_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=512")
   [ "$LOGO_CT" = "image/webp" ] && break
   sleep 0.5
 done
 check "thumbnail 后台生成后命中缓存" "$LOGO_CT" "image/webp"
-check "thumbnail 支持 ?token=（<img> 场景）" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=256&token=$TOKEN")" 200
+check "thumbnail 支持 ?token=（<img> 场景）" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&size=512&token=$TOKEN")" 200
 check "thumbnail 错误 token 返回 401" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/item/thumbnail?id=$LOGO_ID&token=wrong")" 401
 check "thumbnail cache-control" "$(curl -s -D - -o /dev/null -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$LOGO_ID" | grep -i cache-control | tr -d '\r' | tr 'A-Z' 'a-z')" "cache-control: public, max-age=31536000, immutable"
 check "refresh_thumbnail" "$(post_json "$BASE/api/v1/item/refresh_thumbnail" "{\"id\":\"$LOGO_ID\"}" | jq -r .status)" success
-# 小图与大图同逻辑：删缓存后回源原图，后台重建（同上：删缓存消除时序竞态）
-rm -f "$CACHE/thumbnails/256/$SUNSET_ID.webp" "$CACHE/thumbnails/512/$SUNSET_ID.webp" "$CACHE/thumbnails/1024/$SUNSET_ID.webp"
-SUNSET_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256")
-check "小图未命中回源原图" "$SUNSET_CT" "image/png"
+# 小图与大图同逻辑：删缓存后 404，后台重建（同上：删缓存消除时序竞态）
+rm -f "$CACHE/thumbnails/512/$SUNSET_ID.webp" "$CACHE/thumbnails/1024/$SUNSET_ID.webp"
+SUNSET_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=512")
+check "小图未命中返回 404" "$SUNSET_STATUS" "404"
 for _ in $(seq 1 40); do
-  SUNSET_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=256")
+  SUNSET_CT=$(curl -s -o /dev/null -w '%{content_type}' -H "$AUTH" "$BASE/api/v1/item/thumbnail?id=$SUNSET_ID&size=512")
   [ "$SUNSET_CT" = "image/webp" ] && break
   sleep 0.5
 done
@@ -193,7 +206,7 @@ check "颜色检索异色不命中" "$(post_json "$BASE/api/v1/item/list" '{"col
 check "颜色检索限定文件夹范围" "$(post_json "$BASE/api/v1/item/list" '{"color":"#00ff00","folders":["海报"]}' | jq -r .data.total)" 1
 check "颜色检索范围外不命中" "$(post_json "$BASE/api/v1/item/list" '{"color":"#ff0000","folders":["海报"]}' | jq -r .data.total)" 0
 check "非法颜色值返回 400" "$(post_json "$BASE/api/v1/item/list" '{"color":"red"}' -o /dev/null -w '%{http_code}')" 400
-check "调色板已入元数据 TOML" "$(grep -q '^\[\[palette\]\]' "$LIB/.hawk/metadata/$SUNSET_ID.toml" 2>/dev/null && echo yes || echo no)" yes
+check "调色板已写入 SQLite" "$(db_query "SELECT COUNT(*) FROM items WHERE hash='$SUNSET_ID' AND palette IS NOT NULL")" 1
 
 # --- item/add ---
 TINY_PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -323,8 +336,8 @@ check "folder/restore 恢复" "$(post_json "$BASE/api/v1/folder/restore" '{"path
 post_json "$BASE/api/v1/item/delete" "{\"id\":\"$LOGO_ID\"}" >/dev/null
 check "trash/clear" "$(post_json "$BASE/api/v1/trash/clear" '{}' | jq -r .status)" success
 check "清空后回收站为空" "$(post_json "$BASE/api/v1/item/list" '{"in_trash":true}' | jq -r .data.total)" 0
-check "元数据已清理" "$(ls "$LIB/.hawk/metadata/$LOGO_ID.toml" >/dev/null 2>&1 && echo yes || echo no)" no
-check "缩略图已清理" "$(ls "$CACHE/thumbnails/256/$LOGO_ID.webp" >/dev/null 2>&1 && echo yes || echo no)" no
+check "元数据已清理" "$(db_query "SELECT COUNT(*) FROM items WHERE hash='$LOGO_ID'")" 0
+check "缩略图已清理" "$(ls "$CACHE/thumbnails/512/$LOGO_ID.webp" >/dev/null 2>&1 && echo yes || echo no)" no
 
 # --- 重启验证：哈希复用（mtime 不变不重算）且元数据保持 ---
 kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true
@@ -357,10 +370,10 @@ check "refresh_cache 未知类型 400" "$(post_json "$BASE/api/v1/library/refres
 check "refresh_cache 缺 value 400" "$(post_json "$BASE/api/v1/library/refresh_cache" '{"type":"category"}' -o /dev/null -w '%{http_code}')" 400
 
 # --- 宽高自愈闭环：模拟入库时 identify 暂时失败落 0 的遗留 ---
-# 停库后从 TOML 删除宽高字段（width=0 序列化时即省略），重启后对账把 0 搬进索引，
-# 自愈三路（周期对账 / item·list 读取端 / refresh_cache）任一收敛即闭环：宽高恢复且回写 TOML
+# 停库后将 SQLite 宽高清零，重启后把 0 搬进索引，
+# 自愈三路（周期维护 / item·list 读取端 / refresh_cache）任一收敛即闭环：宽高恢复且回写 SQLite
 kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true
-sed -i '/^width = /d; /^height = /d' "$LIB/.hawk/metadata/$SUNSET_ID.toml"
+db_query "UPDATE items SET width=0, height=0 WHERE hash='$SUNSET_ID'" >/dev/null
 HAWK_TOKEN=$TOKEN "${SERVER[@]}" --library "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 60); do curl -sf -H "$AUTH" "$BASE/api/v1/app/status" >/dev/null 2>&1 && break; sleep 0.5; done
@@ -372,7 +385,7 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 check "宽高自愈恢复（0 × 0 → 4）" "$W" 4
-check "自愈结果回写 TOML" "$(grep -c '^width = 4$' "$LIB/.hawk/metadata/$SUNSET_ID.toml")" 1
+check "自愈结果回写 SQLite" "$(db_query "SELECT width FROM items WHERE hash='$SUNSET_ID'")" 4
 
 # --- 局域网写权限（[web] writable）：viewer token 默认只读，开启后可写，热生效 ---
 LAN_PORT=27398

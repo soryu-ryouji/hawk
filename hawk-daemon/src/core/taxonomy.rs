@@ -444,9 +444,8 @@ impl TaxonomyMigrator {
         self.finish_cascade(batch)
     }
 
-    /// 批量写应用的公共尾部：按 1000 条分片，逐片「并行 TOML 落盘（权威层先行）→ apply_batch
-    /// （内存+SQLite 单事务）→ 注册表登记 → 索引同步 → ChangeBatcher 发事件」——
-    /// 长批量（数万条落盘以十秒计）期间客户端渐进可见，而不是全部写完才动。
+    /// 批量写应用的公共尾部：按 1000 条分片，逐片「SQLite 单事务 + 内存副本 →
+    /// 注册表登记 → 索引同步 → ChangeBatcher 发事件」。长批量期间客户端渐进可见，而不是全部写完才动。
     /// 落盘失败的 hash 记入 failed_out，返回实际更新数
     fn finish_metadata_batch(
         &self,
@@ -458,8 +457,7 @@ impl TaxonomyMigrator {
         for slice in batch.chunks(1000) {
             let (written, failed) = self.store.persist_batch(slice);
             failed_out.extend(failed);
-            self.store.apply_batch(&written);
-            for (hash, meta, _) in &written {
+            for (hash, meta) in &written {
                 self.register_taxonomy(meta);
                 if self.index.contains(hash) {
                     self.index.with_item_mut(hash, |item| item.sync_from(meta));

@@ -23,14 +23,13 @@ hawk 的组织维度划分为三个：
 
 ### item 元数据 `categories` 字段
 
-```toml
-# .hawk/metadata/<hash>.toml
-categories = ["海报", "灵感参考"]   # 分类名字数组（扁平，可多选）
-tags = ["nature"]
-...
+```text
+# .hawk/metadata.db 的 categories 表（每行一个分类赋值）
+<hash> | 海报
+<hash> | 灵感参考
 ```
 
-- categories 属于 item（内容级），与 tags/star 同级；参与同步
+- categories 属于 item（内容级），与 tags/star 同级；随 metadata.db 本机保存，注册表文件仍参与同步
 - 回收站中的 item 保留分类；清空回收站随元数据一起消失
 - 每 item 分类数不设上限
 
@@ -42,7 +41,7 @@ tags = ["nature"]
 .hawk/
 ├── categories.toml   ← 分类注册表（参与同步）
 ├── tags.toml         ← 标签注册表（参与同步）
-├── metadata/ ...
+├── metadata.db      ← SQLite 素材元数据（本地专用）
 ```
 
 ```toml

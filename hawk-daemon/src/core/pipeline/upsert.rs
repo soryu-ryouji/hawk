@@ -6,7 +6,7 @@
 use crate::core::color_math;
 use crate::core::content_hash;
 use crate::core::item::PaletteColor;
-use crate::core::metadata::{ItemMetadata, PaletteEntry, PathEntry};
+use crate::core::metadata::{ItemMetadata, PaletteEntry, PathEntry, PerceptualHash};
 use crate::core::paths::{unix_ms, LibraryPaths};
 use crate::core::taxonomy::ItemEvents;
 use crate::core::thumbnail::ThumbnailService;
@@ -43,6 +43,8 @@ pub(crate) struct PendingUpsert {
     pub(crate) dim: Option<(i32, i32)>,
     /// 扫描并行阶段单次解码提炼的调色板（含空数组负缓存）；增量路径为 None
     pub(crate) palette: Option<Vec<PaletteColor>>,
+    /// 同一解码过程计算的 pHash；增量路径由 worker 补齐
+    pub(crate) phash: Option<PerceptualHash>,
 }
 
 /// 单文件入库（消费循环内联调用：watcher 事件 / API 提交 / 移动回退路径）
@@ -164,6 +166,7 @@ pub(crate) fn prepare_upsert(
             hash: None,
             dim: None,
             palette: None,
+            phash: None,
         });
     }
 
@@ -185,6 +188,7 @@ pub(crate) fn prepare_upsert(
         hash: None,
         dim: None,
         palette: None,
+        phash: None,
     })
 }
 
@@ -237,6 +241,17 @@ pub(crate) fn needs_palette_work(ctx: &PipelineCtx, hash: &str) -> bool {
     }
 }
 
+/// pHash 缺失或算法版本过旧时需要后台重算
+pub(crate) fn needs_phash_work(ctx: &PipelineCtx, hash: &str) -> bool {
+    match ctx.store.try_get(hash) {
+        Some(meta) => meta
+            .phash
+            .as_ref()
+            .is_none_or(|hash| hash.version != crate::core::perceptual_hash::PHASH_VERSION),
+        None => true,
+    }
+}
+
 /// 应用入库结果:元数据迁移与回写、索引更新、事件、派生补全派发。只允许串行调用。
 /// added_batch 为 Some 时（扫描路径）created 事件合并进 items.added；
 /// 增量路径传 None，维持即时单条 item.added
@@ -268,8 +283,8 @@ pub(crate) fn apply_upsert(
     // 元数据登记路径并回写最新 size/mtime,保持哈希校验依据新鲜
     let mut meta = get_or_create_metadata(ctx, hash, inherit_from.as_ref());
     let mut meta_changed = false;
-    // 扫描导入通道单次解码已提炼调色板（内容的纯函数,含空数组负缓存）：随首版 TOML 一并
-    // 持久化,颜色索引随 item 就绪即全量可用;None（解码失败/未提炼）保持现状,由对账/worker 重试
+    // 扫描导入通道单次解码已提炼调色板（内容的纯函数,含空数组负缓存）：随首版 SQLite 记录一并
+    // 持久化,颜色索引随 item 就绪即全量可用;None（解码失败/未提炼）保持现状,由维护/worker 重试
     if let Some(palette) = pending.palette.as_ref() {
         meta.palette = Some(
             palette
@@ -280,6 +295,10 @@ pub(crate) fn apply_upsert(
                 })
                 .collect(),
         );
+        meta_changed = true;
+    }
+    if let Some(phash) = pending.phash.as_ref() {
+        meta.phash = Some(phash.clone());
         meta_changed = true;
     }
     match meta.find_path_mut(&pending.lib_path) {
@@ -311,7 +330,7 @@ pub(crate) fn apply_upsert(
             .get_or_add_with_location(hash, &pending.rel, pending.size, pending.mtime);
     ctx.index.with_item_mut(hash, |item| item.sync_from(&meta));
 
-    // 宽高持久化入 TOML（按 storage.md 的设计意图落盘）
+    // 宽高持久化入 SQLite
     let mut dim_persisted = false;
     let needs_dim = ctx
         .index
@@ -352,8 +371,8 @@ pub(crate) fn apply_upsert(
 
     // 缩略图是惰性缓存（读取端未命中时派发），入库/对账只保证调色板（颜色搜索依赖全量 palette）；
     // 派生齐备的文件(如对账扫描重放)不再派发:no-op 任务会把队列与积压计数灌满失真
-    if needs_palette_work(ctx, hash) {
-        ctx.worker.enqueue_palette(hash, &pending.abs_path);
+    if needs_palette_work(ctx, hash) || needs_phash_work(ctx, hash) {
+        ctx.worker.enqueue_derived(hash, &pending.abs_path);
     }
 
     // 扫描窗口内新增/刷新的位置记入会话：消失对账时豁免

@@ -21,7 +21,7 @@ fn no_library_state(dir: &tempfile::TempDir) -> SharedState {
         library_root: None,
         port: 0,
         token: TOKEN.to_string(),
-        reconcile_interval_seconds: 0,
+        maintenance_interval_seconds: 0,
         cache_parent: None,
         web_dist: None,
         remote_config: Some(

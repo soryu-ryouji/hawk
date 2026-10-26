@@ -14,8 +14,8 @@
 //! 级联跟随（文件夹移动/删除、分类/标签改名删除）由索引流水线在对应 Job 内调用（同 global_filter）。
 
 use crate::core::events::EventBus;
-use crate::core::metadata::toml_string;
 use crate::core::paths::LibraryPaths;
+use crate::core::registry_file::toml_string;
 use crate::core::registry_file::{atomic_write, sort_entries};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;

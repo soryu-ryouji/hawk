@@ -494,7 +494,6 @@ hawk-daemon 单实例对应单个素材库。
 | GET  | `/api/v1/library/info`    | 获取当前素材库信息 |
 | PATCH | `/api/v1/library/info`   | 改库显示名（`{"name": "..."}`，写 `.hawk/config.toml`，广播 `library.updated`） |
 | PUT | `/api/v1/library/scan`   | 周期兜底重扫设置（`{"periodic": bool, "interval": 秒}`，写 `.hawk/config.toml` 的 `[scan]`，保存即热生效） |
-| POST | `/api/v1/library/storage_mode` | 切换元数据存储方案（`{"mode": "database" \| "toml"}`），全量迁移后调用方应重启进程 |
 | POST | `/api/v1/library/reindex` | 全量重建索引       |
 | POST | `/api/v1/library/rescan`  | 强制重新遍历文件系统 |
 | POST | `/api/v1/library/refresh_cache` | 按范围刷新派生缓存（补缺失 + 消失对账） |
@@ -516,13 +515,12 @@ hawk-daemon 单实例对应单个素材库。
     "path": "D:/Assets/Design",
     "modification_time": 1592461625783,
     "application_version": "1.0.0",
-    "storage_mode": "database",
     "scan": { "periodic": true, "interval": 900 }
   }
 }
 ```
 
-`storage_mode` 为元数据存储方案：`database`（`.hawk/metadata.db`，默认）/ `toml`（`.hawk/metadata/*.toml`，网盘同步友好）；语义与迁移见 [存储设计](storage.md)。
+素材元数据固定使用 `.hawk/metadata.db`（SQLite 单一路线），不再有 `storage_mode` 字段或切换端点；详见 [存储设计](storage.md)。
 
 ### update
 
@@ -769,6 +767,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | annotation        | string   | 备注                                       |
 | modification_time | number   | 修改时间（Unix 毫秒）                      |
 | palette           | object[] | 调色板（按占比降序，最多 10 项；未提炼或不可解码时为空数组） |
+| similarity_distance | number? | 仅相似查询：与源图的 pHash 汉明距离（0–64，越小越相似） |
 
 palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前缀小写 hex，percentage 为像素覆盖占比（0–100，1 位小数）。调色板由后台异步提炼（见 [颜色提炼与颜色检索](color-search.md)），新入库素材稍后才就绪；就绪后通过 `item.updated` 事件推送。
 
@@ -806,11 +805,15 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | min_width / max_width | number | 宽度独立区间（像素）：≥ / ≤ 阈值，两者可组合；与高度条件独立，宽未解析（0）时不命中 |
 | min_height / max_height | number | 高度独立区间（像素）：≥ / ≤ 阈值，两者可组合；与宽度条件独立，高未解析（0）时不命中 |
 | color      | string   | 按颜色检索（`#344441`，`#` 可省略，大小写不敏感）；命中条件为调色板任一颜色 CIE76 ΔE ≤ 25，格式非法返回 `INVALID_PARAM` |
+| similar_to | string | 以指定 item 为源做 pHash 相似查找；源必须可见且已完成分析 |
+| max_distance | number | 相似查询最大汉明距离（0–64），缺省 5；越小越严格 |
 | in_trash   | boolean  | 是否只查回收站中的 item，默认 false                             |
-| order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` |
+| order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` / `similarity`（需同时指定 `similar_to`） |
 | order      | string   | 排序方向：`desc`（默认）/ `asc`                                 |
 | offset     | number   | 分页偏移，默认 0                                                |
 | limit      | number   | 分页大小，默认 50                                               |
+
+相似图片查找的算法、阈值和边界见 [pHash 相似图片查找](similar-images.md)。
 
 #### 响应
 

@@ -26,7 +26,7 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from benchlib import (
-    Server, cache_dir_for, dir_bytes, index_db_stats, make_pngs, report, sample_copy,
+    Server, cache_dir_for, dir_bytes, make_pngs, metadata_db_stats, report, sample_copy,
 )
 
 WORK_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp")
@@ -89,15 +89,14 @@ def main():
     with open(os.path.join(WORK_ROOT, "bench-images-server.log"), encoding="utf-8", errors="replace") as f:
         log_lines = f.readlines()
     decode_failures = sum(1 for line in log_lines if "缩略图解码失败" in line)
-    batch_failures = sum(1 for line in log_lines if ("批量写入失败" in line or "熔断" in line or "TOML" in line and "失败" in line))
-    palette_flushes = sum(1 for line in log_lines if "元数据缓存批量" in line or "调色板" in line and "冲刷" in line)
+    batch_failures = sum(1 for line in log_lines if "批量写入失败" in line)
     if batch_failures:
         print("!! 批量写库失败日志（前 3 行）:")
         for line in [l for l in log_lines if "批量写入失败" in l or "熔断" in l][:3]:
             print("   " + line.strip()[:200])
 
-    # 直读派生缓存统计（索引镜像行数 / 已提炼调色板数 / 缩略图数）
-    stats = index_db_stats(cache_dir)
+    # 直读 SQLite 权威库统计（条目数 / 已提炼调色板数 / 缩略图数）
+    stats = metadata_db_stats(LIB)
     thumbs_dir = os.path.join(cache_dir, "thumbnails", "1024")
     grid_dir = os.path.join(cache_dir, "thumbnails", "512")
     thumbs_n = len(os.listdir(thumbs_dir)) if os.path.isdir(thumbs_dir) else 0

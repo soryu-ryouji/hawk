@@ -80,11 +80,6 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("POST", "/api/v1/item/aggregate", Some(r#"{"ids":["x"]}"#)),
     ("POST", "/api/v1/item/skeleton", Some("{}")),
     ("POST", "/api/v1/library/reindex", None),
-    (
-        "POST",
-        "/api/v1/library/storage_mode",
-        Some(r#"{"mode":"database"}"#),
-    ),
     ("POST", "/api/v1/library/rescan", Some("{}")),
     ("PUT", "/api/v1/library/scan", Some(r#"{"periodic":true}"#)),
     (
@@ -216,7 +211,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         library_root: Some(root_str),
         port: 0,
         token: TOKEN.to_string(),
-        reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为
+        maintenance_interval_seconds: 0, // 关闭周期派生维护：测试只断言显式驱动的行为
         cache_parent: None,
         web_dist: None,
         remote_config: None,
@@ -869,7 +864,7 @@ async fn app_connection_reports_none_without_library() {
             library_root: None,
             port: 0,
             token: TOKEN.to_string(),
-            reconcile_interval_seconds: 0,
+            maintenance_interval_seconds: 0,
             cache_parent: None,
             web_dist: None,
             remote_config: None,
@@ -2016,89 +2011,171 @@ async fn folder_delete_missing_dir_is_idempotent() {
     assert_eq!(body["data"]["children"], json!([]));
 }
 
-/// 存储方案迁移往返：新库默认数据库模式；切配置文件 → TOML 落盘、重开探测为 toml、数据完好；
-/// 切回数据库 → metadata.db 存在、TOML 清除、重开探测回数据库
+/// SQLite 是唯一启动来源：已有数据库元数据跨重启保留，旧 TOML 文件不读取、不迁移。
 #[tokio::test]
-async fn storage_mode_migration_roundtrip() {
-    let app = test_app("storage-migrate");
-
-    // 新库默认数据库模式
-    async fn info_mode(app: &TestApp) -> String {
-        let (_, bytes) = call_json(&app.router, "GET", "/api/v1/library/info", None).await;
-        let v: Value = serde_json::from_slice(&bytes).unwrap();
-        v["data"]["storage_mode"].as_str().unwrap().to_string()
-    }
-    assert_eq!(info_mode(&app).await, "database");
-
+async fn sqlite_metadata_survives_restart_and_toml_is_ignored() {
+    let app = test_app("sqlite-single-authority");
     let id = app.add_test_item("a.png", [1, 1, 1]).await;
     let (status, _) = call_json(
         &app.router,
         "POST",
         "/api/v1/item/update",
-        Some(json!({"id": id, "tags": ["迁移标记"]})),
+        Some(json!({"id": id, "tags": ["SQLite 标记"]})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // database → toml：TOML 落盘且含标签
-    let (status, bytes) = call_json(
-        &app.router,
-        "POST",
-        "/api/v1/library/storage_mode",
-        Some(json!({"mode": "toml"})),
+    let base = app.leak();
+    let abandoned_hash = "b".repeat(64);
+    let toml_dir = base.join("library/.hawk/metadata");
+    std::fs::create_dir_all(&toml_dir).unwrap();
+    std::fs::write(
+        toml_dir.join(format!("{abandoned_hash}.toml")),
+        "tags = [\"abandoned\"]\n\n[[paths]]\npath = \"a.png\"\nsize = 1\nmodification_time = 1\n",
+    )
+    .unwrap();
+
+    let app2 = test_app_at(base.clone());
+    let (_, bytes) = call_json(
+        &app2.router,
+        "GET",
+        &format!("/api/v1/item/detail?id={id}"),
+        None,
     )
     .await;
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["tags"], json!(["SQLite 标记"]));
+    assert!(app2.lib().store.try_get(&abandoned_hash).is_none());
+
+    let (_, bytes) = call_json(&app2.router, "GET", "/api/v1/library/info", None).await;
+    let info: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(info["data"].get("storage_mode").is_none());
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// pHash 相似查询：距离升序、阈值过滤、骨架同序，未分析与非法排序有明确错误。
+#[tokio::test]
+async fn similar_items_are_filtered_and_sorted_by_phash_distance() {
+    let app = test_app("similar-items");
+    let source = app.add_test_item("source.png", [1, 1, 1]).await;
+    let near = app.add_test_item("near.png", [2, 2, 2]).await;
+    let far = app.add_test_item("far.png", [3, 3, 3]).await;
+    let set_phash = |id: &str, value: Option<u64>| {
+        let mut meta = app.lib().store.try_get(id).unwrap();
+        meta.phash = Some(crate::core::metadata::PerceptualHash {
+            version: crate::core::perceptual_hash::PHASH_VERSION,
+            value,
+        });
+        app.lib().store.save(id, &meta).unwrap();
+        app.lib()
+            .index
+            .with_item_mut(id, |item| item.sync_from(&meta));
+    };
+    set_phash(&source, Some(0));
+    set_phash(&near, Some(1));
+    set_phash(&far, Some(u64::MAX));
+
+    let body = json!({
+        "similar_to": source,
+        "max_distance": 1,
+        "order_by": "similarity",
+        "order": "asc"
+    });
+    let (status, bytes) =
+        call_json(&app.router, "POST", "/api/v1/item/list", Some(body.clone())).await;
     assert_eq!(
         status,
         StatusCode::OK,
-        "迁移到 toml: {}",
+        "{}",
         String::from_utf8_lossy(&bytes)
     );
-    let toml_file = app.library_root().join(format!(".hawk/metadata/{id}.toml"));
-    let text = std::fs::read_to_string(&toml_file).expect("迁移后 TOML 应存在");
-    assert!(text.contains("迁移标记"));
+    let list: Value = serde_json::from_slice(&bytes).unwrap();
+    let items = list["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"], json!(source));
+    assert_eq!(items[0]["similarity_distance"], json!(0));
+    assert_eq!(items[1]["id"], json!(near));
+    assert_eq!(items[1]["similarity_distance"], json!(1));
 
-    // 重开：探测为 toml，数据完好
-    let base = app.leak();
-    let app2 = test_app_at(base.clone());
-    assert_eq!(info_mode(&app2).await, "toml");
-    let (_, bytes) = call_json(
-        &app2.router,
-        "GET",
-        &format!("/api/v1/item/detail?id={id}"),
-        None,
-    )
-    .await;
-    let body: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(body["data"]["tags"], json!(["迁移标记"]));
+    let (status, bytes) = call_json(&app.router, "POST", "/api/v1/item/skeleton", Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+    let skeleton: Value = serde_json::from_slice(&bytes).unwrap();
+    let items = skeleton["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"], json!(source));
+    assert_eq!(items[1]["id"], json!(near));
+    assert_eq!(items[1]["similarity_distance"], json!(1));
 
-    // toml → database：metadata.db 建立、TOML 清除
-    let (status, _) = call_json(
-        &app2.router,
+    let (status, bytes) = call_json(
+        &app.router,
         "POST",
-        "/api/v1/library/storage_mode",
-        Some(json!({"mode": "database"})),
+        "/api/v1/item/list",
+        Some(json!({"similar_to": source, "max_distance": 0, "order_by": "similarity", "order": "asc"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(!toml_file.exists(), "切回数据库后旧 TOML 应删除");
-    assert!(app2.library_root().join(".hawk/metadata.db").exists());
+    let exact: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(exact["data"]["items"].as_array().unwrap().len(), 1);
 
-    // 再重开：探测回 database，数据完好
-    let base = app2.leak();
-    let app3 = test_app_at(base.clone());
-    assert_eq!(info_mode(&app3).await, "database");
-    let (_, bytes) = call_json(
-        &app3.router,
-        "GET",
-        &format!("/api/v1/item/detail?id={id}"),
-        None,
+    // 源图锁与 item/file 同一 item 级公式：未解锁时不能借相似查询绕过
+    call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/update",
+        Some(json!({"id": source, "categories": ["私密"]})),
     )
     .await;
-    let body: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(body["data"]["tags"], json!(["迁移标记"]));
+    call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/set",
+        Some(json!({"dimension": "category", "name": "私密", "password": "pw"})),
+    )
+    .await;
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/list",
+        Some(json!({"similar_to": source})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/remove",
+        Some(json!({"dimension": "category", "name": "私密", "password": "pw"})),
+    )
+    .await;
 
-    let _ = std::fs::remove_dir_all(&base);
+    let (status, _) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/list",
+        Some(json!({"order_by": "similarity"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let mut meta = app.lib().store.try_get(&source).unwrap();
+    meta.phash = None;
+    app.lib().store.save(&source, &meta).unwrap();
+    app.lib()
+        .index
+        .with_item_mut(&source, |item| item.sync_from(&meta));
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/list",
+        Some(json!({"similar_to": source})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let error: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(error["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("尚未完成"));
 }
 
 /// 选择集聚合：common_taxonomy 交集语义 + batch_update 的 remove_tags/remove_categories 摘除

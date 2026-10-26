@@ -3,7 +3,24 @@
 //! view_prefs（map 型）共用，各注册表只保留自己的 schema 与读写时机。
 //! 写入失败保持静默（尽力而为，不阻断业务）——与原各实现语义一致。
 
-use crate::core::metadata::toml_string;
+/// TOML 字符串转义：仅供仍保留的配置/注册表文件使用，与素材元数据存储无关
+pub fn toml_string(value: &str) -> String {
+    let mut sb = String::with_capacity(value.len() + 2);
+    sb.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => sb.push_str("\\\\"),
+            '"' => sb.push_str("\\\""),
+            '\n' => sb.push_str("\\n"),
+            '\r' => sb.push_str("\\r"),
+            '\t' => sb.push_str("\\t"),
+            c if c.is_control() => sb.push_str(&format!("\\u{:04X}", c as u32)),
+            c => sb.push(c),
+        }
+    }
+    sb.push('"');
+    sb
+}
 
 /// 原子写：临时文件 + rename；rename 失败清理临时文件
 pub fn atomic_write(file: &str, body: &str) {

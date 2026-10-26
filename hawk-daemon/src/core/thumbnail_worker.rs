@@ -1,10 +1,10 @@
 //! 缩略图/调色板后台 worker：独立队列与专用线程池(CPU 密集)，不阻塞索引消费循环。
-//! 完成结果经 JobSender 回流消费循环（FixDim/Palette），保持单写者。
+//! 完成结果经 JobSender 回流消费循环（FixDim/Palette/Phash），保持单写者。
 //! worker 对索引/元数据只做只读访问（get_dto / dim_is_zero / try_get），
 //! 队列是尽力而为的缓存：in-flight 去重，重复派发只产生 no-op 任务。
 //!
 //! 任务三种（ThumbJobKind，in-flight 去重 key 分命名空间）：
-//! - PaletteOnly：入库/对账派发，提炼调色板 + 补缺失宽高——
+//! - DerivedOnly：入库/派生维护派发，补调色板 + pHash + 缺失宽高——
 //!   扫描导入已在并行哈希阶段单次解码产出调色板+缩略图（见 pipeline/scan.rs），
 //!   此任务兜底增量路径与解码失败自愈；颜色搜索依赖全量 palette，必须即时
 //! - Repair：读取端 /item/thumbnail 未命中与范围刷新缓存（library/refresh_cache）派发，
@@ -27,8 +27,8 @@ use std::sync::{Arc, Mutex};
 
 /// 任务模式
 enum ThumbJobKind {
-    /// 仅提炼调色板 + 补缺失宽高（入库/对账派发）
-    PaletteOnly,
+    /// 仅补派生元数据：调色板 + pHash + 缺失宽高（入库/维护派发）
+    DerivedOnly,
     /// 补全派生缓存：缺失宽高 + 缺失尺寸缩略图 + 调色板（读取端/范围刷新派发）
     Repair,
     /// 强制重建全部尺寸缩略图 + 补宽高 + 调色板（单 item 手动刷新派发）
@@ -158,9 +158,9 @@ impl ThumbnailWorker {
         self.enqueue(hash, source_abs, ThumbJobKind::ForceRebuild)
     }
 
-    /// 派发 PaletteOnly 任务：入库/启动对账/读取端宽高自愈时调用，提炼调色板 + 补宽高
-    pub fn enqueue_palette(&self, hash: &str, source_abs: &str) -> bool {
-        self.enqueue(hash, source_abs, ThumbJobKind::PaletteOnly)
+    /// 派发 DerivedOnly 任务：入库/启动维护/读取端宽高自愈时调用，补调色板 + pHash + 宽高
+    pub fn enqueue_derived(&self, hash: &str, source_abs: &str) -> bool {
+        self.enqueue(hash, source_abs, ThumbJobKind::DerivedOnly)
     }
 
     fn enqueue(&self, hash: &str, source_abs: &str, kind: ThumbJobKind) -> bool {
@@ -184,25 +184,45 @@ impl ThumbnailWorker {
 }
 
 impl ThumbJob {
-    /// in-flight 去重 key：PaletteOnly 与其余任务独立命名空间，互不挤占
-    /// （PaletteOnly 在途时到达的 Repair/ForceRebuild 必须执行，反之 Repair 自带调色板检查）
+    /// in-flight 去重 key：DerivedOnly 与其余任务独立命名空间，互不挤占
+    /// （DerivedOnly 在途时到达的 Repair/ForceRebuild 必须执行，反之 Repair 自带派生检查）
     fn dedup_key(&self) -> String {
         match self.kind {
-            ThumbJobKind::PaletteOnly => format!("palette:{}", self.hash),
+            ThumbJobKind::DerivedOnly => format!("derived:{}", self.hash),
             _ => self.hash.clone(),
         }
     }
 }
 
 fn process_job(job: &ThumbJob, deps: &WorkerDeps, thumbs: &ThumbnailService, bus: &EventBus) {
-    // 非图像文件（内容喷探）：不做任何解码（identify/缩略图/调色板），空数组负缓存
-    // 终止「palette 缺失 → 重派」的周期循环；宽高 0×0 即终态。幂等，重复应用无害
+    let (need_palette, need_phash) = deps
+        .store
+        .try_get(&job.hash)
+        .map(|meta| {
+            (
+                meta.palette.is_none(),
+                meta.phash
+                    .as_ref()
+                    .is_none_or(|hash| hash.version != crate::core::perceptual_hash::PHASH_VERSION),
+            )
+        })
+        .unwrap_or((true, true));
+
+    // 非图像文件（内容喷探）：不做任何解码，写空调色板/空 pHash 负缓存终止周期重派
     if !ThumbnailService::is_probably_image(&job.source_abs) {
-        // 负缓存只写一次：重复回写会让每次列表读取都触发一轮元数据落盘 + items.updated
-        if !deps.store.palette_negative_cached(&job.hash) {
+        if need_palette {
             let _ = deps.jobs.try_fire(Job::Palette {
                 hash: job.hash.clone(),
                 palette: Vec::new(),
+            });
+        }
+        if need_phash {
+            let _ = deps.jobs.try_fire(Job::Phash {
+                hash: job.hash.clone(),
+                phash: crate::core::metadata::PerceptualHash {
+                    version: crate::core::perceptual_hash::PHASH_VERSION,
+                    value: None,
+                },
             });
         }
         return;
@@ -232,35 +252,36 @@ fn process_job(job: &ThumbJob, deps: &WorkerDeps, thumbs: &ThumbnailService, bus
         }
     }
 
-    let need_palette = deps
-        .store
-        .try_get(&job.hash)
-        .map(|meta| meta.palette.is_none())
-        .unwrap_or(true);
-    // PaletteOnly 不生成缩略图（缩略图是惰性缓存，由读取端派发）
+    // DerivedOnly 不生成缩略图（缩略图是惰性缓存，由读取端派发）
     let generated = match &job.kind {
-        ThumbJobKind::PaletteOnly => false,
+        ThumbJobKind::DerivedOnly => false,
         ThumbJobKind::Repair => thumbs.generate(&job.hash, &job.source_abs, false),
         ThumbJobKind::ForceRebuild => thumbs.generate(&job.hash, &job.source_abs, true),
     };
 
-    // 调色板优先从已有缩略图提炼（解码代价小）；缩略图尚未生成
-    // （惰性首访前、仅调色板任务）时直接解码原图——内容寻址保证同一内容，提炼结果一致。
-    // 提炼结果(含空数组负缓存)经 PaletteJob 写入元数据 TOML——内容的纯函数，全平台复用。
-    // 缩略图生成失败但已有缩略图时也照常提炼
-    if need_palette {
-        let thumb = thumbs.get_path(&job.hash);
-        let source = if std::path::Path::new(&thumb).is_file() {
-            thumb
-        } else {
-            job.source_abs.clone()
-        };
-        if let Some(palette) = color::extract(&source) {
-            // 队列满时丢弃:PaletteJob 幂等,下轮对账/刷新会再触发提炼
-            let _ = deps.jobs.try_fire(Job::Palette {
-                hash: job.hash.clone(),
-                palette,
-            });
+    // 调色板与 pHash 共用一次原图解码，保证与扫描导入的计算来源一致。
+    // 解码暂时失败不写负缓存，下一轮维护/读取会重试；结果经 JobSender 批量回流。
+    if need_palette || need_phash {
+        if let Some(image) = ThumbnailService::decode(&job.source_abs) {
+            if need_palette {
+                if let Some(rgba) = image.as_rgba8() {
+                    let palette = color::extract_from_rgba(rgba);
+                    let _ = deps.jobs.try_fire(Job::Palette {
+                        hash: job.hash.clone(),
+                        palette,
+                    });
+                }
+            }
+            if need_phash {
+                let phash = crate::core::metadata::PerceptualHash {
+                    version: crate::core::perceptual_hash::PHASH_VERSION,
+                    value: Some(crate::core::perceptual_hash::compute(&image)),
+                };
+                let _ = deps.jobs.try_fire(Job::Phash {
+                    hash: job.hash.clone(),
+                    phash,
+                });
+            }
         }
     }
 

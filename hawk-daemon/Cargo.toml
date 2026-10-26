@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive", "env"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 notify = "8"
 image = "0.25"
+image_hasher = "3.1.1"
 fast_image_resize = { version = "5", features = ["image"] }
 mime_guess = "2"
 base64 = "0.22"

@@ -54,8 +54,8 @@ pub struct Settings {
     pub library_root: Option<String>,
     pub port: u16,
     pub token: String,
-    /// 元数据对账间隔（秒），0 关闭：`.hawk/metadata/` 的外部变更（网盘同步等）并入
-    pub reconcile_interval_seconds: u64,
+    /// 派生数据维护间隔（秒），0 关闭：周期补齐调色板、宽高与感知哈希
+    pub maintenance_interval_seconds: u64,
     /// 全局缓存父目录（桌面端设置面板配置，主进程经 --cache-parent 传入）；None 用系统缓存目录
     pub cache_parent: Option<String>,
     /// 应用级远程访问配置路径（Electron 传 ~/.config/hawk/remote.toml）；None 用库内缺省
@@ -100,7 +100,7 @@ impl Settings {
             library_root: library,
             port: cli.port,
             token,
-            reconcile_interval_seconds: std::env::var("HAWK_RECONCILE_INTERVAL")
+            maintenance_interval_seconds: std::env::var("HAWK_MAINTENANCE_INTERVAL")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(60),

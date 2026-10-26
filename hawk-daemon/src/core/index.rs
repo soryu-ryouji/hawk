@@ -103,6 +103,14 @@ impl ItemIndex {
         })
     }
 
+    /// 内容感知哈希快照（相似度查询源图校验用）
+    pub fn phash(&self, hash: &str) -> Option<crate::core::metadata::PerceptualHash> {
+        read_inner!(self)
+            .by_hash
+            .get(hash)
+            .and_then(|item| item.phash.clone())
+    }
+
     /// 宽高是否尚未解析（0 × 0）。只读访问，缩略图 worker 的补宽高闸门用
     pub fn dim_is_zero(&self, hash: &str) -> bool {
         let inner = read_inner!(self);
@@ -489,7 +497,10 @@ impl ItemIndex {
             .filter_map(|(_, id, path)| {
                 let item = inner.by_hash.get(&id)?;
                 let loc = item.locations.iter().find(|l| l.path == path)?;
-                Some(item.to_dto_at(loc, q.in_trash))
+                let mut dto = item.to_dto_at(loc, q.in_trash);
+                dto.similarity_distance =
+                    q.similarity.and_then(|sim| item_phash_distance(item, &sim));
+                Some(dto)
             })
             .collect();
         (dtos, total, total_size)
@@ -514,6 +525,9 @@ impl ItemIndex {
                             height: i.height,
                             star: i.star,
                             size: l.size,
+                            similarity_distance: q
+                                .similarity
+                                .and_then(|sim| item_phash_distance(i, &sim)),
                         },
                     )
                 })
@@ -667,6 +681,12 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
                 .any(|p| delta_e_squared(p.lab, color) <= COLOR_MATCH_THRESHOLD_SQUARED)
         });
     }
+    if let Some(similarity) = q.similarity {
+        items.retain(|i| {
+            item_phash_distance(i, &similarity)
+                .is_some_and(|distance| distance <= similarity.max_distance)
+        });
+    }
 
     // 位置级展开：只保留本视图侧位置，再按位置属性过滤
     let mut entries: Vec<(&Item, &ItemLocation)> = Vec::new();
@@ -715,8 +735,28 @@ enum SortKey {
     Num(i64),
 }
 
+fn item_phash_distance(
+    item: &Item,
+    similarity: &crate::core::item::SimilarityQuery,
+) -> Option<u32> {
+    let phash = item.phash.as_ref()?;
+    if phash.version != crate::core::perceptual_hash::PHASH_VERSION {
+        return None;
+    }
+    let value = phash.value?;
+    Some(crate::core::perceptual_hash::distance(
+        similarity.hash,
+        value,
+    ))
+}
+
 fn sort_key(item: &Item, loc: &ItemLocation, q: &ItemQuery) -> SortKey {
     match q.order_by.as_deref().unwrap_or("modification_time") {
+        "similarity" => SortKey::Num(i64::from(
+            q.similarity
+                .and_then(|sim| item_phash_distance(item, &sim))
+                .unwrap_or(u32::MAX),
+        )),
         "name" => SortKey::Name(LibraryPaths::name_of(loc.library_path()).to_lowercase()),
         "size" => SortKey::Num(loc.size),
         "star" => SortKey::Num(i64::from(item.star)),
@@ -778,5 +818,56 @@ fn loc_in_folder(loc: &ItemLocation, folder: &str, exact: bool) -> bool {
         dir == folder
     } else {
         folder.is_empty() || dir == folder || dir.starts_with(&format!("{folder}/"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::metadata::PerceptualHash;
+
+    /// 手动基准：cargo test similarity_large_index_benchmark -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn similarity_large_index_benchmark() {
+        let index = ItemIndex::default();
+        for n in 0..100_000u64 {
+            let id = format!("{n:064x}");
+            let path = format!("{n}.png");
+            index.get_or_add_with_location(&id, &path, 1, 1);
+            let value = match n % 20 {
+                0 => 0,
+                1 => 1,
+                _ => u64::MAX,
+            };
+            index.with_item_mut(&id, |item| {
+                item.phash = Some(PerceptualHash {
+                    version: crate::core::perceptual_hash::PHASH_VERSION,
+                    value: Some(value),
+                });
+            });
+        }
+        let query = crate::core::item::ItemQuery {
+            similarity: Some(crate::core::item::SimilarityQuery {
+                hash: 0,
+                max_distance: 1,
+            }),
+            order_by: Some("similarity".to_string()),
+            order: Some("asc".to_string()),
+            limit: 50,
+            ..Default::default()
+        };
+        let started = std::time::Instant::now();
+        let (items, total, _) = index.query(&query);
+        let elapsed = started.elapsed();
+        assert_eq!(total, 10_000);
+        assert_eq!(items.len(), 50);
+        assert!(items
+            .iter()
+            .all(|item| item.similarity_distance.unwrap_or(u32::MAX) <= 1));
+        assert!(items
+            .windows(2)
+            .all(|pair| pair[0].similarity_distance <= pair[1].similarity_distance));
+        eprintln!("100000 items pHash filter + sort: {elapsed:?}");
     }
 }

@@ -2,8 +2,8 @@
 //! 扁平 map（scope 键 folder:<路径>/category:<名>/tag:<名>），不理解继承语义（前端沿父链解析）。
 //! 视图偏好（含 RenamePrefix/DeletePrefix 跟随目录移动/删除）。
 
-use crate::core::metadata::toml_string;
 use crate::core::paths::LibraryPaths;
+use crate::core::registry_file::toml_string;
 use std::collections::HashMap;
 use std::sync::Mutex;
 

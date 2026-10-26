@@ -6,7 +6,7 @@
 //! - `upsert`：单文件入库生命周期（防抖/哈希/迁移继承/应用）
 //! - `fs_ops`：删除/移动/回收站
 //! - `scan`：全库扫描（runner 线程做 IO/哈希，结果回流穿插应用，收尾消失对账）
-//! - `reconcile`：元数据周期对账（TOML → 缓存/索引）与派生缓存自愈
+//! - `maintenance`：周期/启动时补齐调色板、宽高与感知哈希
 //! - `derived`：worker 提炼结果的批量回写（调色板/宽高）
 //!
 //! 扫描不再独占消费线程：Job::ScanStart 只建会话并 spawn runner，文件结果以
@@ -17,7 +17,7 @@
 mod ctx;
 mod derived;
 mod fs_ops;
-mod reconcile;
+mod maintenance;
 mod scan;
 #[cfg(test)]
 mod tests;
@@ -116,11 +116,15 @@ pub(crate) enum Job {
         mutate: Box<dyn FnMut(&mut ItemMetadata) + Send>,
         reply: Reply<Result<BatchMetadataResult, String>>,
     },
-    MetadataSync,
-    PaletteFlush,
+    DerivedMaintenance,
+    DerivedFlush,
     Palette {
         hash: String,
         palette: Vec<PaletteColor>,
+    },
+    Phash {
+        hash: String,
+        phash: crate::core::metadata::PerceptualHash,
     },
     FixDim {
         hash: String,
@@ -157,11 +161,6 @@ pub(crate) enum Job {
         reply: Reply<Result<(), String>>,
     },
     RegistryReload,
-    /// 存储方案迁移（写新权威层 + 删旧文件）；单写者内执行保证无并发写。成功后调用方应引导重启
-    StorageMigrate {
-        target: crate::core::metadata_store::StorageMode,
-        reply: Reply<Result<(), String>>,
-    },
 }
 
 #[derive(Clone)]
@@ -220,8 +219,9 @@ impl IndexPipeline {
             progress_last_at: std::sync::atomic::AtomicI64::new(0),
             progress_idle: std::sync::atomic::AtomicBool::new(true),
             palette_pending: Mutex::new(Vec::new()),
-            palette_oldest: Mutex::new(None),
-            palette_timer: std::sync::atomic::AtomicBool::new(false),
+            phash_pending: Mutex::new(Vec::new()),
+            derived_oldest: Mutex::new(None),
+            derived_timer: std::sync::atomic::AtomicBool::new(false),
             runtime: tokio::runtime::Handle::current(),
             scan_session: Mutex::new(None),
         };
@@ -233,7 +233,7 @@ impl IndexPipeline {
 
     // ---------- 启动 ----------
 
-    /// 启动消费循环/缩略图 worker/周期对账，并入队一轮元数据对账（先于初始扫描）。
+    /// 启动消费循环/缩略图 worker/周期派生维护，并入队一轮派生补全（先于初始扫描）。
     /// worker 的回流接线由 main 装配（worker.attach(index, store, pipeline.sender())）
     pub fn start(&self) {
         self.hydrate_index();
@@ -252,17 +252,17 @@ impl IndexPipeline {
 
         self.ctx.worker.start();
 
-        // 周期对账:只跑元数据对账(.hawk/ 内 TOML,轻量);文件系统变更由 watcher 实时事件 + 启动扫描收敛
-        if self.ctx.settings.reconcile_interval_seconds > 0 {
+        // 周期派生维护：只读内存缺失集并派发 worker；文件系统变更由 watcher + 扫描收敛
+        if self.ctx.settings.maintenance_interval_seconds > 0 {
             let ctx = self.ctx.clone();
             self.ctx.runtime.spawn(async move {
                 let mut ticker = tokio::time::interval(Duration::from_secs(
-                    ctx.settings.reconcile_interval_seconds,
+                    ctx.settings.maintenance_interval_seconds,
                 ));
                 ticker.tick().await; // 立即 tick 的一次丢弃
                 loop {
                     ticker.tick().await;
-                    ctx.sender.fire(Job::MetadataSync);
+                    ctx.sender.fire(Job::DerivedMaintenance);
                 }
             });
         }
@@ -297,12 +297,11 @@ impl IndexPipeline {
             });
         }
 
-        // 启动先跑一轮元数据对账（入队于初始扫描之前）：把停机期间网盘同步落地的外部
-        // TOML 变更并入内存，避免扫描拿旧副本做迁移继承
-        self.ctx.sender.fire(Job::MetadataSync);
+        // 启动先跑一轮派生补全（入队于初始扫描之前）：缺失项经 worker 后台补齐
+        self.ctx.sender.fire(Job::DerivedMaintenance);
     }
 
-    /// 启动注水：内存索引由元数据副本恢复（SQLite 快路径/TOML 回退），就绪无需等待全库扫描。
+    /// 启动注水：内存索引直接由 metadata.db 恢复，就绪无需等待全库扫描。
     /// 位置过过滤：hidden/ignore/扩展名白名单外的历史残留不注水（磁盘文件还在时增量对账
     /// 不触达，增量快照永远 clean，只能在这里挡）；元数据同步修剪，新副本不再是残留来源
     fn hydrate_index(&self) {
@@ -654,21 +653,6 @@ impl IndexPipeline {
         }
         await_reply(rx).await
     }
-
-    /// 存储方案迁移（数据库 ⇄ 配置文件）：单写者内完成全量迁移；成功后调用方引导重启
-    pub async fn submit_storage_migrate(
-        &self,
-        target: crate::core::metadata_store::StorageMode,
-    ) -> Result<(), String> {
-        let (tx, rx) = oneshot::channel();
-        if !self.ctx.sender.try_fire(Job::StorageMigrate {
-            target,
-            reply: Some(tx),
-        }) {
-            return Err("索引队列已满".to_string());
-        }
-        await_reply(rx).await
-    }
 }
 
 /// 等待回复的统一出口：oneshot 断开（消费循环停止/任务 panic 丢弃发送端）或超时返回错误。
@@ -709,10 +693,8 @@ fn consumer_loop(ctx: Arc<PipelineCtx>, rx: std::sync::mpsc::Receiver<Job>) {
             });
         }
 
-        derived::maybe_flush_palette(&ctx);
+        derived::maybe_flush_derived(&ctx);
         publish_index_progress(&ctx, false);
-        // 缓存写缓冲的时间阈值冲刷（批量阈值已在 save 内即时触发）
-        ctx.store.maybe_flush_cache();
     }
 }
 
@@ -797,22 +779,22 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             })();
             complete(reply, result);
         }
-        Job::MetadataSync => {
-            // 数据库模式无 TOML 可对账（权威层即 metadata.db，无外部可写源）
-            if ctx.store.mode() == crate::core::metadata_store::StorageMode::Toml {
-                reconcile::do_metadata_sync(ctx);
-            }
+        Job::DerivedMaintenance => {
+            maintenance::do_derived_maintenance(ctx);
         }
         Job::Palette { hash, palette } => {
             // 调色板回写聚合批量处理（flush 时统一落盘），全库重提炼时避免 N 次单条事务 + 事件洪峰。
-            // 语义不变：提炼结果(内容的纯函数)入元数据 TOML;meta 已随漂移/删除消失时丢弃;
+            // 语义不变：提炼结果(内容的纯函数)入 SQLite 元数据;meta 已随漂移/删除消失时丢弃;
             // 空数组是负缓存(已提炼无有效像素),同样持久化。幂等,重复应用无害
             derived::stage_palette(ctx, hash, palette);
         }
-        Job::PaletteFlush => {
+        Job::DerivedFlush => {
             // 冲刷定时任务到期：队列安静期（无新 job）也能把暂存回写落盘，不依赖任务到达
-            ctx.palette_timer.store(false, Ordering::SeqCst);
-            derived::flush_palette_batch(ctx);
+            ctx.derived_timer.store(false, Ordering::SeqCst);
+            derived::flush_derived_batches(ctx);
+        }
+        Job::Phash { hash, phash } => {
+            derived::stage_phash(ctx, hash, phash);
         }
         Job::FixDim { hash, w, h } => {
             derived::do_fix_dim(ctx, &hash, w, h);
@@ -908,14 +890,6 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             if locks_changed {
                 crate::core::locks::publish_changed(&ctx.bus, &ctx.locks.snapshot());
             }
-            complete(reply, result);
-        }
-        Job::StorageMigrate { target, reply } => {
-            let result = crate::core::metadata_store::migrate_authority(
-                &ctx.paths,
-                &ctx.store.snapshot(),
-                target,
-            );
             complete(reply, result);
         }
         Job::RegistryReload => {

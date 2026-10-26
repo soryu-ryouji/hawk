@@ -15,7 +15,6 @@ pub fn routes() -> OpenApiRouter<SharedState> {
     OpenApiRouter::new()
         .routes(routes!(library_info))
         .routes(routes!(library_update))
-        .routes(routes!(storage_mode_set))
         .routes(routes!(reindex))
         .routes(routes!(rescan))
         .routes(routes!(scan_settings_set))
@@ -29,8 +28,6 @@ pub(crate) struct LibraryInfo {
     path: String,
     modification_time: i64,
     application_version: &'static str,
-    /// 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）
-    storage_mode: &'static str,
     /// 周期兜底扫描设置（.hawk/config.toml 的 [scan]）
     scan: ScanInfo,
 }
@@ -76,10 +73,6 @@ fn build_library_info(lib: &crate::api::LibraryState) -> LibraryInfo {
         path: root.clone(),
         modification_time,
         application_version: env!("CARGO_PKG_VERSION"),
-        storage_mode: match lib.store.mode() {
-            crate::core::metadata_store::StorageMode::Db => "database",
-            crate::core::metadata_store::StorageMode::Toml => "toml",
-        },
         scan: {
             let scan = lib.config.scan_settings();
             ScanInfo {
@@ -88,44 +81,6 @@ fn build_library_info(lib: &crate::api::LibraryState) -> LibraryInfo {
             }
         },
     }
-}
-
-#[derive(Deserialize, utoipa::ToSchema)]
-struct StorageModeBody {
-    /// database | toml
-    mode: String,
-}
-
-/// 切换元数据存储方案：单写者内完成全量迁移（写新权威层 + 删旧文件），成功后调用方应重启进程
-/// （打开库时按内容探测模式，见 metadata_store::detect_storage_mode）。已是目标模式时幂等成功
-#[utoipa::path(
-    post,
-    path = "/api/v1/library/storage_mode",
-    tags = ["library"],
-    request_body = StorageModeBody,
-    responses((status = 200, description = "OK", body = SuccessOnly))
-)]
-async fn storage_mode_set(
-    State(state): State<SharedState>,
-    JsonBody(body): JsonBody<StorageModeBody>,
-) -> Result<Json<SuccessOnly>, ApiError> {
-    let target = match body.mode.as_str() {
-        "database" => crate::core::metadata_store::StorageMode::Db,
-        "toml" => crate::core::metadata_store::StorageMode::Toml,
-        other => {
-            return Err(ApiError::invalid_param(format!(
-                "非法存储方案: {other}（支持 database/toml）"
-            )))
-        }
-    };
-    let lib = state.require_library()?;
-    if lib.store.mode() != target {
-        lib.pipeline
-            .submit_storage_migrate(target)
-            .await
-            .map_err(ApiError::internal)?;
-    }
-    Ok(success())
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]

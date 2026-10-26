@@ -22,30 +22,13 @@ struct Rig {
 }
 
 impl Rig {
-    /// 默认装配：新库探测为数据库模式（local）。需配置文件（Toml）模式的用 Rig::toml
+    /// SQLite 单一路线装配；extensions 仅测试扩展名白名单场景传入
     fn new(name: &str) -> Rig {
-        Self::with_mode(name, None)
-    }
-
-    /// 配置文件（Toml）模式装配
-    fn toml(name: &str) -> Rig {
-        Self::with_mode(name, Some(crate::core::metadata_store::StorageMode::Toml))
+        Self::with_extensions(name, &[])
     }
 
     /// 指定扩展名白名单的装配（写 .hawk/config.toml 后再构造 LibraryConfig）
     fn with_extensions(name: &str, extensions: &[&str]) -> Rig {
-        Self::with_mode_and_ext(name, None, extensions)
-    }
-
-    fn with_mode(name: &str, mode: Option<crate::core::metadata_store::StorageMode>) -> Rig {
-        Self::with_mode_and_ext(name, mode, &[])
-    }
-
-    fn with_mode_and_ext(
-        name: &str,
-        mode: Option<crate::core::metadata_store::StorageMode>,
-        extensions: &[&str],
-    ) -> Rig {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new("debug"))
             .with_test_writer()
@@ -71,7 +54,7 @@ impl Rig {
         }
         let config = Arc::new(LibraryConfig::new(paths.clone()));
         let startup = Arc::new(StartupState::default());
-        let store = Arc::new(MetadataStore::with_mode(paths.clone(), &startup, mode));
+        let store = Arc::new(MetadataStore::new(paths.clone(), &startup));
         let index = Arc::new(ItemIndex::default());
         let bus = EventBus::new();
         let categories = Arc::new(CategoryRegistry::new(&paths));
@@ -94,7 +77,7 @@ impl Rig {
             library_root: Some(root_str),
             port: 0,
             token: "test".to_string(),
-            reconcile_interval_seconds: 0, // 关闭元数据周期对账：测试只断言显式驱动的行为
+            maintenance_interval_seconds: 0, // 关闭周期派生维护：测试只断言显式驱动的行为
             cache_parent: None,
             web_dist: None,
             remote_config: None,
@@ -639,10 +622,10 @@ async fn tag_delete_cascade_batches_events() {
         .is_empty());
 }
 
-/// 大批量元数据应用（≥64 条触发并行落盘路径，Toml 模式）：全部应用、TOML 落盘、事件合并发布
+/// 大批量元数据应用：SQLite 单事务落盘、内存同步与事件合并发布
 #[tokio::test]
-async fn batch_metadata_parallel_path() {
-    let rig = Rig::toml("batch-parallel");
+async fn batch_metadata_large_write_path() {
+    let rig = Rig::new("batch-large-write");
     std::fs::create_dir_all(rig.abs("p")).unwrap();
     let mut ids = Vec::new();
     for i in 0..100u8 {
@@ -672,11 +655,18 @@ async fn batch_metadata_parallel_path() {
     assert_eq!(result.updated, 100);
     assert!(result.missing_ids.is_empty());
 
-    // 权威层落盘可解析（随机抽查 3 个）
+    // 独立重开 SQLite 读取，抽查持久化结果而非仅内存副本
+    let persisted = MetadataStore::new(
+        LibraryPaths::new(
+            &rig.root.to_string_lossy(),
+            Some(rig.cache.to_string_lossy().to_string()),
+        ),
+        &StartupState::default(),
+    );
     for id in ids.iter().take(3) {
-        let toml_path = format!("{}/{}.toml", rig.root.join(".hawk/metadata").display(), id);
-        let text = std::fs::read_to_string(&toml_path).expect("TOML 应已落盘");
-        assert!(text.contains("并发"), "TOML 内容应含新标签");
+        assert!(persisted
+            .try_get(id)
+            .is_some_and(|meta| meta.tags.iter().any(|tag| tag == "并发")));
     }
 
     // 事件：合并为单个 items.updated 帧（100 < 1000，一帧装完）
@@ -723,6 +713,51 @@ async fn scan_skips_hidden_entries_and_reconciles_leftovers() {
 
 /// 非图像文件（内容喷探判定）入库但不再解码：调色板写空数组负缓存终止
 /// 周期对账重试、不生成缩略图、宽高保持 0×0 终态
+/// pHash 由后台 worker 补齐并持久化到 SQLite（独立重开可读取同一 64 位值）
+#[tokio::test]
+async fn phash_is_computed_and_persisted() {
+    let rig = Rig::new("phash-persist");
+    rig.write_png("phash.png", [12, 34, 56]);
+    let id = rig
+        .pipeline
+        .submit_upsert(rig.abs("phash.png"), None)
+        .await
+        .unwrap()
+        .unwrap()
+        .item
+        .id;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let value = loop {
+        let ready = rig
+            .store
+            .try_get(&id)
+            .and_then(|meta| meta.phash)
+            .filter(|hash| hash.version == crate::core::perceptual_hash::PHASH_VERSION)
+            .and_then(|hash| hash.value);
+        if let Some(value) = ready {
+            break value;
+        }
+        assert!(std::time::Instant::now() < deadline, "pHash 补算超时");
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    };
+
+    let persisted = MetadataStore::new(
+        LibraryPaths::new(
+            &rig.root.to_string_lossy(),
+            Some(rig.cache.to_string_lossy().to_string()),
+        ),
+        &StartupState::default(),
+    );
+    assert_eq!(
+        persisted
+            .try_get(&id)
+            .and_then(|meta| meta.phash)
+            .and_then(|hash| hash.value),
+        Some(value)
+    );
+}
+
 #[tokio::test]
 async fn non_image_file_gets_empty_palette_cache() {
     let rig = Rig::new("non-image");
@@ -743,6 +778,9 @@ async fn non_image_file_gets_empty_palette_cache() {
         let hash = rig.index.hash_by_location(rel).unwrap();
         let meta = rig.store.try_get(&hash).expect("元数据应存在");
         assert_eq!(meta.palette, Some(vec![]), "{rel} 应有空调色板负缓存");
+        let phash = meta.phash.expect("非图像也应有 pHash 负缓存");
+        assert_eq!(phash.version, crate::core::perceptual_hash::PHASH_VERSION);
+        assert_eq!(phash.value, None);
         assert_eq!(meta.width, 0, "{rel} 宽高保持终态 0");
         assert!(!rig.thumbs_path(&hash).exists(), "{rel} 不应生成缩略图");
     }
@@ -751,4 +789,8 @@ async fn non_image_file_gets_empty_palette_cache() {
     let hash = rig.index.hash_by_location("a.png").unwrap();
     let meta = rig.store.try_get(&hash).expect("元数据应存在");
     assert_ne!(meta.palette, Some(vec![]), "图像不应被误写空负缓存");
+    assert!(
+        meta.phash.and_then(|hash| hash.value).is_some(),
+        "正常图像应计算 pHash"
+    );
 }

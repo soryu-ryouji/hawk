@@ -23,7 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from benchlib import (
-    Server, cache_dir_for, dir_bytes, index_db_stats, make_pngs, percentile, report,
+    Server, cache_dir_for, dir_bytes, make_pngs, metadata_db_stats, percentile, report,
 )
 
 WORK_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp")
@@ -84,10 +84,15 @@ def main():
         color = sorted(srv.api_ms("/api/v1/item/list", {"color": "#808080"}) for _ in range(3))[1]
         count = srv.count()
 
-    stats = index_db_stats(cache_dir)
-    thumbs_256 = (
-        len(os.listdir(os.path.join(cache_dir, "thumbnails", "256")))
-        if os.path.isdir(os.path.join(cache_dir, "thumbnails", "256"))
+    stats = metadata_db_stats(LIB)
+    thumbs_512 = (
+        len(os.listdir(os.path.join(cache_dir, "thumbnails", "512")))
+        if os.path.isdir(os.path.join(cache_dir, "thumbnails", "512"))
+        else 0
+    )
+    thumbs_1024 = (
+        len(os.listdir(os.path.join(cache_dir, "thumbnails", "1024")))
+        if os.path.isdir(os.path.join(cache_dir, "thumbnails", "1024"))
         else 0
     )
 
@@ -110,7 +115,7 @@ def main():
         "rss_ready_mb": round(rss_ready, 1),
         "rss_peak_mb": round(rss_peak, 1),
         "palette_done_pct": round(stats["palette_done"] * 100 / max(count, 1), 1),
-        "thumbs_missing": count - thumbs_256,
+        "thumbs_missing": (count - thumbs_512) + (count - thumbs_1024),
     })
 
 

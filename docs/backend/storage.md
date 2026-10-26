@@ -2,7 +2,7 @@
 
 ## 目录结构
 
-hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛在素材目录下的 `.hawk/` 隐藏文件夹中：
+hawk 不在素材文件和文件夹中写入数据，所有状态收敛在素材目录下的 `.hawk/` 隐藏文件夹中：
 
 ```text
 你的素材目录/
@@ -10,239 +10,114 @@ hawk 不会在素材文件和文件夹中存放任何文件，所有数据收敛
 │   ├── 海报/
 │   └── 图标/
 ├── 摄影/
-│   ├── 风景/
-│   └── 人像/
-└── .hawk/              ← hawk 只在目录下创建这个隐藏文件夹
-    ├── config.toml     ← 项目级配置（参与同步）
-    ├── categories.toml ← 分类注册表（参与同步）
-    ├── tags.toml       ← 标签注册表（参与同步）
-    ├── view.toml       ← 视图偏好：文件夹/分类/标签的排序记忆（参与同步）
-    ├── global_filter.toml ← 全局列表隐藏项：文件夹/分类/标签（参与同步）
-    ├── locks.toml      ← 文件夹/分类/标签锁：密码哈希（参与同步，见「锁」一节）
-    ├── metadata/       ← 素材参数，纯文本 TOML（配置文件模式，参与同步）
-    ├── metadata.db     ← 素材参数，SQLite（数据库模式，本地专用，不参与同步）
-    ├── storage_mode    ← 存储方案标记文件（迁移的最后一步写入；探测时优先于文件存在性）
-    └── trash/          ← 回收站（本地专用，不参与同步）
+└── .hawk/
+    ├── config.toml        ← 项目配置（参与同步）
+    ├── categories.toml    ← 分类注册表（参与同步）
+    ├── tags.toml          ← 标签注册表（参与同步）
+    ├── view.toml          ← 视图排序偏好（参与同步）
+    ├── global_filter.toml ← 全局隐藏项（参与同步）
+    ├── locks.toml         ← 文件夹/分类/标签锁（参与同步）
+    ├── metadata.db        ← 素材元数据的唯一权威 SQLite（本地专用，不参与同步）
+    └── trash/             ← 回收站（本地专用，不参与同步）
+```
 
-派生缓存（缩略图、调色板、元数据缓存）不进 .hawk/，放在库外系统缓存目录，
-避免库位于 iCloud/Dropbox 等同步盘时 .hawk/ 膨胀拖累同步：
+**素材元数据只有 SQLite 一条路线。** 旧 `.hawk/metadata/*.toml` 不读取、不迁移；`.hawk/storage_mode` 与库外 `index.db` 不再使用。其他 TOML 配置和小型注册表保持不变。
+
+缩略图派生缓存位于库外，避免同步盘传播和膨胀：
 
 ```text
-%LOCALAPPDATA%/hawk/cache/<库标识>/        ← Windows（iCloud 不同步）
+%LOCALAPPDATA%/hawk/cache/<库标识>/        ← Windows
 ~/.local/share/hawk/cache/<库标识>/        ← Linux
 ~/Library/Application Support/hawk/cache/<库标识>/  ← macOS
+
+cache/<库标识>/thumbnails/
+├── 512/<hash>.webp   # 网格
+└── 1024/<hash>.webp  # 检查器与广域网预览
 ```
 
-`<库标识>` = `<库文件夹名>_<库根路径SHA-256前16位>`——同名库靠哈希区分，用户可直观识别缓存归属。
-
-**缓存父目录可配置（桌面端）**：设置面板「存储」分区可指定全局缓存父目录（所有库共用，库标识子目录仍拼接其下）；
-迁移为整体搬迁（先复制后删除），由主进程在停/起 server 之间完成。daemon 侧对应 `--cache-parent` 启动参数
-（`HAWK_CACHE_PARENT`）；缓存目录与库根互相包含时拒绝启动（防止缓存被扫描/监听污染索引）。
-缓存目录内布局：
-
-```text
-cache/<库标识>/
-├── index.db     ← 元数据 SQLite 派生缓存 + 调色板缓存（items.palette 列，见下文与「内容寻址」，可删，重启自动重建）
-└── thumbnails/  ← 512/1024 两档缩略图缓存（见「内容寻址」）。首扫导入即生成；增量素材读取端
-                 未命中时返回 404 并后台入队生成，完成经 item.updated 重试（不回源原图）
-```
-
-缓存可整体删除，重启扫描自动重建。
+`<库标识>` = `<库文件夹名>_<库根路径SHA-256前16位>`。缓存父目录可在设置面板修改，迁移为整体搬迁；缓存可整体删除并由后台重建。调色板与 pHash 不是库外缓存，它们和宽高一起存入 `metadata.db`。
 
 ## 同步边界
 
-| 内容          | 是否参与同步 | 说明                       |
-| ------------- | ------------ | -------------------------- |
-| `config.toml`     | 是           | 项目配置，随素材目录一起走 |
-| `categories.toml` | 是           | 分类注册表（含空分类）     |
-| `tags.toml`       | 是           | 标签注册表（含空标签）     |
-| `view.toml`       | 是           | 视图偏好（排序记忆），扁平 map |
-| `global_filter.toml` | 是        | 全局列表隐藏项（文件夹/分类/标签） |
-| `locks.toml`      | 是           | 文件夹/分类/标签锁（Argon2id 密码哈希；服务端强制，见 server-rest-api-v1.md 的 lock 节） |
-| `metadata/`       | 是（配置文件模式） | 素材参数，该模式的唯一权威数据源 |
-| `metadata.db`     | 否（数据库模式）   | 素材参数，该模式的唯一权威数据源；**不要把数据库模式的库放进同步盘**（SQLite 文件跨机同步会腐蚀） |
-| `storage_mode`    | 是           | 存储方案标记（`database`/`toml`），迁移的原子收尾 |
-| `trash/`      | 否           | 回收站，仅本机可恢复       |
-| 库外缩略图/调色板缓存 | 否        | 系统缓存目录，可重建，不进同步盘 |
-| 库外元数据缓存（index.db） | 否   | SQLite 派生缓存，TOML 的镜像，可重建；数据库模式不使用（启动即删除避免误读） |
+| 内容 | 是否参与同步 | 说明 |
+| ---- | ------------ | ---- |
+| `config.toml` / `categories.toml` / `tags.toml` / `view.toml` | 是 | 配置与小型注册表 |
+| `global_filter.toml` / `locks.toml` | 是 | 全局隐藏与锁 |
+| `metadata.db` | 否 | 唯一素材元数据权威库；SQLite 跨机同步容易冲突或腐蚀 |
+| `trash/` | 否 | 回收站仅本机可恢复 |
+| 库外缩略图缓存 | 否 | 可重建 |
 
-`.hawk/.gitignore` 由 hawk 自动生成，排除 `trash/`。
+`.hawk/.gitignore` 自动排除 `trash/`、`remote/` 和 `metadata.db`。部分网盘客户端不识别 `.gitignore`，仍需在网盘客户端中手动排除 SQLite 文件。
 
-注意：部分网盘客户端（OneDrive、Syncthing 等）不识别 `.gitignore`，需要用户在网盘客户端中手动配置排除规则。后续应在用户文档中说明。
+## SQLite 元数据
 
-## 元数据存储方案（数据库 / 配置文件）
+`.hawk/metadata.db` 同时是权威存储和启动注水来源，不再有第二份镜像或回退格式：
 
-素材参数（标签、评分、备注、宽高、调色板等）的权威存储有两种模式，打开库时自动判定：
+- 单条写入：事务提交成功后更新内存副本。
+- 批量写入：单个事务提交全部条目，成功后统一更新内存；失败返回错误，不静默降级。
+- 启动：`load_all` 一次读取并恢复内存索引，无需先全库扫描。
+- 数据库打不开、schema 初始化失败或读取失败：进入启动错误页，**不按空库继续写入**。
+- 已有 v1 SQLite 数据只增量添加 `phash` / `phash_version` 列，原标签、评分、备注、位置与调色板保持不变；不进行 TOML 迁移。
 
-- **数据库（默认，新库）**：`.hawk/metadata.db`，单文件 SQLite。写入同步落盘、批量操作单事务（两万条批量打标签毫秒级完成，配置文件模式需要逐文件写小文件）。适合本地使用的库。**不要放进 iCloud/Dropbox 等同步盘**——SQLite 跨机同步会产生不可合并的冲突副本甚至腐蚀；需要同步时切到配置文件模式。
-- **配置文件**：`.hawk/metadata/<hash>.toml`，每素材一个纯文本小文件。网盘同步友好（冲突粒度为单素材）。
+主要表：
 
-**模式探测**（`detect_storage_mode`）：`.hawk/storage_mode` 标记文件优先（迁移的最后一步写入）；无标记按内容探测——`metadata.db` 存在且非空 → 数据库；有 `metadata/*.toml` → 配置文件；都没有 → 新库默认数据库。两种文件皆存（迁移中断窗口）时空 db 视为残留回退配置文件。
+| 表 | 职责 |
+| -- | ---- |
+| `meta` | schema 版本等元信息 |
+| `items` | hash、来源 URL、评分、备注、宽高、调色板、pHash 与算法版本 |
+| `paths` | 同内容的一个或多个位置、大小与修改时间 |
+| `tags` / `categories` | 标签与分类赋值 |
+| `folders` | 增量扫描的目录快照 |
 
-**切换**（设置面板「存储」分区或 `POST /api/v1/library/storage_mode`）：单写者内全量互转（写新权威层 → 删旧文件 → 写标记），随后重启生效。旧文件被进程占用删不掉时（Windows）由下次启动清理兜底。数据库模式下系统缓存的 `index.db` 不使用（元数据镜像无存在意义），启动时自动删除避免误读。
+`source_mtime` 是旧 SQLite schema 留下的字段，当前不再承载业务语义。
 
-两模式共享同一份内存索引与查询路径（读路径无差异）；元数据对账（外部 TOML 变更并入）只在配置文件模式启用——数据库模式没有外部可写源。
+## 派生数据与维护
 
-## 纯文本元数据（配置文件模式）
+宽高、调色板和 pHash 都是内容的纯函数，存于 `items`：
 
-所有素材参数（标签、评分、备注等）集中存放在 `.hawk/metadata/` 中，按内容哈希命名，每个素材对应一个独立的纯文本文件（TOML）。
+- `width` / `height`：图片尺寸，非图片或未知为 0。
+- `palette`：JSON 数组，最多 10 色；`NULL` 表示未提炼，空数组是非图片负缓存。
+- `phash`：16 位十六进制，供近重复查找；`phash_version=0` 表示未计算。
+- 非图像的 pHash 使用 `version>0, value=NULL` 负缓存，避免周期重试；暂时解码失败保持未计算。
 
-格式（初级版本，后续可能调整）：
-
-```toml
-# .hawk/metadata/<hash>.toml
-
-# 文件位置：相同内容的文件共享一个 item，可有多条
-[[paths]]
-path = "posters/2024/sunset-photo.jpg"
-size = 245760
-modification_time = 1700000000000
-
-url = "https://example.com/photo.jpg"   # 来源网址
-tags = ["nature", "sunset"]             # 标签
-categories = ["海报", "灵感参考"]      # 分类（虚拟分类维度，扁平可多选，见 category.md）
-star = 4                                # 评分 0–5
-annotation = "Beautiful sunset"         # 备注
-```
-
-**派生信息的归属**：宽高与调色板是「内容的纯函数」（同 hash 各平台计算结果必然一致），直接写入元数据 TOML（`width`/`height` 标量 + `[[palette]]` 表）——一台计算、全平台（含未来 Rust 版）复用，无派生缓存与双写。文件大小/扩展名等随 paths 记录或从路径派生，不重复存储。元数据写入采用「临时文件 + rename」的原子写，避免网盘同步走写了一半的文件。
-
-只识别 `<hash>.toml` 命名的文件；网盘同步冲突产生的副本（如 `<hash>.sync-conflict-20250101.toml`）直接忽略，不参与索引。
+扫描、增量入库和周期维护复用同一 worker：单次解码后按需生成缩略图、调色板、宽高和 pHash。结果经 JobSender 回到单写者流水线，按 500 条或 2 秒批量写 SQLite，并合并 `items.updated`。周期维护间隔由 `HAWK_MAINTENANCE_INTERVAL` 控制（默认 60s，0 关闭）。
 
 ## 锁（文件夹/分类/标签）
 
-`.hawk/locks.toml` 存放三维度锁（每条独立密码，Argon2id PHC 字符串自含盐与参数）：
+`.hawk/locks.toml` 存放三维度锁（每条独立密码，Argon2id PHC 字符串自含盐与参数）。锁由服务端强制：未解锁时列表查询排除锁定条目，内容直连和相似查询源图校验返回 403，SSE 不广播被锁素材的元数据事件。
 
-```toml
-[[folders]]
-path = "private/photos"
-password = "$argon2id$v=19$m=19456,t=2,p=1$..."
-
-[[categories]]
-name = "私密"
-password = "..."
-
-[[tags]]
-name = "nsfw"
-password = "..."
-```
-
-与 global_filter 的客户端约定式隐藏不同，锁由**服务端强制**：未解锁时列表查询排除锁定条目、内容直连（thumbnail/file/detail/aggregate）403、SSE 不广播被锁素材的元数据事件；解锁票据（daemon 内存，重启失效）由各客户端独立持有，经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带。级联跟随与 global_filter 同款（文件夹移动/删除/回收站迁移、分类/标签改名删除）。判定口径与安全边界详见 docs/backend/server-rest-api-v1.md 的 lock 节。
-
-已知边界：锁不是加密（文件系统层面无保护，仅防「通过 hawk 查看」）；密码哈希参与同步意味着拿到 `.hawk/` 的人可离线爆破（Argon2id 慢哈希缓解）；验证失败全局节流（连续 5 次冷却 60s）防在线爆破。
+解锁票据只在 daemon 内存中保存，经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带。锁不是加密，文件系统层面无保护；判定细节见 [REST API V1](server-rest-api-v1.md)。
 
 ## 回收站
 
-通过 API 删除的素材或文件夹会被移入 `.hawk/trash/`（保留原有目录结构），而非直接删除。「是否在回收站」不是独立属性，由文件位置派生：位于 `.hawk/trash/` 内即在回收站。回收站是本地目录，不参与同步——恢复操作只能在执行删除的机器上完成。
+删除的素材或文件夹移入 `.hawk/trash/` 并保留目录结构。`metadata.db` 中仍保留原库内路径作为恢复目标；清空回收站时，只有内容在库内已无其他位置引用，才删除对应元数据与全部尺寸缩略图。
 
-移入 trash 的素材，其元数据（`metadata/<hash>.toml`）保留不删，`paths` 仍记录原来的库内路径，作为恢复时的放回目标；清空回收站时清理对应的元数据和缩略图——但仅限该内容在库内已无其他位置引用的情况（同一哈希的文件可能仍存在于其他目录）。
+## 内存索引与启动
 
-## 内存索引
+索引完全在内存中维护，不存在独立索引文件：
 
-索引完全在内存中维护，`.hawk/` 中不存在任何索引文件。元数据副本的注水来源按存储方案分：数据库模式直接读 `.hawk/metadata.db`（一次顺序读）；配置文件模式走库外 SQLite 派生缓存（见下节）→ `.hawk/metadata/` TOML 全量解析（缓存缺失/损坏时的一次性慢路径，解析完顺带重建缓存）。启动流程：
+1. 从 `metadata.db` 注水元数据与位置。
+2. 后台扫描素材目录，仅先读路径、大小、mtime。
+3. 路径和 size/mtime 与数据库一致则复用内容哈希；新文件计算哈希，变化文件按路径迁移元数据。
+4. 消失的位置从索引移除，最新 size/mtime 回写 SQLite。
+5. 运行期间由文件监听保持增量更新，周期扫描收敛漏事件。
 
-1. 注水元数据副本（缓存快路径，或 TOML 全量回退）
-2. 扫描素材目录得到全部文件清单（路径、大小、mtime）——只读目录，不读文件内容
-3. 逐文件与元数据比对：
-   - 路径存在于某元数据的 `paths` 且 `size`、`modification_time` 一致 → 复用哈希（即元数据文件名），不重算
-   - 路径不存在 → 新文件，计算哈希并入库
-   - 大小或 mtime 变化 → 重算该文件哈希，按「路径 + 文件名」迁移元数据
-   - 元数据中的路径已不存在 → 对应位置从索引移除
-4. 哈希确认后将最新 `size`、`modification_time` 回写元数据，保持校验依据新鲜（否则下次启动会误判变动、重复哈希）
-5. 运行期间由文件监听保持增量更新
+需要强制重算全部哈希时调用 `POST /api/v1/library/reindex`。
 
-元数据本身就是哈希缓存（TOML 文件名即哈希，`paths` 记录校验依据），启动时无需读取文件内容。hawk 未运行期间对素材目录的改动会在下次启动时被上述比对自动发现；如对索引状态存疑，可手动调用 `POST /api/v1/library/reindex` 全量重建（见 API 文档）。
+## 内容寻址与 pHash
 
-## 元数据缓存（SQLite 派生缓存，仅配置文件模式）
+item id 是文件内容的 BLAKE3 哈希；同内容多位置共享一个 item 和派生数据。缩略图按 `<尺寸>/<hash>.webp` 寻址。
 
-素材规模到十万级后，每次启动全量解析十万个 TOML 小文件（10–30 秒）成为主要瓶颈。为此在库外缓存目录引入 SQLite 派生缓存（`index.db`，与缩略图/调色板缓存同目录）：
+pHash 使用 `image_hasher` 的 DCT + Mean 算法生成 64 位值，SQLite 中保存为 16 位 hex，内存中保存为整数。算法版本从 1 开始，变化时由维护任务重算。详见 [pHash 相似图片查找](similar-images.md)。
 
-- `.hawk/metadata/*.toml` 仍是唯一权威数据源，参与网盘同步，语义不变（含同步冲突副本忽略规则）
-- `index.db` 是 TOML 的纯镜像：items / paths / tags / categories 四张表 + 每条记录来源 TOML 的 mtime（`source_mtime`，对账比对依据）+ items 镜像宽高/调色板字段（权威数据在 TOML；镜像缺失时 worker 提炼后补写）。不参与同步，可随时删除，重启后从 TOML 全量重建（仅缓存删除后首次启动慢）
-- 写入顺序铁律：先 TOML（临时文件 + rename 原子写），成功后再写缓存——中途崩溃自然朝 TOML 收敛，无需回滚协议；缓存写采用**待冲刷缓冲**（内存副本即时更新，SQLite 写累积 ≥256 条或滞留 200ms 后单事务落盘）摊薄事务开销——缓存是可重建的派生层，崩溃/退出后由启动期元数据对账按 mtime 从 TOML 补齐，无需重算哈希
-- 对账只进不出：周期对账（跟随文件对账节奏，默认 60s）按 mtime 比对 metadata/ 与缓存，把外部变更（网盘同步落地、手工编辑）搬进缓存与内存索引；TOML 消失则清空素材参数（等价于重启后无元数据的语义，item 与位置由扫描决定存续）。缓存永不反向生成 TOML
-- 任何缓存故障（打不开/写失败/读损坏）只退化性能（回到纯 TOML 行为），绝不影响权威数据；schema 版本不符直接重建（缓存是 TOML 的纯镜像，重建即全量恢复；项目未发布，当前格式即 v1，无历史兼容义务）
-
-已知取舍：多机同时编辑时，网盘同步落地到对账收敛之间有秒级窗口，查询可能短暂滞后；单机使用无感。多机同步冲突的语义与引入缓存前完全一致（冲突副本被忽略，由网盘自行裁决谁是 `<hash>.toml`）。
+缓存文件直接平铺在尺寸目录下，不按哈希分桶；访问按内容哈希直接寻址，不枚举目录。
 
 ## 项目配置
 
-每个项目的设置保存在 `.hawk/config.toml` 中，随素材目录一起同步、备份。库首次打开时若缺失会自动生成带注释的默认模板（已存在绝不覆盖，用户手工编辑安全）：
+`.hawk/config.toml` 保存项目名、ignore、扩展名白名单、周期重扫和局域网访问配置，随素材目录同步。该文件与分类/标签/视图/隐藏/锁注册表仍是 TOML，不属于本次移除的素材元数据路线。
 
-```toml
-# .hawk/config.toml 示例
-
-# 项目名（界面显示用）
-name = "设计素材库"
-
-# 索引时忽略的路径
-ignore = ["node_modules", "*.tmp"]
-
-# 可见扩展名白名单：只索引这些后缀的文件（空数组 = 不过滤，全部入库）
-# extensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "avif"]
-
-# 周期兜底重扫（监听漏事件的最终一致保证；设置面板「存储」分区可开关）
-[scan]
-periodic = true
-interval = 900
-
-# 局域网网站访问（桌面端设置面板读写，按库隔离，多库可同时开启互不冲突）
-[web]
-enabled = false      # 开启后监听 0.0.0.0:<port>，托管网页并只接受网站密钥
-port = 27372
-peer_port = 27375    # hawk-app 直连 API 端口，只接受 peer_keys，不托管网页
-# 网站访问密钥（浏览器/网页版；可多把，各自独立读/写权限）
-# [[web.keys]]
-# id = "key_a1b2"
-# label = "我的手机"
-# token = "<random-token>"
-# write = false
-# created_at_ms = 1760000000000
-# hawk-app 直连密钥（不依赖 enabled）
-# [[web.peer_keys]]
-# id = "peer_a1b2"
-# label = "另一台 hawk-app"
-# token = "<random-token>"
-# write = false
-# created_at_ms = 1760000000000
-
-```
-
-`extensions`（可见扩展名白名单，空 = 不过滤）保存即热生效：变化触发一次强制重扫，白名单外的既有条目从索引移除（文件本身不动，非侵入式），新加入白名单的后缀随即入库；回收站不参与过滤（已回收的素材仍可见、可恢复）。入库入口（`item/add`、`item/upload`）对白名单外的格式直接拒绝。
-
-`[web]` 保存即热生效（文件监听 Reload → LAN 监听 supervisor 运行期重绑，见 server-code-structure.md 的 api/lan.rs；仅新增/删除密钥或调整权限时不重绑连接——每请求经 `current().web` 判定）。LAN 使用两个独立监听：网站端口在「`enabled=true` 且有 `keys`」时启动；hawk-app 端口在存在 `peer_keys` 时启动。两者互不影响，网站关闭不影响 hawk-app 直连。网站密钥 `keys` 只在 `enabled=true` 时可用于浏览器；hawk-app 直连密钥 `peer_keys` 不受该开关影响。每把访问密钥独立 `write`：false 一律只读（写端点 `403 READ_ONLY`，放行一切 GET 与 `item/list`、`item/skeleton` 两个查询类 POST）；true 允许上传/删除/修改等写操作。web 端写能力由 `app/info` 的 `writable` 字段按当前密钥告知前端。
-
-远程访问接入配置不在库内：应用级 `~/.config/hawk/remote.toml`（daemon 读写，跨素材库共享），设备身份在 `~/.config/hawk/remote/identity.json`，访问密钥（hawk-app key）验证子在同目录 `keys.json`（sha256 存储，0600，明文不落盘）。`writable` 与 `[web]` 完全独立：它只对经 hawk-server 隧道进入的会话生效，且仅开放导入（`item/add` base64 或 `item/upload` multipart）与 `folder/create`（删除/更新/管理仍 403）。写会话的授权分两路：查看者会话要求带写权限的访问密钥（daemon 按本地 key 映射执法）；同租户设备会话（app 浏览远端库）按本机 `writable` 总开关放行；`writable` 的变更每请求读取当前配置，关闭后立即失效，不重启信令。独立运行 daemon 时不传 `--remote-config`，回退到库内 `.hawk/remote.toml`。
-
-应用级配置文件位于 `~/.config/hawk/`：`config.toml` 存 Electron 壳偏好（最近库、更新通道、关窗行为等），`remote.toml` + `remote/` 存远程访问接入与设备身份。两者都不随素材库同步。
-
-## 内容寻址（Content-Addressable）
-
-每个文件通过其内容哈希（BLAKE3）唯一标识，缩略图与调色板缓存也按 hash 存储，避免重复生成：
-
-```text
-<库外缓存目录>/thumbnails/  # 见「目录结构」一节，%LOCALAPPDATA%/hawk/cache/<库标识>/ 等
-├── 512/                    # 网格缩略图（等比缩入边长内，不放大）
-│   └── abcdef123....webp
-└── 1024/                   # 检查器与广域网预览
-    └── abcdef123....webp
-
-调色板与宽高是「内容的纯函数」：同 hash 各平台计算结果必然一致，故直接存素材元数据 TOML（`width`/`height` 标量 +
-`[[palette]]` 表，提炼算法见 docs/backend/color-search.md）——一台计算、全平台（含未来 Rust 版）复用，无派生缓存与双写。
-index.db 的 items 表同步镜像这些字段（启动注水一次顺序读）。
-
-宽高缺失自愈：入库时解码/头部解析暂时失败（文件占用等）会把 `width=0` 落库，而增量扫描按
-size/mtime 复用不再触及该文件 → 永久滞留 `0 × 0`。三层兜底：`item/list`/`item/skeleton` 响应中发现 0 宽高
-即派发后台补全（用户拉列表即触发）；周期对账扫描元数据中的 0 宽高项一并派发；手动入口
-`POST /api/v1/library/refresh_cache` 按文件夹/分类/标签/整库范围补全（补缺失模式，不重建已有文件）。
-
-缓存文件直接平铺在尺寸/类型目录下，不再按哈希前两位分桶：访问一律按内容哈希直接寻址、从不枚举目录，
-现代文件系统（NTFS/APFS/ext4）承载单目录数万文件没有实际问题；省去分桶后路径计算与排障都更直白。
-
-调色板缓存带算法版本号 `v`：提炼算法变更时版本 +1，旧缓存视为缺失自动重建。清空回收站时随缩略图一并清理。
+远程接入使用应用级 `~/.config/hawk/remote.toml`，设备身份与访问密钥在同级 `remote/`；这些配置跨素材库共享，不进入 `metadata.db`。
 
 ## 实时文件监听
 
-hawk 通过文件系统事件（FileSystemWatcher）实时感知变化，新增、删除、重命名、修改文件时，索引自动更新。`.hawk/` 目录自身不参与监听与索引。`config.toml` 与注册表文件（categories.toml / tags.toml / global_filter.toml / locks.toml）的变更同样被监听，修改后自动生效。
-
-文件监听可能静默丢事件（尤其 macOS FSEvents，无溢出错误可捕获），最终一致由四层兜底：**周期兜底扫描**（`HAWK_FS_RESCAN_INTERVAL`，默认 900s，0 关闭；强制遍历全部文件、按 size/mtime 复用哈希不读内容——目录快照只能发现增删改名，漏掉的内容变更只有全量 stat 能收敛）、启动扫描（停机期间变更）、监听缓冲溢出自动触发全库强制遍历兜底；系统明确告知某路径丢事件（macOS FSEvents `Flag::Rescan`，must-scan-subdirs）则定向强制重扫该路径；另可手动 `POST /api/v1/library/rescan`（可带 `path` 限定文件夹）。**元数据对账**是另一条线（`HAWK_RECONCILE_INTERVAL`，默认 60s，0 关闭）：只并入 `.hawk/metadata/` 的外部变更，不跑文件系统扫描。周期兜底重扫的开关与间隔在库配置 `[scan]`（`periodic` / `interval`，保存即热生效，桌面端设置面板可开关）——关闭后实时监听仍是主路径，仅漏事件需手动重扫。
+文件系统监听负责运行期增量更新。漏事件由启动扫描、周期兜底扫描、监听缓冲溢出重扫和系统 must-scan 提示收敛；`HAWK_FS_RESCAN_INTERVAL` 控制文件系统兜底重扫，与派生维护的 `HAWK_MAINTENANCE_INTERVAL` 是两条独立路径。

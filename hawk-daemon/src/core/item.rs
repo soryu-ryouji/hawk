@@ -4,7 +4,7 @@
 
 use crate::core::color_math::{rgb_to_lab, LabColor};
 use crate::core::locks::LockGuard;
-use crate::core::metadata::ItemMetadata;
+use crate::core::metadata::{ItemMetadata, PerceptualHash};
 use crate::core::paths::LibraryPaths;
 use serde::Serialize;
 
@@ -62,6 +62,8 @@ pub struct Item {
     pub height: i32,
     /// 提炼的调色板（按占比降序，最多 10 个）；尚未提炼或不支持解码时为空
     pub palette: Vec<PaletteColor>,
+    /// 内容感知哈希；None 表示尚未计算，非图像负缓存的 value 也为 None
+    pub phash: Option<PerceptualHash>,
 }
 
 impl Item {
@@ -78,6 +80,7 @@ impl Item {
         self.annotation = meta.annotation.clone();
         self.width = meta.width;
         self.height = meta.height;
+        self.phash = meta.phash.clone();
         // Palette 是内容的纯函数，直接随元数据同步；未提炼（None）保持索引现状
         if let Some(palette) = &meta.palette {
             self.palette = palette
@@ -149,6 +152,7 @@ impl Item {
             star: self.star,
             annotation: self.annotation.clone(),
             modification_time: loc.modification_time,
+            similarity_distance: None,
             palette: self
                 .palette
                 .iter()
@@ -191,6 +195,9 @@ pub struct ItemDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotation: Option<String>,
     pub modification_time: i64,
+    /// 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity_distance: Option<u32>,
     pub palette: Vec<PaletteColorDto>,
 }
 
@@ -205,6 +212,16 @@ pub struct ItemSkeletonDto {
     pub star: i32,
     /// 该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）
     pub size: i64,
+    /// 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity_distance: Option<u32>,
+}
+
+/// 相似度查询：源图 64 位 pHash 与最大汉明距离
+#[derive(Clone, Copy)]
+pub struct SimilarityQuery {
+    pub hash: u64,
+    pub max_distance: u32,
 }
 
 /// item/list 的查询条件（全部可选，组合逻辑为 AND）
@@ -242,6 +259,8 @@ pub struct ItemQuery {
     pub max_height: Option<i32>,
     /// 颜色检索（已转 Lab）；命中条件为调色板任一颜色 ΔE ≤ 阈值
     pub color: Option<LabColor>,
+    /// pHash 相似度过滤；order_by=similarity 时按距离排序
+    pub similarity: Option<SimilarityQuery>,
     /// 锁守卫（服务端强制）：未解锁的锁在此处排除（位置级 + 分类/标签级），
     /// 由 API 层按请求票据构建后随查询传入；空守卫恒放行
     pub lock_guard: LockGuard,

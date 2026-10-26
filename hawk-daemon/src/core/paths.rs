@@ -15,17 +15,13 @@ pub const TRASH_PREFIX: &str = ".hawk/trash/";
 pub struct LibraryPaths {
     pub root: String,
     pub hawk_dir: String,
-    pub metadata_dir: String,
+
     /// 缩略图派生缓存目录（库外系统缓存目录或测试覆盖）
     pub thumbnails_dir: String,
-    /// SQLite 元数据缓存文件（库外系统缓存目录或测试覆盖）
-    pub index_db_file: String,
     pub trash_dir: String,
     pub config_file: String,
-    /// 数据库模式的权威元数据存储（.hawk/metadata.db）；存在即判定为数据库模式
+    /// 素材元数据的唯一权威存储（.hawk/metadata.db）
     pub metadata_db_file: String,
-    /// 存储方案标记文件（.hawk/storage_mode）：迁移完成后最后写入，探测时优先于文件存在性探测
-    pub storage_mode_file: String,
     pub categories_file: String,
     pub tags_file: String,
     pub view_file: String,
@@ -33,7 +29,7 @@ pub struct LibraryPaths {
     pub global_filter_file: String,
     /// 文件夹/分类/标签锁注册表（.hawk/locks.toml，参与同步）
     pub locks_file: String,
-    /// 缓存目录（缩略图与 index.db 所在）：默认 <系统缓存>/hawk/cache/<库名>_<哈希>，
+    /// 缓存目录（缩略图所在）：默认 <系统缓存>/hawk/cache/<库名>_<哈希>，
     /// 可经 --cache-parent 指定全局父目录（桌面端设置面板配置）
     pub cache_dir: String,
 }
@@ -49,30 +45,29 @@ impl LibraryPaths {
     pub fn new(root: &str, cache_parent: Option<String>) -> LibraryPaths {
         let root = full_path(root);
         let hawk_dir = join_path(&root, HAWK_DIR_NAME);
-        let metadata_dir = join_path(&hawk_dir, "metadata");
+
         let parent = cache_parent.unwrap_or_else(default_cache_parent_hawk);
         let cache_dir = join_path(&parent, &cache_dir_name(&root));
         let thumbnails_dir = join_path(&cache_dir, "thumbnails");
         let trash_dir = join_path(&hawk_dir, TRASH_DIR_NAME);
         let config_file = join_path(&hawk_dir, "config.toml");
         let metadata_db_file = join_path(&hawk_dir, "metadata.db");
-        let storage_mode_file = join_path(&hawk_dir, "storage_mode");
+
         let categories_file = join_path(&hawk_dir, "categories.toml");
         let tags_file = join_path(&hawk_dir, "tags.toml");
         let view_file = join_path(&hawk_dir, "view.toml");
         let global_filter_file = join_path(&hawk_dir, "global_filter.toml");
         let locks_file = join_path(&hawk_dir, "locks.toml");
-        let index_db_file = join_path(&cache_dir, "index.db");
+
         LibraryPaths {
             root,
             hawk_dir,
-            metadata_dir,
-            index_db_file,
+
             thumbnails_dir,
             trash_dir,
             config_file,
             metadata_db_file,
-            storage_mode_file,
+
             categories_file,
             tags_file,
             view_file,
@@ -96,14 +91,13 @@ impl LibraryPaths {
 
     /// 创建 .hawk/ 目录结构，并生成排除 trash 的 .gitignore（缺失的排除项会补上）
     pub fn ensure_layout(&self) {
-        let _ = std::fs::create_dir_all(&self.metadata_dir);
         let _ = std::fs::create_dir_all(&self.thumbnails_dir);
         let _ = std::fs::create_dir_all(&self.trash_dir);
 
         let gitignore = join_path(&self.hawk_dir, ".gitignore");
         let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
         let lines: Vec<&str> = existing.lines().collect();
-        for entry in ["trash/", "remote/"] {
+        for entry in ["trash/", "remote/", "metadata.db"] {
             if !lines.contains(&entry) {
                 use std::io::Write;
                 if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -397,7 +391,7 @@ mod tests {
             paths.thumbnails_dir,
             format!("{}/thumbnails", paths.cache_dir)
         );
-        assert_eq!(paths.index_db_file, format!("{}/index.db", paths.cache_dir));
+
         assert!(paths.cache_location_error().is_none());
 
         // 互斥：缓存父目录落在库内 → 拼接后的库缓存子目录也在库内，拒绝

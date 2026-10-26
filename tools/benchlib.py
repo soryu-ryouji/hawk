@@ -265,11 +265,11 @@ def percentile(values, p):
     return values[min(len(values) - 1, int(len(values) * p))]
 
 
-def index_db_stats(cache_dir):
-    """直读派生缓存 index.db：镜像行数 / 已提炼调色板数"""
+def metadata_db_stats(lib_dir):
+    """直读权威 metadata.db：条目数 / 已提炼调色板数"""
     import sqlite3
 
-    db_file = os.path.join(cache_dir, "index.db")
+    db_file = os.path.join(lib_dir, ".hawk", "metadata.db")
     if not os.path.exists(db_file):
         return {"items": 0, "palette_done": 0}
     db = sqlite3.connect(db_file)

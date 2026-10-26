@@ -825,6 +825,15 @@
                 },
                 "type": "array"
               },
+              "similarity_distance": {
+                "description": "仅相似度查询：与源图的 pHash 汉明距离（越小越相似）",
+                "format": "int32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
               "size": {
                 "format": "int64",
                 "type": "integer"
@@ -1342,10 +1351,6 @@
               "scan": {
                 "$ref": "#/components/schemas/ScanInfo",
                 "description": "周期兜底扫描设置（.hawk/config.toml 的 [scan]）"
-              },
-              "storage_mode": {
-                "description": "元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）",
-                "type": "string"
               }
             },
             "required": [
@@ -1353,7 +1358,6 @@
               "path",
               "modification_time",
               "application_version",
-              "storage_mode",
               "scan"
             ],
             "type": "object"
@@ -2348,6 +2352,15 @@
             },
             "type": "array"
           },
+          "similarity_distance": {
+            "description": "仅相似度查询：与源图的 pHash 汉明距离（越小越相似）",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "size": {
             "format": "int64",
             "type": "integer"
@@ -2518,6 +2531,15 @@
             "format": "int32",
             "type": "integer"
           },
+          "max_distance": {
+            "description": "与源图的最大汉明距离（0–64，缺省 5；越小越严格）",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "max_height": {
             "description": "高度筛选（像素）：≤ 阈值，可与 min_height 组成区间",
             "format": "int32",
@@ -2577,6 +2599,13 @@
             ]
           },
           "order_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "similar_to": {
+            "description": "以指定 item 的 pHash 查找相似图片；结果可用 order_by=similarity 按距离排序",
             "type": [
               "string",
               "null"
@@ -2692,6 +2721,15 @@
           "path": {
             "description": "同 id（内容）多位置时按 path 区分条目",
             "type": "string"
+          },
+          "similarity_distance": {
+            "description": "仅相似度查询：与源图的 pHash 汉明距离（越小越相似）",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "size": {
             "description": "该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）",
@@ -3467,10 +3505,6 @@
           "scan": {
             "$ref": "#/components/schemas/ScanInfo",
             "description": "周期兜底扫描设置（.hawk/config.toml 的 [scan]）"
-          },
-          "storage_mode": {
-            "description": "元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好）",
-            "type": "string"
           }
         },
         "required": [
@@ -3478,7 +3512,6 @@
           "path",
           "modification_time",
           "application_version",
-          "storage_mode",
           "scan"
         ],
         "type": "object"
@@ -4248,18 +4281,6 @@
         },
         "required": [
           "status"
-        ],
-        "type": "object"
-      },
-      "StorageModeBody": {
-        "properties": {
-          "mode": {
-            "description": "database | toml",
-            "type": "string"
-          }
-        },
-        "required": [
-          "mode"
         ],
         "type": "object"
       },
@@ -5942,37 +5963,6 @@
           }
         },
         "summary": "周期兜底扫描设置：写库内 `.hawk/config.toml` 的 `[scan]`（toml_edit 保注释），保存即热生效\n（消费循环每 30s 检查一次配置）。返回更新后的库信息并广播 `library.updated`",
-        "tags": [
-          "library"
-        ]
-      }
-    },
-    "/api/v1/library/storage_mode": {
-      "post": {
-        "operationId": "storage_mode_set",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StorageModeBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessOnly"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "切换元数据存储方案：单写者内完成全量迁移（写新权威层 + 删旧文件），成功后调用方应重启进程\n（打开库时按内容探测模式，见 metadata_store::detect_storage_mode）。已是目标模式时幂等成功",
         "tags": [
           "library"
         ]

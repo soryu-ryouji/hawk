@@ -39,6 +39,10 @@ pub(crate) struct ItemListRequest {
     /// 高度筛选（像素）：≤ 阈值，可与 min_height 组成区间
     max_height: Option<i32>,
     color: Option<String>,
+    /// 以指定 item 的 pHash 查找相似图片；结果可用 order_by=similarity 按距离排序
+    similar_to: Option<String>,
+    /// 与源图的最大汉明距离（0–64，缺省 5；越小越严格）
+    max_distance: Option<u32>,
     in_trash: bool,
     order_by: Option<String>,
     order: Option<String>,
@@ -72,6 +76,8 @@ impl Default for ItemListRequest {
             min_height: None,
             max_height: None,
             color: None,
+            similar_to: None,
+            max_distance: None,
             in_trash: false,
             order_by: None,
             order: None,
@@ -101,7 +107,11 @@ pub(crate) struct ItemSkeletonResponse {
 /// ItemListRequest → ItemQuery：/list 与 /skeleton 必须走同一条路径,保证两次查询次序逐位一致。
 /// 锁强制：主动筛选（folders/categories/tags）命中未解锁的锁 → 403 LOCKED；
 /// 未解锁的锁作为独立排除段随 ItemQuery 传递（与 global_filter 的 exclude 参数同语义不同通道）
-fn build_query(req: ItemListRequest, guard: &LockGuard) -> Result<ItemQuery, ApiError> {
+fn build_query(
+    req: ItemListRequest,
+    guard: &LockGuard,
+    similarity: Option<crate::core::item::SimilarityQuery>,
+) -> Result<ItemQuery, ApiError> {
     let color = match &req.color {
         Some(c) => {
             let (r, g, b) = color_math::parse_hex(Some(c))
@@ -134,6 +144,7 @@ fn build_query(req: ItemListRequest, guard: &LockGuard) -> Result<ItemQuery, Api
         min_height: req.min_height,
         max_height: req.max_height,
         color,
+        similarity,
         lock_guard: guard.clone(),
         in_trash: req.in_trash,
         order_by: req.order_by,
@@ -161,7 +172,8 @@ pub(crate) async fn item_list(
 ) -> Result<Json<Envelope<ItemListResponse>>, ApiError> {
     let lib = state.require_library()?;
     check_view_locks(&req, &guard)?;
-    let query = build_query(req, &guard)?;
+    let similarity = similarity_query(&req, lib, &guard)?;
+    let query = build_query(req, &guard, similarity)?;
     let (items, total, total_size) = lib.index.query(&query);
     dispatch_dim_heal(lib, items.iter().map(|i| (i.id.as_str(), i.width)));
     Ok(Json(Envelope::ok(ItemListResponse {
@@ -191,13 +203,60 @@ pub(crate) async fn item_skeleton(
 ) -> Result<Json<Envelope<ItemSkeletonResponse>>, ApiError> {
     let lib = state.require_library()?;
     check_view_locks(&req, &guard)?;
-    let query = build_query(req, &guard)?;
+    let similarity = similarity_query(&req, lib, &guard)?;
+    let query = build_query(req, &guard, similarity)?;
     let (items, total_size) = lib.index.query_skeleton(&query);
     dispatch_dim_heal(lib, items.iter().map(|i| (i.id.as_str(), i.width)));
     Ok(Json(Envelope::ok(ItemSkeletonResponse {
         items,
         total_size,
     })))
+}
+
+/// 相似度源图解析：源必须存在、可见且已有当前版本 pHash；order_by=similarity 必须携带源图
+fn similarity_query(
+    req: &ItemListRequest,
+    lib: &crate::api::LibraryState,
+    guard: &LockGuard,
+) -> Result<Option<crate::core::item::SimilarityQuery>, ApiError> {
+    let Some(id) = req.similar_to.as_deref() else {
+        if req.order_by.as_deref() == Some("similarity") {
+            return Err(ApiError::invalid_param(
+                "order_by=similarity 必须同时指定 similar_to",
+            ));
+        }
+        return Ok(None);
+    };
+    let max_distance = req.max_distance.unwrap_or(5);
+    if max_distance > 64 {
+        return Err(ApiError::invalid_param("max_distance 必须在 0–64 之间"));
+    }
+    if !lib.index.contains(id) {
+        return Err(ApiError::item_not_found(id));
+    }
+    // 与原图/缩略图端点相同的 item 级锁公式（位置 OR + 分类/标签 AND）
+    if let Some((paths, categories, tags)) = lib.index.lock_projection(id) {
+        if !guard.item_visible(paths.into_iter(), &categories, &tags) {
+            return Err(ApiError::locked("内容已锁定，需要解锁后访问"));
+        }
+    }
+    let phash = lib.index.phash(id);
+    let Some(hash) = phash.as_ref().and_then(|hash| {
+        (hash.version == crate::core::perceptual_hash::PHASH_VERSION)
+            .then_some(hash.value)
+            .flatten()
+    }) else {
+        let message = if phash.as_ref().is_some_and(|hash| hash.value.is_none()) {
+            "该素材不是可分析的图片，无法查找相似图片"
+        } else {
+            "图片尚未完成相似度分析，请稍后重试"
+        };
+        return Err(ApiError::invalid_param(message));
+    };
+    Ok(Some(crate::core::item::SimilarityQuery {
+        hash,
+        max_distance,
+    }))
 }
 
 /// 读取端宽高自愈的判定：0 宽高且未被负缓存标记为「已探测的非可解码图像」。
@@ -218,7 +277,7 @@ fn dispatch_dim_heal<'a>(
             continue;
         }
         if let Some(abs) = lib.index.main_source_abs(hash, &lib.paths) {
-            lib.worker.enqueue_palette(hash, &abs);
+            lib.worker.enqueue_derived(hash, &abs);
         }
     }
 }

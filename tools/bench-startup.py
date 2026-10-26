@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""启动性能压测：热启动（SQLite 缓存注水）与冷启动（TOML 全量解析回退）。
+"""启动性能压测：首次建库与已有 SQLite 库的热启动。
 
 用法: python3 tools/bench-startup.py [--items 5000] [--runs 3]
 产出: tools/.tmp/bench-startup-lib（结束时清理）
@@ -8,9 +8,9 @@
   - t_ready_*_s     /health 转 200（内存索引注水完成；热启动是启动屏用户感知速度）
   - t_scan_s        就绪后首轮对账扫描 + 派生缓存补齐完成（wait_idle）
   - rss_ready_mb    就绪时内存
-冷启动额外:
-  - t_ready_cold_s  删除库外缓存后重启 = TOML 全量解析路径（大库分钟级）
-  - t_scan_cold_s   冷启动后还要全库重扫 + 重建缩略图
+首次建库额外:
+  - t_ready_cold_s  首次创建 metadata.db 并注水
+  - t_scan_cold_s   首次全库扫描 + 缩略图/调色板/pHash 生成
 """
 import argparse
 import os
@@ -37,11 +37,15 @@ def main():
     make_pngs(LIB, args.items, subdirs=32)
     lib_abs = os.path.abspath(LIB).replace("\\", "/")
 
-    # 预置：启动一次完成索引/缩略图/缓存落盘
+    # 首次建库：创建 metadata.db + 全量扫描与派生数据生成
+    t0 = time.perf_counter()
     with Server(LIB) as srv:
+        t_ready_cold = srv.start(timeout_s=1800)
         srv.wait_idle()
+        t_scan_cold = time.perf_counter() - t0
+        rss_cold = srv.rss_mb()
 
-    # 热启动（SQLite 快路径）
+    # 热启动（已有 SQLite 库直接注水）
     hot = []
     rss = 0
     for i in range(args.runs):
@@ -51,15 +55,6 @@ def main():
             hot.append(round(t_ready, 2))
             rss = srv.rss_mb()
     hot.sort()
-
-    # 冷启动（删库外缓存 = TOML 全量解析回退 + 重建派生缓存）
-    shutil.rmtree(cache_dir_for(lib_abs, LABEL), ignore_errors=True)
-    t0 = time.perf_counter()
-    with Server(LIB) as srv:
-        t_ready_cold = srv.start(timeout_s=1800)
-        srv.wait_idle()
-        t_scan_cold = time.perf_counter() - t0
-        rss_cold = srv.rss_mb()
 
     shutil.rmtree(WORK_ROOT, ignore_errors=True)
     shutil.rmtree(cache_dir_for(lib_abs, LABEL), ignore_errors=True)

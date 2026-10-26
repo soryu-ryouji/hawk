@@ -848,26 +848,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/library/storage_mode": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * 切换元数据存储方案：单写者内完成全量迁移（写新权威层 + 删旧文件），成功后调用方应重启进程
-         *     （打开库时按内容探测模式，见 metadata_store::detect_storage_mode）。已是目标模式时幂等成功
-         */
-        post: operations["storage_mode_set"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/lock/list": {
         parameters: {
             query?: never;
@@ -1502,6 +1482,11 @@ export interface components {
                 /** @description 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径） */
                 path: string;
                 paths: string[];
+                /**
+                 * Format: int32
+                 * @description 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
+                 */
+                similarity_distance?: number | null;
                 /** Format: int64 */
                 size: number;
                 /** Format: int32 */
@@ -1647,8 +1632,6 @@ export interface components {
                 path: string;
                 /** @description 周期兜底扫描设置（.hawk/config.toml 的 [scan]） */
                 scan: components["schemas"]["ScanInfo"];
-                /** @description 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好） */
-                storage_mode: string;
             };
             status: string;
         };
@@ -1929,6 +1912,11 @@ export interface components {
             /** @description 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径） */
             path: string;
             paths: string[];
+            /**
+             * Format: int32
+             * @description 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
+             */
+            similarity_distance?: number | null;
             /** Format: int64 */
             size: number;
             /** Format: int32 */
@@ -1963,6 +1951,11 @@ export interface components {
             limit?: number;
             /**
              * Format: int32
+             * @description 与源图的最大汉明距离（0–64，缺省 5；越小越严格）
+             */
+            max_distance?: number | null;
+            /**
+             * Format: int32
              * @description 高度筛选（像素）：≤ 阈值，可与 min_height 组成区间
              */
             max_height?: number | null;
@@ -1995,6 +1988,8 @@ export interface components {
             offset?: number;
             order?: string | null;
             order_by?: string | null;
+            /** @description 以指定 item 的 pHash 查找相似图片；结果可用 order_by=similarity 按距离排序 */
+            similar_to?: string | null;
             /** Format: int32 */
             star?: number | null;
             tags?: string[] | null;
@@ -2027,6 +2022,11 @@ export interface components {
             id: string;
             /** @description 同 id（内容）多位置时按 path 区分条目 */
             path: string;
+            /**
+             * Format: int32
+             * @description 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
+             */
+            similarity_distance?: number | null;
             /**
              * Format: int64
              * @description 该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）
@@ -2233,8 +2233,6 @@ export interface components {
             path: string;
             /** @description 周期兜底扫描设置（.hawk/config.toml 的 [scan]） */
             scan: components["schemas"]["ScanInfo"];
-            /** @description 元数据存储方案：database（.hawk/metadata.db）/ toml（.hawk/metadata/*.toml，网盘同步友好） */
-            storage_mode: string;
         };
         LibraryRenameBody: {
             /** @description 新显示名；空白清除自定义名（回退库目录名） */
@@ -2476,10 +2474,6 @@ export interface components {
             status: string;
             /** Format: int32 */
             total?: number | null;
-        };
-        StorageModeBody: {
-            /** @description database | toml */
-            mode: string;
         };
         /** @description 无 data 的成功响应：`{"status":"success"}` */
         SuccessOnly: {
@@ -3749,30 +3743,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_LibraryInfo"];
-                };
-            };
-        };
-    };
-    storage_mode_set: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["StorageModeBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuccessOnly"];
                 };
             };
         };

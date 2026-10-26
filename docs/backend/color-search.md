@@ -40,21 +40,21 @@
 入库/扫描 → IndexPipeline（单写者）
   → 派发后台 worker（与缩略图同一队列）
       解码图像 → 提炼调色板（缩略图生成时顺带，零额外解码成本）
-      → 提交 PaletteJob 回流水线 → 写入元数据 TOML → item.Palette 更新 → 发 item.updated
+      → 提交 PaletteJob 回流水线 → 写入 metadata.db → item.Palette 更新 → 发 item.updated
 启动复用路径（哈希复用、不读文件内容）
-  → 调色板随元数据 TOML/SQLite 镜像直接注水索引
-  → palette 缺失 → 派发 palette-only 任务到 worker 补齐
+  → 调色板随 metadata.db 直接注水索引
+  → palette 缺失 → 派发派生维护任务到 worker 补齐
 ```
 
 要点：
 
 - **计算时机挂在缩略图 worker 上**：生成缩略图时图像已解码，顺带提炼，零额外解码成本。仅调色板缺失而缩略图齐全时，解码已有的 1024px WebP 而非原图，避免为补缓存全库解码原图
 - **单写者规则不破**：worker 不直接改索引，计算结果经 `PaletteJob` 回到流水线消费循环应用；job 携带 hash，若期间内容已漂移（item 不存在或 hash 变化）直接丢弃——幂等
-- **写元数据（2026-02 设计修订）**：调色板是内容的纯函数，同 hash 各平台/各设备计算结果必然一致，直接入 `.hawk/metadata/<hash>.toml`（`[[palette]]` 表）——一台计算全平台复用，无派生缓存与双写
+- **写元数据**：调色板是内容的纯函数，直接写入 `.hawk/metadata.db` 的 `items.palette`（JSON）；不再维护 TOML/镜像双写
 
-### 缓存镜像
+### SQLite 存储
 
-SQLite 派生缓存 `index.db` 的 `items.palette` 列镜像 TOML 中的调色板（本地专用、可重建，见 storage.md），存储格式为纯 JSON 数组：
+权威库 `.hawk/metadata.db` 的 `items.palette` 列保存调色板 JSON（见 storage.md）：
 
 ```json
 [
@@ -64,7 +64,7 @@ SQLite 派生缓存 `index.db` 的 `items.palette` 列镜像 TOML 中的调色�
 ```
 
 - 按占比降序，最多 10 个；percentage 为 0–100、保留 1 位小数，与 Eagle 展示口径一致
-- 镜像随 schema 版本整库重建，与 TOML 始终同源
+- 随 SQLite 事务与内存副本同步更新，启动直接读取；无独立镜像
 
 ### 索引与查询
 
@@ -112,7 +112,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 ### 边界情况
 
-- 非图像文件 / 解码失败：palette 为空，永不命中颜色检索（与缩略图「尽力而为」一致）。非图像经内容喷探（只读头部魔数）后写空数组负缓存，不做周期重试；解码失败保持 None 由对账重试自愈
+- 非图像文件 / 解码失败：palette 为空，永不命中颜色检索（与缩略图「尽力而为」一致）。非图像经内容喷探（只读头部魔数）后写空数组负缓存，不做周期重试；解码失败保持 None 由派生维护重试自愈
 - 动图（GIF/APNG）：取首帧
 - 透明像素：alpha < 128 的像素不参与统计；全透明图 palette 为空
 - id 漂移：内容变化 → 新 hash → 重新提炼，旧缓存在内容无引用时清理
@@ -138,7 +138,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 | 文件 | 改动 |
 | ---- | ---- |
-| `docs/backend/storage.md` | 库外缓存目录布局与 index.db 中的调色板存储 |
+| `docs/backend/storage.md` | SQLite 权威库与调色板存储 |
 | `docs/backend/server-rest-api-v1.md` | palette 字段与 color 参数 |
 | `docs/backend/server-code-structure.md` | 新文件职责与流水线变化 |
 | `hawk-daemon` | `cargo test`：颜色纯函数（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色~100%、双色各半、全透明→空） |
@@ -149,7 +149,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | 方案 | 为何不采用 |
 | ---- | ---- |
 | 纯内存、不缓存调色板 | 每次启动需全库解码（或用缩略图解码 1 万张约数十秒），启动后检索长时间不完整。缓存文件只有几十字节/张，成本极低 |
-| 调色板写入 metadata TOML | 违反「派生信息不入元数据」原则；参与同步会因算法版本差异制造冲突 |
+| 额外维护一份库外调色板镜像 | metadata.db 已是权威与启动来源，额外镜像只会增加失效与双写成本 |
 | RGB/HSV 距离 | RGB 感知不均匀；HSV 色相在低饱和度下不稳定（灰色会匹配到任意色相） |
 | 固定色相分桶 + 倒排索引 | 内存线性扫描已是毫秒级，无需索引结构；分桶还会把桶边界上的相近色错配 |
 | 手写 k-means/中位切分 | Rust 生态无成熟 Wu 量化器实现，手写 median-cut（v2），质量与 Wu 相当 |

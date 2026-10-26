@@ -1,8 +1,8 @@
 //! 进程组装与启动编排（main 只留入口职责，组件复杂度收敛于此）。
 //! 组件图即 api::AppState（单一共享状态对象，axum 生态惯例），按依赖分层构造
 //! （存储底座 → 索引流水线 → 派生服务 → LAN），构造顺序与 AppState 字段分组一致。
-//! 启动模型：axum serve 先拉起监听，随后装配索引流水线——内存索引由元数据缓存
-//! （SQLite 快路径/TOML 回退）注水，就绪不再等待全库扫描；
+//! 启动模型：axum serve 先拉起监听，随后装配索引流水线——内存索引直接由
+//! .hawk/metadata.db 注水，就绪不再等待全库扫描；
 //! 停机期间的文件增删改由监听实时事件 + 后台对账扫描收敛。
 
 use crate::api;
@@ -75,20 +75,24 @@ pub async fn run(settings: Settings) {
         // 文件夹树缓存失效：与 folder.changed 同线（事件即「目录结构可能变化」信号，含扫描兜底）
         lib.folder_tree.spawn_invalidation(&state.bus);
 
-        // ---------- 随后装配索引流水线（HTTP 已监听：以下单例的首次构造/注水期间，startup 端点持续可答） ----------
-        lib.pipeline.start();
-        watcher = Some(start_watcher(&state, lib));
-        state.startup.mark_ready();
-        tracing::info!("hawk-daemon 已就绪（内存索引已由缓存注水），后台对账扫描进行中");
+        // SQLite 读取失败已由 MetadataStore 写入 startup：保持未就绪，不能把空副本当空库继续写
+        if state.startup.snapshot().1.is_some() {
+            tracing::error!("元数据初始化失败，保持启动错误态；修复数据库后重启");
+        } else {
+            // ---------- 随后装配索引流水线（HTTP 已监听：startup 端点持续可答） ----------
+            lib.pipeline.start();
+            watcher = Some(start_watcher(&state, lib));
+            state.startup.mark_ready();
+            tracing::info!("hawk-daemon 已就绪（内存索引已由 SQLite 注水），后台对账扫描进行中");
 
-        // 全库对账扫描转后台：完成前停机期间的删除/新增短暂残留（watcher 实时事件已覆盖运行期变更），
-        // 失败不置启动错误——周期对账（默认 60s）兜底重试
-        let pipeline = lib.pipeline.clone();
-        tokio::spawn(async move {
-            if let Err(e) = pipeline.run_scan(false).await {
-                tracing::error!("后台对账扫描失败（周期对账将重试）: {e}");
-            }
-        });
+            // 全库对账扫描转后台：完成前停机期间的删除/新增短暂残留（watcher 实时事件已覆盖运行期变更）
+            let pipeline = lib.pipeline.clone();
+            tokio::spawn(async move {
+                if let Err(e) = pipeline.run_scan(false).await {
+                    tracing::error!("后台对账扫描失败（周期维护将重试）: {e}");
+                }
+            });
+        }
     } else {
         state.startup.mark_ready();
         tracing::info!("hawk-daemon 已就绪（远程查看模式，无本地素材库）");
