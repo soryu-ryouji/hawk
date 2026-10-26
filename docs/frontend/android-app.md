@@ -154,7 +154,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 
 ## 待定项
 
-1. **M2 索引存储**：Room 还是直接 SQLite（与 daemon 的 `index.db` 同语义的派生缓存），取决于是否需要 FTS
+1. **M2 索引存储**：Room 还是直接 SQLite（端上独立派生缓存，不读写 daemon 的 `metadata.db`），取决于是否需要 FTS
 2. **系统集成**：Android 没有 Spotlight 的等价物，App Actions / 系统搜索索引的收益需要先验证
 3. **端上 AI**：Gemini Nano 的设备覆盖有限，是否值得为少数机型做能力分支
 4. **与 iOS 共享层**：等两端重复逻辑稳定后再评估 KMP

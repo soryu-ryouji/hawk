@@ -1,10 +1,8 @@
 <script setup lang="ts">
-// 存储分区（仅 Electron）：全局缓存父目录的查看与迁移、元数据存储方案切换。
-// 缓存迁移为整体搬迁（先复制后删除），期间 server 重启（前端经 serverRestarting 切启动屏，
-// 就绪后自动恢复——本对话框随主界面一同重现）。
-// 存储方案切换：daemon 侧全量迁移（写新权威层+删旧文件），成功后经 shell.restartServer 重启生效。
+// 存储分区（仅 Electron）：周期重扫、全局缓存目录迁移与索引体检。
+// 素材元数据固定使用 .hawk/metadata.db，不再提供 TOML/SQLite 双模式切换。
+// 缓存迁移为整体搬迁（先复制后删除），期间 server 重启（前端经 serverRestarting 切启动屏）。
 import { computed, onMounted, ref } from 'vue';
-import { api } from '@/shared/api/endpoints';
 import { shell } from '@/shared/lib/platform';
 import { useLibraryStore } from '@/domains/library';
 import { cleanupIndex, setPeriodicRescan } from '@/domains/library';
@@ -12,39 +10,6 @@ import { cleanupIndex, setPeriodicRescan } from '@/domains/library';
 const store = useLibraryStore();
 /** 当前连接是否 admin（远程浏览时隐藏库侧配置：只读 token 调管理端点只会 403） */
 const isAdmin = computed(() => store.access === 'admin');
-
-// ---- 元数据存储方案 ----
-/** 当前模式（library/info 的 storage_mode；数据库=默认本地，配置文件=网盘同步友好） */
-const storageMode = computed(() => store.library?.storage_mode ?? 'database');
-/** 待切换的目标模式（确认弹窗显示用；null=未在选择） */
-const pendingMode = ref<'database' | 'toml' | null>(null);
-const switching = ref(false);
-const switchError = ref('');
-
-/** 选择目标模式（点当前模式无动作） */
-function switchTo(mode: 'database' | 'toml') {
-  if (mode !== storageMode.value) {
-    pendingMode.value = mode;
-  }
-}
-
-/** 发起切换：daemon 全量迁移 → 主进程重启 server（启动屏接管，就绪后自动回主界面） */
-async function confirmSwitch() {
-  if (!pendingMode.value) {
-    return;
-  }
-  switching.value = true;
-  switchError.value = '';
-  const target = pendingMode.value;
-  try {
-    await api.librarySetStorageMode(target);
-    pendingMode.value = null;
-    await shell.restartServer();
-  } catch (e) {
-    switchError.value = e instanceof Error ? e.message : String(e);
-    switching.value = false;
-  }
-}
 
 const current = ref('');
 const isDefault = ref(true);
@@ -119,21 +84,6 @@ async function runCleanup() {
       </label>
     </div>
 
-    <div v-if="isAdmin" class="field column">
-      <span class="field-label">元数据存储</span>
-      <div class="mode-row">
-        <label class="mode-option" :class="{ active: storageMode === 'database' }">
-          <input type="radio" name="storage-mode" :checked="storageMode === 'database'" @change="switchTo('database')" />
-          <span class="mode-name">数据库</span>
-        </label>
-        <label class="mode-option" :class="{ active: storageMode === 'toml' }">
-          <input type="radio" name="storage-mode" :checked="storageMode === 'toml'" @change="switchTo('toml')" />
-          <span class="mode-name">配置文件</span>
-        </label>
-      </div>
-      <p v-if="switchError" class="field-error">{{ switchError }}</p>
-    </div>
-
     <div class="field column">
       <span class="field-label">缓存目录</span>
       <span class="cache-path">{{ current || '…' }}</span>
@@ -163,18 +113,6 @@ async function runCleanup() {
         <button class="btn" @click="pending = null">取消</button>
       </div>
     </div>
-
-    <!-- 存储方案切换确认：全量迁移 + 自动重启 -->
-    <div v-if="pendingMode" class="migrate-confirm">
-      <p>
-        切换为<b>{{ pendingMode === 'database' ? '数据库' : '配置文件' }}</b
-        >方案？ 全部元数据将迁移到新存储（原数据迁移完成后自动删除），随后后台服务自动重启，素材库短暂不可用。
-      </p>
-      <div class="actions-left">
-        <button class="btn danger" :disabled="switching" @click="confirmSwitch">{{ switching ? '正在迁移…' : '切换并重启' }}</button>
-        <button class="btn" :disabled="switching" @click="pendingMode = null">取消</button>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -183,30 +121,6 @@ async function runCleanup() {
   font-size: 13px;
   word-break: break-all;
   user-select: text;
-}
-
-.mode-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mode-option {
-  display: grid;
-  grid-template-columns: auto auto 1fr;
-  gap: 4px 8px;
-  align-items: baseline;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.mode-option.active {
-  border-color: var(--accent);
-}
-
-.mode-name {
-  color: var(--fg-0);
 }
 
 .migrate-confirm {

@@ -39,6 +39,15 @@ function onSizeSelect(size: SizeFilter | undefined) {
 
 <template>
   <div class="filterbar">
+    <button
+      v-if="store.isSimilar"
+      class="chip active"
+      title="pHash 匹配距离：严格为 0–5，宽松为 0–10"
+      @click="store.setSimilarityThreshold(store.similarityThreshold === 5 ? 10 : 5)"
+    >
+      {{ store.similarityThreshold === 5 ? '严格匹配' : '宽松匹配' }}
+    </button>
+
     <button class="chip" :class="{ active: store.query.star !== undefined }" title="评分筛选" @click="openRatingMenu">
       <Icon name="star" :size="13" />
       <span>{{ store.query.star !== undefined ? `${store.query.star} 星` : '评分' }}</span>

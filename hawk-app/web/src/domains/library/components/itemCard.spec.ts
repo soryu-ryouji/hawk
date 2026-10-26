@@ -50,6 +50,14 @@ describe('ItemCard 缩略图', () => {
   });
 });
 
+describe('ItemCard 相似度', () => {
+  it('相似结果展示 pHash 差异值', () => {
+    setActivePinia(createPinia());
+    const wrapper = mount(ItemCard, { props: { item: { ...item, similarity_distance: 3 }, selected: false } });
+    expect(wrapper.find('.distance').text()).toBe('差异 3');
+  });
+});
+
 describe('ItemCard 长按', () => {
   beforeEach(() => {
     vi.useFakeTimers();

@@ -57,6 +57,11 @@ try {
   execFileSync(process.execPath, [cli, schemaFile, '-o', out]);
   console.log(`已生成 ${out}`);
 } finally {
-  server.kill();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // Windows 上 SQLite/可执行文件句柄在 kill 后仍需一个退出周期才能释放；等待后再删临时库
+  if (server.exitCode === null && server.signalCode === null) {
+    const exited = new Promise((resolve) => server.once('exit', resolve));
+    server.kill();
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  }
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

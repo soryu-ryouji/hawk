@@ -48,11 +48,11 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 - 原有的文件夹组织习惯完全保留
 - 与网盘（Dropbox、iCloud、Syncthing、OneDrive）天然兼容
 
-### 纯文本元数据存储
+### SQLite 元数据与相似图片查找
 
-素材参数（标签、评分、备注等）以独立的纯文本文件存放在 `.hawk/metadata/` 中。网盘同步冲突只影响单个素材，可以用 Git 管理素材库，没有数据锁定。
+素材参数（标签、评分、备注等）统一存放在 `.hawk/metadata.db`，单文件 SQLite 提供事务写入与快速启动，不再有 TOML/数据库双模式。SQLite 仅本机使用，不参与网盘同步。
 
-本机加速：库外缓存目录维护一份 SQLite 派生缓存（`index.db`），启动时一次顺序读即可注水索引（内存索引与元数据都从缓存恢复，秒级就绪），十万级素材无需全量解析 TOML，也无需先全库扫描。缓存只是 TOML 的镜像，可随时删除、重启自动重建，不参与同步。
+支持 pHash 视觉近重复查找：缩放、格式转换、重新压缩后的图片可按汉明距离检索和排序，结果复用虚拟网格；计算在 daemon 后台完成，广域网仍只传缩略图。
 
 ### 前后端解耦
 
@@ -121,7 +121,8 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
 - [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配
-- [存储设计](docs/backend/storage.md)：`.hawk/` 目录结构、同步边界、索引与缓存
+- [pHash 相似图片查找](docs/backend/similar-images.md)：64 位感知哈希、近重复检索与阈值设计
+- [存储设计](docs/backend/storage.md)：`.hawk/` 目录结构、SQLite、同步边界、索引与缓存
 
 **远程访问（hawk-server/）**
 

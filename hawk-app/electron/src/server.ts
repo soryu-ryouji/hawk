@@ -250,7 +250,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
       if (!res.ok) {
         return; // 服务已监听但未到可查询状态，继续轮询
       }
-      // 可应答即视为活着（慢任务容忍：缓存重建/TOML 全量解析可达数分钟），重置停滞计时
+      // 可应答即视为活着（慢任务容忍：首次索引与派生缓存重建可达数分钟），重置停滞计时
       lastProgressAt = Date.now();
       const body = (await res.json()) as { data: { status: string; phase?: string; processed?: number; total?: number; message?: string } };
       const state = body.data;

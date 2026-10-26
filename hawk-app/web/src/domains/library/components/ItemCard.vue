@@ -92,7 +92,8 @@ function onClick(e: MouseEvent) {
     </div>
     <div class="meta">
       <div class="name" :title="`${item.name}.${item.ext}`">{{ item.name }}.{{ item.ext }}</div>
-      <div class="dims">{{ item.width }} × {{ item.height }}</div>
+      <div v-if="item.similarity_distance !== undefined" class="dims distance" title="pHash 汉明距离，越小越相似">差异 {{ item.similarity_distance }}</div>
+      <div v-else class="dims">{{ item.width }} × {{ item.height }}</div>
     </div>
   </div>
 </template>

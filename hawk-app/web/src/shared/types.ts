@@ -68,7 +68,9 @@ export type ViewState =
   | { kind: 'folder'; path: string }
   | { kind: 'category'; name: string }
   | { kind: 'tag'; name: string }
-  | { kind: 'trash' };
+  | { kind: 'trash' }
+  /** 以指定素材为源的全库 pHash 近重复查找；maxDistance 为 0–64 汉明距离 */
+  | { kind: 'similar'; id: string; path: string; name: string; maxDistance: number };
 
 /** 分辨率档位筛选：短边（min(width, height)）区间 */
 export interface SideSizeFilter {

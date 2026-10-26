@@ -70,7 +70,6 @@ const libraryInfo: LibraryInfo = {
   path: '/lib',
   item_count: 0,
   total_size: 0,
-  storage_mode: 'db',
   scan: { periodic: false, interval_seconds: 0 },
 } as unknown as LibraryInfo; // 仅锁定 library.updated 分支的写入，字段以事件负载为准
 

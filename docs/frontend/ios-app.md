@@ -109,7 +109,7 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 
 AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必须自建。
 
-- 存储：GRDB（SQLite），库文件放 `Application Support`，可整体删除后重建（与 daemon 的 `index.db` 同语义：派生缓存，不是权威数据）
+- 存储：GRDB（SQLite），库文件放 `Application Support`，可整体删除后重建（端上独立派生缓存，不读写 daemon 的 `metadata.db`）
 - 表：`item(id, name, ext, width, height, size, star, tags, categories, folders, paths, annotation, modification_time, library_id)` + `sync_state(library_id, last_sync_at, server_generation)`
 - 注水：启动先用本地库渲染（秒开），再增量对账
   - 骨架：`POST /api/v1/item/skeleton`（含 id/path/宽高/star/size，全量、不分页）

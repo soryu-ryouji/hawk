@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 
 import { useLibraryStore } from './store';
+import type { Item } from '@/shared/types';
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -51,6 +52,28 @@ describe('视图历史', () => {
 
     store.goForward(); // 无前进项：原地不动
     expect(store.view).toEqual({ kind: 'tag', name: 'T' });
+  });
+
+  it('相似视图按距离查询，阈值切换不新增历史', async () => {
+    const store = useLibraryStore();
+    store.setView({ kind: 'category', name: 'C' });
+    store.query.keywords = ['old-filter'];
+    store.searchText = 'old-filter';
+    store.showSimilar({ id: 'source', path: 'source.png', name: 'source' } as Item);
+    await Promise.resolve();
+
+    expect(store.view).toEqual({ kind: 'similar', id: 'source', path: 'source.png', name: 'source', maxDistance: 5 });
+    expect(store.viewTitle).toBe('相似图片：source');
+    expect(store.query.keywords).toEqual([]);
+    expect(store.searchText).toBe('');
+    expect(mocks.itemSkeleton).toHaveBeenCalledWith(expect.objectContaining({ similar_to: 'source', max_distance: 5, order_by: 'similarity', order: 'asc' }));
+
+    store.setSimilarityThreshold(10);
+    await Promise.resolve();
+    expect(mocks.itemSkeleton).toHaveBeenLastCalledWith(expect.objectContaining({ similar_to: 'source', max_distance: 10 }));
+    expect(store.canGoBack).toBe(true);
+    store.goBack();
+    expect(store.view).toEqual({ kind: 'category', name: 'C' });
   });
 
   it('correctView 就地修正当前条目，不新增历史', () => {

@@ -67,6 +67,8 @@ export function createViewNavigation(deps: ViewNavigationDeps) {
       return;
     }
     const valid =
+      // 相似结果依赖源图当前 pHash 与存续状态，不跨重启恢复；会话内历史/后退仍完整保留
+      parsed.kind !== 'similar' &&
       (parsed.kind !== 'folder' || validators.folderExists(parsed.path)) &&
       (parsed.kind !== 'category' || validators.categoryExists(parsed.name)) &&
       (parsed.kind !== 'tag' || validators.tagExists(parsed.name));

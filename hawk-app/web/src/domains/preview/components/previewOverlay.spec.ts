@@ -19,6 +19,7 @@ import PreviewOverlay from './PreviewOverlay.vue';
 import { useLibraryStore } from '@/domains/library';
 import { usePreviewStore } from '@/domains/preview';
 import { itemKey } from '@/domains/library';
+import { useContextMenu } from '@/shared/composables/useContextMenu';
 import type { Item, SkeletonItem } from '@/shared/types';
 
 function fixture(id: string): Item {
@@ -109,6 +110,21 @@ describe('广域网预览流量', () => {
     await nextTick();
     expect(document.body.querySelectorAll('.zoom-layer img')).toHaveLength(1);
     expect(document.body.querySelector('.load-status')).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('预览菜单可进入相似查找并关闭浮层', () => {
+    const { wrapper, current } = mountPreview(true);
+    const store = useLibraryStore();
+    const showSimilar = vi.spyOn(store, 'showSimilar').mockImplementation(() => {});
+
+    document.body.querySelector('.overlay')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const entry = useContextMenu().state.items.find((item) => item.label === '查找相似图片');
+    expect(entry).toBeDefined();
+    entry?.action?.();
+
+    expect(showSimilar).toHaveBeenCalledWith(current);
+    expect(wrapper.emitted('close')).toHaveLength(1);
     wrapper.unmount();
   });
 

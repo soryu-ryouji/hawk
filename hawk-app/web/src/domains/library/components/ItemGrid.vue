@@ -246,10 +246,6 @@ function confirmClearTrash() {
 }
 
 function onMenu(item: Item, e: MouseEvent) {
-  // 只读查看（局域网 viewer）与远端受限写：编辑类入口隐藏，不出右键菜单
-  if (store.editLocked) {
-    return;
-  }
   // 右键未选中项时先选中它
   const key = itemKey(item.id, item.path);
   if (!store.selectionSet.has(key)) {
@@ -267,26 +263,42 @@ function onMenu(item: Item, e: MouseEvent) {
       .catch(() => store.showToast('保存图片失败'));
   }
 
+  // 相似查找与保存都是读操作，viewer/remote_writer 同样可用；编辑类入口仍由 editLocked 隐藏
+  const canFindSimilar = Number(item.width) > 0 && Number(item.height) > 0;
+  const readItems = [
+    ...(canFindSimilar ? [{ label: '查找相似图片', action: () => store.showSimilar(item) }] : []),
+    ...(!hasShell ? [{ label: '保存图片', action: saveItem }] : []),
+  ];
   const items = store.isTrash
     ? [
-        { label: '恢复', action: () => void restoreSelected() },
-        { label: '清空回收站', danger: true, action: confirmClearTrash },
+        ...readItems,
+        ...(!store.editLocked
+          ? [
+              { label: '恢复', action: () => void restoreSelected() },
+              { label: '清空回收站', danger: true, action: confirmClearTrash },
+            ]
+          : []),
       ]
     : [
-        // 保存图片：仅浏览器端出现（桌面端文件本就在本机，走「在文件管理器中显示」）
-        ...(!hasShell ? [{ label: '保存图片', action: saveItem }] : []),
-        { label: '添加标签…', action: () => (showTagDialog.value = true) },
-        { label: '添加到分类…', action: () => (showCategoryDialog.value = true) },
-        { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
-        // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
-        ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => preview.openEditor(item) }] : []),
-        // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现；定位本卡片对应的位置
-        ...(hasShell ? [{ label: showInFileManagerLabel, action: () => void shell.showInFinder(item.path) }] : []),
-        { separator: true, label: '' },
-        { label: '移入回收站', danger: true, action: () => void trashSelected() },
+        ...readItems,
+        ...(!store.editLocked
+          ? [
+              { label: '添加标签…', action: () => (showTagDialog.value = true) },
+              { label: '添加到分类…', action: () => (showCategoryDialog.value = true) },
+              { label: '移动到文件夹…', action: () => (showFolderDialog.value = true) },
+              // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口
+              ...(isRotatableImage(item.ext) ? [{ label: '编辑图片…', action: () => preview.openEditor(item) }] : []),
+              // 「在文件管理器中显示」依赖 Electron 主进程,浏览器（局域网查看）不出现；定位本卡片对应的位置
+              ...(hasShell ? [{ label: showInFileManagerLabel, action: () => void shell.showInFinder(item.path) }] : []),
+              { separator: true, label: '' },
+              { label: '移入回收站', danger: true, action: () => void trashSelected() },
+            ]
+          : []),
       ];
 
-  menu.open(items, e);
+  if (items.length > 0) {
+    menu.open(items, e);
+  }
 }
 </script>
 
