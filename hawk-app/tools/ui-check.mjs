@@ -781,10 +781,12 @@ try {
 
   // 回收站视图
   await evaljs(`[...document.querySelectorAll('.sidebar .entry')].find((n) => n.textContent.includes('回收站'))?.click()`);
+  let trashText = '';
   const trashEmpty = await waitFor(async () => {
-    const text = await evaljs(`document.querySelector('.empty')?.textContent ?? ''`);
-    return text === '' ? null : text;
-  }, 5_000).catch(() => '');
+    trashText = await evaljs(`document.querySelector('.empty')?.textContent ?? ''`);
+    // 视图切换先渲染“加载中…”；必须等到目标空态，不能把中间态当断言结果
+    return trashText === '回收站为空' ? trashText : null;
+  }, 5_000).catch(() => trashText);
   check('回收站空态', trashEmpty, '回收站为空');
 
   // 主进程素材库记忆：应用配置（TOML）应已写入当前库路径
