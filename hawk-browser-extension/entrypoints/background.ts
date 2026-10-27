@@ -25,6 +25,10 @@ const USAGE_KEY = 'folderLastUse';
 let foldersCache: { key: string; folders: FolderNode; at: number } | null = null;
 const FOLDERS_CACHE_TTL = 30_000;
 
+type FoldersResult = { folders: FolderNode; targetLabel: string };
+/** 同一目标的进行中加载：远程冷启动较慢，重复打开面板不能并发建立/替换会话 */
+let foldersPending: { key: string; promise: Promise<FoldersResult> } | null = null;
+
 /** 目标标识 + 展示名：最近使用统计与文件夹树缓存按目标隔离（本机切库/切到远端库不串用），
  *  展示名同时给拖拽面板标题用（跟随远端库时告诉用户存进的是哪台设备） */
 async function targetInfo(settings: HawkSettings): Promise<{ key: string; label: string }> {
@@ -61,16 +65,33 @@ function sortByLastUse(nodes: FolderNode[], usage: FolderUsage): FolderNode[] {
 }
 
 /** 按最近使用排序后的文件夹树（拖拽保存面板展示用） */
-async function getFolders(force = false): Promise<{ folders: FolderNode; targetLabel: string }> {
+async function getFolders(force = false): Promise<FoldersResult> {
   const settings = await getSettings();
   const info = await targetInfo(settings);
   if (!force && foldersCache && foldersCache.key === info.key && Date.now() - foldersCache.at < FOLDERS_CACHE_TTL) {
     return { folders: foldersCache.folders, targetLabel: info.label };
   }
-  const root = await fetchFolderList();
-  const folders = { ...root, children: sortByLastUse(root.children, await getUsage(info.key)) };
-  foldersCache = { key: info.key, folders, at: Date.now() };
-  return { folders, targetLabel: info.label };
+  if (!force && foldersPending?.key === info.key) {
+    return foldersPending.promise;
+  }
+  const promise = (async () => {
+    const root = await fetchFolderList();
+    const folders = { ...root, children: sortByLastUse(root.children, await getUsage(info.key)) };
+    foldersCache = { key: info.key, folders, at: Date.now() };
+    return { folders, targetLabel: info.label };
+  })();
+  if (force) {
+    return promise;
+  }
+  const pending = { key: info.key, promise };
+  foldersPending = pending;
+  try {
+    return await promise;
+  } finally {
+    if (foldersPending === pending) {
+      foldersPending = null;
+    }
+  }
 }
 
 export default defineBackground(() => {

@@ -69,6 +69,8 @@ function onDragStart(e: DragEvent) {
   startX = e.clientX;
   startY = e.clientY;
   dragging = true;
+  // 拖动开始即预取；跨过阈值后面板复用后台的同一请求。预取失败不弹通知，面板加载会展示错误
+  void browser.runtime.sendMessage({ type: GET_FOLDERS_MESSAGE }).catch(() => {});
   window.addEventListener('dragend', cleanup, true); // 落在面板之外也要收起
   window.addEventListener('keydown', onKeyDown, true);
 }
