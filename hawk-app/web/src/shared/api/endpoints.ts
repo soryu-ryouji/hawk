@@ -3,6 +3,8 @@ import { apiConfig, request, unlockQueryValue } from './client';
 import type { components } from './schema';
 import type {
   CategoryInfo,
+  DuplicateScanRequest,
+  DuplicateScanResponse,
   FolderNode,
   GlobalFilter,
   Item,
@@ -96,6 +98,8 @@ export const api = {
   /** 单条详情：同内容多位置时传 path 定位具体条目（缺省主位置） */
   itemDetail: (id: string, path?: string) => request<Item>('GET', '/api/v1/item/detail', { query: path ? { id, path } : { id } }),
   itemCount: () => request<number>('GET', '/api/v1/item/count'),
+  /** 重复图片分组扫描（admin）：相似 pHash / 相同内容多位置，分页按组返回 */
+  itemDuplicates: (params: DuplicateScanRequest) => request<DuplicateScanResponse>('POST', '/api/v1/item/duplicates', { body: params }),
   itemAddByPath: (path: string, opts?: { name?: string; folder_path?: string; tags?: string[]; skip_existing?: boolean }) =>
     request<{ item: Item; already_existed: boolean; skipped: boolean }>('POST', '/api/v1/item/add', {
       body: { path, name: opts?.name, folder_path: opts?.folder_path, tags: opts?.tags, skip_existing: opts?.skip_existing },

@@ -80,6 +80,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/core/pipeline/` | **核心**：索引流水线模块（单写者 actor），按职责拆分，详见下节：`mod.rs`（Job 枚举/提交表面/消费循环/超时）、`ctx.rs`（上下文 + JobSender 外部回流通道 + 进度快照）、`upsert.rs`（入库生命周期）、`fs_ops.rs`（删除/移动/回收站）、`scan.rs`（扫描 runner + 会话簿记 + 定向扫描）、`reconcile.rs`（元数据对账）、`derived.rs`（调色板/宽高回写） |
 | `src/core/content_hash.rs` | BLAKE3 流式哈希（1MB 缓冲），即 item id，元数据/缩略图命名依据 |
 | `src/core/perceptual_hash.rs` | 64 位 pHash：`image_hasher` DCT + Mean、稳定 Lanczos3；`PHASH_VERSION=1`；XOR 汉明距离。单元测试覆盖重复计算、缩放、JPEG 重压缩与不同画面 |
+| `src/core/duplicates.rs` | 重复分组：exact 检查同 item 多位置；similar 先按 bits 预分组，4×16bit 分带索引（≤10 保证不漏候选）+ 完整距离复核 + 并查集，>10 回退 BK-tree。分页稳定排序；与暴力分组对照测试及 100k 性能基准 |
 | `src/core/events.rs` | SSE 事件总线：tokio broadcast（容量 1024），订阅者消费跟不上（lagged）即由端点断开其订阅；`TaskProgress` 快照结构（task.progress 事件与 app/status 共用）；`folder.changed` 负载构造 |
 | `src/core/fs_util.rs` | 文件操作辅助：建父目录、回收站冲突追加 ` (n)` 后缀（恢复按实际名称放回）、名称合法性校验（禁分隔符/`.`/`..`/`.hawk`） |
 | `src/core/thumbnail.rs` | 图像服务：`identify`（只解码头取尺寸）、`detect_extension_bytes`（guess_format → 扩展名映射，item/add 类型推断用）、`is_probably_image`（只读头部 64B 内容喷探，非图像文件在解码派生前拦下；打不开时保守视为图像）、`generate`（固定 512/1024 两档，Max 等比缩小**不放大**、Lanczos3、有损 WebP q80、单次解码生成全部缺失档/force 强制重建、仅缺 512 时复用已有 1024 缓存解码、按内容寻址存库外缓存目录、非图像跳过）、`delete`（清理全部尺寸）。解码失败记 warn 并返回 false（读取端重试自愈） |
@@ -111,7 +112,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 
 ### api/item/ 详解
 
-- **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影。`similar_to` + `max_distance` 启用 pHash 过滤，`order_by=similarity` 按距离排序并投影 `similarity_distance`；源图锁与分析状态在 API 层校验
+- **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影。`similar_to` + `max_distance` 启用 pHash 过滤，`order_by=similarity` 按距离排序并投影 `similarity_distance`；源图锁与分析状态在 API 层校验。`item/duplicates`（admin）复用同一 pHash 候选做分组扫描，分页返回各位置的 Item 与差异值
 - **add**：`path`/`img_base64` 二选一取内容（入库策略前置校验：ignore 规则/扩展名白名单外的目标直接 4xx，不落盘）（base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`；图片的网络下载由浏览器插件完成后以 base64 提交，服务端不再自行下载——无代理无会话、TLS 指纹常被拒，能力是浏览器网络栈的子集）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（`spawn_blocking`，不阻塞运行时线程；path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
 - **upload**：multipart/form-data 内容入库（web 端用，浏览器无文件路径可引用）：`file`（文件名只取末段防跨目录，扩展名决定类型，与 path 导入同语义不校验内容）/`folder_path`/`name` → 与 add 相同的同名检查→哈希→落盘→upsert 闭环，响应同 add；写权限 viewer 需对应访问密钥 `write=true`（auth 中间件统一拦截）
 - **update**：经 `find_location` 取位置快照 → 回收站中的文件禁止改名/移动 → `name` 分支做真实 rename 并 `submit_move`；`folder_path` 分支**按移动后的最新位置再移动**（改名+移动同请求时基于新文件名计算目标）→ tags/star(0–5 校验)/categories/annotation/url 走 `submit_metadata` → 响应 `get_dto` 投影

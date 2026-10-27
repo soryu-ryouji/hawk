@@ -103,6 +103,47 @@ impl ItemIndex {
         })
     }
 
+    /// 重复扫描投影：只保留当前锁守卫可见的非回收站位置；同内容多位置与 pHash 候选共用
+    pub fn duplicate_items(
+        &self,
+        guard: &crate::core::locks::LockGuard,
+    ) -> Vec<crate::core::duplicates::DuplicateItem> {
+        let inner = read_inner!(self);
+        let mut items: Vec<crate::core::duplicates::DuplicateItem> = inner
+            .by_hash
+            .values()
+            .filter_map(|item| {
+                let locations: Vec<ItemLocation> = item
+                    .locations
+                    .iter()
+                    .filter(|location| {
+                        !location.in_trash()
+                            && guard.entry_visible(&location.path, &item.categories, &item.tags)
+                    })
+                    .cloned()
+                    .collect();
+                if locations.is_empty() {
+                    return None;
+                }
+                let phash = item
+                    .phash
+                    .as_ref()
+                    .filter(|hash| hash.version == crate::core::perceptual_hash::PHASH_VERSION)
+                    .and_then(|hash| hash.value);
+                if locations.len() == 1 && phash.is_none() {
+                    return None;
+                }
+                Some(crate::core::duplicates::DuplicateItem {
+                    id: item.id.clone(),
+                    phash,
+                    locations,
+                })
+            })
+            .collect();
+        items.sort_by(|a, b| a.id.cmp(&b.id));
+        items
+    }
+
     /// 内容感知哈希快照（相似度查询源图校验用）
     pub fn phash(&self, hash: &str) -> Option<crate::core::metadata::PerceptualHash> {
         read_inner!(self)

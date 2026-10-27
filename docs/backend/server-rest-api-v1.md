@@ -735,6 +735,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | ---- | -------------------------------- | -------------- |
 | POST | `/api/v1/item/list`              | 查询 item 列表 |
 | POST | `/api/v1/item/skeleton`          | 全量布局骨架（dim，不分页，与 list 同序） |
+| POST | `/api/v1/item/duplicates`        | 重复图片分组扫描（相似 pHash / 相同内容多位置，admin） |
 | POST | `/api/v1/item/aggregate`          | 选择集共有特性聚合：`{ ids }` → 标签/分类交集（多选面板数据源） |
 | GET  | `/api/v1/item/detail`            | 获取单个 item  |
 | GET  | `/api/v1/item/count`             | 获取 item 总数 |
@@ -849,6 +850,49 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 `total` / `total_size` 为过滤后未分页的全量计数与字节数合计（前端检查器「分区状态」用）。
 
 **排序稳定性**：主键同值（如相同 `modification_time`）时按 `id` 字典序打破平局，保证相同查询的次序逐位确定——前端「骨架 + 分页窗口」模型依赖这一点对齐。
+
+### duplicates
+
+`POST /api/v1/item/duplicates`（admin 限定）
+
+扫描并分组重复图片，供「设置 → 存储 → 重复图片」使用。只返回分组与位置信息，不执行删除。
+
+#### 请求
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| kind | string | 否 | `similar`（pHash 近重复，默认）/ `exact`（同 item 多库内位置） |
+| max_distance | number | 否 | 仅 similar：最大汉明距离 0–64，缺省 5 |
+| offset | number | 否 | 组偏移，默认 0 |
+| limit | number | 否 | 每组页大小，默认 50、最大 100 |
+
+#### 响应
+
+```json
+{
+  "status": "success",
+  "data": {
+    "groups": [
+      {
+        "id": "9b1f2c...",
+        "kind": "similar",
+        "entries": [
+          { "item": { "id": "9b1f2c...", "path": "posters/a.png", "width": 1920, "height": 1080, "size": 245760 }, "similarity_distance": 1 },
+          { "item": { "id": "71ab90...", "path": "posters/a-export.png", "width": 1920, "height": 1080, "size": 180120 }, "similarity_distance": 1 }
+        ]
+      }
+    ],
+    "total": 1,
+    "offset": 0,
+    "limit": 50
+  }
+}
+```
+
+- `total` 为分页前总组数，分页顺序稳定（组大小降序、组 id 升序）。
+- exact 组只包含当前用户可见、非回收站位置数大于 1 的 item；similar 组只包含不同 item 的近重复集合，组内各位置完整展开。
+- 锁过滤与其他查询一致；被锁定内容不会进入响应。
+- 前端逐项显示文件大小、像素和路径，按 `id + path` 选择并调用 `item/delete` 移入回收站，不进行整 item 删除。
 
 ### skeleton
 

@@ -6,6 +6,7 @@ import { computed, onMounted, ref } from 'vue';
 import { shell } from '@/shared/lib/platform';
 import { useLibraryStore } from '@/domains/library';
 import { cleanupIndex, setPeriodicRescan } from '@/domains/library';
+import DuplicateManager from './DuplicateManager.vue';
 
 const store = useLibraryStore();
 /** 当前连接是否 admin（远程浏览时隐藏库侧配置：只读 token 调管理端点只会 403） */
@@ -88,6 +89,8 @@ async function runCleanup() {
       <span class="field-label">缓存目录</span>
       <span class="cache-path">{{ current || '…' }}</span>
     </div>
+
+    <DuplicateManager v-if="isAdmin" />
 
     <div v-if="isAdmin" class="field column">
       <span class="field-label">索引体检</span>

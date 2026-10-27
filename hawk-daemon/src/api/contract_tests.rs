@@ -68,6 +68,11 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
         Some(r#"{"label":"契约密钥","read":true,"write":false}"#),
     ),
     ("GET", "/api/v1/item/count", None),
+    (
+        "POST",
+        "/api/v1/item/duplicates",
+        Some(r#"{"kind":"similar"}"#),
+    ),
     ("GET", "/api/v1/library/info", None),
     (
         "PATCH",
@@ -2176,6 +2181,136 @@ async fn similar_items_are_filtered_and_sorted_by_phash_distance() {
         .as_str()
         .unwrap()
         .contains("尚未完成"));
+}
+
+/// 重复扫描：同内容多位置、相似分组、锁过滤与分页稳定性。
+#[tokio::test]
+async fn duplicate_scan_groups_locations_and_similar_items() {
+    let app = test_app("duplicate-scan");
+    let source = app.add_test_item("source.png", [1, 1, 1]).await;
+    std::fs::copy(
+        app.library_root().join("source.png"),
+        app.library_root().join("source-copy.png"),
+    )
+    .unwrap();
+    app.lib()
+        .pipeline
+        .submit_upsert(
+            app.library_root()
+                .join("source-copy.png")
+                .to_string_lossy()
+                .to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+    let near = app.add_test_item("near.png", [2, 2, 2]).await;
+    let other = app.add_test_item("other.png", [3, 3, 3]).await;
+    let other_near = app.add_test_item("other-near.png", [4, 4, 4]).await;
+    let far = app.add_test_item("far.png", [5, 5, 5]).await;
+    let set_phash = |id: &str, value: u64| {
+        let mut meta = app.lib().store.try_get(id).unwrap();
+        meta.phash = Some(crate::core::metadata::PerceptualHash {
+            version: crate::core::perceptual_hash::PHASH_VERSION,
+            value: Some(value),
+        });
+        app.lib().store.save(id, &meta).unwrap();
+        app.lib()
+            .index
+            .with_item_mut(id, |item| item.sync_from(&meta));
+    };
+    set_phash(&source, 0);
+    set_phash(&near, 1);
+    set_phash(&other, 100);
+    set_phash(&other_near, 101);
+    set_phash(&far, u64::MAX);
+
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/duplicates",
+        Some(json!({"kind": "exact"})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let exact: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(exact["data"]["total"], json!(1));
+    let group = &exact["data"]["groups"][0];
+    assert_eq!(group["id"], json!(source));
+    assert_eq!(group["kind"], json!("exact"));
+    assert_eq!(group["entries"].as_array().unwrap().len(), 2);
+
+    let mut group_ids = Vec::new();
+    for offset in [0, 1] {
+        let (status, bytes) = call_json(
+            &app.router,
+            "POST",
+            "/api/v1/item/duplicates",
+            Some(json!({"kind": "similar", "max_distance": 1, "offset": offset, "limit": 1})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let page: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(page["data"]["total"], json!(2));
+        let groups = page["data"]["groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 1);
+        group_ids.push(groups[0]["id"].as_str().unwrap().to_string());
+    }
+    assert_ne!(group_ids[0], group_ids[1], "分页组顺序必须稳定且不重复");
+
+    // 源组被锁后：exact 组消失，另一相似组仍保留；锁定内容不进入响应
+    call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/update",
+        Some(json!({"id": source, "categories": ["私密"]})),
+    )
+    .await;
+    call_json(
+        &app.router,
+        "POST",
+        "/api/v1/lock/set",
+        Some(json!({"dimension": "category", "name": "私密", "password": "pw"})),
+    )
+    .await;
+    let (_, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/duplicates",
+        Some(json!({"kind": "exact"})),
+    )
+    .await;
+    let exact_locked: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(exact_locked["data"]["total"], json!(0));
+    let (_, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/item/duplicates",
+        Some(json!({"kind": "similar", "max_distance": 1})),
+    )
+    .await;
+    let similar_locked: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(similar_locked["data"]["total"], json!(1));
+    assert_eq!(
+        similar_locked["data"]["groups"][0]["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let locked_ids: Vec<&str> = similar_locked["data"]["groups"][0]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["item"]["id"].as_str().unwrap())
+        .collect();
+    assert!(locked_ids.contains(&other.as_str()));
+    assert!(locked_ids.contains(&other_near.as_str()));
 }
 
 /// 选择集聚合：common_taxonomy 交集语义 + batch_update 的 remove_tags/remove_categories 摘除

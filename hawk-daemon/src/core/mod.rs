@@ -4,6 +4,7 @@ pub mod color;
 pub mod color_math;
 pub mod config;
 pub mod content_hash;
+pub mod duplicates;
 pub mod events;
 pub mod fs_util;
 pub mod global_filter;

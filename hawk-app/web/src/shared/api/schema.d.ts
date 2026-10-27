@@ -558,6 +558,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/item/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重复图片分组扫描：分页按组切片，相同内容与相似图片共用响应结构 */
+        post: operations["item_duplicates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/item/file": {
         parameters: {
             query?: never;
@@ -1303,6 +1320,42 @@ export interface components {
         DeleteKeyDto: {
             synced: boolean;
         };
+        DuplicateEntryDto: {
+            item: components["schemas"]["ItemDto"];
+            /**
+             * Format: int32
+             * @description 与组内代表图的 pHash 汉明距离；exact 组不返回
+             */
+            similarity_distance?: number | null;
+        };
+        DuplicateGroupDto: {
+            entries: components["schemas"]["DuplicateEntryDto"][];
+            /** @description 稳定组标识：exact 为 item id，similar 为组内代表 item id */
+            id: string;
+            kind: string;
+        };
+        DuplicateScanRequest: {
+            /** @description similar（pHash 近重复）/ exact（同内容多位置） */
+            kind?: string;
+            /** Format: int32 */
+            limit?: number;
+            /**
+             * Format: int32
+             * @description 仅 similar：最大汉明距离（0–64，缺省 5）
+             */
+            max_distance?: number | null;
+            /** Format: int32 */
+            offset?: number;
+        };
+        DuplicateScanResponse: {
+            groups: components["schemas"]["DuplicateGroupDto"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            /** @description 过滤后的总组数（分页前） */
+            total: number;
+        };
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_ActiveSessionDto: {
             data?: {
@@ -1396,6 +1449,19 @@ export interface components {
         Envelope_DeleteKeyDto: {
             data?: {
                 synced: boolean;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_DuplicateScanResponse: {
+            data?: {
+                groups: components["schemas"]["DuplicateGroupDto"][];
+                /** Format: int32 */
+                limit: number;
+                /** Format: int32 */
+                offset: number;
+                /** @description 过滤后的总组数（分页前） */
+                total: number;
             };
             status: string;
         };
@@ -3323,6 +3389,44 @@ export interface operations {
                 };
             };
             /** @description 位置或内容位于未解锁的锁覆盖内（LOCKED） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    item_duplicates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateScanRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_DuplicateScanResponse"];
+                };
+            };
+            /** @description kind 或 max_distance 非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 仅 admin 可执行重复扫描 */
             403: {
                 headers: {
                     [name: string]: unknown;

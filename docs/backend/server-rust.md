@@ -11,7 +11,7 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
   CI（`ci.yml`）全部使用本实现
 - **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描 runner 线程：并行哈希+单次解码产出派生+结果回流消费循环穿插应用/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
-  调色板（median-cut）、pHash 近重复查找（DCT + Mean，64 位）、SQLite 元数据（schema v2，单一路线）
+  调色板（median-cut）、pHash 近重复查找与重复分组（DCT + Mean，64 位；分带索引 + BK-tree 回退）、SQLite 元数据（schema v2，单一路线）
 - **设计与实现要点**：
   - 宽高、调色板与 pHash 在入库/后台补算后持久化入 `.hawk/metadata.db`，重启直接注水，无需 TOML 回退
   - 调色板算法为 median-cut，同 hash 结果确定性一致（按占比降序、并列按 RGB 升序）
@@ -35,6 +35,7 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 | WebP 编码 | webp（libwebp） | 有损 q80；纯 Rust 的 image-webp 仅支持无损 |
 | 元数据存储 | rusqlite（bundled） | `.hawk/metadata.db` 唯一权威；schema v2 增量加入 pHash |
 | pHash | image_hasher | DCT 预处理 + Mean，64 位；稳定 Lanczos3 resize |
+| 重复分组 | 4×16bit 分带 + bktree | 默认阈值分带索引保证不漏候选；大阈值回退 BK-tree；并查集成组 |
 | TOML | toml / toml_edit | 仅配置与小型注册表，不存素材元数据 |
 
 ## 构建与运行

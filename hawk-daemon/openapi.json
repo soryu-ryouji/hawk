@@ -277,6 +277,105 @@
         ],
         "type": "object"
       },
+      "DuplicateEntryDto": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "similarity_distance": {
+            "description": "与组内代表图的 pHash 汉明距离；exact 组不返回",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "type": "object"
+      },
+      "DuplicateGroupDto": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/DuplicateEntryDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "description": "稳定组标识：exact 为 item id，similar 为组内代表 item id",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "DuplicateScanRequest": {
+        "properties": {
+          "kind": {
+            "description": "similar（pHash 近重复）/ exact（同内容多位置）",
+            "type": "string"
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "max_distance": {
+            "description": "仅 similar：最大汉明距离（0–64，缺省 5）",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "DuplicateScanResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/DuplicateGroupDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "description": "过滤后的总组数（分页前）",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "groups",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
       "Envelope_ActiveSessionDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -532,6 +631,48 @@
             },
             "required": [
               "synced"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_DuplicateScanResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "groups": {
+                "items": {
+                  "$ref": "#/components/schemas/DuplicateGroupDto"
+                },
+                "type": "array"
+              },
+              "limit": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "offset": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "total": {
+                "description": "过滤后的总组数（分页前）",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "groups",
+              "total",
+              "offset",
+              "limit"
             ],
             "type": "object"
           },
@@ -5449,6 +5590,43 @@
           }
         },
         "summary": "单 item 详情（锁内投影）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/duplicates": {
+      "post": {
+        "operationId": "item_duplicates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_DuplicateScanResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "description": "kind 或 max_distance 非法"
+          },
+          "403": {
+            "description": "仅 admin 可执行重复扫描"
+          }
+        },
+        "summary": "重复图片分组扫描：分页按组切片，相同内容与相似图片共用响应结构",
         "tags": [
           "item"
         ]

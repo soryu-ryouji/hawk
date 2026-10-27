@@ -1,8 +1,9 @@
-//! item 端点（14 个），按子域拆分文件，本文件聚合路由与公共辅助。
+//! item 端点（15 个），按子域拆分文件，本文件聚合路由与公共辅助。
 //! 写路径的真实文件操作在本层完成，随后提交索引流水线并等待完成；读取一律走索引锁内投影。
 
 mod add;
 mod delete;
+mod duplicates;
 mod file;
 mod query;
 mod replace;
@@ -34,6 +35,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(query::item_aggregate))
         .routes(routes!(query::item_detail))
         .routes(routes!(query::item_count))
+        .routes(routes!(duplicates::item_duplicates))
         .routes(routes!(add::item_add))
         .routes(routes!(upload::item_upload))
         .routes(routes!(update::item_update))
