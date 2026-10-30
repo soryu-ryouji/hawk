@@ -88,7 +88,7 @@ relay = false
 - 控制面（已实现）：设备注册/心跳/列表/更新/注销、WSS 控制通道、会话编排（直连候选组装、打洞编排、状态机）
 - 内嵌中继（可选组件）：iroh-relay 库形态（不另起进程），打洞协调 + 数据兜底；共享 token 准入（数据目录生成，经控制面下发），`--relay-url` 未配置即不提供
 - 中继（已实现，可选组件）：内嵌 iroh-relay（库形态），打洞协调 + 数据兜底；token 准入经控制面下发；端到端语义不变（只见密文）
-- **网页版宿主（已实现）**：服务端作为 B 侧（以「网页版」全局设备身份走既有协议发起会话、经长驻 iroh endpoint 拨号并终结隧道），任意浏览器经域名浏览素材库。浏览器令牌（bt）由两级登录换发（service-key → 门令牌 → hawk-app key → bt；bt 绑定唯一目标设备与 read/write 作用域，服务端只存哈希），查看面 API（`/api/v1/viewer/*`）+ 隧道代理 + 登录页；查看器前端产物不落服务端，`/app` 与 `/assets/*` 同样经隧道由目标设备 daemon 托管。部署见 [远程访问部署](remote-deployment.md)
+- **网页版宿主（已实现）**：服务端作为 B 侧（以「网页版」全局设备身份走既有协议发起会话、经长驻 iroh endpoint 拨号并终结隧道），任意浏览器经域名浏览素材库。浏览器令牌（bt）由两级登录换发（service-key → 门令牌 → hawk-app key → bt；bt 绑定唯一目标设备与 viewer/importer 角色，服务端只存哈希），查看面 API（`/api/v1/viewer/*`）+ 隧道代理 + 登录页；查看器前端产物不落服务端，`/app` 与 `/assets/*` 同样经隧道由目标设备 daemon 托管。部署见 [远程访问部署](remote-deployment.md)
 - 持久化：设备注册表/网页版身份/令牌 JSON 文件；部署：监听明文 HTTP（默认 9100），TLS/WSS 由前置反代终结
 
 ## 数据流：daemon 为何不需要理解「远程」语义
@@ -131,7 +131,7 @@ Connection {
 - 本地库：`api_base` 指向 daemon API 端口；远程库：指向 B 侧会话代理端口
 - 前端收到 `connection-changed` 后执行**统一的切换重置**：abort 进行中的请求与 SSE → 清空内存 store → `GET /app/info` → 按返回重新注水。该流程是启动注水的泛化，只写一次
 - **断线分级处理**：路径级抖动（NAT 重绑定、网络切换）由 iroh 路径迁移自治（不断连）；连接真正死亡时 B 侧原会话内重拨并热替换（前端无感）；重拨连续失败/对端离线才回切——主进程经 daemon SSE 的 remote 事件获知，自动把当前连接切回本地库再通知前端。用户看到的是无声回到自己的库，而非远程白屏报错
-- **无感的边界**：写能力降级与来源标识保留。桌面端远程浏览先争取写会话：目标开启「允许广域网保存素材」即得 `remote_writer`（**仅导入素材与新建文件夹**，其余写端点 403），否则自动降级只读；前端按 `app/info.access` 区分三态（`viewer` 只读 / `remote_writer` 仅导入 / admin 可读写），侧栏左上角库名按钮改为「库名 [远程]」（悬停提示为设备名与写能力；侧栏隐藏时为顶栏左组紧凑徽标；显式断开入口在库名下拉顶部）——这是安全与认知底线，不是可省略的区分逻辑。浏览器插件本地模式跟随当前连接（`GET /api/v1/app/connection` 拿会话代理地址与令牌），远端库可写时拖拽直接入库，与桌面端同一条会话通道
+- **无感的边界**：写能力降级与来源标识保留。桌面端远程浏览先争取写会话：目标开启「允许广域网保存素材」即得 `importer`（**仅导入素材与新建文件夹**，其余写端点 403），否则自动降级 viewer；前端按 `app/info.role` 区分三态（`viewer` 只读 / `importer` 仅导入 / admin 可读写），侧栏左上角库名按钮改为「库名 [远程]」（悬停提示为设备名与写能力；侧栏隐藏时为顶栏左组紧凑徽标；显式断开入口在库名下拉顶部）——这是安全与认知底线，不是可省略的区分逻辑。浏览器插件本地模式跟随当前连接（`GET /api/v1/app/connection` 拿会话代理地址与令牌），远端库可写时拖拽直接入库，与桌面端同一条会话通道
 
 ## 关键设计决策
 
@@ -231,7 +231,7 @@ hawk-server 内嵌 iroh-relay（库形态，不另起进程），准入为共享
 | `hawk-server/`             | 远程访问服务端（多租户：租户注册表 + key 映射 + 门令牌两步登录 + 风控；控制面 + 中继 + 查看面） |
 | `hawk-daemon/src/remote/`  | 模块：信令客户端 / iroh 数据面 / B 侧会话代理 / 访问密钥保管（keys.rs），supervisor reconcile 管理 |
 | `hawk-daemon` config       | 应用级 `remote.toml`（enabled/url/service_key/allow_import），保存即热生效（写开关不重启信令）；设备身份与 keys.json 同级 `remote/` |
-| `hawk-daemon` 鉴权中间件   | 进程内 viewer / remote_writer 权限标记（供隧道转发请求使用），无 remote 语义、无门控 |
+| `hawk-daemon` 鉴权中间件   | 进程内 AccessContext（viewer/importer + WAN 通道，供隧道转发请求使用） |
 | `hawk-daemon` API          | `/api/v1/remote/*` 状态端点 + 访问密钥管理端点 + SSE remote 会话生命周期事件 |
 | `hawk-app`（主进程 + 前端） | 远程 UI（接入配置/访问密钥管理/设备列表/会话流程）；连接描述符与 `connection-changed`；订阅 daemon SSE remote 事件驱动断线回切 |
 | `~/.config/hawk/remote/`   | 应用级设备身份目录（device_id、自签证书私钥）与访问密钥验证子（keys.json），不参与素材库同步 |

@@ -1,7 +1,7 @@
 //! 网页版宿主：hawk-server 作为 B 侧（协议中的查看方），任意浏览器经域名查看素材库；
 //! 写作用域令牌可供插件通过查看面代理导入素材（目标设备仍需开启广域网写入）。
 //! 隧道在服务器终结（素材明文过服务器，自托管单用户信任前提）；浏览器令牌（bt）与
-//! access_key / write_key 分离：登录换发 read/write 作用域令牌，服务端只存哈希与作用域。
+//! access_key 与 browser_token 分离：登录换发 viewer/importer 角色令牌，服务端只存哈希与角色。
 
 pub mod api;
 pub mod page;

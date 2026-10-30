@@ -188,7 +188,7 @@ function onDblClick(e: MouseEvent) {
 
       <!-- 远端标识：来源区分是安全与认知底线（不可省略）。常规布局落在侧栏库名按钮上
            （「库名 [远程/局域网]」，见 LibraryDropdown）；侧栏隐藏时由这条紧凑徽标兜住。
-           悬停提示带写能力：局域网写权限由目标 [web].writable 决定，广域网由 remote.writable 决定 -->
+           悬停提示带写能力：局域网写权限由目标 access key 的 role 决定，广域网导入由 remote.allow_import 决定 -->
       <span v-if="connection.isPeer.value && !store.sidebarVisible" class="remote-chip" :title="remoteChipTitle">
         <Icon name="globe" :size="12" />
         <span>{{ connection.isLan.value ? '局域网' : '远程' }}</span>

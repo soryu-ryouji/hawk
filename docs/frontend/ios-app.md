@@ -160,7 +160,7 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 现状（不改动即成立）：
 
 - 局域网 write token：可走 `item/update` 等全部写端点
-- 广域网：`hawk-daemon/src/api/mod.rs` 的 `is_remote_writer_allowed` 仅放行 `item/add`（禁 `path`）、`item/upload` 与 `folder/create`，其余写端点 403 `READ_ONLY`
+- 广域网：`hawk-daemon/src/api/access.rs` 的 WAN 通道仅允许 `Read` 与 `Import`：`item/add`（禁 `path`）、`item/upload` 与 `folder/create`，其余写端点 403 `READ_ONLY`
 
 决策：
 
@@ -237,7 +237,7 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 
 ## 待定项
 
-1. **AI 定位**：只做「查找增强」，还是要做「自动打标写回」——后者决定是否改 `remote_writer` 白名单
+1. **AI 定位**：只做「查找增强」，还是要做「自动打标写回」——后者决定是否调整 WAN importer 的端点能力
 2. **局域网自动发现**：是否值得给 daemon 加 mDNS（否则每次都靠扫码）
 3. **Android 共享层**（已解决）：Android M1 已独立实现，未引入 KMP；两端重复逻辑稳定后再评估
 

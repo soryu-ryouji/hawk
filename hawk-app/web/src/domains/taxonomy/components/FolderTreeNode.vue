@@ -119,7 +119,7 @@ function onContextMenu(e: MouseEvent) {
   if (store.viewerMode) {
     return;
   }
-  // 远端受限写（remote_writer）：只留新建子文件夹（folder/create 在远程写白名单内）；
+  // 远端 importer：只留新建子文件夹（folder/create 属于 Import）；
   // 重命名/删除/隐藏/重扫/刷新缓存/锁都是编辑类写，远程一律 403
   if (store.limitedWrite) {
     menu.open([{ label: '新建子文件夹', action: () => startEdit('create') }], e);

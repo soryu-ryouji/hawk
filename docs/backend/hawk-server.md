@@ -108,7 +108,7 @@ curl -X DELETE http://127.0.0.1:9110/api/v1/admin/tenants/t_xxxx
 | 访问密钥 `hawk-app key` | 查看者第二级验证（网页/插件登录）；逐把读/写权限，由目标 daemon 签发与吊销 | 登录请求体 |
 | 浏览器令牌 `bt` | 网页版/插件查看面（登录后的客户端） | `Authorization: Bearer <bt>` 或 `?token=`（SPA 的 img/SSE 场景）；静态子资源（`/assets/*`、`/icon.png`）用 `hawk_bt` cookie |
 
-`bt`（形如 `hb_...`）由两级登录换发：`POST /viewer/gate`（service-key → 门令牌，5 分钟、5 次尝试预算）→ `POST /viewer/login`（门令牌 + hawk-app key → bt）。bt 绑定唯一目标设备（key 映射决定）与作用域（read/write，write 含读），服务端只存 sha256 哈希。写令牌开写会话需目标设备 `allow_import`；**最终权限由目标 daemon 按本地 key 映射裁决**（会话请求携带 key 验证子，server 声称的权限不被采信）。
+`bt`（形如 `hb_...`）由两级登录换发：`POST /viewer/gate`（service-key → 门令牌，5 分钟、5 次尝试预算）→ `POST /viewer/login`（门令牌 + hawk-app key → bt）。bt 绑定唯一目标设备（key 映射决定）与角色（viewer/importer，importer 含读），服务端只存 sha256 哈希。写令牌开写会话需目标设备 `allow_import`；**最终权限由目标 daemon 按本地 key 映射裁决**（会话请求携带 key 验证子，server 声称的权限不被采信）。
 
 `hawk_bt` cookie（`Path=/; HttpOnly; SameSite=Strict`，30 天）在页面 URL 带 `?token=` 时下发，供查看器的 `<script>`/`<img>` 等无法设请求头的子资源使用。`/api/*` 不认 cookie，只接受显式令牌，避免 cookie 自动携带带来的 CSRF 面；反代声明 `X-Forwarded-Proto: https` 时 cookie 才带 `Secure`。
 

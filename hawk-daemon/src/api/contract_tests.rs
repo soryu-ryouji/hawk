@@ -2440,7 +2440,7 @@ async fn aggregate_and_batch_remove() {
 /// 广域网受限写：只放行导入（item/add base64、item/upload multipart，path 导入被 handler 拒）与
 /// folder/create，其余写端点 403；只读隧道流量保持 viewer 只读。
 #[tokio::test]
-async fn remote_writer_is_limited_to_import_and_folder_create() {
+async fn wan_importer_is_limited_to_import_and_folder_create() {
     let app = test_app("remote-writer");
     let mut remote = app.state.remote.remote_config().current();
     remote.allow_import = true;

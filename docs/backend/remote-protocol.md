@@ -14,7 +14,7 @@ service-key（池门禁）
 
 hawk-app key（逐 key 权限：读 / 写 / 读+写）
   └─ 查看者第二级：POST /viewer/login（门令牌 + key）换浏览器令牌 bt
-       bt 绑定唯一目标设备与作用域（read/write），查看面专用，不参与控制面鉴权
+       bt 绑定唯一目标设备与角色（viewer/importer），查看面专用，不参与控制面鉴权
 ```
 
 **存储与验证**：
