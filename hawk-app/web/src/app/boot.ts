@@ -3,7 +3,7 @@
 // 相位：starting（等 server 就绪）→ ready（主界面）；旁路 setup（未配置库）/ connect（token 门页）/
 // remote（远程查看模式：本地无库，配置/选设备）/ error。
 import { onMounted, onUnmounted, ref, watch } from 'vue';
-import { initApi, apiConfig, clearStoredToken, ApiError } from '@/shared/api/client';
+import { initApi, apiConfig, clearStoredCredential, ApiError } from '@/shared/api/client';
 import { api } from '@/shared/api/endpoints';
 import { connectEvents } from '@/shared/api/events';
 import { hasShell, shell } from '@/shared/lib/platform';
@@ -79,7 +79,7 @@ export function useBoot() {
     } catch (e) {
       if (e instanceof ApiError && e.code === 'UNAUTHORIZED') {
         // token 缺失/失效：清掉本地残留，进门页重新输入
-        clearStoredToken(apiConfig().api);
+        clearStoredCredential(apiConfig().api);
         phase.value = 'connect';
       } else {
         bootError.value = e instanceof Error ? e.message : String(e);
@@ -101,7 +101,7 @@ export function useBoot() {
       return;
     }
     if (message === 'UNAUTHORIZED') {
-      clearStoredToken(apiConfig().api);
+      clearStoredCredential(apiConfig().api);
       phase.value = 'connect';
     } else {
       bootError.value = message;

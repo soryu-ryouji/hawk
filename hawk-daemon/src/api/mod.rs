@@ -234,7 +234,7 @@ async fn cors(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::http::header;
-    let is_token_discovery = req.uri().path() == "/api/v1/app/token";
+    let is_token_discovery = req.uri().path() == "/api/v1/app/admin-token";
     // 预检短路：OPTIONS 不携带凭据、不执行任何操作，直接 204 + 放开头（跨源 dev 前端
     // （localhost:5173 → 127.0.0.1）带 Authorization 头的请求全靠预检放行；token 校验仍在真实请求上执行）
     if req.method() == axum::http::Method::OPTIONS && !is_token_discovery {
@@ -259,7 +259,7 @@ async fn cors(
 /// Token 鉴权：/api/* 请求必须携带 Authorization: Bearer <token>；
 /// SSE 端点（/api/v1/events）无法设置请求头，改用查询参数 ?token=。
 /// 双 token：admin（Electron 启动时生成，全权限）与 viewer（config.toml [web].token，只读）。
-/// 例外：GET /api/v1/app/token（token 发现端点）无鉴权，安全性见端点实现。
+/// 例外：GET /api/v1/app/admin-token（token 发现端点）无鉴权，安全性见端点实现。
 async fn auth(
     axum::extract::State(state): axum::extract::State<SharedState>,
     mut req: axum::extract::Request,
@@ -274,7 +274,7 @@ async fn auth(
         .get::<ListenerMode>()
         .copied()
         .unwrap_or(ListenerMode::Local);
-    if path == "/api/v1/app/token" && req.method() == axum::http::Method::GET {
+    if path == "/api/v1/app/admin-token" && req.method() == axum::http::Method::GET {
         return next.run(req).await;
     }
     // 局域网自动配对免 Bearer：源端创建请求、随后用随机 request_id 轮询目标端决策。
@@ -398,7 +398,7 @@ fn resolve_access(
     if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
         if let Ok(value) = auth.to_str() {
             if let Some(token) = value.strip_prefix("Bearer ") {
-                if token == state.settings.token {
+                if token == state.settings.admin_token {
                     return Some(ResolvedAccess {
                         level: AccessLevel::Admin,
                         peer_key_id: None,
@@ -426,7 +426,7 @@ fn resolve_access(
                 .find(|(k, _)| *k == "token")
                 .map(|(_, v)| v);
             if let Some(token) = token {
-                if token == state.settings.token {
+                if token == state.settings.admin_token {
                     return Some(ResolvedAccess {
                         level: AccessLevel::Admin,
                         peer_key_id: None,

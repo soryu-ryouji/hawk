@@ -104,7 +104,7 @@ class Server:
             args,
             stdout=self.stdout,
             stderr=subprocess.STDOUT,
-            env={**os.environ, "HAWK_TOKEN": self.token},
+            env={**os.environ, "HAWK_ADMIN_TOKEN": self.token},
         )
         t0 = time.perf_counter()
         while True:

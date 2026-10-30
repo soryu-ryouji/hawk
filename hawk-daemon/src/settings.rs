@@ -79,7 +79,7 @@ pub struct Settings {
     /// 本地素材库根目录；None = 远程查看模式（无本地库）
     pub library_root: Option<String>,
     pub port: u16,
-    pub token: String,
+    pub admin_token: String,
     /// 派生数据维护间隔（秒），0 关闭：周期补齐调色板、宽高与感知哈希
     pub maintenance_interval_seconds: u64,
     /// 全局缓存父目录（桌面端设置面板配置，主进程经 --cache-parent 传入）；None 用系统缓存目录
@@ -120,7 +120,7 @@ impl Settings {
         Settings {
             library_root,
             port: daemon.port,
-            token: access_token(),
+            admin_token: admin_token(),
             maintenance_interval_seconds: std::env::var("HAWK_MAINTENANCE_INTERVAL")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -133,8 +133,8 @@ impl Settings {
 }
 
 /// token 只存在于进程环境中；未传入时（开发场景）生成随机 token 并打印到 stdout
-fn access_token() -> String {
-    std::env::var("HAWK_TOKEN").ok().unwrap_or_else(|| {
+fn admin_token() -> String {
+    std::env::var("HAWK_ADMIN_TOKEN").ok().unwrap_or_else(|| {
         let mut bytes = [0u8; 32];
         getrandom::fill(&mut bytes).expect("生成随机 token 失败");
         let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();

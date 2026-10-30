@@ -12,6 +12,10 @@
           "session_id": {
             "type": "string"
           },
+          "session_token": {
+            "description": "会话代理临时凭证：web 查看器以 ?token= 携带",
+            "type": "string"
+          },
           "target_device_id": {
             "type": "string"
           },
@@ -19,10 +23,6 @@
             "type": "string"
           },
           "target_name": {
-            "type": "string"
-          },
-          "token": {
-            "description": "会话代理 token：web 查看器以 ?token= 携带",
             "type": "string"
           },
           "writable": {
@@ -36,8 +36,24 @@
           "target_name",
           "target_library_name",
           "proxy_port",
-          "token",
+          "session_token",
           "writable"
+        ],
+        "type": "object"
+      },
+      "AdminTokenResponse": {
+        "description": "admin token 发现端点响应（信封的 data 直接为 admin token 字符串）",
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "data"
         ],
         "type": "object"
       },
@@ -46,6 +62,13 @@
         "properties": {
           "api_base": {
             "description": "仅 remote 有值：会话代理地址（http://127.0.0.1:<port>）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "credential": {
+            "description": "仅 remote 有值：会话临时凭证",
             "type": [
               "string",
               "null"
@@ -66,13 +89,6 @@
           "mode": {
             "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
             "type": "string"
-          },
-          "token": {
-            "description": "仅 remote 有值：会话令牌",
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "writable": {
             "description": "当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）",
@@ -390,6 +406,10 @@
               "session_id": {
                 "type": "string"
               },
+              "session_token": {
+                "description": "会话代理临时凭证：web 查看器以 ?token= 携带",
+                "type": "string"
+              },
               "target_device_id": {
                 "type": "string"
               },
@@ -397,10 +417,6 @@
                 "type": "string"
               },
               "target_name": {
-                "type": "string"
-              },
-              "token": {
-                "description": "会话代理 token：web 查看器以 ?token= 携带",
                 "type": "string"
               },
               "writable": {
@@ -414,7 +430,7 @@
               "target_name",
               "target_library_name",
               "proxy_port",
-              "token",
+              "session_token",
               "writable"
             ],
             "type": "object"
@@ -441,6 +457,13 @@
                   "null"
                 ]
               },
+              "credential": {
+                "description": "仅 remote 有值：会话临时凭证",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "device_id": {
                 "type": [
                   "string",
@@ -456,13 +479,6 @@
               "mode": {
                 "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
                 "type": "string"
-              },
-              "token": {
-                "description": "仅 remote 有值：会话令牌",
-                "type": [
-                  "string",
-                  "null"
-                ]
               },
               "writable": {
                 "description": "当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）",
@@ -1572,6 +1588,10 @@
                   "session_id": {
                     "type": "string"
                   },
+                  "session_token": {
+                    "description": "会话代理临时凭证：web 查看器以 ?token= 携带",
+                    "type": "string"
+                  },
                   "target_device_id": {
                     "type": "string"
                   },
@@ -1579,10 +1599,6 @@
                     "type": "string"
                   },
                   "target_name": {
-                    "type": "string"
-                  },
-                  "token": {
-                    "description": "会话代理 token：web 查看器以 ?token= 携带",
                     "type": "string"
                   },
                   "writable": {
@@ -1596,7 +1612,7 @@
                   "target_name",
                   "target_library_name",
                   "proxy_port",
-                  "token",
+                  "session_token",
                   "writable"
                 ],
                 "type": "object"
@@ -4557,22 +4573,6 @@
         ],
         "type": "object"
       },
-      "TokenResponse": {
-        "description": "token 发现端点响应（信封的 data 直接为 token 字符串）",
-        "properties": {
-          "data": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status",
-          "data"
-        ],
-        "type": "object"
-      },
       "UnlockResponse": {
         "properties": {
           "unlock_token": {
@@ -4636,6 +4636,27 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/app/admin-token": {
+      "get": {
+        "operationId": "admin_token",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTokenResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Token 发现：浏览器插件零配置接入。\n安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；\nHost 限定环回地址（防 DNS rebinding 伪装同源读取）。\n注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——\nremote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）",
+        "tags": [
+          "app"
+        ]
+      }
+    },
     "/api/v1/app/connection": {
       "get": {
         "operationId": "connection",
@@ -5034,27 +5055,6 @@
           }
         },
         "summary": "后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照）",
-        "tags": [
-          "app"
-        ]
-      }
-    },
-    "/api/v1/app/token": {
-      "get": {
-        "operationId": "token",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenResponse"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "Token 发现：浏览器插件零配置接入。\n安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；\nHost 限定环回地址（防 DNS rebinding 伪装同源读取）。\n注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——\nremote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）",
         "tags": [
           "app"
         ]

@@ -35,7 +35,7 @@ Eagle 主窗口的关键特征：
 | 侧栏标签云/智能文件夹 | 采纳（标签列表） | Category 维度落地后侧栏含分类列表与标签列表（见 category.md，分类为扁平受控词表）；智能文件夹不做 |
 | 框选 | 不做 | 保留 Shift/Cmd 点选 |
 | 评分筛选、颜色标签 | 评分筛选做（筛选工具列），颜色标签不做 | API 支持 star 过滤；排序与评分筛选均不占顶栏大下拉——排序按钮弹二级菜单，评分收进筛选工具列（见布局章节） |
-| 浏览器扩展采集 | 已交付（hawk-browser-extension） | 独立 WXT 扩展，经 `GET /api/v1/app/token` 免配置接入；主界面不做导入入口，API 已就绪 |
+| 浏览器扩展采集 | 已交付（hawk-browser-extension） | 独立 WXT 扩展，经 `GET /api/v1/app/admin-token` 免配置接入；主界面不做导入入口，API 已就绪 |
 
 ## 进程模型与启动流程
 
@@ -58,7 +58,7 @@ Electron 主进程启动
   → 首帧渲染完成后 ready-to-show 才 show 窗口（GPU 驱动不认可 backgroundColor、合成器首帧延迟时
     提前 show 会把空白/白窗暴露给用户）
   → spawn hawk-daemon（开发：hawk-daemon/target 下的 Rust 构建产物；打包：process.resourcesPath 内二进制）
-      环境变量传入 HAWK_TOKEN；本地库执行 local <path>，无库远程查看执行 remote；
+      环境变量传入 HAWK_ADMIN_TOKEN；本地库执行 local <path>，无库远程查看执行 remote；
       共同参数 --port <配置端口> --web-dist <web/dist> --remote-config ~/.config/hawk/remote.toml
       （应用级远程配置的身份目录为 ~/.config/hawk/remote/）
       （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录；
@@ -650,7 +650,7 @@ npm run test:mobile # 移动端网页冒烟测试（见下）
 
 关键依赖：`vue@3`、`pinia`、`@vueuse/core`、`vite`、`@vitejs/plugin-vue`、`vue-tsc`、`electron`、`electron-builder`、`openapi-typescript`。
 
-纯前端调试（不启 Electron）：`VITE_HAWK_API=http://127.0.0.1:27371 VITE_HAWK_TOKEN=<token> npm run dev:web`，hash 无参数时回退读这两个环境变量。
+纯前端调试（不启 Electron）：`VITE_HAWK_API=http://127.0.0.1:27371 VITE_HAWK_ADMIN_TOKEN=<token> npm run dev:web`，hash 无参数时回退读这两个环境变量。
 
 自检手段：`HAWK_SCREENSHOT=<路径>` 环境变量启动时，主进程在页面加载完成后截图落盘，供无头验证渲染结果。
 

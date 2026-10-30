@@ -6,7 +6,7 @@ import type { LanPeer } from '@/shared/types';
 
 const shellMock = vi.hoisted(() => ({
   lanPair: vi.fn((_input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }) =>
-    Promise.resolve({ api_base: 'http://192.168.1.2:27375', token: 't', label: '目标', remote: true, kind: 'lan', peer_id: 'peer' }),
+    Promise.resolve({ api_base: 'http://192.168.1.2:27375', credential: 't', label: '目标', remote: true, kind: 'lan', peer_id: 'peer' }),
   ),
   lanPeers: vi.fn(() => Promise.resolve({ peers: [] })),
 }));

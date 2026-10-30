@@ -20,7 +20,7 @@ fn occupied_port_exits_with_port_in_use() {
             "--remote-config",
             dir.path().join("remote.toml").to_str().unwrap(),
         ])
-        .env("HAWK_TOKEN", "port-test-token")
+        .env("HAWK_ADMIN_TOKEN", "port-test-token")
         .output()
         .expect("拉起 hawk-daemon");
 
@@ -49,7 +49,7 @@ fn free_port_does_not_fail_binding() {
             "--remote-config",
             dir.path().join("remote.toml").to_str().unwrap(),
         ])
-        .env("HAWK_TOKEN", "port-test-token")
+        .env("HAWK_ADMIN_TOKEN", "port-test-token")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()

@@ -89,17 +89,18 @@ export function useStartup() {
     // 故挂载时同时经 remoteGetConnection 拉取——同连接只 boot 一次。
     // 远程切换（connection-changed）与断线回切走同一条重配路径：连接描述符即「一个 api base + 一个 token」
     let bootedKey: string | null = null;
-    const onConn = (conn: { address?: string; api_base?: string; token: string }) => {
+    const onConn = (conn: { address?: string; api_base?: string; admin_token?: string; credential?: string }) => {
       const api = conn.api_base ?? conn.address;
-      if (!api) {
+      const credential = conn.credential ?? conn.admin_token;
+      if (!api || !credential) {
         return;
       }
-      const key = `${api}|${conn.token}`;
+      const key = `${api}|${credential}`;
       if (bootedKey === key) {
         return;
       }
       bootedKey = key;
-      configureApi({ api, token: conn.token });
+      configureApi({ api, credential });
       readyCount.value++;
     };
     shell.onServerStarted(onConn);

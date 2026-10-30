@@ -51,7 +51,7 @@ open(os.path.join(lib, '海报', 'cat.png'), 'wb').write(png(2, 4, (0, 255, 0)))
 open(os.path.join(lib, '海报', 'logo.png'), 'wb').write(png_gray_noise(800, 800))
 PYEOF
 
-HAWK_TOKEN=$TOKEN "${SERVER[@]}" local "$LIB" --port $PORT >"$WORK/server.log" 2>&1 &
+HAWK_ADMIN_TOKEN=$TOKEN "${SERVER[@]}" local "$LIB" --port $PORT >"$WORK/server.log" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
@@ -341,7 +341,7 @@ check "缩略图已清理" "$(ls "$CACHE/thumbnails/512/$LOGO_ID.webp" >/dev/nul
 
 # --- 重启验证：哈希复用（mtime 不变不重算）且元数据保持 ---
 kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true
-HAWK_TOKEN=$TOKEN "${SERVER[@]}" local "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
+HAWK_ADMIN_TOKEN=$TOKEN "${SERVER[@]}" local "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 60); do curl -sf "$BASE/health" >/dev/null 2>&1 && break; sleep 0.5; done
 DETAIL2=$(curl -s -H "$AUTH" "$BASE/api/v1/item/detail?id=$DOT_ID")
@@ -374,7 +374,7 @@ check "refresh_cache 缺 value 400" "$(post_json "$BASE/api/v1/library/refresh_c
 # 自愈三路（周期维护 / item·list 读取端 / refresh_cache）任一收敛即闭环：宽高恢复且回写 SQLite
 kill $PID 2>/dev/null || true; wait $PID 2>/dev/null || true
 db_query "UPDATE items SET width=0, height=0 WHERE hash='$SUNSET_ID'" >/dev/null
-HAWK_TOKEN=$TOKEN "${SERVER[@]}" local "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
+HAWK_ADMIN_TOKEN=$TOKEN "${SERVER[@]}" local "$LIB" --port $PORT >>"$WORK/server.log" 2>&1 &
 PID=$!
 for _ in $(seq 1 60); do curl -sf -H "$AUTH" "$BASE/api/v1/app/status" >/dev/null 2>&1 && break; sleep 0.5; done
 W=0

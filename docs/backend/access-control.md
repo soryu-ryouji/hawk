@@ -114,7 +114,7 @@ access.require(Capability::Import)?;
 
 ### admin token 发现
 
-`GET /api/v1/app/admin-token` 替代 `/app/token`，响应字段为 `admin_token`。仍仅用于本机扩展零配置发现：Host 限定环回、响应不带 CORS、WAN 隧道拒绝转发。
+`GET /api/v1/app/admin-token` 替代 `/app/token`，响应信封的 `data` 直接为 admin token 字符串。仍仅用于本机扩展零配置发现：Host 限定环回、响应不带 CORS、WAN 隧道拒绝转发。
 
 ### 连接描述符
 

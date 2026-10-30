@@ -4,6 +4,29 @@
  */
 
 export interface paths {
+    "/api/v1/app/admin-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Token 发现：浏览器插件零配置接入。
+         *     安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；
+         *     Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
+         *     注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
+         *     remote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）
+         */
+        get: operations["admin_token"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/connection": {
         parameters: {
             query?: never;
@@ -209,29 +232,6 @@ export interface paths {
         };
         /** 后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照） */
         get: operations["status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/app/token": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Token 发现：浏览器插件零配置接入。
-         *     安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；
-         *     Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
-         *     注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
-         *     remote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）
-         */
-        get: operations["token"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1231,16 +1231,21 @@ export interface components {
              */
             proxy_port: number;
             session_id: string;
+            /** @description 会话代理临时凭证：web 查看器以 ?token= 携带 */
+            session_token: string;
             target_device_id: string;
             target_library_name: string;
             target_name: string;
-            /** @description 会话代理 token：web 查看器以 ?token= 携带 */
-            token: string;
             /**
              * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
              *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
              */
             writable: boolean;
+        };
+        /** @description admin token 发现端点响应（信封的 data 直接为 admin token 字符串） */
+        AdminTokenResponse: {
+            data: string;
+            status: string;
         };
         /**
          * @description 当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。
@@ -1249,12 +1254,12 @@ export interface components {
         AppConnectionDto: {
             /** @description 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>） */
             api_base?: string | null;
+            /** @description 仅 remote 有值：会话临时凭证 */
+            credential?: string | null;
             device_id?: string | null;
             label?: string | null;
             /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
             mode: string;
-            /** @description 仅 remote 有值：会话令牌 */
-            token?: string | null;
             /** @description 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限） */
             writable: boolean;
         };
@@ -1365,11 +1370,11 @@ export interface components {
                  */
                 proxy_port: number;
                 session_id: string;
+                /** @description 会话代理临时凭证：web 查看器以 ?token= 携带 */
+                session_token: string;
                 target_device_id: string;
                 target_library_name: string;
                 target_name: string;
-                /** @description 会话代理 token：web 查看器以 ?token= 携带 */
-                token: string;
                 /**
                  * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
                  *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
@@ -1387,12 +1392,12 @@ export interface components {
             data?: {
                 /** @description 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>） */
                 api_base?: string | null;
+                /** @description 仅 remote 有值：会话临时凭证 */
+                credential?: string | null;
                 device_id?: string | null;
                 label?: string | null;
                 /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
                 mode: string;
-                /** @description 仅 remote 有值：会话令牌 */
-                token?: string | null;
                 /** @description 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限） */
                 writable: boolean;
             };
@@ -1720,11 +1725,11 @@ export interface components {
                  */
                 proxy_port: number;
                 session_id: string;
+                /** @description 会话代理临时凭证：web 查看器以 ?token= 携带 */
+                session_token: string;
                 target_device_id: string;
                 target_library_name: string;
                 target_name: string;
-                /** @description 会话代理 token：web 查看器以 ?token= 携带 */
-                token: string;
                 /**
                  * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
                  *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
@@ -2585,11 +2590,6 @@ export interface components {
             count: number;
             name: string;
         };
-        /** @description token 发现端点响应（信封的 data 直接为 token 字符串） */
-        TokenResponse: {
-            data: string;
-            status: string;
-        };
         UnlockResponse: {
             /**
              * @description 解锁票据：后续请求经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带（img/SSE 通道）；
@@ -2615,6 +2615,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    admin_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminTokenResponse"];
+                };
+            };
+        };
+    };
     connection: {
         parameters: {
             query?: never;
@@ -2943,26 +2963,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_TaskStatus"];
-                };
-            };
-        };
-    };
-    token: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TokenResponse"];
                 };
             };
         };

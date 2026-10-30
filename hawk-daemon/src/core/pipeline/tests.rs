@@ -76,7 +76,7 @@ impl Rig {
         let settings = Settings {
             library_root: Some(root_str),
             port: 0,
-            token: "test".to_string(),
+            admin_token: "test".to_string(),
             maintenance_interval_seconds: 0, // 关闭周期派生维护：测试只断言显式驱动的行为
             cache_parent: None,
             web_dist: None,

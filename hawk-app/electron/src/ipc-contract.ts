@@ -114,7 +114,7 @@ export type UpdateProgress = { phase: 'downloading'; received: number; total: nu
 /** server 就绪事件负载（冷启动/换库/应用设置重启都会到达，restart 会换端口） */
 export interface ServerConn {
   address: string;
-  token: string;
+  admin_token: string;
 }
 
 /** 端口被占用的错误码（daemon 退出码 4 / stderr PORT_IN_USE，见 hawk-daemon/src/bootstrap.rs） */
@@ -138,10 +138,10 @@ export interface ApiPortInfo {
 /** 连接形态：local=本机库；remote=经 hawk-server 的广域网远端；lan=局域网直连的另一台 hawk-app */
 export type ConnectionKind = 'local' | 'remote' | 'lan';
 
-/** 连接描述符：前端唯一面对的连接语义（api_base + token + 展示名），本地库/远端库同构 */
+/** 连接描述符：前端唯一面对的连接语义（api_base + credential + 展示名），本地库/远端库同构 */
 export interface ConnectionDescriptor {
   api_base: string;
-  token: string;
+  credential: string;
   /** 「我的库」| 远端设备名 */
   label: string;
   /** 非本机连接（remote/lan）；保留布尔字段给既有展示逻辑，细分来源用 kind */
@@ -243,7 +243,7 @@ export interface RemoteSessionDto {
   target_name: string;
   target_library_name: string;
   proxy_port: number;
-  token: string;
+  session_token: string;
 }
 
 /** 访问密钥条目（daemon /remote/keys 单条；不含明文——明文只在签发响应出现一次） */

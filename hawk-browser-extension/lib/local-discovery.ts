@@ -3,7 +3,7 @@
 // 契约跨仓库：hawk-app/electron/src/app-config.ts 的 API_PORT_RANGE（app 填入段外端口时，
 // 用户需在本插件的高级选项里指定端口，覆盖端口优先于自动发现）。
 //
-// 探活打的是 `GET /api/v1/app/token`：免鉴权、响应不带 CORS 头（跨源网页 JS 读不到，持
+// 探活打的是 `GET /api/v1/app/admin-token`：免鉴权、响应不带 CORS 头（跨源网页 JS 读不到，持
 // host_permissions 的扩展可读），本就是为生态客户端零配置接入设计的端点。
 const PORT_RANGE: readonly [number, number] = [27371, 27400];
 /** 命中结果缓存时长：app 重启/换端口后最迟这么久自动跟上（401 路径会立即作废缓存） */
@@ -41,7 +41,7 @@ export async function discoverLocalBase(overridePort?: number): Promise<string> 
 /** 探活：能应答 token 发现端点即认定该端口是 hawk-daemon */
 async function probe(base: string): Promise<boolean> {
   try {
-    const res = await fetch(`${base}/api/v1/app/token`, { signal: AbortSignal.timeout(500) });
+    const res = await fetch(`${base}/api/v1/app/admin-token`, { signal: AbortSignal.timeout(500) });
     if (!res.ok) {
       return false;
     }

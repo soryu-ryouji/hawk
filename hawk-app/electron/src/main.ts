@@ -36,7 +36,7 @@ app.whenReady().then(async () => {
     // 远程查看模式记忆：无库 daemon 直接拉起（无本地素材目录）
     try {
       const server = await startRemoteViewer();
-      loadMainPage({ address: server.address, token: server.token });
+      loadMainPage({ address: server.address, admin_token: server.admin_token });
     } catch (error) {
       dialog.showErrorBox('hawk-daemon 启动失败', String(error));
       app.quit();
@@ -52,7 +52,7 @@ app.whenReady().then(async () => {
   // 窗口内容单页生命周期，无 loading→主界面二次导航，杜绝切换白屏
   try {
     const server = await openLibraryAt(libPath);
-    loadMainPage({ address: server.address, token: server.token });
+    loadMainPage({ address: server.address, admin_token: server.admin_token });
   } catch (error) {
     dialog.showErrorBox('hawk-daemon 启动失败', String(error));
     app.quit();

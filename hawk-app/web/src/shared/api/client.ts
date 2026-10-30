@@ -6,7 +6,7 @@ import { loadText, removeKey, saveText, STORAGE_KEYS } from '@/shared/lib/persis
 
 interface ApiConfig {
   api: string;
-  token: string;
+  credential: string;
 }
 
 let config: ApiConfig | null = null;
@@ -33,28 +33,28 @@ export function initApi(): ApiConfig | null {
     return null;
   }
   // token 优先级：hash（Electron 注入）> ?token= 查询参数 > 本地存储（按 api 地址隔离，记住上次验证通过的 token）
-  const token = hash.get('token') || search.get('token') || loadText(tokenStorageKey(api)) || '';
-  config = { api, token };
+  const credential = hash.get('token') || search.get('token') || loadText(credentialStorageKey(api)) || '';
+  config = { api, credential };
   return config;
 }
 
 /** token 在 localStorage 的存储键：按 api host 隔离，多素材库/多服务端互不覆盖 */
-export function tokenStorageKey(api: string): string {
-  return STORAGE_KEYS.token(new URL(api).host);
+export function credentialStorageKey(api: string): string {
+  return STORAGE_KEYS.credential(new URL(api).host);
 }
 
 /** 记住验证通过的 token（局域网查看器下次免输入直连） */
-export function storeToken(api: string, token: string): void {
-  saveText(tokenStorageKey(api), token);
+export function storeCredential(api: string, credential: string): void {
+  saveText(credentialStorageKey(api), credential);
 }
 
-export function clearStoredToken(api: string): void {
-  removeKey(tokenStorageKey(api));
+export function clearStoredCredential(api: string): void {
+  removeKey(credentialStorageKey(api));
 }
 
-/** 更新当前连接 token（ConnectScreen 验证通过后注入） */
-export function setApiToken(token: string): void {
-  apiConfig().token = token;
+/** 更新当前连接凭证（ConnectScreen 验证通过后注入） */
+export function setApiCredential(credential: string): void {
+  apiConfig().credential = credential;
 }
 
 // ---- 文件夹/分类/标签锁的解锁票据（内存态；daemon 重启即失效，重新输密码即可） ----
@@ -98,7 +98,7 @@ export function unlockQueryValue(): string | null {
 
 /** server 重启后整体更换连接（主进程经 hawk:server-started 推送新地址/token）；
  *  票据是 daemon 内存态，重启即失效 → 同步清空 */
-export function configureApi(next: { api: string; token: string }): void {
+export function configureApi(next: { api: string; credential: string }): void {
   config = { ...next };
   clearUnlockTickets();
 }
@@ -112,7 +112,7 @@ export function apiConfig(): ApiConfig {
 
 /** 统一请求：信封解包，status==='error' 或 HTTP 非 2xx 时抛 ApiError */
 export async function request<T>(method: string, path: string, opts?: { body?: unknown; query?: Record<string, string> }): Promise<T> {
-  const { api, token } = apiConfig();
+  const { api, credential } = apiConfig();
   const url = new URL(api + path);
   for (const [key, value] of Object.entries(opts?.query ?? {})) {
     url.searchParams.set(key, value);
@@ -125,7 +125,7 @@ export async function request<T>(method: string, path: string, opts?: { body?: u
     res = await fetch(url, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${credential}`,
         ...(unlockHeaderValue() ? { 'X-Hawk-Unlock': unlockHeaderValue()! } : {}),
         ...(opts?.body !== undefined && !raw ? { 'Content-Type': 'application/json' } : {}),
       },

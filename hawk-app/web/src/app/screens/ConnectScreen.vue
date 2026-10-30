@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // 局域网 web 查看的连接门页：浏览器直连 hawk-daemon 时无 Electron 注入的 token，
-// 先输入访问 token，验证通过后经 client.storeToken 记住（localStorage 按 api host 隔离），
+// 先输入访问 token，验证通过后经 client.storeCredential 记住（localStorage 按 api host 隔离），
 // 之后访问同一地址自动免输入直连。
 import { ref } from 'vue';
-import { apiConfig, setApiToken, storeToken, ApiError } from '@/shared/api/client';
+import { apiConfig, setApiCredential, storeCredential, ApiError } from '@/shared/api/client';
 import { api } from '@/shared/api/endpoints';
 
 const emit = defineEmits<{ connect: [] }>();
@@ -20,9 +20,9 @@ async function submit() {
   busy.value = true;
   error.value = null;
   try {
-    setApiToken(value);
+    setApiCredential(value);
     await api.appInfo(); // 验证 token（无效则 401 UNAUTHORIZED）
-    storeToken(apiConfig().api, value);
+    storeCredential(apiConfig().api, value);
     emit('connect');
   } catch (e) {
     if (e instanceof ApiError && e.code === 'UNAUTHORIZED') {

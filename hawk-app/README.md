@@ -9,7 +9,7 @@ npm install            # 首次（electron 二进制镜像已配在 .npmrc）
 cargo build --release --manifest-path ../hawk-daemon/Cargo.toml   # 后端二进制（Electron 开发态直接运行它）
 npm run gen:types      # 从 hawk-daemon 的 OpenAPI schema 生成 TS 类型（web/src/shared/api/schema.d.ts）
 npm run dev            # vite + electron 一键起（server 由 electron 拉起）
-npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_TOKEN 可纯浏览器调试
+npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_ADMIN_TOKEN 可纯浏览器调试
 npm run build          # vue-tsc --noEmit（web）+ tsc --noEmit（electron）+ vite build
 npm run test:unit      # Vitest 单测（web/src/**/*.spec.ts：纯函数/决策逻辑 + 组件渲染）
 npm run hooks:install  # 手动启用版本化 Git hooks（npm install / npm ci 已自动执行）

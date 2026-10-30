@@ -31,7 +31,7 @@ fs.rmSync(tmp, { recursive: true, force: true });
 fs.mkdirSync(lib, { recursive: true });
 
 const server = spawn(bin, ['local', lib, '--port', String(port)], {
-  env: { ...process.env, HAWK_TOKEN: 'gen-types' },
+  env: { ...process.env, HAWK_ADMIN_TOKEN: 'gen-types' },
   stdio: 'ignore',
 });
 

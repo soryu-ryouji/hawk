@@ -16,8 +16,8 @@ hawk 浏览器图片收集插件：右键或拖拽网页图片，保存到 hawk 
 ### 本地模式
 
 - 直连本机 hawk-daemon，`Authorization: Bearer <token>` 鉴权，接口见 [server-rest-api-v1.md](../docs/backend/server-rest-api-v1.md)
-- **端口自动发现**：hawk app 的本地 API 端口默认 27371，被占用时在 `27371–27400` 段内换一个（app 启动屏会询问用户，不会静默改端口）；插件按同一段顺序探活免鉴权的 `GET /api/v1/app/token` 找到实际端口，结果缓存 60 秒，app 重启后 401 会立即重新探活。契约在 `hawk-app/electron/src/app-config.ts` 的 `API_PORT_RANGE`
-- 本机 daemon 的 token 每次启动随机生成；插件通过 `GET /api/v1/app/token` 自动发现（该端点仅环回地址可读），「高级选项」里的 Token 仅作手动覆盖
+- **端口自动发现**：hawk app 的本地 API 端口默认 27371，被占用时在 `27371–27400` 段内换一个（app 启动屏会询问用户，不会静默改端口）；插件按同一段顺序探活免鉴权的 `GET /api/v1/app/admin-token` 找到实际端口，结果缓存 60 秒，app 重启后 401 会立即重新探活。契约在 `hawk-app/electron/src/app-config.ts` 的 `API_PORT_RANGE`
+- 本机 daemon 的 token 每次启动随机生成；插件通过 `GET /api/v1/app/admin-token` 自动发现（该端点仅环回地址可读），「高级选项」里的 Token 仅作手动覆盖
 - 目标解析：每次保存前查 `GET /api/v1/app/connection`——`local` 存本地库；`remote` 表示本机 hawk 正在浏览远端库，按返回的会话代理地址 + 令牌直发（与 app 渲染进程同一条隧道）；`none` 提示「本地 hawk 未连接任何素材库」
 - 远端库能否写入取决于目标设备的「允许广域网保存素材」（本机以同租户设备身份拿到写会话）；只读时提示保存失败原因，不静默丢图
 - 请求一律从 background 发起（`host_permissions` 覆盖本机地址与任意 http(s) 图片源，不受页面 CORS 限制）
@@ -89,7 +89,7 @@ entrypoints/
   popup/           # 工具栏弹窗（本地/远程设置、素材库选择、连接状态）
 lib/
   api.ts           # 本地 daemon / hawk-server 远程客户端（Envelope 解包、令牌、会话）
-  local-discovery.ts # 本地模式端口自动发现（27371–27400 探活 /api/v1/app/token，手填端口优先）
+  local-discovery.ts # 本地模式端口自动发现（27371–27400 探活 /api/v1/app/admin-token，手填端口优先）
   settings.ts      # 插件设置（browser.storage.local）
   notify.ts        # 系统通知
 public/icons/      # 扩展图标（透明底、鸟形放大；tools/gen-extension-icons.py 从 hawk-app/build/icon.png 生成）

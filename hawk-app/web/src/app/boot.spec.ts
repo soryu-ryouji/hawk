@@ -12,7 +12,7 @@ const env = vi.hoisted(() => ({
   restartCb: null as null | (() => void),
   errorCb: null as null | ((e: { message: string; code?: string; port?: number }) => void),
   pullError: null as null | { message: string; code?: string; port?: number },
-  clearStoredToken: vi.fn(),
+  clearStoredCredential: vi.fn(),
   connectEvents: vi.fn(() => vi.fn()),
 }));
 
@@ -20,9 +20,9 @@ vi.mock('@/shared/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/shared/api/client')>();
   return {
     ...actual,
-    initApi: () => (env.initOk ? { api: 'http://127.0.0.1:1', token: 't' } : null),
-    apiConfig: () => ({ api: 'http://127.0.0.1:1', token: 't' }),
-    clearStoredToken: env.clearStoredToken,
+    initApi: () => (env.initOk ? { api: 'http://127.0.0.1:1', credential: 't' } : null),
+    apiConfig: () => ({ api: 'http://127.0.0.1:1', credential: 't' }),
+    clearStoredCredential: env.clearStoredCredential,
   };
 });
 
@@ -96,7 +96,7 @@ beforeEach(() => {
   env.restartCb = null;
   env.errorCb = null;
   env.pullError = null;
-  env.clearStoredToken.mockClear();
+  env.clearStoredCredential.mockClear();
   env.connectEvents.mockClear();
   for (const fn of Object.values(apiMocks)) fn.mockClear();
   apiMocks.startupStatus.mockImplementation(() => Promise.resolve({ status: 'ready' as const }));
@@ -126,7 +126,7 @@ describe('启动相位机', () => {
     await boot.runBoot();
 
     expect(boot.phase.value).toBe('connect');
-    expect(env.clearStoredToken).toHaveBeenCalledWith('http://127.0.0.1:1');
+    expect(env.clearStoredCredential).toHaveBeenCalledWith('http://127.0.0.1:1');
   });
 
   it('端口被占用（推送）：错误屏带 code/port，供启动屏显示换端口界面', async () => {

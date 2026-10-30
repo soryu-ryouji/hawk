@@ -34,7 +34,7 @@ let sseAbort: AbortController | null = null;
 /** 本地库描述符（label 恒为「我的库」） */
 function localDescriptor(): ConnectionDescriptor | null {
   const conn = getStartedConn();
-  return conn ? { api_base: conn.address, token: conn.token, label: '我的库', remote: false, kind: 'local' } : null;
+  return conn ? { api_base: conn.address, credential: conn.admin_token, label: '我的库', remote: false, kind: 'local' } : null;
 }
 
 /** 当前活动连接描述符：远程/局域网直连优先，其次本地库 */
@@ -68,7 +68,7 @@ export function onServerReady(): void {
   if (!conn) {
     return;
   }
-  sseAbort = watchRemoteSessionEvents(conn.address, conn.token);
+  sseAbort = watchRemoteSessionEvents(conn.address, conn.admin_token);
 }
 
 /** server 停止/换库：远程会话随之消亡，回切本地并废弃 SSE */
@@ -88,7 +88,7 @@ async function daemonCall<T>(method: string, path: string, body?: unknown): Prom
   const res = await fetch(`${conn.address}${path}`, {
     method,
     headers: {
-      Authorization: `Bearer ${conn.token}`,
+      Authorization: `Bearer ${conn.admin_token}`,
       'Content-Type': 'application/json',
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -163,7 +163,7 @@ export async function remoteConnect(targetDeviceId: string): Promise<ConnectionD
   setLanTarget(null);
   remoteConn = {
     api_base: `http://127.0.0.1:${session.proxy_port}`,
-    token: session.token,
+    credential: session.session_token,
     label: session.target_name,
     remote: true,
     kind: 'remote',
@@ -470,7 +470,7 @@ async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
   upsertLanPeer({ ...profile, last_connected_at_ms: Date.now() });
   lanConn = {
     api_base: profile.url,
-    token: profile.token,
+    credential: profile.token,
     label: `${profile.name}（${profile.library_name}）`,
     remote: true,
     kind: 'lan',

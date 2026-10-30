@@ -65,8 +65,8 @@ pub struct ActiveSessionDto {
     pub target_library_name: String,
     /// 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
     pub proxy_port: u16,
-    /// 会话代理 token：web 查看器以 ?token= 携带
-    pub token: String,
+    /// 会话代理临时凭证：web 查看器以 ?token= 携带
+    pub session_token: String,
     /// 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
     /// 只读会话的代理拒绝写请求，app 的写入口依此隐藏
     pub writable: bool,
@@ -196,12 +196,12 @@ impl SessionManager {
             .local_addr()
             .map_err(|e| ConnectError::server(format!("会话代理地址获取失败: {e}")))?
             .port();
-        let token = random_token();
+        let session_token = random_session_token();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let conn_cell = Arc::new(RwLock::new(conn));
         let ctx = Arc::new(ProxyContext {
             conn: conn_cell.clone(),
-            token: token.clone(),
+            session_token: session_token.clone(),
             session_id: session_id.clone(),
             writable,
         });
@@ -218,7 +218,7 @@ impl SessionManager {
             target_name,
             target_library_name,
             proxy_port,
-            token,
+            session_token,
             writable,
         };
 
@@ -598,7 +598,7 @@ async fn server_message(resp: reqwest::Response) -> String {
         .unwrap_or_else(|| format!("服务端返回 {status}"))
 }
 
-fn random_token() -> String {
+fn random_session_token() -> String {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("系统随机源可用");
     bytes.iter().map(|b| format!("{b:02x}")).collect()

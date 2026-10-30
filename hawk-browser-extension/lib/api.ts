@@ -1,7 +1,7 @@
 // hawk 服务端 REST 客户端：本地直连 daemon / 经 hawk-server 域名两套连接方式。
 // 请求一律从 background 发起（配合 host_permissions，不受页面 CORS 限制）。
 //
-// 本地模式：Bearer token 自动发现（GET /api/v1/app/token 仅环回地址可读）。
+// 本地模式：Bearer token 自动发现（GET /api/v1/app/admin-token 仅环回地址可读）。
 // 远程模式：两级验证——service-key（池门禁）换门令牌，门令牌 + hawk-app key（须带写权限）
 // 换写作用域令牌（bt 绑定唯一目标素材库），之后的素材请求经查看面代理转发到目标 daemon。
 import { getSettings, saveSettings, type HawkSettings } from './settings';
@@ -115,7 +115,7 @@ async function discoverToken(serverUrl: string): Promise<string> {
     return discovered.token;
   }
   try {
-    const token = await call<string>(serverUrl, '/api/v1/app/token', { method: 'GET' });
+    const token = await call<string>(serverUrl, '/api/v1/app/admin-token', { method: 'GET' });
     discovered = { serverUrl, token, at: Date.now() };
     return token;
   } catch (e) {
@@ -139,7 +139,7 @@ export interface ResolvedTarget {
 interface AppConnection {
   mode: 'local' | 'remote' | 'none';
   api_base?: string;
-  token?: string;
+  credential?: string;
   device_id?: string;
   label?: string;
   writable: boolean;
@@ -160,11 +160,11 @@ export async function resolveLocalTarget(): Promise<ResolvedTarget> {
     method: 'GET',
     token: adminToken,
   });
-  if (conn.mode === 'remote' && conn.api_base && conn.token) {
+  if (conn.mode === 'remote' && conn.api_base && conn.credential) {
     return {
       kind: 'remote',
       base: conn.api_base,
-      token: conn.token,
+      token: conn.credential,
       writable: conn.writable,
       label: conn.label ?? '',
     };

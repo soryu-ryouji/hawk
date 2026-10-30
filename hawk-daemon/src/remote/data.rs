@@ -356,7 +356,7 @@ async fn serve_http(
         let registry = registry.clone();
         async move {
             // 隧道端拒绝转发 token 发现端点（协议安全模型：免鉴权返回主 token，只服务本机扩展）
-            if req.uri().path() == "/api/v1/app/token" {
+            if req.uri().path() == "/api/v1/app/admin-token" {
                 return Ok::<_, Infallible>(tunnel_response(StatusCode::NOT_FOUND));
             }
             let session_id = req
@@ -396,7 +396,7 @@ async fn serve_http(
 pub struct ProxyContext {
     /// 当前隧道连接（连接级重建会热替换；与 SessionManager 共享单元格）
     pub conn: Arc<std::sync::RwLock<iroh::endpoint::Connection>>,
-    pub token: String,
+    pub session_token: String,
     /// 隧道会话 id：每个转发请求带上，A 侧据此判定读写权限
     pub session_id: String,
     /// 会话是否可写：只读会话在代理侧直接拦写请求（目标侧仍会二次执法，这里省一次隧道往返）
@@ -416,7 +416,7 @@ async fn proxy_handler(
     State(ctx): State<Arc<ProxyContext>>,
     req: axum::extract::Request,
 ) -> Result<axum::response::Response, StatusCode> {
-    if !token_valid(&req, &ctx.token) {
+    if !credential_valid(&req, &ctx.session_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     // 只读会话的纵深防御：与本地库验证同一套只读白名单（GET + 查询类 POST）
@@ -463,14 +463,14 @@ async fn proxy_handler(
 }
 
 /// 会话 token 校验：Bearer 头或查询参数（events/thumbnail/file 等 EventSource、<img> 场景）
-fn token_valid(req: &axum::extract::Request, token: &str) -> bool {
+fn credential_valid(req: &axum::extract::Request, credential: &str) -> bool {
     let bearer = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
     if let Some(value) = bearer {
-        return value == token;
+        return value == credential;
     }
     req.uri()
         .query()
@@ -480,7 +480,7 @@ fn token_valid(req: &axum::extract::Request, token: &str) -> bool {
                 .find(|(k, _)| *k == "token")
                 .map(|(_, v)| v)
         })
-        .is_some_and(|value| value == token)
+        .is_some_and(|value| value == credential)
 }
 
 /// Windows 防火墙入站规则（首次启用隧道监听时添加，幂等）：无规则时入站 UDP 会被静默丢弃。

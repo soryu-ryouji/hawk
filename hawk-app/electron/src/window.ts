@@ -35,7 +35,7 @@ export function showMainWindow(): void {
 }
 
 export function loadMainPage(conn?: ServerConn): void {
-  const hash = conn ? `api=${encodeURIComponent(conn.address)}&token=${conn.token}` : '';
+  const hash = conn ? `api=${encodeURIComponent(conn.address)}&token=${conn.admin_token}` : '';
   if (isDev) {
     mainWindow?.loadURL(`http://localhost:5173/${hash ? `#${hash}` : ''}`);
   } else {

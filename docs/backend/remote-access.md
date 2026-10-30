@@ -212,7 +212,7 @@ hawk-server 内嵌 iroh-relay（库形态，不另起进程），准入为共享
 | 控制面   | HTTPS/WSS（TLS 由前置反代终结）；service-key 程序生成 256-bit 随机（`tenant add`），服务端只存 HMAC-SHA256(pepper, key)，恒定时间比较；key 一律走 Authorization 头，不进 URL（防反代日志泄露） |
 | 凭证风控 | gate/login/控制面鉴权失败按来源 IP 计（10min/30 次 → 冷却 15min）；login 另按租户计（20 次 → 池冷却 15min 起指数增长封顶 24h，成功清零）；门令牌 5min TTL + 5 次尝试预算 |
 | 数据面   | iroh（QUIC/noq + TLS 1.3）端到端加密，endpoint_id 即公钥经控制面交换、握手认证；服务端接触不到素材内容（直连不过服务端，中继只见密文） |
-| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与对端身份（endpoint_id）匹配的会话标识，且目标 `remote.writable=true`（查看者会话另需 key 带写权限）。`GET /api/v1/app/token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
+| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与对端身份（endpoint_id）匹配的会话标识，且目标 `remote.writable=true`（查看者会话另需 key 带写权限）。`GET /api/v1/app/admin-token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
 | 本地防护 | B 侧会话代理：每次会话随机 token、响应无 CORS、环回监听 |
 | 凭据存储 | 接入配置（url + service_key）存应用级 `~/.config/hawk/remote.toml`（与壳偏好 `config.toml` 分开，daemon 权威写入；明文，权限 0600）；设备身份（device_id、自签证书私钥）存同级 `remote/identity.json`、访问密钥验证子存同级 `remote/keys.json`（均 0600）。浏览器插件的 service-key 与访问密钥存 `browser.storage.local`，与本地 daemon token 同级 |
 | 网页版   | **隧道在服务器终结**：素材明文过服务器（自托管信任前提，与「中继只见密文」刻意不同的取舍）。浏览器令牌 bt 随机换发、服务端存 sha256 哈希与授权（作用域 + 绑定设备 + 凭证）、可随时注销；service-key 与 hawk-app key 都只出现在登录请求体（服务端只见 service-key 与 key 的哈希输入，key 明文以哈希落盘验证后即弃） |

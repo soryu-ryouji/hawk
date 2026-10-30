@@ -50,10 +50,10 @@ cargo test                     # 单元测试（纯函数）+ 流水线行为测
 
 ```bash
 # 本地素材库
-HAWK_TOKEN=<token> hawk-daemon local <素材库路径> --port 27371 [--web-dist <dir>]
+HAWK_ADMIN_TOKEN=<token> hawk-daemon local <素材库路径> --port 27371 [--web-dist <dir>]
 
 # 无本地库，仅查看远程素材库
-HAWK_TOKEN=<token> hawk-daemon remote --remote-config <remote.toml 路径> --port 27371
+HAWK_ADMIN_TOKEN=<token> hawk-daemon remote --remote-config <remote.toml 路径> --port 27371
 ```
 
 `--port` 严格绑定（被占用即以退出码 4 + `PORT_IN_USE <port>` 退出，不自动换端口）；`--port 0`

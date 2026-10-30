@@ -1,5 +1,5 @@
-//! app 端点：health / startup / status / info / token。
-//! App 端点：启动握手、积压快照、token 发现的 Host 环回约束。
+//! app 端点：health / startup / status / info / admin-token。
+//! App 端点：启动握手、积压快照、admin token 发现的 Host 环回约束。
 
 use crate::api::envelope::{ApiError, Envelope};
 use crate::api::{require_admin, AccessLevel, SharedState};
@@ -16,7 +16,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(status))
         .routes(routes!(info))
         .routes(routes!(connection))
-        .routes(routes!(token))
+        .routes(routes!(admin_token))
 }
 
 /// 就绪探活：无需 token。初始索引完成前返回 503
@@ -259,14 +259,14 @@ async fn info(
 /// remote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）
 #[utoipa::path(
     get,
-    path = "/api/v1/app/token",
+    path = "/api/v1/app/admin-token",
     tags = ["app"],
-    responses((status = 200, description = "OK", body = TokenResponse))
+    responses((status = 200, description = "OK", body = AdminTokenResponse))
 )]
-async fn token(
+async fn admin_token(
     State(state): State<SharedState>,
     req: axum::extract::Request,
-) -> Result<Json<TokenResponse>, ApiError> {
+) -> Result<Json<AdminTokenResponse>, ApiError> {
     // HTTP/1.1 请求行是 origin-form（无 authority），Host 以 Host 头为准
     let host = req
         .headers()
@@ -286,15 +286,15 @@ async fn token(
             "token discovery requires loopback host",
         ));
     }
-    Ok(Json(TokenResponse {
+    Ok(Json(AdminTokenResponse {
         status: "success",
-        data: state.settings.token.clone(),
+        data: state.settings.admin_token.clone(),
     }))
 }
 
-/// token 发现端点响应（信封的 data 直接为 token 字符串）
+/// admin token 发现端点响应（信封的 data 直接为 admin token 字符串）
 #[derive(Serialize, utoipa::ToSchema)]
-struct TokenResponse {
+struct AdminTokenResponse {
     status: &'static str,
     data: String,
 }
@@ -308,9 +308,9 @@ struct AppConnectionDto {
     /// 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>）
     #[serde(skip_serializing_if = "Option::is_none")]
     api_base: Option<String>,
-    /// 仅 remote 有值：会话令牌
+    /// 仅 remote 有值：会话临时凭证
     #[serde(skip_serializing_if = "Option::is_none")]
-    token: Option<String>,
+    credential: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -340,7 +340,7 @@ async fn connection(
         return Ok(Json(Envelope::ok(AppConnectionDto {
             mode: "remote",
             api_base: Some(format!("http://127.0.0.1:{}", session.proxy_port)),
-            token: Some(session.token),
+            credential: Some(session.session_token),
             device_id: Some(session.target_device_id),
             label: Some(label),
             writable: session.writable,
@@ -350,7 +350,7 @@ async fn connection(
     Ok(Json(Envelope::ok(AppConnectionDto {
         mode: if has_library { "local" } else { "none" },
         api_base: None,
-        token: None,
+        credential: None,
         device_id: None,
         label: None,
         writable: has_library,

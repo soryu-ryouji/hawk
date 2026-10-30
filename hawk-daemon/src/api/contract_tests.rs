@@ -44,7 +44,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("GET", "/api/v1/app/lan", None),
     ("GET", "/api/v1/app/startup", None),
     ("GET", "/api/v1/app/status", None),
-    ("GET", "/api/v1/app/token", None),
+    ("GET", "/api/v1/app/admin-token", None),
     ("GET", "/api/v1/category/list", None),
     ("GET", "/api/v1/folder/list", None),
     ("GET", "/api/v1/global_filter/list", None),
@@ -215,7 +215,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
     let settings = Settings {
         library_root: Some(root_str),
         port: 0,
-        token: TOKEN.to_string(),
+        admin_token: TOKEN.to_string(),
         maintenance_interval_seconds: 0, // 关闭周期派生维护：测试只断言显式驱动的行为
         cache_parent: None,
         web_dist: None,
@@ -868,7 +868,7 @@ async fn app_connection_reports_none_without_library() {
         settings: Settings {
             library_root: None,
             port: 0,
-            token: TOKEN.to_string(),
+            admin_token: TOKEN.to_string(),
             maintenance_interval_seconds: 0,
             cache_parent: None,
             web_dist: None,

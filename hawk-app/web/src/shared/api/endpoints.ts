@@ -165,16 +165,16 @@ export const api = {
 
   /** 缩略图 URL：<img> 无法带请求头，token/unlock 走查询参数（后端已放行该端点） */
   thumbnailUrl(id: string, size?: ThumbnailSize): string {
-    const { api: base, token } = apiConfig();
+    const { api: base, credential } = apiConfig();
     const unlock = unlockQueryValue();
     const sizeQuery = size ? `&size=${size}` : '';
-    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}${sizeQuery}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
+    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(credential)}${sizeQuery}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
   },
 
   /** 原图 URL：预览浮层用；token/unlock 同样走查询参数 */
   fileUrl(id: string): string {
-    const { api: base, token } = apiConfig();
+    const { api: base, credential } = apiConfig();
     const unlock = unlockQueryValue();
-    return `${base}/api/v1/item/file?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
+    return `${base}/api/v1/item/file?id=${encodeURIComponent(id)}&token=${encodeURIComponent(credential)}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
   },
 };

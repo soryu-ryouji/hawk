@@ -20,7 +20,7 @@ const PORT_IN_USE_EXIT_CODE = 4;
 export interface ServerHandle {
   child: ChildProcess;
   address: string;
-  token: string;
+  admin_token: string;
   markStopped(): void;
 }
 
@@ -154,10 +154,10 @@ async function notifyReady(): Promise<void> {
  * 拉起 hawk-daemon：监听端口、初始索引后台构建（正规 HTTP 握手，无 stdout 私有协议）。
  * libPath 为 null 即远程查看模式（daemon 无库形态：仅远程管理面与会话代理可用）。
  * 页面已先行加载并显示应用内启动屏，此处不再等待就绪——进度/就绪/错误经 IPC 事件推送：
- *   hawk:server-progress（starting 阶段进度）→ hawk:server-started（就绪，含地址与 token）→ hawk:server-error（失败原因）。
+ *   hawk:server-progress（starting 阶段进度）→ hawk:server-started（就绪，含地址与 admin_token）→ hawk:server-error（失败原因）。
  * spawn 失败、异常退出（stopServer 除外）、停滞 120s 超时就 hawk:server-error。
  */
-function startServer(libPath: string | null, address: string, token: string): ServerHandle {
+function startServer(libPath: string | null, address: string, admin_token: string): ServerHandle {
   lastFailure = null; // 新的一次拉起：清掉上一轮失败（页面挂载时的拉取兜底不应看到旧错）
   const { command, args } = resolveServerCommand();
   // 全局缓存父目录（设置面板「存储」配置；未配置用系统默认）
@@ -179,7 +179,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
   // 新 server 的拉起，全局标志会被新一轮复位，造成误报异常退出
   let intentionalExit = false;
   const child = spawn(command, spawnArgs, {
-    env: { ...process.env, HAWK_TOKEN: token },
+    env: { ...process.env, HAWK_ADMIN_TOKEN: admin_token },
     stdio: ['ignore', 'pipe', 'pipe'], // stdout 落日志文件（tracing info 级是远程排障主力），stderr 报错
     // GUI 进程拉起控制台子进程：不隐藏会在 Windows 上弹出黑窗口
     windowsHide: true,
@@ -241,7 +241,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
   poll = setInterval(async () => {
     try {
       const res = await fetch(`${address}/api/v1/app/startup`, {
-        headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: `Bearer ${admin_token}` },
       });
       if (!res.ok) {
         return; // 服务已监听但未到可查询状态，继续轮询
@@ -262,7 +262,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
       clearInterval(watchdog);
       if (state.status === 'ready') {
         lastFailure = null;
-        startedConn = { address, token };
+        startedConn = { address, admin_token };
         // remote SSE 订阅重建（remote.session 断线回切依赖；见 remote.ts）
         onServerReady();
         void notifyReady();
@@ -281,7 +281,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
     }
   }, 1000);
 
-  return { child, address, token, markStopped: () => (intentionalExit = true) };
+  return { child, address, admin_token, markStopped: () => (intentionalExit = true) };
 }
 
 export function stopServer(): void {
@@ -310,7 +310,7 @@ export async function pickLibrary(): Promise<string | null> {
   return result.canceled ? null : result.filePaths[0];
 }
 
-async function switchLibrary(libPath: string, address: string, token: string): Promise<ServerHandle> {
+async function switchLibrary(libPath: string, address: string, admin_token: string): Promise<ServerHandle> {
   // 前端立刻切启动屏：旧 server 已停、新 server 未 ready 的窗口期，
   // 主界面所有 API 已失效（假死），不能在 ready 后才切（hawk:server-restarting）
   getMainWindow()?.webContents.send(IPC.serverRestarting);
@@ -320,26 +320,26 @@ async function switchLibrary(libPath: string, address: string, token: string): P
   const history = [libPath, ...(readConfig().libraryHistory ?? []).filter((p) => p !== libPath)].slice(0, 10);
   writeConfig({ libraryPath: libPath, libraryHistory: history, remoteViewer: false });
   setLibraryRoot(libPath);
-  return startServer(libPath, address, token);
+  return startServer(libPath, address, admin_token);
 }
 
-/** 拉起指定素材库的 server（选新目录/历史库/冷启动共用）：端口取自用户配置，token 即选即生成 */
+/** 拉起指定素材库的 server（选新目录/历史库/冷启动共用）：端口取自用户配置，admin_token 即选即生成 */
 export async function openLibraryAt(libPath: string): Promise<ServerHandle> {
-  const token = crypto.randomBytes(32).toString('hex');
-  server = await switchLibrary(libPath, apiAddress(), token);
+  const admin_token = crypto.randomBytes(32).toString('hex');
+  server = await switchLibrary(libPath, apiAddress(), admin_token);
   return server;
 }
 
 /** 远程查看模式：拉起无库 daemon（仅远程管理面与会话代理），不创建任何本地目录。
  *  就绪后前端进远程查看屏（配置服务端/选设备）；冷启动模式记忆为 remoteViewer */
 export async function startRemoteViewer(): Promise<ServerHandle> {
-  const token = crypto.randomBytes(32).toString('hex');
+  const admin_token = crypto.randomBytes(32).toString('hex');
   getMainWindow()?.webContents.send(IPC.serverRestarting);
   startedConn = null;
   stopServer();
   writeConfig({ remoteViewer: true });
   setLibraryRoot(null);
-  server = startServer(null, apiAddress(), token);
+  server = startServer(null, apiAddress(), admin_token);
   return server;
 }
 

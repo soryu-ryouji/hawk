@@ -323,7 +323,7 @@ hawk-server 内嵌 [iroh-relay](https://docs.rs/iroh-relay)（库形态，不另
 - A 侧按会话权限转发到本机 API：
   - 只读会话：viewer 级，仅 GET 与查询类 POST
   - 写会话：`access=write` 且请求时 `remote.writable=true`，且来源合法（查看者会话 = key 带写权限；app 间会话 = 同租户设备）；仅放行 GET、查询类 POST、`POST /api/v1/item/add`（禁止 `path`）、`POST /api/v1/item/upload` 与 `POST /api/v1/folder/create`，其余写端点 403
-- **隧道端必须拒绝转发 `GET /api/v1/app/token`（直接返回 404）**。该端点免鉴权返回主 token（完全读写权限），仅服务于本机浏览器插件的零配置发现（插件直连环回，不经隧道）；远程查看方不需要它——B 侧已持有代理会话 token
+- **隧道端必须拒绝转发 `GET /api/v1/app/admin-token`（直接返回 404）**。该端点免鉴权返回主 token（完全读写权限），仅服务于本机浏览器插件的零配置发现（插件直连环回，不经隧道）；远程查看方不需要它——B 侧已持有代理会话 token
 - B 侧本地代理：监听环回随机端口，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口由客户端会话建立时分配，会话 token 由 B 侧生成，web 查看器 URL 由客户端拼装，不经过服务端
 - 同一设备身份可同时承载多个查看会话（例如 hawk-server 的网页版与插件）：A 侧按会话放行，连接与会话绑定，取消一个会话只关闭该会话的连接与请求
 - 隧道端口：iroh endpoint 绑定 UDP 27373（可配置；双栈监听）；本地端口由客户端在会话建立时分配

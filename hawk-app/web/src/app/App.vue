@@ -2,7 +2,7 @@
 // 装配根组件：相位分发（启动/引导/门页/错误 ↔ 主界面）与布局模板。
 // 启动状态机在 app/boot.ts，面板拖拽在 app/panelResize.ts，本组件只做接线与胶水。
 import { ref, watch } from 'vue';
-import { apiConfig, clearStoredToken } from '@/shared/api/client';
+import { apiConfig, clearStoredCredential } from '@/shared/api/client';
 import { useLibraryStore, FilterBar, ItemGrid, Inspector } from '@/domains/library';
 import { useImporterStore } from '@/domains/import';
 import { usePreviewStore } from '@/domains/preview';
@@ -73,7 +73,7 @@ function quitApp() {
 
 /** web 端注销 token：清除本浏览器记忆的局域网 token，回门页重新输入（切换只读/可写身份用） */
 function logoutToken() {
-  clearStoredToken(apiConfig().api);
+  clearStoredCredential(apiConfig().api);
   showSettings.value = false;
   phase.value = 'connect';
 }

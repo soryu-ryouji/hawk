@@ -39,7 +39,7 @@ const shellMock = vi.hoisted(() => ({
   remoteConnect: vi.fn((_id: string) =>
     env.connectError
       ? Promise.reject(new Error(env.connectError))
-      : Promise.resolve({ api_base: 'http://127.0.0.1:1', token: 's', label: _id, remote: true, kind: 'remote' }),
+      : Promise.resolve({ api_base: 'http://127.0.0.1:1', credential: 's', label: _id, remote: true, kind: 'remote' }),
   ),
   remoteDisconnect: vi.fn(() => Promise.resolve(null)),
   remotePatchDevice: vi.fn(() => Promise.resolve({})),
@@ -238,7 +238,7 @@ it('refreshKeys 不依赖 dto 就绪/启用状态（密钥本地持久保管；�
 describe('useConnectionLabel', () => {
   it('init 应用当前连接并响应变更', async () => {
     setActivePinia(createPinia());
-    env.connection = { api_base: 'http://127.0.0.1:1', token: 't', label: '我的库', remote: false, kind: 'local' };
+    env.connection = { api_base: 'http://127.0.0.1:1', credential: 't', label: '我的库', remote: false, kind: 'local' };
     initConnectionLabel();
     await Promise.resolve();
     const { label, isRemote } = useConnectionLabel();
@@ -246,7 +246,7 @@ describe('useConnectionLabel', () => {
     expect(isRemote.value).toBe(false);
 
     // 主进程推送切换到远程
-    const remote: ConnectionDescriptor = { api_base: 'http://127.0.0.1:2', token: 's', label: '台式机', remote: true, kind: 'remote' };
+    const remote: ConnectionDescriptor = { api_base: 'http://127.0.0.1:2', credential: 's', label: '台式机', remote: true, kind: 'remote' };
     for (const cb of env.connCbs) {
       cb(remote);
     }

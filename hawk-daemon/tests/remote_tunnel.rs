@@ -35,7 +35,7 @@ async fn test_manager(
 }
 
 /// 测试路由：/hello 校验 TunneledPeer 标记与写权限（进程内受托语义）；
-/// /api/v1/app/token 若被隧道放行则返回 200（测试断言它被隧道端 404 拦截、永远到不了路由）
+/// /api/v1/app/admin-token 若被隧道放行则返回 200（测试断言它被隧道端 404 拦截、永远到不了路由）
 fn test_router() -> Router {
     Router::new()
         .route(
@@ -78,7 +78,7 @@ fn test_proxy_ctx(
 ) -> Arc<ProxyContext> {
     Arc::new(ProxyContext {
         conn: Arc::new(std::sync::RwLock::new(conn)),
-        token: token.to_string(),
+        session_token: token.to_string(),
         session_id: session_id.to_string(),
         writable,
     })
@@ -160,7 +160,7 @@ async fn tunnel_carries_http_with_viewer_marker() {
     // 隧道端拦截 token 发现端点（协议安全模型）
     let resp = client
         .get(format!(
-            "http://127.0.0.1:{proxy_port}/api/v1/app/token?token=session-token"
+            "http://127.0.0.1:{proxy_port}/api/v1/app/admin-token?token=session-token"
         ))
         .send()
         .await;
@@ -521,7 +521,7 @@ async fn session_orchestration_end_to_end() {
     // 经会话代理访问 A 的素材服务
     let resp = http
         .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
-        .bearer_auth(&dto.token)
+        .bearer_auth(&dto.session_token)
         .send()
         .await
         .unwrap();
@@ -565,7 +565,7 @@ async fn session_rebuilds_in_place_when_connection_dies() {
     loop {
         let resp = http
             .get(format!("http://127.0.0.1:{}/hello", dto.proxy_port))
-            .bearer_auth(&dto.token)
+            .bearer_auth(&dto.session_token)
             .send()
             .await;
         if resp.is_ok_and(|r| r.status() == 200) {
