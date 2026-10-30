@@ -2,7 +2,7 @@
 //! 只返回分组和位置信息；删除仍走 item/delete?id+path，避免整 item 误删。
 
 use super::*;
-use crate::api::{require_admin, AccessLevel};
+use crate::api::{require_manage, AccessContext};
 use crate::core::duplicates::{exact_groups, similar_groups, DuplicateGroup as CoreGroup};
 use crate::core::locks::LockGuard;
 use axum::extract::Extension;
@@ -68,11 +68,11 @@ pub(crate) struct DuplicateScanResponse {
 )]
 pub(crate) async fn item_duplicates(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Extension(guard): Extension<LockGuard>,
     JsonBody(req): JsonBody<DuplicateScanRequest>,
 ) -> Result<Json<Envelope<DuplicateScanResponse>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     if req.kind != "similar" && req.kind != "exact" {
         return Err(ApiError::invalid_param("kind 仅支持 similar 或 exact"));
     }

@@ -85,16 +85,16 @@ HTTP 方法不决定能力：`POST item/list` 等复杂查询仍是 `Read`。
 
 ## 端点授权
 
-认证中间件只负责解析凭证并生成 `AccessContext`。业务端点显式要求能力：
+认证中间件解析凭证并生成 `AccessContext`，再根据**单一路由能力表**完成请求级判定。管理端点内仍通过 `require_manage` 做纵深防御：
 
 ```rust
-access.require(Capability::Import)?;
+access.require(Capability::Manage)?;
 ```
 
-- 查询端点要求 `Read`。
-- 管理端点要求 `Manage`，不再单独维护 `require_admin` 的角色判断。
-- 写端点未声明能力时默认拒绝（fail closed）。
-- 不再使用 HTTP 路径白名单推断 viewer/remote writer 权限。
+- 查询端点声明 `Read`，管理端点声明 `Manage`，导入与编辑分别声明 `Import` / `Edit`。
+- 未声明能力的方法或路径默认拒绝（fail closed）。
+- OpenAPI 契约测试遍历全部端点，新增端点未加入能力表即测试失败。
+- 用一张能力表替代原先彼此独立的 viewer 与 remote-writer 白名单，避免规则漂移。
 - 隧道代理只负责转发和附加受托会话信息，不另建一套素材权限语义。
 
 ## 凭证职责与命名

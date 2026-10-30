@@ -282,29 +282,25 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   // ---- 初始与查询 ----
-  /** 局域网 web 查看（viewer token）：默认只读（全部写入口隐藏，服务端 403 为最终防线）；
-   * [web] writable 开启后解除只读（app/info.writable 驱动，web 端可上传/删除/修改） */
+  /** viewer 只读；importer 仅允许导入与新建文件夹；editor/admin 由具体端点能力决定。 */
   const viewerMode = ref(false);
-  /** 远端受限写（app/info.access=remote_writer）：只允许导入与新建文件夹，
-   *  标签/评分/备注/移动/回收站等编辑类写入口仍按只读隐藏（服务端 403 为最终防线） */
   const limitedWrite = ref(false);
-  /** 编辑类写入口是否禁用：只读 viewer 与远端受限写都禁用；导入入口只看 viewerMode */
+  /** 编辑类写入口是否禁用：viewer 与 importer 都禁用；导入入口只看 viewerMode */
   const editLocked = computed(() => viewerMode.value || limitedWrite.value);
-  /** 当前连接的访问级别（app/info.access）：admin=本地库全权限；viewer=局域网/远程只读查看；
-   *  remote_writer=远端受限写（导入 + 新建文件夹）。设置面板的 admin 限定分区据此门禁 */
-  const access = ref<'admin' | 'viewer' | 'remote_writer'>('admin');
-  /** 当前请求是否经广域网隧道（app/info.remote）：只据此降低预览流量，本地/LAN 保持原图预览 */
+  /** 当前连接角色（app/info.role），设置面板的 admin 限定分区据此门禁。 */
+  const role = ref<'viewer' | 'importer' | 'editor' | 'admin'>('admin');
+  /** 当前请求是否经 WAN（app/info.channel）：只据此降低预览流量。 */
   const remoteTransport = ref(false);
 
-  /** app/info 的权限与传输快照就地应用：局域网/远端密钥权限热更新时无需重新 boot。 */
-  function applyAccessInfo(info: Pick<AppInfo, 'access' | 'writable' | 'remote'>): void {
-    access.value = info.access;
-    viewerMode.value = info.access === 'viewer' && !info.writable;
-    limitedWrite.value = info.access === 'remote_writer';
-    remoteTransport.value = info.remote;
+  /** app/info 的权限与传输快照就地应用：密钥权限热更新时无需重新 boot。 */
+  function applyAccessInfo(info: Pick<AppInfo, 'role' | 'channel'>): void {
+    role.value = info.role;
+    viewerMode.value = info.role === 'viewer';
+    limitedWrite.value = info.role === 'importer';
+    remoteTransport.value = info.channel === 'wan';
   }
 
-  /** 重新读取当前 token 的 access/writable（SSE lan.access.changed 触发）。 */
+  /** 重新读取当前角色与通道（SSE lan.access.changed 触发）。 */
   async function refreshAccess(): Promise<void> {
     applyAccessInfo(await api.appInfo());
   }
@@ -732,7 +728,7 @@ export const useLibraryStore = defineStore('library', () => {
     viewerMode,
     limitedWrite,
     editLocked,
-    access,
+    role,
     remoteTransport,
     refreshAccess,
     viewPrefs,

@@ -53,7 +53,7 @@ const error = ref<string | null>(null);
 const store = useLibraryStore();
 /** 当前连接是否 admin：远程浏览/局域网 viewer 下隐藏 admin 限定内容（局域网块），
  *  避免只读 token 调管理端点 403（viewer token cannot access admin settings） */
-const isAdmin = computed(() => store.access === 'admin');
+const isAdmin = computed(() => store.role === 'admin');
 
 /** 可保存标签共用 footer 保存入口。 */
 const showLanSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'lan-access');

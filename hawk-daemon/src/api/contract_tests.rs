@@ -902,6 +902,31 @@ fn openapi_json_in_sync() {
     );
 }
 
+/// 授权完备性：除明确的免认证端点外，每个 OpenAPI 路由都必须声明 Capability。
+#[test]
+fn every_endpoint_declares_capability() {
+    let spec = spec();
+    for (path, item) in spec["paths"].as_object().unwrap() {
+        for method in ["get", "post", "put", "patch", "delete"] {
+            if item.get(method).is_none() {
+                continue;
+            }
+            let exempt = path == "/health"
+                || (path == "/api/v1/app/admin-token" && method == "get")
+                || (path == "/api/v1/app/lan/pair-requests" && method == "post")
+                || (path == "/api/v1/app/lan/pair-requests/{request_id}" && method == "get");
+            if exempt {
+                continue;
+            }
+            let method = axum::http::Method::from_bytes(method.to_uppercase().as_bytes()).unwrap();
+            assert!(
+                super::access::required_capability(&method, path).is_some(),
+                "端点未声明 Capability: {method} {path}"
+            );
+        }
+    }
+}
+
 /// 文档-代码契约：docs/backend/server-rest-api-v1.md 必须覆盖全部端点与 SSE 事件，
 /// 且不得提及不存在的端点——API 文档靠人维护，漂移由这条测试兜住
 /// （历史上 library/cleanup_index 与 library.updated 事件都曾漏记）
@@ -1203,7 +1228,8 @@ async fn app_info_marks_tunneled_transport() {
     let app = test_app("app-info-remote");
     let (_, bytes) = call_json(&app.router, "GET", "/api/v1/app/info", None).await;
     let local: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(local["data"]["remote"], json!(false));
+    assert_eq!(local["data"]["role"], json!("admin"));
+    assert_eq!(local["data"]["channel"], json!("loopback"));
 
     let mut req = Request::builder()
         .method("GET")
@@ -1219,7 +1245,8 @@ async fn app_info_marks_tunneled_transport() {
         .await
         .unwrap();
     let remote: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(remote["data"]["remote"], json!(true));
+    assert_eq!(remote["data"]["role"], json!("viewer"));
+    assert_eq!(remote["data"]["channel"], json!("wan"));
 }
 
 /// gzip 只压缩可压缩文本；图片保持原始字节流，SSE 由 tower-http 默认判定排除。

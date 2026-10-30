@@ -103,7 +103,8 @@
       },
       "AppInfo": {
         "properties": {
-          "access": {
+          "channel": {
+            "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan）",
             "type": "string"
           },
           "exec_path": {
@@ -119,26 +120,21 @@
           "platform": {
             "type": "string"
           },
-          "remote": {
-            "description": "当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网",
-            "type": "boolean"
+          "role": {
+            "description": "当前凭证的角色（viewer/importer/editor/admin）",
+            "type": "string"
           },
           "version": {
             "type": "string"
-          },
-          "writable": {
-            "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹",
-            "type": "boolean"
           }
         },
         "required": [
           "version",
           "platform",
           "exec_path",
-          "access",
+          "role",
+          "channel",
           "has_library",
-          "writable",
-          "remote",
           "lan"
         ],
         "type": "object"
@@ -505,7 +501,8 @@
         "properties": {
           "data": {
             "properties": {
-              "access": {
+              "channel": {
+                "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan）",
                 "type": "string"
               },
               "exec_path": {
@@ -521,26 +518,21 @@
               "platform": {
                 "type": "string"
               },
-              "remote": {
-                "description": "当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网",
-                "type": "boolean"
+              "role": {
+                "description": "当前凭证的角色（viewer/importer/editor/admin）",
+                "type": "string"
               },
               "version": {
                 "type": "string"
-              },
-              "writable": {
-                "description": "当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable\n（前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹",
-                "type": "boolean"
               }
             },
             "required": [
               "version",
               "platform",
               "exec_path",
-              "access",
+              "role",
+              "channel",
               "has_library",
-              "writable",
-              "remote",
               "lan"
             ],
             "type": "object"
@@ -4693,7 +4685,7 @@
             "description": "OK"
           }
         },
-        "summary": "运行信息；access 级别由鉴权中间件写入请求扩展。lan 为局域网监听实况\n（设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）",
+        "summary": "运行信息；role/channel 由鉴权中间件写入请求扩展。lan 为局域网监听实况\n（设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）",
         "tags": [
           "app"
         ]

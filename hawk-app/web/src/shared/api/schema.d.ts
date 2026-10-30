@@ -52,7 +52,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 运行信息；access 级别由鉴权中间件写入请求扩展。lan 为局域网监听实况
+         * 运行信息；role/channel 由鉴权中间件写入请求扩展。lan 为局域网监听实况
          *     （设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）
          */
         get: operations["info"];
@@ -1264,20 +1264,16 @@ export interface components {
             writable: boolean;
         };
         AppInfo: {
-            access: string;
+            /** @description 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan） */
+            channel: string;
             exec_path: string;
             /** @description 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理） */
             has_library: boolean;
             lan: components["schemas"]["LanInfo"];
             platform: string;
-            /** @description 当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网 */
-            remote: boolean;
+            /** @description 当前凭证的角色（viewer/importer/editor/admin） */
+            role: string;
             version: string;
-            /**
-             * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
-             *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
-             */
-            writable: boolean;
         };
         CategoryCreateRequest: {
             name: string;
@@ -1406,20 +1402,16 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_AppInfo: {
             data?: {
-                access: string;
+                /** @description 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan） */
+                channel: string;
                 exec_path: string;
                 /** @description 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理） */
                 has_library: boolean;
                 lan: components["schemas"]["LanInfo"];
                 platform: string;
-                /** @description 当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网 */
-                remote: boolean;
+                /** @description 当前凭证的角色（viewer/importer/editor/admin） */
+                role: string;
                 version: string;
-                /**
-                 * @description 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
-                 *     （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
-                 */
-                writable: boolean;
             };
             status: string;
         };

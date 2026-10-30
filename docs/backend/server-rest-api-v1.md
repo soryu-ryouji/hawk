@@ -142,10 +142,9 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "version": "1.0.0",
     "platform": "windows",
     "exec_path": "C:/Tools/hawk/hawk-daemon.exe",
-    "access": "admin",
+    "role": "admin",
+    "channel": "loopback",
     "has_library": true,
-    "writable": true,
-    "remote": false,
     "lan": { "active": true, "port": 27372, "peer_active": true, "peer_port": 27375 }
   }
 }
@@ -156,10 +155,9 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | version   | string | 后端版本号                    |
 | platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
-| access    | string | 当前 token 的访问级别：`admin`（桌面端全权）/ `viewer`（局域网 web 查看器或远程只读会话）/ `remote_writer`（广域网受限写会话） |
+| role | string | 当前凭证角色：`viewer` / `importer` / `editor` / `admin` |
+| channel | string | 当前请求通道：`loopback` / `lan_web` / `lan_peer` / `wan`；前端据此判断远程低流量策略 |
 | has_library | boolean | 当前 daemon 是否打开本地素材库；false 为无库远程查看形态 |
-| writable  | boolean | 当前 token 是否可执行写操作：admin 恒 true；viewer 取决于 `[web]` 的写权限配置；remote_writer 仅限导入/建文件夹 |
-| remote | boolean | 当前请求是否经广域网隧道（由 daemon 的受托标记判定）；前端据此使用低流量预览，本地与局域网为 false |
 | lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。配置读写走 `app/lan`（PUT 内置收敛等待），此字段供状态展示 |
 
 ### connection
@@ -178,7 +176,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
   "data": {
     "mode": "remote",
     "api_base": "http://127.0.0.1:57123",
-    "token": "会话令牌",
+    "credential": "会话临时凭证",
     "device_id": "d_aaba43017fff4888",
     "label": "台式机 · 我的素材库",
     "writable": true
@@ -190,7 +188,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | -------- | ------- | ------------------------------------------------------------ |
 | mode     | string  | `local`（本地库）/ `remote`（正在浏览的远端库）/ `none`（未连接任何素材库） |
 | api_base | string? | 仅 remote：会话代理环回地址                                  |
-| token    | string? | 仅 remote：会话令牌（与 app 渲染进程同一把）                 |
+| credential | string? | 仅 remote：会话临时凭证（与 app 渲染进程同一把）             |
 | device_id| string? | 仅 remote：目标设备 id                                       |
 | label    | string? | 仅 remote：目标展示名（设备名 · 库名）                       |
 | writable | boolean | 当前连接是否可写                                             |
@@ -201,7 +199,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 就绪探活，不带 `/api/v1` 前缀，无需 token。**初始索引完成前返回 503**，完成后 200。只用于区分进程状态，进度与就绪判断以 `app/startup` 为准。
 
-### token
+### admin-token
 
 `GET /api/v1/app/admin-token`
 

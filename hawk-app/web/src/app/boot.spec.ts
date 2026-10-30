@@ -28,7 +28,7 @@ vi.mock('@/shared/api/client', async (importOriginal) => {
 
 const apiMocks = vi.hoisted(() => ({
   startupStatus: vi.fn(() => Promise.resolve({ status: 'ready' as const })),
-  appInfo: vi.fn(() => Promise.resolve({ access: 'admin', has_library: true, writable: true, remote: false })),
+  appInfo: vi.fn(() => Promise.resolve({ role: 'admin', channel: 'loopback', has_library: true })),
   libraryInfo: vi.fn(() => Promise.resolve({ name: '库', path: '/lib' })),
   viewPreferences: vi.fn(() => Promise.resolve({})),
   itemSkeleton: vi.fn(() => Promise.resolve({ items: [], total_size: 0 })),
@@ -174,7 +174,7 @@ describe('启动相位机', () => {
   });
 
   it('远程查看模式（has_library=false）：转远程查看屏，不拉库数据', async () => {
-    apiMocks.appInfo.mockImplementation(() => Promise.resolve({ access: 'admin', has_library: false, writable: true, remote: false }));
+    apiMocks.appInfo.mockImplementation(() => Promise.resolve({ role: 'admin', channel: 'loopback', has_library: false }));
     const boot = mountBoot();
     await boot.runBoot();
     expect(boot.phase.value).toBe('remote');

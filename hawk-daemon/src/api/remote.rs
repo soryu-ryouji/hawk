@@ -2,7 +2,7 @@
 //! 保存即热生效（remote supervisor 经 wake 热重启信令），模型与 app/lan 一致。
 
 use super::envelope::{codes, ApiError, Envelope, SuccessOnly};
-use super::{require_admin, AccessLevel, SharedState};
+use super::{require_manage, AccessContext, SharedState};
 use crate::remote::config::RemoteSettings;
 use crate::remote::session::ActiveSessionDto;
 use crate::remote::RemoteStatus;
@@ -58,9 +58,9 @@ fn remote_dto(state: &SharedState) -> RemoteDto {
 )]
 async fn get_remote(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<RemoteDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     Ok(Json(Envelope::ok(remote_dto(&state))))
 }
 
@@ -89,10 +89,10 @@ struct PutRemoteBody {
 )]
 async fn put_remote(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Json(body): Json<PutRemoteBody>,
 ) -> Result<Json<Envelope<RemoteDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     // quic_port 不在 PUT 体（高级项，编辑 remote.toml 后重启 daemon 调整）：保留现值
     let new_remote = RemoteSettings {
         enabled: body.enabled,
@@ -207,9 +207,9 @@ struct RemoteDevicesDto {
 )]
 async fn list_devices(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<RemoteDevicesDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let (http, base, key) = signal_client(&state)?;
     let resp = http
         .get(format!("{base}/api/v1/devices"))
@@ -255,9 +255,9 @@ async fn list_devices(
 )]
 async fn get_session(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<Option<ActiveSessionDto>>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     Ok(Json(Envelope::ok(state.remote.sessions.snapshot())))
 }
 
@@ -284,10 +284,10 @@ fn default_session_mode() -> String {
 )]
 async fn create_session(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Json(body): Json<CreateSessionBody>,
 ) -> Result<Json<Envelope<ActiveSessionDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     if body.mode != "direct" && body.mode != "relay" {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
@@ -334,9 +334,9 @@ async fn create_session(
 )]
 async fn delete_session(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<super::envelope::SuccessOnly>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let (http, base, key) = signal_client(&state)?;
     state.remote.sessions.disconnect(&http, &base, &key).await;
     Ok(super::envelope::success())
@@ -364,10 +364,10 @@ struct PatchDeviceBody {
 )]
 async fn patch_device(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Json(body): Json<PatchDeviceBody>,
 ) -> Result<Json<Envelope<RemoteDeviceDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     if body.name.is_none() && body.allow_remote.is_none() && body.library_name.is_none() {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
@@ -440,10 +440,10 @@ struct RotateDeviceDto {
 )]
 async fn delete_device(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     axum::extract::Path(device_id): axum::extract::Path<String>,
 ) -> Result<Json<super::envelope::SuccessOnly>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     // 本机已注册身份与目标相同 → 拒绝（注销自己会让信令立即 404 重注册，记录删不干净）
     if let Ok(identity) = crate::remote::identity::Identity::load_or_create(
         state.remote.remote_config().identity_dir(),
@@ -478,9 +478,9 @@ async fn delete_device(
 )]
 async fn rotate_device(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<RotateDeviceDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let (http, base, key) = signal_client(&state)?;
     let mut identity = crate::remote::identity::Identity::load_or_create(
         state.remote.remote_config().identity_dir(),
@@ -565,9 +565,9 @@ struct RemoteKeysDto {
 )]
 async fn list_keys(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<RemoteKeysDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let keys = state.remote.keys.list().iter().map(key_dto).collect();
     Ok(Json(Envelope::ok(RemoteKeysDto { keys })))
 }
@@ -605,10 +605,10 @@ struct CreateKeyDto {
 )]
 async fn create_key(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Json(body): Json<CreateKeyBody>,
 ) -> Result<Json<Envelope<CreateKeyDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let (entry, key) = state
         .remote
         .keys
@@ -654,11 +654,11 @@ struct PatchKeyDto {
 )]
 async fn patch_key(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
     Json(body): Json<PatchKeyBody>,
 ) -> Result<Json<Envelope<PatchKeyDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let entry = state
         .remote
         .keys
@@ -693,10 +693,10 @@ struct DeleteKeyDto {
 )]
 async fn delete_key(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
 ) -> Result<Json<Envelope<DeleteKeyDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let removed = state.remote.keys.remove(&key_id).map_err(|e| {
         ApiError::new(
             codes::INTERNAL,

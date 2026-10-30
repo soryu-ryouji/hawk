@@ -17,6 +17,9 @@ use crate::settings::Settings;
 use axum::response::IntoResponse;
 use std::sync::Arc;
 
+pub use access::{AccessContext, Capability, Channel, Principal, Role};
+
+pub mod access;
 pub mod app;
 pub mod envelope;
 pub mod events;
@@ -72,24 +75,6 @@ fn strip_schema_defaults(value: &mut serde_json::Value) {
     }
 }
 
-/// 请求级扩展：当前 token 的访问级别，app/info 据此报告。
-/// Viewer 携带该访问密钥的写能力（[web].keys 每把密钥独立 read/write，
-/// 每请求解析，配置热生效）；RemoteWriter 为广域网隧道的受限写（仅导入/建文件夹）。
-#[derive(Clone, Copy)]
-pub enum AccessLevel {
-    Admin,
-    Viewer { writable: bool },
-    RemoteWriter,
-}
-
-/// 鉴权结果：AccessLevel 之外保留命中的 peer key id，用于记录设备活跃时间。
-/// key id 只留在进程内，不写入请求扩展或响应。
-#[derive(Clone)]
-struct ResolvedAccess {
-    level: AccessLevel,
-    peer_key_id: Option<String>,
-}
-
 /// LAN 监听器类型：网页端口与 hawk-app 直连端口各自只接受对应密钥。
 /// Local = 本机 daemon API（以及测试/隧道复用），兼容两类局域网密钥。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,17 +84,9 @@ pub enum ListenerMode {
     Peer,
 }
 
-/// admin 限定端点的统一门禁：viewer（含可写）与远程写 403，防止只读 token 经管理端点提权
-pub(crate) fn require_admin(access: &AccessLevel) -> Result<(), envelope::ApiError> {
-    if matches!(access, AccessLevel::Admin) {
-        Ok(())
-    } else {
-        Err(envelope::ApiError::new(
-            envelope::codes::READ_ONLY,
-            axum::http::StatusCode::FORBIDDEN,
-            "viewer token cannot access admin settings",
-        ))
-    }
+/// Manage 端点的统一门禁：角色能力和通道上限必须同时允许。
+pub(crate) fn require_manage(access: &AccessContext) -> Result<(), envelope::ApiError> {
+    access.require(Capability::Manage)
 }
 
 /// 本地素材库状态（仅本地库模式存在；远程查看模式无本地库时为 None）。
@@ -290,19 +267,22 @@ async fn auth(
     }
 
     // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledPeer（HTTP 客户端无法伪造扩展，
-    // 忽略其携带的任何 token 头）。写会话是否生效还要看当前 remote.writable（应用级配置，热生效）。
-    let resolved = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>()
-    {
-        ResolvedAccess {
-            level: if tunnel.writable && state.remote.remote_config().current().writable {
-                AccessLevel::RemoteWriter
-            } else {
-                AccessLevel::Viewer { writable: false }
+    // 忽略其携带的任何 token 头）。角色与设备开关在每次请求重新计算。
+    let access = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
+        let role = if tunnel.writable && state.remote.remote_config().current().writable {
+            Role::Importer
+        } else {
+            Role::Viewer
+        };
+        AccessContext::new(
+            Principal::Session {
+                id: "tunnel".to_string(),
             },
-            peer_key_id: None,
-        }
+            role,
+            Channel::Wan,
+        )
     } else {
-        let Some(resolved) = resolve_access(&state, &req, mode) else {
+        let Some(access) = resolve_access(&state, &req, mode) else {
             return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 axum::Json(
@@ -311,31 +291,23 @@ async fn auth(
             )
                 .into_response();
         };
-        resolved
-    }; // 无库模式仅 admin token 有效（viewer token 存于库内配置）
-    let access = resolved.level;
+        access
+    };
     if mode == ListenerMode::Peer {
-        if let Some(key_id) = resolved.peer_key_id {
-            state.lan.record_peer_activity(&key_id);
+        if let Principal::AccessKey { id } = &access.principal {
+            state.lan.record_peer_activity(id);
         }
     }
-    if matches!(access, AccessLevel::Viewer { writable: false }) && !is_viewer_allowed(&req) {
-        return (
+    let Some(capability) = access::required_capability(req.method(), path) else {
+        return envelope::ApiError::new(
+            envelope::codes::READ_ONLY,
             axum::http::StatusCode::FORBIDDEN,
-            axum::Json(
-                serde_json::json!({ "status": "error", "error": { "code": envelope::codes::READ_ONLY, "message": "viewer token is read-only" } }),
-            ),
+            "endpoint capability is not declared",
         )
-            .into_response();
-    }
-    if matches!(access, AccessLevel::RemoteWriter) && !is_remote_writer_allowed(&req) {
-        return (
-            axum::http::StatusCode::FORBIDDEN,
-            axum::Json(
-                serde_json::json!({ "status": "error", "error": { "code": envelope::codes::READ_ONLY, "message": "remote writer is limited to import and folder create" } }),
-            ),
-        )
-            .into_response();
+        .into_response();
+    };
+    if let Err(error) = access.require(capability) {
+        return error.into_response();
     }
 
     req.extensions_mut().insert(access);
@@ -388,27 +360,19 @@ fn parse_unlock_tickets(req: &axum::extract::Request) -> Vec<String> {
     tickets
 }
 
-/// 返回 access 级别（含 viewer 的 per-token 写能力），token 无效返回 None
+/// 解析请求凭证：admin token 仅接受 Loopback，其余凭证按监听通道和密钥角色解析。
 fn resolve_access(
     state: &AppState,
     req: &axum::extract::Request,
     mode: ListenerMode,
-) -> Option<ResolvedAccess> {
-    let headers = req.headers();
-    if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(value) = auth.to_str() {
-            if let Some(token) = value.strip_prefix("Bearer ") {
-                if token == state.settings.admin_token {
-                    return Some(ResolvedAccess {
-                        level: AccessLevel::Admin,
-                        peer_key_id: None,
-                    });
-                }
-                if let Some(access) = viewer_access(state, token, mode) {
-                    return Some(access);
-                }
-            }
-        }
+) -> Option<AccessContext> {
+    let bearer = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    if let Some(context) = resolve_credential(state, bearer, mode) {
+        return Some(context);
     }
 
     // EventSource 与 <img> 均无法设置请求头，这几个 GET 端点放行查询参数 token
@@ -418,92 +382,83 @@ fn resolve_access(
             path,
             "/api/v1/events" | "/api/v1/item/thumbnail" | "/api/v1/item/file"
         );
-    if allow_query_token {
-        if let Some(query) = req.uri().query() {
-            let token: Option<&str> = query
-                .split('&')
-                .filter_map(|pair| pair.split_once('='))
-                .find(|(k, _)| *k == "token")
-                .map(|(_, v)| v);
-            if let Some(token) = token {
-                if token == state.settings.admin_token {
-                    return Some(ResolvedAccess {
-                        level: AccessLevel::Admin,
-                        peer_key_id: None,
-                    });
-                }
-                if let Some(access) = viewer_access(state, token, mode) {
-                    return Some(access);
-                }
-            }
-        }
+    if !allow_query_token {
+        return None;
     }
-    None
+    let credential = req.uri().query().and_then(|query| {
+        query
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(key, _)| *key == "token")
+            .map(|(_, value)| value)
+    });
+    resolve_credential(state, credential, mode)
 }
 
-/// 局域网 viewer token 的访问能力（每请求解析，配置变更热生效）：
-/// 在 [web].keys 中按 token 查找，密钥自身的 write 字段决定读写；密钥吊销/权限变更即刻生效。
-///
-/// 无库模式无库内 [web] 配置，viewer token 不生效
-fn viewer_access(state: &AppState, token: &str, mode: ListenerMode) -> Option<ResolvedAccess> {
+fn resolve_credential(
+    state: &AppState,
+    credential: Option<&str>,
+    mode: ListenerMode,
+) -> Option<AccessContext> {
+    let credential = credential?;
+    if mode == ListenerMode::Local && credential == state.settings.admin_token {
+        return Some(AccessContext::new(
+            Principal::ProcessAdmin,
+            Role::Admin,
+            Channel::Loopback,
+        ));
+    }
+    viewer_access(state, credential, mode)
+}
+
+/// LAN access key 每请求解析，密钥吊销和角色变化立即生效。
+fn viewer_access(state: &AppState, credential: &str, mode: ListenerMode) -> Option<AccessContext> {
     let web = &state.library.as_ref()?.config.current().web;
-    let lookup = |keys: &[crate::core::config::WebAccessKey]| {
-        keys.iter()
-            .find(|key| key.token == token)
-            .map(|key| ResolvedAccess {
-                level: AccessLevel::Viewer {
-                    writable: key.write,
-                },
-                peer_key_id: Some(key.id.clone()),
-            })
-    };
-    match mode {
-        // 网页端口只认网站密钥；网站关闭时该端口应已停止监听，这里是纵深防御。
-        ListenerMode::Web => {
-            if web.enabled {
-                lookup(&web.keys)
-            } else {
-                None
-            }
-        }
-        // hawk-app 端口只认直连密钥，不暴露网站密钥。
-        ListenerMode::Peer => lookup(&web.peer_keys),
-        // 本机 API/隧道测试兼容两类。
+    let (keys, channel) = match mode {
+        ListenerMode::Web if web.enabled => (&web.keys, Channel::LanWeb),
+        ListenerMode::Web => return None,
+        ListenerMode::Peer => (&web.peer_keys, Channel::LanPeer),
         ListenerMode::Local => {
-            lookup(&web.peer_keys).or_else(|| if web.enabled { lookup(&web.keys) } else { None })
+            if let Some(access) =
+                viewer_access_in_keys(&web.peer_keys, credential, Channel::Loopback)
+            {
+                return Some(access);
+            }
+            if !web.enabled {
+                return None;
+            }
+            (&web.keys, Channel::Loopback)
         }
-    }
+    };
+    viewer_access_in_keys(keys, credential, channel)
 }
 
-/// viewer（局域网 web 查看）默认只读：仅放行 GET 与查询类 POST；
-/// 可写密钥（[web].keys 中 write=true）解除限制（每请求经 current() 校验，保存即热生效）。
-/// 会话代理的只读纵深防御复用同一白名单（remote/data.rs）。
+fn viewer_access_in_keys(
+    keys: &[crate::core::config::WebAccessKey],
+    credential: &str,
+    channel: Channel,
+) -> Option<AccessContext> {
+    keys.iter().find(|key| key.token == credential).map(|key| {
+        AccessContext::new(
+            Principal::AccessKey { id: key.id.clone() },
+            if key.write {
+                Role::Editor
+            } else {
+                Role::Viewer
+            },
+            channel,
+        )
+    })
+}
+
+/// 只读会话代理的粗粒度前置拦截；目标 daemon 仍会按完整路由能力表二次执法。
 pub(crate) fn is_viewer_allowed(req: &axum::extract::Request) -> bool {
     if req.method() == axum::http::Method::GET {
         return true;
     }
-    // 查询类 POST（复杂过滤结构），语义只读
     matches!(
         req.uri().path(),
         "/api/v1/item/list" | "/api/v1/item/skeleton" | "/api/v1/item/aggregate"
-    )
-}
-
-/// 广域网受限写：只开放导入素材与新建文件夹；其余写端点仍按只读处理。
-/// 导入两条通道：`item/add` 的 base64（插件）与 `item/upload` 的 multipart（客户端 / app 浏览远端库时
-/// 读不到本机路径，只能传内容）；path 导入由 handler 再拦（防止远端读本机文件入库）。
-fn is_remote_writer_allowed(req: &axum::extract::Request) -> bool {
-    if req.method() == axum::http::Method::GET {
-        return true;
-    }
-    matches!(
-        req.uri().path(),
-        "/api/v1/item/list"
-            | "/api/v1/item/skeleton"
-            | "/api/v1/item/aggregate"
-            | "/api/v1/item/add"
-            | "/api/v1/item/upload"
-            | "/api/v1/folder/create"
     )
 }
 

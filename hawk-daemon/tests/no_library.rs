@@ -84,7 +84,8 @@ async fn no_library_mode_serves_remote_plane_only() {
     let (status, body) = call(&router, "GET", "/api/v1/app/info", None).await;
     assert_eq!(status, StatusCode::OK, "app/info");
     assert_eq!(body["data"]["has_library"], json!(false));
-    assert_eq!(body["data"]["access"], json!("admin"));
+    assert_eq!(body["data"]["role"], json!("admin"));
+    assert_eq!(body["data"]["channel"], json!("loopback"));
 
     // 库端点一律 400 NO_LIBRARY（读/写/注册表各取一代表）
     for (method, uri, body) in [

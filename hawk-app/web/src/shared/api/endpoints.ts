@@ -19,8 +19,9 @@ import type {
 
 /** server 启动状态（GET /app/startup，浏览器无 IPC 时由前端轮询） */
 type StartupInfo = components['schemas']['StartupInfo'];
-export type AppInfo = Omit<components['schemas']['AppInfo'], 'access'> & {
-  access: 'viewer' | 'admin' | 'remote_writer';
+export type AppInfo = Omit<components['schemas']['AppInfo'], 'role' | 'channel'> & {
+  role: 'viewer' | 'importer' | 'editor' | 'admin';
+  channel: 'loopback' | 'lan_web' | 'lan_peer' | 'wan';
 };
 export type ThumbnailSize = 512 | 1024;
 

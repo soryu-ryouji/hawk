@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::api::envelope::codes;
-use crate::api::AccessLevel;
+use crate::api::{AccessContext, Channel};
 use axum::Extension;
 
 // ---------- add ----------
@@ -45,11 +45,11 @@ pub(crate) struct ItemAddResponse {
 )]
 pub(crate) async fn item_add(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     JsonBody(req): JsonBody<ItemAddRequest>,
 ) -> Result<Json<Envelope<ItemAddResponse>>, ApiError> {
     // 广域网远程写只接受内容上传，禁止按本机路径导入（否则可借素材库读取服务器文件）
-    if matches!(access, AccessLevel::RemoteWriter) && req.path.is_some() {
+    if access.channel == Channel::Wan && req.path.is_some() {
         return Err(ApiError::new(
             codes::READ_ONLY,
             axum::http::StatusCode::FORBIDDEN,

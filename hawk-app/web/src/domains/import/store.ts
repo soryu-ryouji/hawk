@@ -145,7 +145,7 @@ export const useImporterStore = defineStore('importer', () => {
    *  远端库（app 正在浏览的远端会话）读不到本机路径：即使有 hawkShell 也走 multipart 上传——
    *  远端受限写白名单同样放行 item/upload */
   async function runBatch(files: DroppedFile[], folderOf: (relPath: string) => string, verb: string) {
-    const byPath = hasShell && library.access === 'admin';
+    const byPath = hasShell && library.role === 'admin';
     await runImportBatch(files, {
       importOne: (f, skipExisting) => {
         const folder = folderOf(f.relPath) || undefined;

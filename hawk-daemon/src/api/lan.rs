@@ -10,7 +10,7 @@
 //! 状态即快照（LanStatus）：active / port / error，app/info 序列化给前端。
 
 use super::envelope::{codes, ApiError, Envelope};
-use super::{require_admin, AccessLevel, SharedState};
+use super::{require_manage, AccessContext, SharedState};
 use crate::core::config::WebSettings;
 use axum::extract::{Extension, Path, State};
 use axum::Json;
@@ -949,9 +949,9 @@ async fn get_lan_pair_request_status(
 )]
 async fn list_lan_pair_requests(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<LanPairRequestsDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let _ = state.require_library()?;
     Ok(Json(Envelope::ok(LanPairRequestsDto {
         requests: state
@@ -979,11 +979,11 @@ async fn list_lan_pair_requests(
 )]
 async fn decide_lan_pair_request(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Path(request_id): Path<String>,
     Json(body): Json<LanPairDecisionBody>,
 ) -> Result<Json<Envelope<LanPairDecisionDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let lib = state.require_library()?;
     let Some(request) = state.lan.begin_pair_request_decision(&request_id) else {
         return Err(ApiError::new(
@@ -1085,9 +1085,9 @@ async fn decide_lan_pair_request(
 )]
 async fn discover_lan_peers(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<LanPeersDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     Ok(Json(Envelope::ok(LanPeersDto {
         peers: discover_peers(&state).await?,
     })))
@@ -1103,9 +1103,9 @@ async fn discover_lan_peers(
 )]
 async fn list_lan_clients(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<LanClientsDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let lib = state.require_library()?;
     let web = lib.config.current().web;
     let now = unix_ms_now();
@@ -1139,10 +1139,10 @@ async fn list_lan_clients(
 )]
 async fn create_lan_device_key(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Json(body): Json<LanDeviceKeyCreateBody>,
 ) -> Result<Json<Envelope<LanAccessKeyDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let lib = state.require_library()?;
     let label = body.label.trim();
     if label.is_empty() {
@@ -1197,11 +1197,11 @@ async fn create_lan_device_key(
 )]
 async fn update_lan_device_key(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Path(key_id): Path<String>,
     Json(body): Json<LanDeviceKeyUpdateBody>,
 ) -> Result<Json<Envelope<LanAccessKeyDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let lib = state.require_library()?;
     let mut web = lib.config.current().web;
     let Some(key) = web.peer_keys.iter_mut().find(|key| key.id == key_id) else {
@@ -1238,10 +1238,10 @@ async fn update_lan_device_key(
 )]
 async fn delete_lan_device_key(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Path(key_id): Path<String>,
 ) -> Result<Json<Envelope<LanDeviceKeyDeletedDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let lib = state.require_library()?;
     let mut web = lib.config.current().web;
     let before = web.peer_keys.len();
@@ -1394,9 +1394,9 @@ fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
 )]
 async fn get_lan(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<LanSettingsDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let lib = state.require_library()?;
     Ok(Json(Envelope::ok(lan_dto(&state, lib))))
 }
@@ -1518,10 +1518,10 @@ async fn wait_converged(state: &SharedState, web: &WebSettings, epoch0: u64) -> 
 )]
 async fn put_lan(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     Json(body): Json<PutLanBody>,
 ) -> Result<Json<Envelope<LanSettingsDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     if body.port == 0 || body.peer_port == 0 {
         return Err(ApiError::new(
             codes::INVALID_PARAM,

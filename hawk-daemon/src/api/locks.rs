@@ -6,7 +6,7 @@
 //! 开放（含只读 viewer——锁靠密码区分，不靠 token）。验证失败全局节流（连续 5 次冷却 60s）。
 
 use crate::api::envelope::{success, ApiError, Envelope, JsonBody};
-use crate::api::{AccessLevel, SharedState};
+use crate::api::{require_manage, AccessContext, SharedState};
 use crate::core::locks::{publish_changed, LockDim, LocksSnapshot, ManageOutcome, UnlockOutcome};
 use crate::core::paths::LibraryPaths;
 use crate::core::taxonomy::normalize_category_name;
@@ -116,10 +116,10 @@ struct LockSetRequest {
 )]
 async fn lock_set(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     JsonBody(req): JsonBody<LockSetRequest>,
 ) -> Result<Json<crate::api::envelope::SuccessOnly>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let (dim, name) = parse_target(&req.target)?;
     if req.password.trim().is_empty() {
         return Err(ApiError::invalid_param("密码不能为空"));
@@ -163,10 +163,10 @@ struct LockRemoveRequest {
 )]
 async fn lock_remove(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
     JsonBody(req): JsonBody<LockRemoveRequest>,
 ) -> Result<Json<crate::api::envelope::SuccessOnly>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     let (dim, name) = parse_target(&req.target)?;
     let (dim_c, name_c, pwd) = (dim, name, req.password);
     let locks = state.require_library()?.locks.clone();
@@ -228,17 +228,5 @@ async fn lock_unlock(
         UnlockOutcome::NotFound => Err(ApiError::lock_not_found(&req.target.name)),
         UnlockOutcome::WrongPassword => Err(ApiError::unauthorized("密码错误")),
         UnlockOutcome::Throttled(wait) => Err(throttled_error(wait)),
-    }
-}
-
-fn require_admin(access: &AccessLevel) -> Result<(), ApiError> {
-    if matches!(access, AccessLevel::Admin) {
-        Ok(())
-    } else {
-        Err(ApiError::new(
-            crate::api::envelope::codes::READ_ONLY,
-            axum::http::StatusCode::FORBIDDEN,
-            "viewer token cannot manage locks",
-        ))
     }
 }

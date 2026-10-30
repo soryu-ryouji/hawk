@@ -10,7 +10,7 @@ import DuplicateManager from './DuplicateManager.vue';
 
 const store = useLibraryStore();
 /** 当前连接是否 admin（远程浏览时隐藏库侧配置：只读 token 调管理端点只会 403） */
-const isAdmin = computed(() => store.access === 'admin');
+const isAdmin = computed(() => store.role === 'admin');
 
 const current = ref('');
 const isDefault = ref(true);

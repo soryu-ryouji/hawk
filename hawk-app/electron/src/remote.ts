@@ -221,7 +221,8 @@ async function directCall<T>(base: string, path: string, token: string, method =
 /** 目标库 app/info 的最小校验（连接前确认 token 有效且确为素材库） */
 interface TargetAppInfo {
   has_library: boolean;
-  access: 'viewer' | 'admin' | 'remote_writer';
+  role: 'viewer' | 'importer' | 'editor' | 'admin';
+  channel: 'loopback' | 'lan_web' | 'lan_peer' | 'wan';
   writable: boolean;
 }
 

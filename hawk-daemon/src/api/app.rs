@@ -2,7 +2,7 @@
 //! App 端点：启动握手、积压快照、admin token 发现的 Host 环回约束。
 
 use crate::api::envelope::{ApiError, Envelope};
-use crate::api::{require_admin, AccessLevel, SharedState};
+use crate::api::{require_manage, AccessContext, SharedState};
 use axum::extract::{Extension, State};
 use axum::Json;
 use serde::Serialize;
@@ -193,18 +193,16 @@ struct AppInfo {
     version: &'static str,
     platform: &'static str,
     exec_path: String,
-    access: &'static str,
+    /// 当前凭证的角色（viewer/importer/editor/admin）
+    role: &'static str,
+    /// 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan）
+    channel: &'static str,
     /// 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理）
     has_library: bool,
-    /// 当前 token 是否可执行写操作：admin 恒 true；viewer 为 [web].writable
-    /// （前端 viewerMode 依据，开启后 web 端展示全部写入口）；remote_writer 仅限导入/建文件夹
-    writable: bool,
-    /// 当前请求是否经广域网隧道到达；前端据此启用低流量预览，不影响本地/局域网
-    remote: bool,
     lan: LanInfo,
 }
 
-/// 运行信息；access 级别由鉴权中间件写入请求扩展。lan 为局域网监听实况
+/// 运行信息；role/channel 由鉴权中间件写入请求扩展。lan 为局域网监听实况
 /// （设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）
 #[utoipa::path(
     get,
@@ -214,14 +212,8 @@ struct AppInfo {
 )]
 async fn info(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
-    tunnel: Option<Extension<crate::remote::data::TunneledPeer>>,
+    Extension(access): Extension<AccessContext>,
 ) -> Json<Envelope<AppInfo>> {
-    let (access, writable) = match access {
-        AccessLevel::Admin => ("admin", true),
-        AccessLevel::Viewer { writable } => ("viewer", writable),
-        AccessLevel::RemoteWriter => ("remote_writer", true),
-    };
     let platform = if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
@@ -237,10 +229,9 @@ async fn info(
         version: env!("CARGO_PKG_VERSION"),
         platform,
         exec_path,
-        access,
+        role: access.role.as_str(),
+        channel: access.channel.as_str(),
         has_library: state.library.is_some(),
-        writable,
-        remote: tunnel.is_some(),
         lan: LanInfo {
             active: lan.web.active,
             port: lan.web.port,
@@ -328,9 +319,9 @@ struct AppConnectionDto {
 )]
 async fn connection(
     State(state): State<SharedState>,
-    Extension(access): Extension<AccessLevel>,
+    Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<AppConnectionDto>>, ApiError> {
-    require_admin(&access)?;
+    require_manage(&access)?;
     if let Some(session) = state.remote.sessions.snapshot() {
         let label = if session.target_library_name.is_empty() {
             session.target_name.clone()
