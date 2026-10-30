@@ -36,15 +36,79 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 2. **流水线的所有处理幂等**。同一事件重复到达（例如 API 主动移动文件后，watcher 又上报一次）不会产生副作用，这是免锁设计成立的前提。
 3. **锁内投影，锁外只见 DTO**：`ItemIndex` 一把锁保护，`with_item_mut` 可变访问仅限流水线；HTTP 层一律走 `get_dto`（锁内投影）/ `query` / `find_location` / `main_source_abs`（不可变快照）。
 
+## 架构评估与适用边界
+
+### 当前定位与组件结构
+
+当前实现面向**桌面端、单用户、单素材库**。核心目标不是通用 CRUD 或多租户服务，而是在文件系统持续变化的情况下，维持素材文件、SQLite 元数据、内存索引和派生缓存的最终一致。无本地库时可退化为仅提供远程管理面与会话代理的远程查看模式。
+
+```text
+main / settings
+      │
+      ▼
+bootstrap（组合根）──► AppState
+                          │
+        ┌─────────────────┼──────────────────┐
+        ▼                 ▼                  ▼
+  本地 Axum API       LAN Supervisor      Remote Supervisor
+  鉴权 / 路由         Web / Peer / UDP     信令 / QUIC / 会话
+        │
+        ▼
+  LibraryState（无库模式为 None）
+        │
+        ├── ItemIndex：内存索引，RwLock
+        ├── MetadataStore：内存副本 → SQLite
+        ├── 分类、标签、锁、视图偏好等 TOML 注册表
+        ├── ThumbnailWorker：独立 CPU 线程池
+        └── IndexPipeline：单写者消费线程
+                  ▲          ▲             ▲
+                  │          │             │
+              Watcher      Scanner      API 写入与 worker 回流
+                  │
+                  ▼
+              EventBus → SSE
+```
+
+查询直接读取 `ItemIndex`，排序在锁外完成，DTO 只投影分页窗口。API 写入先操作真实文件，再向流水线提交 Job；watcher、扫描和 worker 的计算结果也汇入同一消费循环。SQLite 提交成功后更新元数据内存副本，索引变更完成后通过 SSE 通知客户端。
+
+### 设计合理性
+
+对当前桌面端定位，这一结构是合理的，不需要整体重构：
+
+1. **单写者流水线匹配问题本身**：集中处理 watcher 重复事件、扫描与实时写入并发、位置迁移和元数据更新，避免索引多写者竞争。幂等处理、队列溢出重扫和扫描窗口簿记都是这一模型的必要组成。
+2. **计算与状态写应用分离**：遍历、哈希、图片解码和缩略图生成在扫描线程或 worker 线程执行，结果回流流水线，不让 CPU 密集任务长期占住索引消费线程。
+3. **存储权威明确**：文件系统保存素材，SQLite 是素材元数据唯一权威，内存索引服务查询，缩略图是可重建缓存，TOML 只保存可同步的小型配置与注册表。
+4. **本地、LAN、WAN 复用同一业务路由**：remote 主要承担网络转发和会话管理，通过 `Admin` / `Viewer` / `RemoteWriter` 区分权限，没有另建一套远程素材业务逻辑。
+5. **契约与行为测试匹配架构边界**：OpenAPI 与路由同源，流水线行为测试覆盖文件系统、元数据和索引协作，SSE 客户端在断流后通过全量查询重新对齐。
+
+### 一致性边界
+
+当前保证的是**运行期近实时、异常情况下最终一致**，不是文件系统、SQLite 和索引之间的请求级强事务。
+
+部分写端点先在 API 层执行 `rename` 等真实文件操作，再等待流水线提交。如果进程在两者之间退出，或提交时发生队列已满、等待超时等错误，可能出现文件已改变但 API 返回失败的窗口。文件系统操作本身也不经过单写者，并发 API 请求仍可能在文件层竞争。
+
+后台对账扫描通常能重新收敛位置，但不会自动回滚多步骤请求已经产生的部分效果。因此演进重点是补充并发写、流水线失败和进程中断后的恢复测试，并明确各端点的部分成功语义；当前没有必要为此引入分布式事务或重型工作流框架。
+
+### 扩展与维护边界
+
+1. **大库存在吞吐和内存上限**：索引写入串行；查询过滤需要遍历内存索引；`MetadataStore` 与 `ItemIndex` 各保留一份元数据副本；缩略图 worker 使用无界队列。它们都是当前场景下的取舍，应通过目标素材规模的压测验证，不能视为无限扩展方案。
+2. **LAN 与 remote 是后续拆分热点**：`api/lan.rs` 同时包含 HTTP、监听生命周期、UDP 发现和配对状态机；`api` 与 `remote` 在授权和隧道转发上存在双向引用。目前无需为分层形式重写，后续修改这些功能时再逐步分离 supervisor、应用逻辑和 HTTP handler。
+3. **“先监听”存在数据库加载窗口**：实际启动顺序是绑定端口 → `build_state()` 内同步执行 SQLite `load_all()` → 启动 Axum serve → 流水线注水 → ready → 后台对账扫描。SQLite 加载期间端口已绑定，但 `app/startup` 尚不能响应；只有启动反馈成为明确问题时才需要调整。
+4. **当前不是多用户服务器架构**：`AppState` 只承载一个库，认证以进程 token 和库级访问密钥为主，状态与索引都在单进程内。未来服务器版可以复用 HTTP 契约和部分领域流程，但多租户、认证授权、集中存储与查询扩展需要另行设计，不能仅靠替换 SQLite 或直接部署当前二进制完成。
+
+### 演进原则
+
+优先保持现有端到端链路稳定：先补一致性故障测试和规模压测，再依据数据处理查询、队列或内存瓶颈；LAN/remote 随功能修改渐进拆分。没有真实服务器需求前，不提前引入存储 trait、PostgreSQL、微服务或通用 actor 框架。
+
 ## 文件清单与职责
 
 ### 启动入口
 
 | 文件 | 职责 |
 | ---- | ---- |
-| `src/main.rs` | 进程入口（薄壳，~30 行）：`Cli::parse_args` → `--dump-openapi` 分流（打印 schema 后退出）→ tracing 初始化 → `bootstrap::run`。组装与启动编排全部在 bootstrap |
-| `src/bootstrap.rs` | 组件图组装与启动编排（组合根）：`build_state` 直接构造 `api::AppState`（单一共享状态对象，按依赖分层分段：存储底座 → 索引流水线 → 分类与视图偏好 → 缩略图 → LAN；db/store/scanner/migrator 是构造中间件不进组件图；worker.attach 回流接线须在 start 前）；`run` 按序执行：**先绑端口**（严格按 `--port`，占用即退出码 4 + `PORT_IN_USE <port>`，不静默漂移；先绑再建索引，端口冲突秒级失败）→ `build_state` → `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `pipeline.start()`（注水/消费线程/worker/周期对账 + 周期兜底扫描定时检查）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore/扩展名白名单变化 → 强制重扫（收敛既有条目）；[web] 变化 → LAN 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
-| `src/settings.rs` | 启动设置（解析层/配置层分离）：`Cli` 用 clap derive 声明全部 CLI（`--library`/`--port`（严格绑定，0 = 系统分配）/`--web-dist`/`--cache-parent`/`--remote-config`/`--dump-openapi`，每项支持同名 `HAWK_*` env 回退、CLI 优先，未知参数/非法值报错 exit 2，`--dump-openapi` 豁免 library 必填）；`Settings::from_cli` 承接业务校验（库目录为空/不存在 exit 2）与 env-only 参数——token 只走 `HAWK_TOKEN`（避免出现在进程列表，未传入时生成随机值并打印 stdout），`HAWK_MAINTENANCE_INTERVAL` 派生维护间隔（默认 60s，0 关闭）；周期兜底重扫在库配置 `[scan]`（periodic/interval，热更即生效） |
+| `src/main.rs` | 进程入口（薄壳）：只负责 `Cli::parse_args` 与子命令分发——`local` 进入 `bootstrap::run_local`，`remote` 进入 `bootstrap::run_remote`，`openapi` 进入 `api::openapi::dump()`；不包含日志、配置或组件初始化 |
+| `src/bootstrap.rs` | daemon 启动流程与组件图组装（组合根）：`run_local` / `run_remote` 分别构造有库与无库 `Settings`，启动流程内初始化 tracing/panic hook；`build_state` 直接构造 `api::AppState`（单一共享状态对象，按依赖分层分段：存储底座 → 索引流水线 → 分类与视图偏好 → 缩略图 → LAN；db/store/scanner/migrator 是构造中间件不进组件图；worker.attach 回流接线须在 start 前）；`run` 按序执行：**先绑端口**（严格按 `--port`，占用即退出码 4 + `PORT_IN_USE <port>`，不静默漂移；先绑再建索引，端口冲突秒级失败）→ `build_state` → `build_router` → **先监听**（环回 `axum::serve` 优雅退出；LAN 由 supervisor 常驻任务管理，首轮回合即按配置绑定）→ `pipeline.start()`（注水/消费线程/worker/周期对账 + 周期兜底扫描定时检查）→ 接线 watcher（ConfigChanged 先 `config.reload()` 再按差异分发：ignore/扩展名白名单变化 → 强制重扫（收敛既有条目）；[web] 变化 → LAN 热重绑）→ `startup.mark_ready()` → 后台全库对账扫描 |
+| `src/settings.rs` | 启动设置（解析层/配置层分离）：`Cli` 用 clap derive 声明 `local <PATH>` / `remote --remote-config <PATH>` / `openapi` 三个子命令；`local` 的库路径与 `remote` 的远程配置均为必填，模式不依赖可选参数推断。`DaemonArgs` 共享 `--port`（严格绑定，0 = 系统分配）/`--web-dist`/`--cache-parent`，各项支持同名 `HAWK_*` env 回退、CLI 优先；`Settings::from_local` / `from_remote` 承接业务校验与 env-only 参数——token 只走 `HAWK_TOKEN`（避免出现在进程列表，未传入时生成随机值并打印 stdout），`HAWK_MAINTENANCE_INTERVAL` 派生维护间隔（默认 60s，0 关闭）；周期兜底重扫在库配置 `[scan]`（periodic/interval，热更即生效） |
 
 ### api/ —— HTTP 层
 
@@ -61,7 +125,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/api/view.rs` | view 三端点（preferences / preference PUT / DELETE）。偏好与索引/元数据无耦合，注册表自带锁，端点直接读写，**不经过索引流水线** |
 | `src/api/trash.rs` | `trash/clear`。顺序铁律：先 `submit_clear_trash` 清索引位置、元数据与缓存（缩略图/调色板），再物理删除 `.hawk/trash/` 内容——先物理删除会让 watcher 的 Deleted 事件抢先摘除位置，导致元数据与缓存泄漏 |
 | `src/api/events.rs` | SSE 订阅端点：`broadcast::Receiver` 转 `event:`/`data:` 帧；lagged（消费跟不上）或总线关闭即结束流（lagged 次数累计进 app/status），客户端重连后须以 `item/skeleton` + `folder/list` 全量对齐。同文件定义 `SseEvents` 事件载荷注册表（键=事件名，与 `ItemEvents` 常量一一对应，契约测试双向比对），经 `attach_extra_schemas` 注册进 OpenAPI components |
-| `src/api/openapi.rs` | OpenAPI 文档装配（`build_openapi_json`：OpenApiRouter 收集 + SSE 事件载荷等无端点引用 schema 的手工注册 + default 关键字剥除）与 `/openapi/v1.json` 服务（OnceLock 缓存）；schema 由代码生成并固化入库，同步性由契约测试校验 |
+| `src/api/openapi.rs` | OpenAPI 导出流程（`dump()` 将代码生成的 schema 打印到 stdout，不启动 daemon）、额外 schema 注册与 `/openapi/v1.json` 服务（OnceLock 缓存）；`build_openapi_json` 在 `api/mod.rs` 中统一装配路由文档、剥离 default 并序列化，schema 由代码生成并固化入库，同步性由契约测试校验 |
 | `src/api/web_dist.rs` | 局域网 web 查看的静态托管（fallback 挂载；`--web-dist` 传入时启用）：SPA 回退 `index.html`，`/assets/` 内容哈希资源 immutable 长缓存，其余 no-cache（防手机浏览器启发式缓存旧 HTML）；favicon 经 vite publicDir=build/ 落在 dist 根（icon.png，index.html 内 link rel=icon 引用），由本服务一并返回。请求路径逐段校验拒绝 `..` 与反斜杠（网页版经服务端隧道暴露，本托管面对公网） |
 | `src/api/item/` | item 十四端点，逻辑最重，按子域拆分（`mod.rs` 聚合路由与公共辅助；`query.rs` list/skeleton/detail/count；`add.rs` 路径导入与 URL 下载；`upload.rs` multipart 上传；`update.rs` update/batch_update；`delete.rs` 回收站进出；`file.rs` thumbnail/file/refresh_thumbnail；`replace.rs` 内容替换），见下节 |
 | `src/api/contract_tests.rs`（`#[cfg(test)]`） | OpenAPI 契约校验：schema 声明的端点全量归类（新增端点未归类即失败）、空库成功路径响应体经 jsonschema 校验（$ref 经 components 提升解析）、写端点校验路由存在（区分业务错误信封与 fallback 空 404） |
@@ -76,7 +140,7 @@ HTTP 请求 ──► api/（端点、信封、鉴权中间件）──► 读�
 | `src/core/metadata.rs` | 元数据模型（`ItemMetadata`：paths + url/tags/star/annotation + 宽高 + `palette` + `phash`）；仅负责内存与 SQLite 之间的数据结构，不再有 TOML 解析/序列化路径。`PerceptualHash` 保存算法版本与可选 64 位值，非图像用 value=None 负缓存 |
 | `src/core/metadata_store.rs` | 元数据存取：内存查询副本 + path→hash 反查表 + `.hawk/metadata.db` 唯一权威。构造直接 `MetadataDb.load_all` 注水，读取失败写 StartupState 进入错误页，不按空库降级；单条/批量写先提交 SQLite 再更新内存，`persist_batch` 同步持久化与内存并返回实际成功项供索引/事件使用；`hashes_with_missing_palette` / `hashes_with_missing_phash` / `hashes_with_zero_dim` 供派生维护。旧 TOML 不读取、不迁移，库外 index.db 与 StorageMode 已删除 |
 | `src/core/item.rs` | 索引中的 item：`ItemLocation`（一个文件位置，回收站位置以 `.hawk/trash/` 开头）+ `Item`（位置列表 + 元数据查询副本 + 宽高 + 调色板，每项同时保存 RGB 与**预算 Lab** 检索坐标）；`sync_from` 为元数据 → 索引的单向同步（只允许流水线调用，palette 为 None 时保持索引现状）；`to_dto(trash_view)` 锁内投影——回收站视图的 paths 展示原库内路径（恢复目标）、folders 派生去重；`ItemQuery`/`ItemDto`/`ItemSkeletonDto` |
-| `src/core/index.rs` | 内存索引：hash→item 与位置路径→hash 双字典，一把 `Mutex`。读取纪律见总览规则 3。`query` 实现 item/list 全部过滤（AND 语义）+ 排序 + 分页：**排序在轻量键上进行**（name 预计算小写键，避免比较器内反复分配）、主键同值按 (id, path) 字典序打破平局、desc 反转整个比较结果、`total_size` 为过滤后全量字节合计，**DTO 只投影分页窗口**（大库下不为全部命中项克隆完整 DTO）；`query_skeleton` 同过滤同排序投影 id/path/width/height/star/size（两次独立查询次序逐位一致，前端按 offset 取窗口依赖这一点）；颜色检索：查询色一次转 Lab，逐 item 检查预算 Lab 的 ΔE² ≤ 25²（免开方）；`folder_counts`（含祖先目录，同 item 同目录只计一次）/`category_counts`/`tags_with_counts` 供侧栏与 folder/list |
+| `src/core/index.rs` | 内存索引：hash→item 与位置路径→hash 双字典，一把 `RwLock`。读取纪律见总览规则 3。`query` 实现 item/list 全部过滤（AND 语义）+ 排序 + 分页：锁内只做过滤与轻量排序键投影，**排序在锁外基于轻量键进行**（name 预计算小写键，避免比较器内反复分配）、主键同值按 (id, path) 字典序打破平局、desc 反转整个比较结果、`total_size` 为过滤后全量字节合计，**DTO 只投影分页窗口**（大库下不为全部命中项克隆完整 DTO）；`query_skeleton` 同过滤同排序投影 id/path/width/height/star/size（两次独立查询次序逐位一致，前端按 offset 取窗口依赖这一点）；颜色检索：查询色一次转 Lab，逐 item 检查预算 Lab 的 ΔE² ≤ 25²（免开方）；`folder_counts`（含祖先目录，同 item 同目录只计一次）/`category_counts`/`tags_with_counts` 供侧栏与 folder/list |
 | `src/core/pipeline/` | **核心**：索引流水线模块（单写者 actor），按职责拆分，详见下节：`mod.rs`（Job 枚举/提交表面/消费循环/超时）、`ctx.rs`（上下文 + JobSender 外部回流通道 + 进度快照）、`upsert.rs`（入库生命周期）、`fs_ops.rs`（删除/移动/回收站）、`scan.rs`（扫描 runner + 会话簿记 + 定向扫描）、`reconcile.rs`（元数据对账）、`derived.rs`（调色板/宽高回写） |
 | `src/core/content_hash.rs` | BLAKE3 流式哈希（1MB 缓冲），即 item id，元数据/缩略图命名依据 |
 | `src/core/perceptual_hash.rs` | 64 位 pHash：`image_hasher` DCT + Mean、稳定 Lanczos3；`PHASH_VERSION=1`；XOR 汉明距离。单元测试覆盖重复计算、缩放、JPEG 重压缩与不同画面 |

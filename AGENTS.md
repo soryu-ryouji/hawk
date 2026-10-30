@@ -12,7 +12,7 @@
 - 更新了功能之后，需要同步更新对应的文档
 
 - API 契约的三段式生成链：端点定义与 `#[utoipa::path]`/DTO 上的文档注释是单一来源，任何改动（包括只改注释）后必须重新固化两份产物，缺一不可：
-  1. `cd hawk-daemon && cargo run -- --dump-openapi > openapi.json`
+  1. `cd hawk-daemon && cargo run -- openapi > openapi.json`
   2. `cd hawk-app && npm run gen:types`（依赖 hawk-daemon 的构建产物，先 `cargo build`）
   守护：daemon 契约测试 `openapi_json_in_sync` 校验 openapi.json 与代码同步；CI 重跑 gen:types 并 diff 检查 schema.d.ts 同步。漏跑任一步即测试/CI 失败。
 

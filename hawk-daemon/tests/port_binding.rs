@@ -14,6 +14,7 @@ fn occupied_port_exits_with_port_in_use() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_hawk-daemon"))
         .args([
+            "remote",
             "--port",
             &port.to_string(),
             "--remote-config",
@@ -42,6 +43,7 @@ fn free_port_does_not_fail_binding() {
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_hawk-daemon"))
         .args([
+            "remote",
             "--port",
             &port.to_string(),
             "--remote-config",

@@ -22,14 +22,26 @@ use crate::core::thumbnail::ThumbnailService;
 use crate::core::thumbnail_worker::ThumbnailWorker;
 use crate::core::view_prefs::ViewPreferences;
 use crate::core::watcher::{LibraryWatcher, WatcherEvent};
-use crate::settings::Settings;
+use crate::settings::{LocalArgs, RemoteArgs, Settings};
 use std::sync::Arc;
 
-/// 进程入口：先监听（startup 端点可答 starting）→ 组装组件图 → 装配索引流水线 → 就绪 → 保活至退出信号
+/// 本地素材库模式
+pub async fn run_local(args: LocalArgs) {
+    run(Settings::from_local(args)).await;
+}
+
+/// 无本地库的远程素材库查看模式
+pub async fn run_remote(args: RemoteArgs) {
+    run(Settings::from_remote(args)).await;
+}
+
+/// daemon 启动流程：初始化诊断 → 先监听（startup 端点可答 starting）→ 组装组件图
+/// → 装配索引流水线 → 就绪 → 保活至退出信号。
 ///
 /// 端口严格按 `--port` 绑定，绑不上就报错退出（不静默换端口）：端口的唯一所有权在壳层（Electron
 /// 读取用户配置后传入），生态客户端（浏览器插件）据此按固定段探活；daemon 自行漂移会让客户端追不上。
-pub async fn run(settings: Settings) {
+async fn run(settings: Settings) {
+    init_diagnostics();
     let port = settings.port;
 
     // ---------- 先监听 ----------
@@ -297,6 +309,21 @@ fn start_watcher(state: &api::AppState, lib: &api::LibraryState) -> Arc<LibraryW
     });
     watcher.start();
     watcher
+}
+
+fn init_diagnostics() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
+    // panic 也进日志（默认 hook 仍保留：stderr 尾部是 Electron 侧错误屏的数据源）
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("panic: {info}");
+        default_hook(info);
+    }));
 }
 
 async fn shutdown_signal() {

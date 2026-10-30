@@ -1,7 +1,7 @@
 //! OpenAPI 契约校验：代码生成（utoipa）的 schema 与路由实现、固化产物的一致性。
 //!
 //! 1. 同步性：固化的 openapi.json 与 `build_openapi_json()` 语义相等
-//!    ——改 API 后须重新固化：`cargo run -- --dump-openapi > openapi.json`
+//!    ——改 API 后须重新固化：`cargo run -- openapi > openapi.json`
 //! 2. 完备性：schema 声明的每个 path+method 必须恰好归入 SUCCESS_CASES（成功路径校验）/
 //!    WRITE_SCRIPT（写端点剧本校验）/ ROUTE_ONLY（仅路由存在）/ SSE_ENDPOINTS（SSE 不发 HTTP 请求）
 //!    之一——新增端点未归类即测试失败，防止端点静默游离于契约校验之外
@@ -898,7 +898,7 @@ fn openapi_json_in_sync() {
     let fixed = spec();
     assert!(
         generated == fixed,
-        "openapi.json 与代码生成不同步，请重新固化：cargo run -- --dump-openapi > openapi.json"
+        "openapi.json 与代码生成不同步，请重新固化：cargo run -- openapi > openapi.json"
     );
 }
 

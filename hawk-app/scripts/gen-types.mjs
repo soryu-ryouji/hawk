@@ -30,7 +30,7 @@ if (!bin) {
 fs.rmSync(tmp, { recursive: true, force: true });
 fs.mkdirSync(lib, { recursive: true });
 
-const server = spawn(bin, ['--library', lib, '--port', String(port)], {
+const server = spawn(bin, ['local', lib, '--port', String(port)], {
   env: { ...process.env, HAWK_TOKEN: 'gen-types' },
   stdio: 'ignore',
 });

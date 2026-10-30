@@ -1,5 +1,5 @@
 //! OpenAPI schema 服务。schema 由代码生成（utoipa，路由与文档同一来源），
-//! 固化于 openapi.json（`--dump-openapi` 重新生成，契约测试校验同步），
+//! 固化于 openapi.json（`openapi` 子命令重新生成，契约测试校验同步），
 //! 前后端类型从它生成。
 
 use std::sync::OnceLock;
@@ -45,6 +45,12 @@ pub fn attach_extra_schemas(doc: &mut utoipa::openapi::OpenApi) {
     ] {
         components.schemas.insert(name.into_owned(), schema);
     }
+}
+
+/// 将代码生成的 OpenAPI schema 打印到 stdout 后返回，供 `hawk-daemon openapi > openapi.json` 使用。
+/// 该流程不初始化日志、配置、数据库或网络监听。
+pub fn dump() {
+    print!("{}", super::build_openapi_json());
 }
 
 pub async fn openapi_schema() -> axum::response::Response {

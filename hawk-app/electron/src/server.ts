@@ -164,8 +164,8 @@ function startServer(libPath: string | null, address: string, token: string): Se
   const cacheParent = readConfig().cacheParent;
   const spawnArgs = [
     ...args,
-    // 无库（远程查看模式）不传 --library：远程配置与设备身份在应用级 remote.toml
-    ...(libPath ? ['--library', libPath] : []),
+    // 本地库与无库远程查看是两个显式子命令；远程配置与设备身份固定在应用级目录
+    ...(libPath ? ['local', libPath] : ['remote']),
     '--port',
     String(new URL(address).port),
     '--web-dist',
@@ -234,11 +234,7 @@ function startServer(libPath: string | null, address: string, token: string): Se
         fail(`本地端口 ${port} 已被占用，本地服务无法启动`, { code: PORT_IN_USE, port });
         return;
       }
-      // 旧 daemon 不认识新参数：提示版本不匹配，而不是只甩 clap 用法
-      const stale = stderrTail.includes("unexpected argument '--remote-config'")
-        ? '\n\nhawk-daemon 版本过旧或安装包不完整：请完全退出 hawk 后重新安装，或重新构建 hawk-daemon。'
-        : '';
-      fail(`hawk-daemon 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}${stale}`);
+      fail(`hawk-daemon 异常退出（退出码 ${code}）${stderrTail.trim() ? `\n${stderrTail.trim()}` : ''}`);
     }
   });
 

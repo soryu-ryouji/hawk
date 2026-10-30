@@ -393,7 +393,7 @@ jobs:
         run: node scripts/pack.mjs --publish never ${{ steps.nightly_ver.outputs.flag }}
 
       # 回归守卫：Windows 构建曾因 daemon 编译失败静默产出无 daemon 的 zip（并行 wait 吞错误），
-      # 旧 daemon 会被沿用到运行时，表现为新 app 传 --remote-config 报错
+      # 旧 daemon 会被沿用到运行时，表现为新 app 传 local/remote 子命令报错
       - name: Verify packaged daemon
         shell: pwsh
         run: |

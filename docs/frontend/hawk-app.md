@@ -58,8 +58,9 @@ Electron 主进程启动
   → 首帧渲染完成后 ready-to-show 才 show 窗口（GPU 驱动不认可 backgroundColor、合成器首帧延迟时
     提前 show 会把空白/白窗暴露给用户）
   → spawn hawk-daemon（开发：hawk-daemon/target 下的 Rust 构建产物；打包：process.resourcesPath 内二进制）
-      环境变量传入 HAWK_TOKEN，参数 --library <path>（远程查看模式省略，无库形态）--port <配置端口> --web-dist <web/dist>
-      --remote-config ~/.config/hawk/remote.toml（应用级远程配置；身份目录 ~/.config/hawk/remote/）
+      环境变量传入 HAWK_TOKEN；本地库执行 local <path>，无库远程查看执行 remote；
+      共同参数 --port <配置端口> --web-dist <web/dist> --remote-config ~/.config/hawk/remote.toml
+      （应用级远程配置的身份目录为 ~/.config/hawk/remote/）
       （--web-dist 供局域网 web 查看托管前端页面；asar 打包需 asarUnpack 该目录；
        缓存头：/assets/ 内容哈希资源 immutable 长缓存，index.html no-cache——防手机浏览器
        启发式缓存旧 HTML 引用已失效的旧 bundle，重建后手机端拿到构建前版本）
@@ -101,7 +102,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | 通道 | 用途 |
 | ---- | ---- |
 | `selectLibrary()` | 选新素材库：弹系统目录选择框 → 主进程杀掉旧 server 用新库重启（进历史记录） |
-| `openRemoteViewer()` | 没有本地库时进入远程查看模式：拉起无库形态 daemon（不传 --library，不创建本地目录），不弹目录选择框；就绪后前端进远程查看屏（RemoteScreen） |
+| `openRemoteViewer()` | 没有本地库时进入远程查看模式：以 remote 子命令拉起无库形态 daemon（不创建本地目录），不弹目录选择框；就绪后前端进远程查看屏（RemoteScreen） |
 | `listLibraries()` | 本机打开过的素材库历史：`{ current, libraries: [{ path, name, exists }] }`（最近在前；主进程读 `config.toml` 的 `libraryHistory` 并校验目录存在性） |
 | `openLibrary(path)` | 打开历史素材库（仅接受历史记录内的路径），换库就绪经 `onServerStarted` 通知 |
 | `openLibraryFolder(path)` | 在系统文件管理器中打开素材库目录（历史库条目 `···` 菜单） |

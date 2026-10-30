@@ -89,7 +89,7 @@ Debug 构建支持从应用外部私有目录读取一条连接，免去手点�
 ```bash
 # 1) 起一个测试库 daemon（token 走环境变量）
 HAWK_TOKEN=smoke-token ../hawk-daemon/target/debug/hawk-daemon.exe \
-  --library /path/to/test-library --port 27372
+  local /path/to/test-library --port 27372
 
 # 2) 模拟器内访问宿主机端口
 adb reverse tcp:27372 tcp:27372

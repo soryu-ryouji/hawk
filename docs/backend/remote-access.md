@@ -56,7 +56,7 @@
 - 数据面：iroh endpoint（打洞/中继/路径迁移/映射保活全部由 iroh 自治）——A 侧 accept 循环按会话放行集合执法（连接建立后身份不符即断开），隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级或受限远程写权限标记（见安全模型）；B 侧会话代理：环回监听器（supervisor 管理，同 LAN web 模型），每次会话随机 token，web 查看器以 `?token=` 携带，响应不带 CORS 头；连接死亡在原会话内重拨热替换（前端无感）
 **可选子系统约束**：应用级 `remote.toml` 的 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——接入参数变化热重启信令，`writable` 变更热生效不重启；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。热重启时旧数据面（QUIC 端点 + A 侧 accept 循环）随任务一起关停，supervisor 等其结束再拉起新任务，并对端口绑定做短暂重试——避免新一轮绑定自己刚占用的端口；停用后端口立即释放。
 
-**应用级配置与设备身份**：接入配置存 `~/.config/hawk/remote.toml`（Electron 经 `--remote-config` 传入），设备身份存同级的 `remote/identity.json`。两者不再随素材库切换：同一台机器在服务端始终是一台设备，切换库后心跳把设备表的 `library_name` 收敛到当前库。独立运行 daemon 时不传 `--remote-config`，回退到库内 `.hawk/remote.toml` 与 `.hawk/remote/`（测试/单库脚本用）。手工修改 `remote.toml` 需重启 daemon；设置面板经 API 写入即时生效。
+**应用级配置与设备身份**：接入配置存 `~/.config/hawk/remote.toml`（Electron 经 `--remote-config` 传入），设备身份存同级的 `remote/identity.json`。两者不再随素材库切换：同一台机器在服务端始终是一台设备，切换库后心跳把设备表的 `library_name` 收敛到当前库。以 `local` 子命令独立运行 daemon 时可不传 `--remote-config`，回退到库内 `.hawk/remote.toml` 与 `.hawk/remote/`（测试/单库脚本用）。手工修改 `remote.toml` 需重启 daemon；设置面板经 API 写入即时生效。
 
 ```toml
 # ~/.config/hawk/remote.toml（应用级；设备身份与访问密钥在 ~/.config/hawk/remote/）
@@ -174,7 +174,7 @@ Connection {
 
 ## 远程查看模式（没有本地素材库）
 
-daemon 是双形态进程：`--library` 缺省即远程查看模式——不构建任何库子系统（索引/监听/缩略图/LAN），库端点一律 400 `NO_LIBRARY`，仅保留远程管理面（`/remote/*`）与会话代理；接入配置与设备身份在应用级 remote.toml/remote/（无库无库内回退位，`--remote-config` 必显式提供）。无库设备注册时 `allow_remote=false`、库名恒为「远程查看」（可被池内发现，但没有素材可服务）。
+daemon 是双形态进程：`local <素材库路径>` 启动本地库模式，`remote --remote-config <路径>` 启动无本地库的远程查看模式。后者不构建任何库子系统（索引/监听/缩略图/LAN），库端点一律 400 `NO_LIBRARY`，仅保留远程管理面（`/remote/*`）与会话代理；接入配置与设备身份在应用级 remote.toml/remote/（无库无库内回退位，`--remote-config` 由 clap 强制要求）。无库设备注册时 `allow_remote=false`、库名恒为「远程查看」（可被池内发现，但没有素材可服务）。
 
 首次启动或本地库失效时，引导页提供「仅浏览远程素材库」：主进程直接拉起无库 daemon（不创建任何本地目录），前端经 `app/info.has_library=false` 进远程查看屏（复用设置面板的远程分区：填服务端/密钥 → 选设备 → 连接）。冷启动模式记忆为 config.toml 的 `remoteViewer`（开本地库即复位）；真实本地库从远程查看屏「打开本地素材库」或侧栏库下拉切换。
 

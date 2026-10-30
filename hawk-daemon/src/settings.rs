@@ -1,44 +1,20 @@
-//! 启动设置：素材库路径（可空 = 远程查看模式）、监听端口、访问 token。
+//! 启动设置：`local` 使用本地素材库，`remote` 仅查看远程素材库，`openapi` 导出契约。
 //! 桌面版由 Electron 通过命令行 / 环境变量传入（见 docs/architecture.md）。
 //! CLI 定义集中在 Cli（clap derive，单一权威：未知参数/非法值直接报错退出），
 //! Settings 只承接业务校验与加工——解析层/配置层分离。
 //! token 与对账间隔只走环境变量、不进命令行命名空间：token 避免出现在进程列表（ps 可见），
 //! 对账间隔是内部调参（ui-check 缩短用），Electron 的传参约定不变。
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 
 pub const DEFAULT_PORT: u16 = 27371;
 
-/// 命令行接口（每项支持同名 HAWK_* 环境变量回退，命令行优先于环境变量）
+/// 命令行接口（各项支持同名 HAWK_* 环境变量回退，命令行优先于环境变量）
 #[derive(Parser)]
 #[command(name = "hawk-daemon", version, about = "hawk 素材库后端服务")]
 pub struct Cli {
-    /// 素材库根目录；省略即远程查看模式（无本地库，仅提供远程管理面与会话代理，
-    /// 此时必须显式提供 --remote-config）
-    #[arg(long, env = "HAWK_LIBRARY")]
-    pub library: Option<String>,
-
-    /// 本地监听端口：严格绑定，被占用即用固定文案报错退出（不自动换端口）。
-    /// 0 = 由系统分配空闲端口（仅供测试/脚本，桌面端总是传显式端口）
-    #[arg(long, env = "HAWK_PORT", default_value_t = DEFAULT_PORT)]
-    pub port: u16,
-
-    /// 局域网 web 查看托管的前端静态文件目录；不存在则不托管
-    #[arg(long, env = "HAWK_WEB_DIST")]
-    pub web_dist: Option<String>,
-
-    /// 全局缓存父目录；缺省用系统缓存目录
-    #[arg(long, env = "HAWK_CACHE_PARENT")]
-    pub cache_parent: Option<String>,
-
-    /// 应用级远程访问配置（remote.toml，含身份目录）；缺省为 <library>/.hawk/remote.toml
-    /// （远程查看模式无库内回退位，必显式提供）
-    #[arg(long, env = "HAWK_REMOTE_CONFIG")]
-    pub remote_config: Option<String>,
-
-    /// 打印 OpenAPI schema 到 stdout 后退出（openapi.json 的固化来源）
-    #[arg(long)]
-    pub dump_openapi: bool,
+    #[command(subcommand)]
+    pub command: Command,
 }
 
 impl Cli {
@@ -46,6 +22,56 @@ impl Cli {
     pub fn parse_args() -> Cli {
         <Cli as Parser>::parse()
     }
+}
+
+#[derive(Subcommand)]
+pub enum Command {
+    /// 使用本地素材库
+    Local(LocalArgs),
+    /// 无本地库，仅查看远程素材库
+    Remote(RemoteArgs),
+    /// 打印 OpenAPI schema 到 stdout 后退出
+    Openapi,
+}
+
+#[derive(Args)]
+pub struct LocalArgs {
+    /// 素材库根目录
+    #[arg(value_name = "PATH", env = "HAWK_LIBRARY")]
+    pub library: String,
+
+    #[command(flatten)]
+    pub daemon: DaemonArgs,
+
+    /// 应用级远程访问配置（remote.toml，含身份目录）；缺省为 <library>/.hawk/remote.toml
+    #[arg(long, env = "HAWK_REMOTE_CONFIG", value_name = "PATH")]
+    pub remote_config: Option<String>,
+}
+
+#[derive(Args)]
+pub struct RemoteArgs {
+    #[command(flatten)]
+    pub daemon: DaemonArgs,
+
+    /// 应用级远程访问配置（remote.toml，含身份目录）
+    #[arg(long, env = "HAWK_REMOTE_CONFIG", value_name = "PATH")]
+    pub remote_config: String,
+}
+
+#[derive(Args)]
+pub struct DaemonArgs {
+    /// 本地监听端口：严格绑定，被占用即用固定文案报错退出（不自动换端口）。
+    /// 0 = 由系统分配空闲端口（仅供测试/脚本，桌面端总是传显式端口）
+    #[arg(long, env = "HAWK_PORT", default_value_t = DEFAULT_PORT)]
+    pub port: u16,
+
+    /// 局域网 web 查看托管的前端静态文件目录；不存在则不托管
+    #[arg(long, env = "HAWK_WEB_DIST", value_name = "DIR")]
+    pub web_dist: Option<String>,
+
+    /// 全局缓存父目录；缺省用系统缓存目录
+    #[arg(long, env = "HAWK_CACHE_PARENT", value_name = "DIR")]
+    pub cache_parent: Option<String>,
 }
 
 #[derive(Clone)]
@@ -65,48 +91,55 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Cli 已完成词法解析（端口合法由 clap 保证），此处承接业务校验与 env-only 参数
-    pub fn from_cli(cli: Cli) -> Settings {
-        let library = cli
-            .library
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty());
-        if let Some(library) = &library {
-            if !std::path::Path::new(library).is_dir() {
-                eprintln!("素材库目录不存在: {library}");
-                std::process::exit(2);
-            }
-        }
-        let remote_config = cli
-            .remote_config
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty());
-        // 无库模式没有库内 .hawk/ 回退位，远程配置（含设备身份目录）必须显式指定
-        if library.is_none() && remote_config.is_none() {
-            eprintln!("远程查看模式（无 --library）必须显式提供 --remote-config");
+    pub fn from_local(args: LocalArgs) -> Settings {
+        let library = args.library.trim().to_string();
+        if library.is_empty() || !std::path::Path::new(&library).is_dir() {
+            eprintln!("素材库目录不存在: {library}");
             std::process::exit(2);
         }
+        let remote_config = args
+            .remote_config
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty());
+        Settings::from_parts(Some(library), args.daemon, remote_config)
+    }
 
-        // token 只存在于进程环境中；未传入时（开发场景）生成随机 token 并打印到 stdout
-        let token = std::env::var("HAWK_TOKEN").ok().unwrap_or_else(|| {
-            let mut bytes = [0u8; 32];
-            getrandom::fill(&mut bytes).expect("生成随机 token 失败");
-            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-            println!("{hex}");
-            hex
-        });
+    pub fn from_remote(args: RemoteArgs) -> Settings {
+        let remote_config = args.remote_config.trim().to_string();
+        if remote_config.is_empty() {
+            eprintln!("远程配置路径不能为空");
+            std::process::exit(2);
+        }
+        Settings::from_parts(None, args.daemon, Some(remote_config))
+    }
 
+    fn from_parts(
+        library_root: Option<String>,
+        daemon: DaemonArgs,
+        remote_config: Option<String>,
+    ) -> Settings {
         Settings {
-            library_root: library,
-            port: cli.port,
-            token,
+            library_root,
+            port: daemon.port,
+            token: access_token(),
             maintenance_interval_seconds: std::env::var("HAWK_MAINTENANCE_INTERVAL")
                 .ok()
-                .and_then(|v| v.parse::<u64>().ok())
+                .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(60),
-            cache_parent: cli.cache_parent,
-            web_dist: cli.web_dist,
+            cache_parent: daemon.cache_parent,
+            web_dist: daemon.web_dist,
             remote_config,
         }
     }
+}
+
+/// token 只存在于进程环境中；未传入时（开发场景）生成随机 token 并打印到 stdout
+fn access_token() -> String {
+    std::env::var("HAWK_TOKEN").ok().unwrap_or_else(|| {
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes).expect("生成随机 token 失败");
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        println!("{hex}");
+        hex
+    })
 }

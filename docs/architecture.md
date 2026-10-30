@@ -53,7 +53,7 @@ Web 前端不依赖 Electron IPC，只通过 REST API 通信。
 
 **3. API 契约先行**
 
-REST API 由代码生成 OpenAPI schema（utoipa：`#[utoipa::path]` 标注端点、DTO derive `ToSchema`，路由与文档同一来源），固化于 `hawk-daemon/openapi.json`（改 API 后 `cargo run -- --dump-openapi > openapi.json` 重新固化，契约测试校验同步），TypeScript 类型从 schema 生成（`npm run gen:types`），前后端不允许手写对接口。
+REST API 由代码生成 OpenAPI schema（utoipa：`#[utoipa::path]` 标注端点、DTO derive `ToSchema`，路由与文档同一来源），固化于 `hawk-daemon/openapi.json`（改 API 后 `cargo run -- openapi > openapi.json` 重新固化，契约测试校验同步），TypeScript 类型从 schema 生成（`npm run gen:types`），前后端不允许手写对接口。
 
 **4. 编辑计算归客户端，server 归存储与管理**
 
@@ -69,7 +69,7 @@ Electron 壳与后端二进制一起打包发行（electron-builder 的 `extraRe
 Electron 启动
   → 预选空闲环回端口 + 生成随机 token
   → spawn hawk-daemon 子进程
-      - 参数 --library <path> --port <预选端口>（远程查看模式不传 --library，daemon 无库形态运行），token 经环境变量传入
+      - 本地库：`local <path> --port <预选端口>`；无库远程查看：`remote --remote-config <path> --port <预选端口>`；token 经环境变量传入
       - **先监听端口，初始索引后台构建**（先监听、后索引的启动模型）
   → 轮询 GET /api/v1/app/startup（200ms 间隔）：
       starting → 进度帧驱动启动进度页；ready → 加载主界面；error → 弹错误框
@@ -82,15 +82,17 @@ Electron 退出
 
 ### 服务器版（未来）
 
-同一个 hawk-daemon 直接部署在服务器上，为多个用户服务。与桌面版的差异：
+当前 hawk-daemon 面向桌面端的单用户、单素材库场景：`AppState` 只承载一个库，认证以进程 token 和库级访问密钥为主，索引与运行状态都在单进程内，**不能直接作为多用户服务器部署**。
 
-| 差异点   | 桌面版             | 服务器版                      |
-| -------- | ------------------ | ----------------------------- |
-| 数据来源 | 监听本地文件系统   | 用户上传 / 同步客户端推送     |
-| 索引存储 | 内存索引           | 集中式数据库（如 PostgreSQL） |
-| 认证     | 随机 token（单机） | 真实的用户认证体系            |
+未来服务器版可以复用 HTTP 契约和部分领域流程，但需要单独设计以下能力：
 
-这三处差异在架构上已预留位置：core 的索引读写收在窄接口后面、API 预留认证头位置。但**当前只实现桌面版**，不提前实现服务器版的任何功能。
+| 差异点   | 当前桌面版                     | 服务器版需要新增             |
+| -------- | ------------------------------ | ---------------------------- |
+| 数据来源 | 监听本地文件系统               | 用户上传 / 同步客户端推送    |
+| 状态边界 | 单进程、单素材库、内存索引     | 多用户隔离与可扩展的存储查询 |
+| 认证     | 进程 token 与库级访问密钥      | 用户认证、授权与租户隔离     |
+
+**当前只实现桌面版**，不提前引入存储 trait、集中式数据库或其他服务器专用抽象。daemon 当前架构的一致性、扩展边界与演进原则见 [代码导读](backend/server-code-structure.md#架构评估与适用边界)。
 
 ### 远程访问（服务端与 daemon remote 模块已实现）
 
@@ -107,7 +109,7 @@ Electron 退出
 
 ```text
 hawk/
-├── hawk-daemon/             ← Rust 后端（桌面版与服务器版共用）
+├── hawk-daemon/             ← Rust 素材库 daemon（当前面向桌面版）
 ├── hawk-update/             ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
 ├── hawk-app/                ← 桌面应用（Electron 壳 + Vue 前端，见 docs/frontend/hawk-app.md）
 ├── hawk-browser-extension/  ← 浏览器插件（Chrome/Firefox，WXT）

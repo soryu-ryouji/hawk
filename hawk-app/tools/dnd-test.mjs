@@ -65,7 +65,7 @@ const serverBin = [
   path.join(targetDir, 'debug', exeName),
 ].find((p) => existsSync(p));
 if (!serverBin) throw new Error('未找到 hawk-daemon 构建产物，请先 cargo build --release');
-const server = spawn(serverBin, ['--library', lib, '--port', String(port)], {
+const server = spawn(serverBin, ['local', lib, '--port', String(port)], {
   env: { ...process.env, HAWK_TOKEN: token },
   stdio: 'ignore',
 });

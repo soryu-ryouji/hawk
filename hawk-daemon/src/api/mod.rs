@@ -36,7 +36,7 @@ pub mod web_dist;
 #[cfg(test)]
 mod contract_tests;
 
-/// 重建 OpenAPI 文档并序列化为 pretty JSON（LF 行尾）——/openapi/v1.json 与 --dump-openapi 共用
+/// 重建 OpenAPI 文档并序列化为 pretty JSON（LF 行尾）——/openapi/v1.json 与 openapi 子命令共用
 pub fn build_openapi_json() -> String {
     let (_router, mut doc) = api_router();
     openapi::attach_extra_schemas(&mut doc);

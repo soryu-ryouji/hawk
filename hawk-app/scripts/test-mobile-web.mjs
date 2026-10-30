@@ -159,7 +159,7 @@ try {
   const port = await probeFreePort();
   server = spawn(
     serverCmd.command,
-    [...serverCmd.args, '--library', libDir, '--port', String(port), '--web-dist', path.join(root, 'web', 'dist')],
+    [...serverCmd.args, 'local', libDir, '--port', String(port), '--web-dist', path.join(root, 'web', 'dist')],
     { env: { ...process.env, HAWK_TOKEN: token }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
   );
   let serverErr = '';

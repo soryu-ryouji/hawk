@@ -97,7 +97,7 @@ class Server:
         self.stop()
 
     def start(self, timeout_s=300):
-        args = [self.bin, "--library", self.lib_dir, "--port", str(self.port)]
+        args = [self.bin, "local", self.lib_dir, "--port", str(self.port)]
         if self.cache_parent:
             args += ["--cache-parent", self.cache_parent]
         self.proc = subprocess.Popen(
