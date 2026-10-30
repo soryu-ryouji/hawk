@@ -275,7 +275,7 @@ export async function request<T>(method: string, path: string,
 // 行为：拼 Bearer 头；信封解包（status==='error' → throw ApiError）；网络错误 → ApiError('NETWORK')；无 data → undefined
 ```
 
-**局域网网站访问**（server 侧见 storage.md 的 `[web]` 段与 server-rest-api-v1.md 的 `app/info.access`）：桌面端设置面板配置 enabled/port 与访问密钥列表（按库隔离，每把密钥独立读/写权限），server 追加监听 `0.0.0.0:<port>` 并托管前端静态文件；浏览器打开 `http://<电脑IP>:<port>` 先进 ConnectScreen 输入某把密钥 token，验证通过后经 `app/info` 的 `access`/`writable` 判定写能力（store.viewerMode 驱动，同一浏览器切换身份用设置面板「连接」分区的注销按钮）——**只读密钥**：前端隐藏全部写入口（右键写菜单/编辑窗口/检查器编辑字段/侧栏新建/多选批量/删除快捷键/拖拽导入与放置/上传按钮），服务端写端点对该密钥一律 `403 READ_ONLY` 为最终防线；**持可写密钥**（创建时勾选「允许写入」）web 端与桌面端同权：上传（multipart `item/upload`，浏览器无文件路径可引用）、删除、标签/评分/文件夹等全部写操作可用。
+**局域网网站访问**（server 侧见 storage.md 的 `[web]` 段与 server-rest-api-v1.md 的 `app/info.role`）：桌面端设置面板配置 enabled/port 与访问密钥列表（按库隔离，每把密钥独立读/写权限），server 追加监听 `0.0.0.0:<port>` 并托管前端静态文件；浏览器打开 `http://<电脑IP>:<port>` 先进 ConnectScreen 输入某把密钥 token，验证通过后经 `app/info` 的 `role`/`channel` 判定写能力（store.viewerMode 驱动，同一浏览器切换身份用设置面板「连接」分区的注销按钮）——**只读密钥**：前端隐藏全部写入口（右键写菜单/编辑窗口/检查器编辑字段/侧栏新建/多选批量/删除快捷键/拖拽导入与放置/上传按钮），服务端写端点对该密钥一律 `403 READ_ONLY` 为最终防线；**持可写密钥**（创建时勾选「允许写入」）web 端与桌面端同权：上传（multipart `item/upload`，浏览器无文件路径可引用）、删除、标签/评分/文件夹等全部写操作可用。
 
 **shared/api/endpoints.ts**——端点一一对应 server-rest-api-v1.md，签名即契约：
 

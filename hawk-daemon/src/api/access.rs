@@ -39,24 +39,9 @@ impl CapabilitySet {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Role {
-    Viewer,
-    Importer,
-    Editor,
-    Admin,
-}
+pub use crate::core::access::Role;
 
 impl Role {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Role::Viewer => "viewer",
-            Role::Importer => "importer",
-            Role::Editor => "editor",
-            Role::Admin => "admin",
-        }
-    }
-
     const fn capabilities(self) -> CapabilitySet {
         match self {
             Role::Viewer => CapabilitySet::READ,

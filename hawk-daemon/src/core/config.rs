@@ -3,19 +3,19 @@
 //! [web] 段保存即热生效（LAN 监听 supervisor 运行期重绑，见 api/lan.rs）；
 //! 每个局域网访问密钥独立携带读/写权限，鉴权中间件每请求经 current().web 查找并判定，热生效。
 
+use crate::core::access::Role;
 use crate::core::paths::LibraryPaths;
 use std::collections::HashSet;
 use std::sync::RwLock;
 
-/// 局域网访问密钥：明文 token 与配置一起存于库内；
+/// 局域网访问密钥：明文 secret 与配置一起存于库内；
 /// 列表 API 仅 admin 可读，渲染层可复制给浏览器/移动端使用。
 #[derive(Clone, Default, PartialEq)]
 pub struct WebAccessKey {
     pub id: String,
     pub label: String,
-    pub token: String,
-    /// true = 该密钥允许写操作；false = 只读
-    pub write: bool,
+    pub secret: String,
+    pub role: Role,
     pub created_at_ms: u64,
     /// 配对设备元数据：用于目标端管理列表展示对端信息（网站密钥为空）。
     pub peer_id: Option<String>,
@@ -280,8 +280,8 @@ fn keys_to_toml(keys: &[WebAccessKey]) -> toml_edit::Item {
         let mut table = toml_edit::Table::new();
         table["id"] = toml_edit::value(key.id.as_str());
         table["label"] = toml_edit::value(key.label.as_str());
-        table["token"] = toml_edit::value(key.token.as_str());
-        table["write"] = toml_edit::value(key.write);
+        table["secret"] = toml_edit::value(key.secret.as_str());
+        table["role"] = toml_edit::value(key.role.as_str());
         table["created_at_ms"] = toml_edit::value(key.created_at_ms as i64);
         if let Some(peer_id) = &key.peer_id {
             table["peer_id"] = toml_edit::value(peer_id.as_str());
@@ -337,8 +337,8 @@ port = 27372
 # [[web.keys]]
 # id = "..."
 # label = "我的浏览器"
-# token = "..."
-# write = false
+# secret = "..."
+# role = "viewer"
 # created_at_ms = 0
 
 "#;
@@ -389,12 +389,12 @@ fn parse_web_keys(value: Option<&toml::Value>) -> Vec<WebAccessKey> {
         .filter_map(|value| {
             let key = value.as_table()?;
             let id = key.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
-            let token = key
-                .get("token")
+            let secret = key
+                .get("secret")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .trim();
-            if id.is_empty() || token.is_empty() {
+            if id.is_empty() || secret.is_empty() {
                 return None;
             }
             Some(WebAccessKey {
@@ -405,8 +405,16 @@ fn parse_web_keys(value: Option<&toml::Value>) -> Vec<WebAccessKey> {
                     .unwrap_or("访问密钥")
                     .trim()
                     .to_string(),
-                token: token.to_string(),
-                write: key.get("write").and_then(|v| v.as_bool()).unwrap_or(false),
+                secret: secret.to_string(),
+                role: key
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .and_then(|role| match role {
+                        "viewer" => Some(Role::Viewer),
+                        "editor" => Some(Role::Editor),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
                 created_at_ms: key
                     .get("created_at_ms")
                     .and_then(|v| v.as_integer())
@@ -763,19 +771,19 @@ mod tests {
         .unwrap();
         let cfg = LibraryConfig::new(paths.clone());
 
-        let key = |id: &str, token: &str, write: bool| WebAccessKey {
+        let key = |id: &str, secret: &str, role: Role| WebAccessKey {
             id: id.to_string(),
             label: format!("label-{id}"),
-            token: token.to_string(),
-            write,
+            secret: secret.to_string(),
+            role,
             created_at_ms: 42,
             ..Default::default()
         };
         let web = WebSettings {
             enabled: true,
             port: 28101,
-            keys: vec![key("web_a", "token_a", false)],
-            peer_keys: vec![key("peer_a", "token_b", true)],
+            keys: vec![key("web_a", "token_a", Role::Viewer)],
+            peer_keys: vec![key("peer_a", "token_b", Role::Editor)],
             peer_port: 28102,
         };
         let change = cfg.update_web(&web).unwrap();

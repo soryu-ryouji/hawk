@@ -11,6 +11,7 @@
 
 use super::lan::LanSupervisor;
 use super::{build_router, build_router_for, AppState, ListenerMode, SharedState};
+use crate::core::access::Role;
 use crate::core::config::{LibraryConfig, WebAccessKey, WebSettings};
 use crate::core::events::{EventBus, LibraryEvents};
 use crate::core::index::ItemIndex;
@@ -341,16 +342,16 @@ async fn lan_ports_enforce_separate_key_namespaces() {
             keys: vec![WebAccessKey {
                 id: "web".into(),
                 label: "web".into(),
-                token: "web-token".into(),
-                write: false,
+                secret: "web-token".into(),
+                role: Role::Viewer,
                 created_at_ms: 0,
                 ..Default::default()
             }],
             peer_keys: vec![WebAccessKey {
                 id: "peer".into(),
                 label: "peer".into(),
-                token: "peer-token".into(),
-                write: false,
+                secret: "peer-token".into(),
+                role: Role::Viewer,
                 created_at_ms: 0,
                 ..Default::default()
             }],
@@ -398,7 +399,7 @@ async fn pair_request_rejects_missing_reverse_profile() {
         &peer_router,
         "POST",
         "/api/v1/app/lan/pair-requests",
-        Some(json!({ "client_name": "OldClient", "writable": true })),
+        Some(json!({ "client_name": "OldClient", "role": "editor" })),
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -425,7 +426,7 @@ async fn lan_device_keys_are_independent_from_website_keys() {
         "/api/v1/app/lan/device-keys",
         Some(json!({
             "label": "Target-Mac",
-            "write": false,
+            "role": "viewer",
             "peer_id": "peer-source",
             "library_name": "Source Library",
             "url": "http://192.168.1.10:27375"
@@ -449,9 +450,15 @@ async fn lan_device_keys_are_independent_from_website_keys() {
     assert_eq!(web.peer_keys.len(), 1);
 
     let path = format!("/api/v1/app/lan/device-keys/{key_id}");
-    let (status, _) = call_json(&app.router, "PATCH", &path, Some(json!({ "write": true }))).await;
+    let (status, _) = call_json(
+        &app.router,
+        "PATCH",
+        &path,
+        Some(json!({ "role": "editor" })),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(lib.config.current().web.peer_keys[0].write);
+    assert!(lib.config.current().web.peer_keys[0].role == Role::Editor);
 
     let (status, _) = call_json(&app.router, "DELETE", &path, None).await;
     assert_eq!(status, StatusCode::OK);
@@ -472,8 +479,8 @@ async fn lan_peer_activity_reports_online_client() {
             peer_keys: vec![WebAccessKey {
                 id: "peer".into(),
                 label: "Test-Mac".into(),
-                token: "peer-token".into(),
-                write: false,
+                secret: "peer-token".into(),
+                role: Role::Viewer,
                 created_at_ms: 0,
                 peer_id: Some("source-peer".into()),
                 library_name: Some("Source Library".into()),
@@ -499,7 +506,7 @@ async fn lan_peer_activity_reports_online_client() {
     let data: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(data["data"]["clients"][0]["key_id"], "peer");
     assert_eq!(data["data"]["clients"][0]["online"], true);
-    assert_eq!(data["data"]["clients"][0]["write"], false);
+    assert_eq!(data["data"]["clients"][0]["role"], "viewer");
     assert_eq!(data["data"]["clients"][0]["peer_id"], "source-peer");
     assert_eq!(data["data"]["clients"][0]["library_name"], "Source Library");
     assert_eq!(
@@ -521,14 +528,14 @@ async fn put_lan_auto_pair_request_flow() {
         "/api/v1/app/lan/pair-requests",
         Some(json!({
             "client_name": "MacBook",
-            "writable": true,
+            "role": "editor",
             "reverse": {
                 "peer_id": "source-peer",
                 "name": "MacBook",
                 "library_name": "Source Library",
                 "urls": ["http://192.168.1.10:27375"],
-                "token": "reverse-token",
-                "writable": false
+                "peer_key": "reverse-token",
+                "role": "viewer"
             }
         })),
     )
@@ -559,7 +566,7 @@ async fn put_lan_auto_pair_request_flow() {
         &app.router,
         "POST",
         &decision_path,
-        Some(json!({ "allow": true, "write": true })),
+        Some(json!({ "allow": true, "role": "editor" })),
     )
     .await;
     assert_eq!(
@@ -571,7 +578,7 @@ async fn put_lan_auto_pair_request_flow() {
     let decision: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(decision["data"]["peer"]["id"], "source-peer");
     assert_eq!(decision["data"]["peer"]["url"], "http://192.168.1.10:27375");
-    assert_eq!(decision["data"]["peer"]["token"], "reverse-token");
+    assert_eq!(decision["data"]["peer"]["peer_key"], "reverse-token");
     let peer_key = &app
         .state
         .library
@@ -596,8 +603,8 @@ async fn put_lan_auto_pair_request_flow() {
     let approved: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(approved["data"]["status"], "approved");
     assert_eq!(approved["data"]["protocol"], 2);
-    assert_eq!(approved["data"]["writable"], true);
-    assert!(approved["data"]["token"]
+    assert_eq!(approved["data"]["role"], "editor");
+    assert!(approved["data"]["access_key"]
         .as_str()
         .is_some_and(|token| !token.is_empty()));
     assert!(approved["data"]["peer_id"]
@@ -611,7 +618,7 @@ async fn put_lan_auto_pair_request_flow() {
         .web
         .peer_keys
         .iter()
-        .any(|key| key.write && key.label == "MacBook"));
+        .any(|key| key.role == Role::Editor && key.label == "MacBook"));
 }
 
 /// PUT /app/lan 必须真正唤醒 supervisor 并让 hawk-app 端口开始监听。
@@ -639,8 +646,8 @@ async fn put_lan_starts_peer_listener() {
         "peer_keys": [{
             "id": "peer",
             "label": "peer",
-            "token": "peer-token",
-            "write": false,
+            "access_key": "peer-token",
+            "role": "viewer",
             "created_at_ms": 0
         }]
     });
@@ -679,8 +686,8 @@ async fn put_lan_auto_selects_free_peer_port() {
         "peer_keys": [{
             "id": "peer",
             "label": "peer",
-            "token": "peer-token",
-            "write": false,
+            "access_key": "peer-token",
+            "role": "viewer",
             "created_at_ms": 0
         }]
     });
@@ -716,8 +723,8 @@ async fn lan_supervisor_starts_configured_peer_port_on_boot() {
             peer_keys: vec![WebAccessKey {
                 id: "peer".into(),
                 label: "peer".into(),
-                token: "peer-token".into(),
-                write: false,
+                secret: "peer-token".into(),
+                role: Role::Viewer,
                 created_at_ms: 0,
                 ..Default::default()
             }],

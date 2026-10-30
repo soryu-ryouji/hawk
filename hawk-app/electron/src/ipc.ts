@@ -239,8 +239,11 @@ export function registerIpc(): void {
     if (typeof requestId !== 'string' || !requestId || typeof body !== 'object' || body === null) {
       throw new Error('无效的配对请求');
     }
-    const { allow, write } = body as { allow?: unknown; write?: unknown };
-    return lanDecidePairRequest(requestId, { allow: Boolean(allow), write: Boolean(write) });
+    const { allow, role } = body as { allow?: unknown; role?: string };
+    return lanDecidePairRequest(requestId, {
+      allow: Boolean(allow),
+      role: role === 'editor' ? 'editor' : 'viewer',
+    });
   });
   ipcMain.handle(IPC.lanForget, (_event, peerId: unknown) => {
     if (typeof peerId === 'string' && peerId) {

@@ -118,7 +118,7 @@ function startEdit(device: DeviceRow): void {
     return;
   }
   error.value = '';
-  editWrite.value = device.accessKey.write;
+  editWrite.value = device.accessKey.role === 'editor';
   editTarget.value = device;
 }
 
@@ -128,7 +128,7 @@ async function saveEdit(): Promise<void> {
     return;
   }
   busyId.value = device.accessKey.id;
-  const ok = await lan.setDeviceKeyWrite(device.accessKey.id, editWrite.value);
+  const ok = await lan.setDeviceKeyRole(device.accessKey.id, editWrite.value ? 'editor' : 'viewer');
   busyId.value = null;
   if (ok) {
     editTarget.value = null;
@@ -182,7 +182,7 @@ async function confirmQr(): Promise<void> {
   generatingQr.value = true;
   error.value = '';
   try {
-    const key = await lan.addDeviceKey('移动端扫码 ' + (lan.peerKeys.length + 1), qrWrite.value);
+    const key = await lan.addDeviceKey('移动端扫码 ' + (lan.peerKeys.length + 1), qrWrite.value ? 'editor' : 'viewer');
     if (!key) {
       error.value = lan.error ?? '创建设备密钥失败';
       return;
@@ -190,12 +190,12 @@ async function confirmQr(): Promise<void> {
     qrPermissionOpen.value = false;
     const urls = addresses.value.map((addr) => 'http://' + addr + ':' + lan.peerPort);
     pairing.value = {
-      payload: encodePairingPayload(lanPairingPayload(urls, key.token)),
+      payload: encodePairingPayload(lanPairingPayload(urls, key.access_key)),
       details: [
         { label: '地址（客户端自动择优）', value: urls.join('\n') },
-        { label: '访问密钥', value: key.token },
+        { label: '访问密钥', value: key.access_key },
       ],
-      warning: key.write ? '当前二维码包含写权限；请只在信任的设备上扫码。' : '',
+      warning: key.role === 'editor' ? '当前二维码包含写权限；请只在信任的设备上扫码。' : '',
     };
   } finally {
     generatingQr.value = false;
@@ -226,7 +226,7 @@ async function confirmQr(): Promise<void> {
           </div>
           <div class="device-meta">
             <span v-if="device.url">{{ device.url }}</span>
-            <span v-if="device.accessKey"> · 本机权限：{{ device.accessKey.write ? '可读写' : '仅读取' }}</span>
+            <span v-if="device.accessKey"> · 本机权限：{{ device.accessKey.role === 'editor' ? '可读写' : '仅读取' }}</span>
           </div>
         </div>
         <div class="row-actions">

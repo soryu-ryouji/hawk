@@ -11,6 +11,7 @@
 
 use super::envelope::{codes, ApiError, Envelope};
 use super::{require_manage, AccessContext, SharedState};
+use crate::core::access::Role;
 use crate::core::config::WebSettings;
 use axum::extract::{Extension, Path, State};
 use axum::Json;
@@ -43,7 +44,7 @@ const PAIR_PROTOCOL_VERSION: u32 = 2;
 enum PairRequestState {
     Pending,
     Approving,
-    Approved { token: String, writable: bool },
+    Approved { access_key: String, role: Role },
     Denied,
 }
 
@@ -51,7 +52,7 @@ enum PairRequestState {
 struct PairRequestTicket {
     id: String,
     client_name: String,
-    requested_write: bool,
+    requested_role: Role,
     created_at_ms: u64,
     expires_at: Instant,
     state: PairRequestState,
@@ -104,7 +105,7 @@ impl LanSupervisor {
     fn create_pair_request(
         &self,
         client_name: &str,
-        requested_write: bool,
+        requested_role: Role,
         reverse: LanReversePeerDto,
     ) -> Option<(String, u64)> {
         let now = Instant::now();
@@ -113,7 +114,7 @@ impl LanSupervisor {
         if let Some(existing) = requests.iter().find(|request| {
             matches!(request.state, PairRequestState::Pending)
                 && request.client_name == client_name
-                && request.requested_write == requested_write
+                && request.requested_role == requested_role
         }) {
             return Some((
                 existing.id.clone(),
@@ -137,7 +138,7 @@ impl LanSupervisor {
         requests.push(PairRequestTicket {
             id: id.clone(),
             client_name: client_name.to_string(),
-            requested_write,
+            requested_role,
             created_at_ms: unix_ms_now(),
             expires_at: now + PAIR_REQUEST_TTL,
             state: PairRequestState::Pending,
@@ -182,7 +183,7 @@ impl LanSupervisor {
         }
     }
 
-    fn pair_request_status(&self, id: &str) -> Option<(String, Option<String>, Option<bool>)> {
+    fn pair_request_status(&self, id: &str) -> Option<(String, Option<String>, Option<Role>)> {
         let now = Instant::now();
         let mut requests = self.pair_requests.lock().unwrap();
         requests.retain(|request| request.expires_at > now);
@@ -191,9 +192,11 @@ impl LanSupervisor {
             PairRequestState::Pending | PairRequestState::Approving => {
                 Some(("pending".to_string(), None, None))
             }
-            PairRequestState::Approved { token, writable } => {
-                Some(("approved".to_string(), Some(token.clone()), Some(*writable)))
-            }
+            PairRequestState::Approved { access_key, role } => Some((
+                "approved".to_string(),
+                Some(access_key.clone()),
+                Some(*role),
+            )),
             PairRequestState::Denied => Some(("denied".to_string(), None, None)),
         }
     }
@@ -726,7 +729,7 @@ struct LanClientDto {
     label: String,
     last_seen_ms: u64,
     online: bool,
-    write: bool,
+    role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     peer_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -740,7 +743,7 @@ struct LanClientsDto {
     clients: Vec<LanClientDto>,
 }
 
-/// 源端为反向连接提供的设备信息；token 由源端为本机 daemon 新签发。
+/// 源端为反向连接提供的设备信息；peer_key 由源端为本机 daemon 新签发。
 #[derive(Clone, Deserialize, utoipa::ToSchema)]
 struct LanReversePeerDto {
     peer_id: String,
@@ -748,17 +751,17 @@ struct LanReversePeerDto {
     library_name: String,
     /// 源端候选局域网地址（http://ip:peer_port）
     urls: Vec<String>,
-    token: String,
-    writable: bool,
+    peer_key: String,
+    role: Role,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
 struct LanPairRequestCreateBody {
     /// 源端设备名（仅用于目标端确认提示）
     client_name: String,
-    /// 源端希望获得写权限；最终由目标端用户决定
+    /// 源端希望获得的角色；最终由目标端用户决定
     #[serde(default)]
-    writable: bool,
+    role: Role,
     /// 源端回连 profile：目标端批准后据此保存可反向连接的设备。
     reverse: LanReversePeerDto,
 }
@@ -769,8 +772,8 @@ struct LanPairedPeerDto {
     name: String,
     library_name: String,
     url: String,
-    writable: bool,
-    token: String,
+    role: Role,
+    peer_key: String,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -783,7 +786,7 @@ struct LanPairRequestCreatedDto {
 struct LanPairRequestDto {
     id: String,
     client_name: String,
-    requested_write: bool,
+    requested_role: Role,
     created_at_ms: u64,
 }
 
@@ -799,9 +802,9 @@ struct LanPairRequestStatusDto {
     /// pending / approved / denied / expired
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    token: Option<String>,
+    access_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    writable: Option<bool>,
+    role: Option<Role>,
     #[serde(skip_serializing_if = "Option::is_none")]
     peer_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -814,7 +817,7 @@ struct LanPairRequestStatusDto {
 struct LanPairDecisionBody {
     allow: bool,
     #[serde(default)]
-    write: bool,
+    role: Role,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -866,7 +869,7 @@ async fn create_lan_pair_request(
     let reverse = &body.reverse;
     if reverse.peer_id.trim().is_empty()
         || reverse.name.trim().is_empty()
-        || reverse.token.trim().is_empty()
+        || reverse.peer_key.trim().is_empty()
         || !reverse
             .urls
             .iter()
@@ -881,7 +884,7 @@ async fn create_lan_pair_request(
     let Some((request_id, expires_in_seconds)) =
         state
             .lan
-            .create_pair_request(&client_name, body.writable, body.reverse)
+            .create_pair_request(&client_name, body.role, body.reverse)
     else {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
@@ -917,12 +920,12 @@ async fn get_lan_pair_request_status(
         ));
     }
     let lib = state.require_library()?;
-    let Some((status, token, writable)) = state.lan.pair_request_status(&request_id) else {
+    let Some((status, access_key, role)) = state.lan.pair_request_status(&request_id) else {
         return Ok(Json(Envelope::ok(LanPairRequestStatusDto {
             protocol: PAIR_PROTOCOL_VERSION,
             status: "expired".to_string(),
-            token: None,
-            writable: None,
+            access_key: None,
+            role: None,
             peer_id: None,
             name: None,
             library_name: None,
@@ -932,8 +935,8 @@ async fn get_lan_pair_request_status(
     Ok(Json(Envelope::ok(LanPairRequestStatusDto {
         protocol: PAIR_PROTOCOL_VERSION,
         status,
-        token,
-        writable,
+        access_key,
+        role,
         peer_id: approved.then(|| local_peer_id(lib)),
         name: approved.then(|| gethostname::gethostname().to_string_lossy().to_string()),
         library_name: approved.then(|| local_library_name(lib)),
@@ -961,7 +964,7 @@ async fn list_lan_pair_requests(
             .map(|request| LanPairRequestDto {
                 id: request.id,
                 client_name: request.client_name,
-                requested_write: request.requested_write,
+                requested_role: request.requested_role,
                 created_at_ms: request.created_at_ms,
             })
             .collect(),
@@ -1023,13 +1026,13 @@ async fn decide_lan_pair_request(
             "直连访问密钥已达上限，请先删除不再使用的设备",
         ));
     }
-    let token = random_hex(32);
+    let access_key = random_hex(32);
     let key_id = format!("peer_{}", random_hex(8));
     web.peer_keys.push(crate::core::config::WebAccessKey {
         id: key_id,
         label: request.client_name.clone(),
-        token: token.clone(),
-        write: body.write,
+        secret: access_key.clone(),
+        role: body.role,
         created_at_ms: unix_ms_now(),
         peer_id: Some(reverse.peer_id.clone()),
         library_name: Some(reverse.library_name.clone()),
@@ -1049,8 +1052,8 @@ async fn decide_lan_pair_request(
     state.lan.finish_pair_request(
         &request_id,
         PairRequestState::Approved {
-            token,
-            writable: body.write,
+            access_key,
+            role: body.role,
         },
     );
     state.bus.publish(
@@ -1062,13 +1065,13 @@ async fn decide_lan_pair_request(
         name: reverse.name.clone(),
         library_name: reverse.library_name.clone(),
         url: reverse_url,
-        writable: reverse.writable,
-        token: reverse.token.clone(),
+        role: reverse.role,
+        peer_key: reverse.peer_key.clone(),
     };
     tracing::info!(
-        "局域网配对请求已允许: {}（request={request_id}, write={}）",
+        "局域网配对请求已允许: {}（request={request_id}, role={}）",
         request.client_name,
-        body.write
+        body.role.as_str()
     );
     Ok(Json(Envelope::ok(LanPairDecisionDto {
         status: "approved".to_string(),
@@ -1120,7 +1123,7 @@ async fn list_lan_clients(
                 label: key.label.clone(),
                 last_seen_ms,
                 online: now.saturating_sub(last_seen_ms) <= PEER_ONLINE_WINDOW_MS,
-                write: key.write,
+                role: key.role,
                 peer_id: key.peer_id.clone(),
                 library_name: key.library_name.clone(),
                 url: key.url.clone(),
@@ -1163,8 +1166,8 @@ async fn create_lan_device_key(
     let key = crate::core::config::WebAccessKey {
         id: format!("peer_{}", random_hex(8)),
         label: label.to_string(),
-        token: random_hex(32),
-        write: body.write,
+        secret: random_hex(32),
+        role: body.role,
         created_at_ms: unix_ms_now(),
         peer_id: body.peer_id,
         library_name: body.library_name,
@@ -1211,7 +1214,7 @@ async fn update_lan_device_key(
             "设备密钥不存在",
         ));
     };
-    key.write = body.write;
+    key.role = body.role;
     let updated = key.clone();
     lib.config.update_web(&web).map_err(|error| {
         ApiError::new(
@@ -1272,9 +1275,9 @@ async fn delete_lan_device_key(
 struct LanAccessKeyDto {
     id: String,
     label: String,
-    /// 完整 token 仅 admin 可读；设置面板负责打码展示与复制
-    token: String,
-    write: bool,
+    /// 完整访问密钥仅 admin 可读；设置面板负责打码展示与复制
+    access_key: String,
+    role: Role,
     created_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     peer_id: Option<String>,
@@ -1288,7 +1291,7 @@ struct LanAccessKeyDto {
 struct LanDeviceKeyCreateBody {
     label: String,
     #[serde(default)]
-    write: bool,
+    role: Role,
     #[serde(default)]
     peer_id: Option<String>,
     #[serde(default)]
@@ -1299,7 +1302,7 @@ struct LanDeviceKeyCreateBody {
 
 #[derive(Deserialize, utoipa::ToSchema)]
 struct LanDeviceKeyUpdateBody {
-    write: bool,
+    role: Role,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1311,8 +1314,8 @@ fn access_key_dto(key: crate::core::config::WebAccessKey) -> LanAccessKeyDto {
     LanAccessKeyDto {
         id: key.id,
         label: key.label,
-        token: key.token,
-        write: key.write,
+        access_key: key.secret,
+        role: key.role,
         created_at_ms: key.created_at_ms,
         peer_id: key.peer_id,
         library_name: key.library_name,
@@ -1356,8 +1359,8 @@ fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
             .map(|key| LanAccessKeyDto {
                 id: key.id,
                 label: key.label,
-                token: key.token,
-                write: key.write,
+                access_key: key.secret,
+                role: key.role,
                 created_at_ms: key.created_at_ms,
                 peer_id: key.peer_id,
                 library_name: key.library_name,
@@ -1370,8 +1373,8 @@ fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
             .map(|key| LanAccessKeyDto {
                 id: key.id,
                 label: key.label,
-                token: key.token,
-                write: key.write,
+                access_key: key.secret,
+                role: key.role,
                 created_at_ms: key.created_at_ms,
                 peer_id: key.peer_id,
                 library_name: key.library_name,
@@ -1405,9 +1408,9 @@ async fn get_lan(
 struct PutLanKey {
     id: String,
     label: String,
-    token: String,
+    access_key: String,
     #[serde(default)]
-    write: bool,
+    role: Role,
     #[serde(default)]
     created_at_ms: u64,
     #[serde(default)]
@@ -1544,32 +1547,32 @@ async fn put_lan(
         ));
     }
     let mut ids = std::collections::HashSet::new();
-    let mut tokens = std::collections::HashSet::new();
+    let mut secrets = std::collections::HashSet::new();
     let mut parse_keys =
         |input: Vec<PutLanKey>| -> Result<Vec<crate::core::config::WebAccessKey>, ApiError> {
             let mut out = Vec::with_capacity(input.len());
             for key in input {
                 let id = key.id.trim().to_string();
-                let token = key.token.trim().to_string();
-                if id.is_empty() || token.is_empty() {
+                let access_key = key.access_key.trim().to_string();
+                if id.is_empty() || access_key.is_empty() {
                     return Err(ApiError::new(
                         codes::INVALID_PARAM,
                         axum::http::StatusCode::BAD_REQUEST,
-                        "访问密钥的 id 与 token 不能为空",
+                        "访问密钥的 id 与 access_key 不能为空",
                     ));
                 }
-                if !ids.insert(id.clone()) || !tokens.insert(token.clone()) {
+                if !ids.insert(id.clone()) || !secrets.insert(access_key.clone()) {
                     return Err(ApiError::new(
                         codes::INVALID_PARAM,
                         axum::http::StatusCode::BAD_REQUEST,
-                        "访问密钥 id/token 不能重复",
+                        "访问密钥 id/access_key 不能重复",
                     ));
                 }
                 out.push(crate::core::config::WebAccessKey {
                     id,
                     label: key.label.trim().to_string(),
-                    token,
-                    write: key.write,
+                    secret: access_key,
+                    role: key.role,
                     created_at_ms: key.created_at_ms,
                     peer_id: key
                         .peer_id
@@ -1707,8 +1710,8 @@ mod tests {
             peer_keys: vec![crate::core::config::WebAccessKey {
                 id: "peer".into(),
                 label: "peer".into(),
-                token: "peer-token".into(),
-                write: false,
+                secret: "peer-token".into(),
+                role: Role::Viewer,
                 created_at_ms: 0,
                 ..Default::default()
             }],

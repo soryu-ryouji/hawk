@@ -21,9 +21,9 @@ val HawkJson = Json {
 data class AppInfo(
     val version: String,
     val platform: String? = null,
-    val access: String,
+    val role: String,
+    val channel: String,
     @SerialName("has_library") val hasLibrary: Boolean,
-    val writable: Boolean = false,
     val lan: LanInfo? = null,
 )
 

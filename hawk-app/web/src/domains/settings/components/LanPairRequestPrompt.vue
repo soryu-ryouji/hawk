@@ -39,7 +39,7 @@ async function decide(allow: boolean, write: boolean): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    await shell.lanDecidePairRequest(current.value.id, { allow, write });
+    await shell.lanDecidePairRequest(current.value.id, { allow, role: write ? 'editor' : 'viewer' });
     await lanStore.refreshSaved();
     current.value = null;
   } catch (e) {

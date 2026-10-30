@@ -61,11 +61,15 @@ final class LibraryContext {
     }
 
     var isRemote: Bool { profile.kind == .remote }
-    var canWrite: Bool { info.writable }
+    var canWrite: Bool { info.role != "viewer" }
 
     var accessLabel: String {
-        if info.writable { return info.access == "admin" ? "完全访问" : "可读写" }
-        return "只读"
+        switch info.role {
+        case "admin": return "完全访问"
+        case "editor": return "可读写"
+        case "importer": return "仅导入"
+        default: return "只读"
+        }
     }
 
     var title: String {

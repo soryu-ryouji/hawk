@@ -34,7 +34,7 @@ class LibrarySession(
     val api: ApiClient,
     val profile: ConnectionProfile,
     val label: String,
-    val access: String,
+    val role: String,
     val targetDeviceName: String?,
     val targetLibraryName: String?,
     val store: LibraryStore,
@@ -42,9 +42,10 @@ class LibrarySession(
     val isRemote: Boolean get() = profile.kind == ConnectionKind.Remote
 
     val accessLabel: String
-        get() = when (access) {
+        get() = when (role) {
             "admin" -> "完全访问"
-            "remote_writer" -> "受限写入"
+            "editor" -> "可读写"
+            "importer" -> "仅导入"
             else -> "只读"
         }
 }
@@ -109,7 +110,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     api = outcome.api,
                     profile = saved,
                     label = label,
-                    access = outcome.info.access,
+                    role = outcome.info.role,
                     targetDeviceName = outcome.targetDeviceName,
                     targetLibraryName = outcome.targetLibraryName,
                     store = store,

@@ -34,7 +34,7 @@ export interface LibraryList {
 
 /** 主进程内部保存的局域网设备（含长期访问 token）；列表对外一律剥掉 token */
 interface StoredLanPeer extends LanPeerProfile {
-  token: string;
+  peer_key: string;
 }
 
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.toml');
@@ -170,7 +170,7 @@ function storedLanPeers(): StoredLanPeer[] {
       typeof peer === 'object' &&
       typeof (peer as StoredLanPeer).id === 'string' &&
       typeof (peer as StoredLanPeer).url === 'string' &&
-      typeof (peer as StoredLanPeer).token === 'string',
+      typeof (peer as StoredLanPeer).peer_key === 'string',
   );
 }
 

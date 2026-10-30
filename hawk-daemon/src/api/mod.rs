@@ -438,14 +438,10 @@ fn viewer_access_in_keys(
     credential: &str,
     channel: Channel,
 ) -> Option<AccessContext> {
-    keys.iter().find(|key| key.token == credential).map(|key| {
+    keys.iter().find(|key| key.secret == credential).map(|key| {
         AccessContext::new(
             Principal::AccessKey { id: key.id.clone() },
-            if key.write {
-                Role::Editor
-            } else {
-                Role::Viewer
-            },
+            key.role,
             channel,
         )
     })

@@ -8,6 +8,7 @@ import { getMainWindow } from './window';
 import { getLanTarget, getRemoteTarget, getStoredLanPeer, listLanPeers, removeStoredLanPeer, setLanTarget, setRemoteTarget, upsertLanPeer } from './app-config';
 import {
   IPC,
+  type AccessRole,
   type ConnectionDescriptor,
   type LanClient,
   type LanPairRequest,
@@ -223,7 +224,6 @@ interface TargetAppInfo {
   has_library: boolean;
   role: 'viewer' | 'importer' | 'editor' | 'admin';
   channel: 'loopback' | 'lan_web' | 'lan_peer' | 'wan';
-  writable: boolean;
 }
 
 function normalizeLanURL(url: string): string {
@@ -254,11 +254,11 @@ export async function lanSpeedTest(): Promise<{ latency_ms: number }> {
   if (!profile) {
     throw new Error('局域网设备记录不存在，请重新配对');
   }
-  await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+  await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
   const samples: number[] = [];
   for (let i = 0; i < 5; i += 1) {
     const started = Date.now();
-    await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+    await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
     samples.push(Date.now() - started);
   }
   samples.sort((a, b) => a - b);
@@ -268,8 +268,8 @@ export async function lanSpeedTest(): Promise<{ latency_ms: number }> {
 interface LanKeyDto {
   id: string;
   label: string;
-  token: string;
-  write: boolean;
+  access_key: string;
+  role: AccessRole;
   created_at_ms: number;
   peer_id?: string;
   library_name?: string;
@@ -294,8 +294,8 @@ interface ReversePeerProfile {
   name: string;
   library_name: string;
   urls: string[];
-  token: string;
-  writable: boolean;
+  peer_key: string;
+  role: AccessRole;
 }
 
 interface LanPairedPeer {
@@ -303,14 +303,14 @@ interface LanPairedPeer {
   name: string;
   library_name: string;
   url: string;
-  writable: boolean;
-  token: string;
+  role: AccessRole;
+  peer_key: string;
 }
 /** 源端发起配对前在本机创建一把同名设备密钥；失败则整体配对失败。 */
 async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ keyId: string; profile: ReversePeerProfile }> {
   const key = await daemonCall<LanKeyDto>('POST', '/api/v1/app/lan/device-keys', {
     label: target.name,
-    write: writable,
+    role: writable ? 'editor' : 'viewer',
     peer_id: target.id,
     library_name: target.library_name,
     url: target.url,
@@ -324,8 +324,8 @@ async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ 
         name: settings.name,
         library_name: settings.library_name,
         urls: lanAddresses().map((ip) => 'http://' + ip + ':' + settings.peer_port),
-        token: key.token,
-        writable: key.write,
+        peer_key: key.access_key,
+        role: key.role,
       },
     };
   } catch (error) {
@@ -349,7 +349,7 @@ export async function lanClients(): Promise<{ clients: LanClient[] }> {
 }
 
 /** 目标端用户确认/拒绝配对请求；批准时把源端回连信息保存为已配对设备。 */
-export async function lanDecidePairRequest(requestId: string, body: { allow: boolean; write: boolean }): Promise<{ status: string }> {
+export async function lanDecidePairRequest(requestId: string, body: { allow: boolean; role: AccessRole }): Promise<{ status: string }> {
   const result = await daemonCall<{ status: string; peer?: LanPairedPeer }>(
     'POST',
     '/api/v1/app/lan/pair-requests/' + encodeURIComponent(requestId) + '/decision',
@@ -364,8 +364,8 @@ export async function lanDecidePairRequest(requestId: string, body: { allow: boo
       name: result.peer.name,
       library_name: result.peer.library_name,
       url: normalizeLanURL(result.peer.url),
-      writable: result.peer.writable,
-      token: result.peer.token,
+      writable: result.peer.role === 'editor',
+      peer_key: result.peer.peer_key,
       last_connected_at_ms: 0,
     });
   }
@@ -389,7 +389,7 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
     const base = normalizeLanURL(input.peer.url);
     const created = await directCall<{ request_id: string; expires_in_seconds: number }>(base, '/api/v1/app/lan/pair-requests', '', 'POST', {
       client_name: os.hostname(),
-      writable: input.writable,
+      role: input.writable ? 'editor' : 'viewer',
       reverse: reverse.profile,
     });
     const requestId = created.request_id;
@@ -399,8 +399,8 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
       const status = await directCall<{
         protocol: number;
         status: 'pending' | 'approved' | 'denied' | 'expired';
-        token?: string;
-        writable?: boolean;
+        access_key?: string;
+        role?: AccessRole;
         peer_id?: string;
         name?: string;
         library_name?: string;
@@ -417,10 +417,10 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
       if (status.status !== 'approved') {
         continue;
       }
-      if (!status.token) {
+      if (!status.access_key) {
         throw new Error('目标设备返回了无效的访问凭证');
       }
-      const info = await directCall<TargetAppInfo>(base, '/api/v1/app/info', status.token);
+      const info = await directCall<TargetAppInfo>(base, '/api/v1/app/info', status.access_key);
       if (!info.has_library) {
         throw new Error('目标设备未打开素材库');
       }
@@ -431,8 +431,8 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
         name: status.name || input.peer.name,
         library_name: status.library_name || input.peer.library_name,
         url: base,
-        writable: status.writable ?? false,
-        token: status.token,
+        writable: status.role === 'editor',
+        peer_key: status.access_key,
         last_connected_at_ms: Date.now(),
       });
       return connectLanPeer(peerId);
@@ -454,7 +454,7 @@ async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
   if (!profile) {
     throw new Error('局域网设备记录不存在，请重新配对');
   }
-  const info = await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+  const info = await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
   if (!info.has_library) {
     throw new Error('目标设备未打开素材库');
   }
@@ -471,7 +471,7 @@ async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
   upsertLanPeer({ ...profile, last_connected_at_ms: Date.now() });
   lanConn = {
     api_base: profile.url,
-    credential: profile.token,
+    credential: profile.peer_key,
     label: `${profile.name}（${profile.library_name}）`,
     remote: true,
     kind: 'lan',
@@ -503,7 +503,7 @@ function startLanMonitor(profile: ReturnType<typeof getStoredLanPeer>): void {
   lanMonitorTimer = setInterval(() => {
     void (async () => {
       try {
-        await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.token);
+        await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
         lanMonitorFailures = 0;
       } catch {
         lanMonitorFailures += 1;

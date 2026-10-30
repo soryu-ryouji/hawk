@@ -2,12 +2,13 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
+import type { AccessRole } from '@/shared/types';
 
 export interface LanAccessKey {
   id: string;
   label: string;
-  token: string;
-  write: boolean;
+  access_key: string;
+  role: AccessRole;
   created_at_ms: number;
   peer_id?: string | null;
   library_name?: string | null;
@@ -72,8 +73,8 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     }
   }
 
-  function addKey(label: string, write: boolean): LanAccessKey {
-    const key = createKey(label, write, 'key');
+  function addKey(label: string, role: AccessRole): LanAccessKey {
+    const key = createKey(label, role, 'key');
     keys.value.unshift(key);
     return key;
   }
@@ -83,10 +84,10 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
   }
 
   /** 设备访问密钥走独立端点，和网站访问密钥/网站开关完全解耦。 */
-  async function addDeviceKey(label: string, write: boolean): Promise<LanAccessKey | null> {
+  async function addDeviceKey(label: string, role: AccessRole): Promise<LanAccessKey | null> {
     error.value = null;
     try {
-      const key = await api.createLanDeviceKey({ label, write });
+      const key = await api.createLanDeviceKey({ label, role });
       peerKeys.value.unshift(key);
       return key;
     } catch (e) {
@@ -95,10 +96,10 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     }
   }
 
-  async function setDeviceKeyWrite(id: string, write: boolean): Promise<boolean> {
+  async function setDeviceKeyRole(id: string, role: AccessRole): Promise<boolean> {
     error.value = null;
     try {
-      const updated = await api.patchLanDeviceKey(id, { write });
+      const updated = await api.patchLanDeviceKey(id, { role });
       const index = peerKeys.value.findIndex((key) => key.id === id);
       if (index >= 0) {
         peerKeys.value[index] = updated;
@@ -122,18 +123,18 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     }
   }
 
-  function createKey(label: string, write: boolean, prefix: string): LanAccessKey {
+  function createKey(label: string, role: AccessRole, prefix: string): LanAccessKey {
     const bytes = new Uint8Array(32);
     crypto.getRandomValues(bytes);
-    const token = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const access_key = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
     const idBytes = new Uint8Array(8);
     crypto.getRandomValues(idBytes);
     const id = `${prefix}_${[...idBytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
     return {
       id,
       label: label.trim() || `访问密钥 ${(prefix === 'peer' ? peerKeys.value.length : keys.value.length) + 1}`,
-      token,
-      write,
+      access_key,
+      role,
       created_at_ms: Date.now(),
     };
   }
@@ -152,7 +153,7 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     }
     // First enable: auto-create a read-only key so the listener starts immediately.
     if (enabled.value && keys.value.length === 0) {
-      addKey('\u7f51\u7ad9\u8bbf\u95ee\u5bc6\u94a5', false);
+      addKey('\u7f51\u7ad9\u8bbf\u95ee\u5bc6\u94a5', 'viewer');
     }
     saving.value = true;
     error.value = null;
@@ -196,7 +197,7 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     addKey,
     removeKey,
     addDeviceKey,
-    setDeviceKeyWrite,
+    setDeviceKeyRole,
     removeDeviceKey,
     save,
   };

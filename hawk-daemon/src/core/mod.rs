@@ -1,5 +1,6 @@
 //! 与 HTTP 无关的领域核心。依赖单向：api/ → core/。
 
+pub mod access;
 pub mod color;
 pub mod color_math;
 pub mod config;

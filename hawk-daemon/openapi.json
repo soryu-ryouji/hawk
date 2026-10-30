@@ -1117,6 +1117,10 @@
         "properties": {
           "data": {
             "properties": {
+              "access_key": {
+                "description": "完整访问密钥仅 admin 可读；设置面板负责打码展示与复制",
+                "type": "string"
+              },
               "created_at_ms": {
                 "format": "int64",
                 "minimum": 0,
@@ -1140,25 +1144,21 @@
                   "null"
                 ]
               },
-              "token": {
-                "description": "完整 token 仅 admin 可读；设置面板负责打码展示与复制",
-                "type": "string"
+              "role": {
+                "$ref": "#/components/schemas/Role"
               },
               "url": {
                 "type": [
                   "string",
                   "null"
                 ]
-              },
-              "write": {
-                "type": "boolean"
               }
             },
             "required": [
               "id",
               "label",
-              "token",
-              "write",
+              "access_key",
+              "role",
               "created_at_ms"
             ],
             "type": "object"
@@ -1288,6 +1288,12 @@
         "properties": {
           "data": {
             "properties": {
+              "access_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "library_name": {
                 "type": [
                   "string",
@@ -1312,21 +1318,19 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "role": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Role"
+                  }
+                ]
+              },
               "status": {
                 "description": "pending / approved / denied / expired",
                 "type": "string"
-              },
-              "token": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "writable": {
-                "type": [
-                  "boolean",
-                  "null"
-                ]
               }
             },
             "required": [
@@ -3085,6 +3089,10 @@
       },
       "LanAccessKeyDto": {
         "properties": {
+          "access_key": {
+            "description": "完整访问密钥仅 admin 可读；设置面板负责打码展示与复制",
+            "type": "string"
+          },
           "created_at_ms": {
             "format": "int64",
             "minimum": 0,
@@ -3108,25 +3116,21 @@
               "null"
             ]
           },
-          "token": {
-            "description": "完整 token 仅 admin 可读；设置面板负责打码展示与复制",
-            "type": "string"
+          "role": {
+            "$ref": "#/components/schemas/Role"
           },
           "url": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "write": {
-            "type": "boolean"
           }
         },
         "required": [
           "id",
           "label",
-          "token",
-          "write",
+          "access_key",
+          "role",
           "created_at_ms"
         ],
         "type": "object"
@@ -3159,14 +3163,14 @@
               "null"
             ]
           },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
           "url": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "write": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -3174,7 +3178,7 @@
           "label",
           "last_seen_ms",
           "online",
-          "write"
+          "role"
         ],
         "type": "object"
       },
@@ -3209,14 +3213,14 @@
               "null"
             ]
           },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
           "url": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "write": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -3237,12 +3241,12 @@
       },
       "LanDeviceKeyUpdateBody": {
         "properties": {
-          "write": {
-            "type": "boolean"
+          "role": {
+            "$ref": "#/components/schemas/Role"
           }
         },
         "required": [
-          "write"
+          "role"
         ],
         "type": "object"
       },
@@ -3296,8 +3300,8 @@
           "allow": {
             "type": "boolean"
           },
-          "write": {
-            "type": "boolean"
+          "role": {
+            "$ref": "#/components/schemas/Role"
           }
         },
         "required": [
@@ -3336,9 +3340,9 @@
             "$ref": "#/components/schemas/LanReversePeerDto",
             "description": "源端回连 profile：目标端批准后据此保存可反向连接的设备。"
           },
-          "writable": {
-            "description": "源端希望获得写权限；最终由目标端用户决定",
-            "type": "boolean"
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "源端希望获得的角色；最终由目标端用户决定"
           }
         },
         "required": [
@@ -3377,20 +3381,26 @@
           "id": {
             "type": "string"
           },
-          "requested_write": {
-            "type": "boolean"
+          "requested_role": {
+            "$ref": "#/components/schemas/Role"
           }
         },
         "required": [
           "id",
           "client_name",
-          "requested_write",
+          "requested_role",
           "created_at_ms"
         ],
         "type": "object"
       },
       "LanPairRequestStatusDto": {
         "properties": {
+          "access_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "library_name": {
             "type": [
               "string",
@@ -3415,21 +3425,19 @@
             "minimum": 0,
             "type": "integer"
           },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role"
+              }
+            ]
+          },
           "status": {
             "description": "pending / approved / denied / expired",
             "type": "string"
-          },
-          "token": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "writable": {
-            "type": [
-              "boolean",
-              "null"
-            ]
           }
         },
         "required": [
@@ -3463,14 +3471,14 @@
           "name": {
             "type": "string"
           },
-          "token": {
+          "peer_key": {
             "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
           },
           "url": {
             "type": "string"
-          },
-          "writable": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -3478,8 +3486,8 @@
           "name",
           "library_name",
           "url",
-          "writable",
-          "token"
+          "role",
+          "peer_key"
         ],
         "type": "object"
       },
@@ -3530,7 +3538,7 @@
         "type": "object"
       },
       "LanReversePeerDto": {
-        "description": "源端为反向连接提供的设备信息；token 由源端为本机 daemon 新签发。",
+        "description": "源端为反向连接提供的设备信息；peer_key 由源端为本机 daemon 新签发。",
         "properties": {
           "library_name": {
             "type": "string"
@@ -3541,8 +3549,11 @@
           "peer_id": {
             "type": "string"
           },
-          "token": {
+          "peer_key": {
             "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
           },
           "urls": {
             "description": "源端候选局域网地址（http://ip:peer_port）",
@@ -3550,9 +3561,6 @@
               "type": "string"
             },
             "type": "array"
-          },
-          "writable": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -3560,8 +3568,8 @@
           "name",
           "library_name",
           "urls",
-          "token",
-          "writable"
+          "peer_key",
+          "role"
         ],
         "type": "object"
       },
@@ -3902,6 +3910,9 @@
       },
       "PutLanKey": {
         "properties": {
+          "access_key": {
+            "type": "string"
+          },
           "created_at_ms": {
             "format": "int64",
             "minimum": 0,
@@ -3925,23 +3936,20 @@
               "null"
             ]
           },
-          "token": {
-            "type": "string"
+          "role": {
+            "$ref": "#/components/schemas/Role"
           },
           "url": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "write": {
-            "type": "boolean"
           }
         },
         "required": [
           "id",
           "label",
-          "token"
+          "access_key"
         ],
         "type": "object"
       },
@@ -4230,6 +4238,15 @@
           }
         },
         "type": "object"
+      },
+      "Role": {
+        "enum": [
+          "viewer",
+          "importer",
+          "editor",
+          "admin"
+        ],
+        "type": "string"
       },
       "RotateDeviceDto": {
         "properties": {

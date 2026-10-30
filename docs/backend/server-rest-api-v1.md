@@ -237,10 +237,10 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "name": "studio-mac",
     "library_name": "我的素材库",
     "keys": [
-      { "id": "key_a1b2", "label": "我的手机", "token": "<access-key>", "write": false, "created_at_ms": 1760000000000 }
+      { "id": "key_a1b2", "label": "我的手机", "access_key": "<access-key>", "role": "viewer", "created_at_ms": 1760000000000 }
     ],
     "peer_keys": [
-      { "id": "peer_c3d4", "label": "另一台 hawk-app", "token": "<peer-key>", "write": false, "created_at_ms": 1760000000000 }
+      { "id": "peer_c3d4", "label": "另一台 hawk-app", "access_key": "<peer-key>", "role": "viewer", "created_at_ms": 1760000000000 }
     ],
     "active": true,
     "peer_active": true,
@@ -265,15 +265,15 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
   "port": 27372,
   "peer_port": 27375,
   "keys": [
-    { "id": "key_a1b2", "label": "我的手机", "token": "<access-key>", "write": false, "created_at_ms": 1760000000000 }
+    { "id": "key_a1b2", "label": "我的手机", "access_key": "<access-key>", "role": "viewer", "created_at_ms": 1760000000000 }
   ],
   "peer_keys": [
-    { "id": "peer_c3d4", "label": "另一台 hawk-app", "token": "<peer-key>", "write": false, "created_at_ms": 1760000000000 }
+    { "id": "peer_c3d4", "label": "另一台 hawk-app", "access_key": "<peer-key>", "role": "viewer", "created_at_ms": 1760000000000 }
   ]
 }
 ```
 
-校验（`INVALID_PARAM`）：`port` 与 `peer_port` 均须为 1–65535 且不能相同；`enabled=true` 时至少一把网站访问密钥；同类密钥最多 32 把，id/token 全局非空且不重复。网站端口只接受 `keys` 并托管网页；直连端口只接受 `peer_keys` 且不提供静态页面，网站关闭时仍独立监听。若目标端口被其它进程占用，daemon 会从该端口向后自动选择最近的可用端口并在响应中返回实际值，避免用户手动排障。密钥 `write=true` 才允许上传/删除/修改等写操作。响应同 GET（收敛后的最新状态）。
+校验（`INVALID_PARAM`）：`port` 与 `peer_port` 均须为 1–65535 且不能相同；`enabled=true` 时至少一把网站访问密钥；同类密钥最多 32 把，id/access_key 全局非空且不重复。网站端口只接受 `keys` 并托管网页；直连端口只接受 `peer_keys` 且不提供静态页面，网站关闭时仍独立监听。若目标端口被其它进程占用，daemon 会从该端口向后自动选择最近的可用端口并在响应中返回实际值，避免用户手动排障。密钥 `role=editor` 才允许上传/删除/修改等写操作，`viewer` 只读。响应同 GET（收敛后的最新状态）。
 
 ### 局域网互联（不经 hawk-server）
 
@@ -281,7 +281,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 
 桌面配对协议为 v2 双向协议：
 
-- `POST /api/v1/app/lan/pair-requests`：源端创建请求，必须携带 `reverse`（本机 peer_id/name/library_name/候选 urls/token/writable）；请求 id 随机、90 秒过期。
+- `POST /api/v1/app/lan/pair-requests`：源端创建请求，必须携带 `reverse`（本机 peer_id/name/library_name/候选 urls/peer_key/role）；请求 id 随机、90 秒过期。
 - `GET /api/v1/app/lan/pair-requests`：目标端本机 admin 查看待确认列表。
 - `GET /api/v1/app/lan/pair-requests/{request_id}`：源端轮询结果，响应含 `protocol=2`、`status` 与批准后的目标 token；旧协议客户端会被拒绝。
 - `POST /api/v1/app/lan/pair-requests/{request_id}/decision`：目标端批准/拒绝并选择 A 的读写权限；批准时动态创建该设备专用 `[web].peer_keys` 条目，并在响应 `peer` 中返回源端回连 profile，供目标端保存反向连接。

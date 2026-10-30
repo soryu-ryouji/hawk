@@ -33,7 +33,7 @@ onMounted(async () => {
 const portValid = computed(() => lan.portValid);
 
 function addKey(): void {
-  lan.addKey(keyLabel.value, keyWrite.value);
+  lan.addKey(keyLabel.value, keyWrite.value ? 'editor' : 'viewer');
   keyLabel.value = '';
   keyWrite.value = false;
   error.value = null;
@@ -119,12 +119,12 @@ defineExpose({ save, busy });
             <div v-for="key in lan.keys" :key="key.id" class="key-row">
               <div class="key-main">
                 <div class="key-label">{{ key.label }}</div>
-                <div class="key-token">{{ maskedToken(key.token) }}</div>
+                <div class="key-token">{{ maskedToken(key.access_key) }}</div>
               </div>
               <span class="perm read">读</span>
-              <span v-if="key.write" class="perm write">写</span>
+              <span v-if="key.role === 'editor'" class="perm write">写</span>
               <div class="key-actions">
-                <button class="icon-btn" title="复制完整密钥" @click="copy(key.token)">
+                <button class="icon-btn" title="复制完整密钥" @click="copy(key.access_key)">
                   <Icon name="copy" :size="13" />
                 </button>
                 <button class="icon-btn" title="删除访问密钥" @click="removeKey(key.id)">

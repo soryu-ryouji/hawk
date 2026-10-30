@@ -137,6 +137,7 @@ export interface ApiPortInfo {
 
 /** 连接形态：local=本机库；remote=经 hawk-server 的广域网远端；lan=局域网直连的另一台 hawk-app */
 export type ConnectionKind = 'local' | 'remote' | 'lan';
+export type AccessRole = 'viewer' | 'importer' | 'editor' | 'admin';
 
 /** 连接描述符：前端唯一面对的连接语义（api_base + credential + 展示名），本地库/远端库同构 */
 export interface ConnectionDescriptor {
@@ -170,7 +171,7 @@ export interface LanPeer {
 export interface LanPairRequest {
   id: string;
   client_name: string;
-  requested_write: boolean;
+  requested_role: AccessRole;
   created_at_ms: number;
 }
 
@@ -180,7 +181,7 @@ export interface LanClient {
   label: string;
   last_seen_ms: number;
   online: boolean;
-  write: boolean;
+  role: AccessRole;
   peer_id?: string | null;
   library_name?: string | null;
   url?: string | null;
@@ -399,7 +400,7 @@ export interface HawkShell {
   /** 本机 daemon 当前活跃的局域网直连设备（目标端展示） */
   lanClients(): Promise<{ clients: LanClient[] }>;
   /** 允许/拒绝自动配对请求，并决定只读或读写 */
-  lanDecidePairRequest(requestId: string, body: { allow: boolean; write: boolean }): Promise<{ status: string }>;
+  lanDecidePairRequest(requestId: string, body: { allow: boolean; role: AccessRole }): Promise<{ status: string }>;
   /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。
    *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 remoteGetConnection 拉取兜底 */
   onConnectionChanged(cb: (conn: ConnectionDescriptor) => void): () => void;

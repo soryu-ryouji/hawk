@@ -1587,16 +1587,16 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanAccessKeyDto: {
             data?: {
+                /** @description 完整访问密钥仅 admin 可读；设置面板负责打码展示与复制 */
+                access_key: string;
                 /** Format: int64 */
                 created_at_ms: number;
                 id: string;
                 label: string;
                 library_name?: string | null;
                 peer_id?: string | null;
-                /** @description 完整 token 仅 admin 可读；设置面板负责打码展示与复制 */
-                token: string;
+                role: components["schemas"]["Role"];
                 url?: string | null;
-                write: boolean;
             };
             status: string;
         };
@@ -1634,6 +1634,7 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanPairRequestStatusDto: {
             data?: {
+                access_key?: string | null;
                 library_name?: string | null;
                 name?: string | null;
                 peer_id?: string | null;
@@ -1642,10 +1643,9 @@ export interface components {
                  * @description 桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。
                  */
                 protocol: number;
+                role?: null | components["schemas"]["Role"];
                 /** @description pending / approved / denied / expired */
                 status: string;
-                token?: string | null;
-                writable?: boolean | null;
             };
             status: string;
         };
@@ -2145,16 +2145,16 @@ export interface components {
             changed: boolean;
         };
         LanAccessKeyDto: {
+            /** @description 完整访问密钥仅 admin 可读；设置面板负责打码展示与复制 */
+            access_key: string;
             /** Format: int64 */
             created_at_ms: number;
             id: string;
             label: string;
             library_name?: string | null;
             peer_id?: string | null;
-            /** @description 完整 token 仅 admin 可读；设置面板负责打码展示与复制 */
-            token: string;
+            role: components["schemas"]["Role"];
             url?: string | null;
-            write: boolean;
         };
         LanClientDto: {
             key_id: string;
@@ -2164,8 +2164,8 @@ export interface components {
             library_name?: string | null;
             online: boolean;
             peer_id?: string | null;
+            role: components["schemas"]["Role"];
             url?: string | null;
-            write: boolean;
         };
         LanClientsDto: {
             clients: components["schemas"]["LanClientDto"][];
@@ -2174,14 +2174,14 @@ export interface components {
             label: string;
             library_name?: string | null;
             peer_id?: string | null;
+            role?: components["schemas"]["Role"];
             url?: string | null;
-            write?: boolean;
         };
         LanDeviceKeyDeletedDto: {
             deleted: boolean;
         };
         LanDeviceKeyUpdateBody: {
-            write: boolean;
+            role: components["schemas"]["Role"];
         };
         LanInfo: {
             /** @description 网站端口监听状态 */
@@ -2197,7 +2197,7 @@ export interface components {
         };
         LanPairDecisionBody: {
             allow: boolean;
-            write?: boolean;
+            role?: components["schemas"]["Role"];
         };
         LanPairDecisionDto: {
             peer?: null | components["schemas"]["LanPairedPeerDto"];
@@ -2208,8 +2208,8 @@ export interface components {
             client_name: string;
             /** @description 源端回连 profile：目标端批准后据此保存可反向连接的设备。 */
             reverse: components["schemas"]["LanReversePeerDto"];
-            /** @description 源端希望获得写权限；最终由目标端用户决定 */
-            writable?: boolean;
+            /** @description 源端希望获得的角色；最终由目标端用户决定 */
+            role?: components["schemas"]["Role"];
         };
         LanPairRequestCreatedDto: {
             /** Format: int64 */
@@ -2221,9 +2221,10 @@ export interface components {
             /** Format: int64 */
             created_at_ms: number;
             id: string;
-            requested_write: boolean;
+            requested_role: components["schemas"]["Role"];
         };
         LanPairRequestStatusDto: {
+            access_key?: string | null;
             library_name?: string | null;
             name?: string | null;
             peer_id?: string | null;
@@ -2232,10 +2233,9 @@ export interface components {
              * @description 桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。
              */
             protocol: number;
+            role?: null | components["schemas"]["Role"];
             /** @description pending / approved / denied / expired */
             status: string;
-            token?: string | null;
-            writable?: boolean | null;
         };
         LanPairRequestsDto: {
             requests: components["schemas"]["LanPairRequestDto"][];
@@ -2244,9 +2244,9 @@ export interface components {
             id: string;
             library_name: string;
             name: string;
-            token: string;
+            peer_key: string;
+            role: components["schemas"]["Role"];
             url: string;
-            writable: boolean;
         };
         /** @description 发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。 */
         LanPeerDto: {
@@ -2260,15 +2260,15 @@ export interface components {
         LanPeersDto: {
             peers: components["schemas"]["LanPeerDto"][];
         };
-        /** @description 源端为反向连接提供的设备信息；token 由源端为本机 daemon 新签发。 */
+        /** @description 源端为反向连接提供的设备信息；peer_key 由源端为本机 daemon 新签发。 */
         LanReversePeerDto: {
             library_name: string;
             name: string;
             peer_id: string;
-            token: string;
+            peer_key: string;
+            role: components["schemas"]["Role"];
             /** @description 源端候选局域网地址（http://ip:peer_port） */
             urls: string[];
-            writable: boolean;
         };
         LanSettingsDto: {
             /** @description 网站监听状态 */
@@ -2359,15 +2359,15 @@ export interface components {
             port: number;
         };
         PutLanKey: {
+            access_key: string;
             /** Format: int64 */
             created_at_ms?: number;
             id: string;
             label: string;
             library_name?: string | null;
             peer_id?: string | null;
-            token: string;
+            role?: components["schemas"]["Role"];
             url?: string | null;
-            write?: boolean;
         };
         PutRemoteBody: {
             enabled: boolean;
@@ -2453,6 +2453,8 @@ export interface components {
             /** @description 只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库） */
             path?: string | null;
         };
+        /** @enum {string} */
+        Role: "viewer" | "importer" | "editor" | "admin";
         RotateDeviceDto: {
             /** @description 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效） */
             endpoint_id: string;

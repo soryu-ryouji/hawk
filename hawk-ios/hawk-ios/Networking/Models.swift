@@ -7,9 +7,9 @@ nonisolated struct AppInfo: Decodable, Sendable {
     let version: String
     let platform: String?
     let execPath: String?
-    let access: String
+    let role: String
+    let channel: String
     let hasLibrary: Bool
-    let writable: Bool
     let lan: LanInfo?
 }
 

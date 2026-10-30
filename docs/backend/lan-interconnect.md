@@ -25,7 +25,7 @@
 | 发现/匹配 | UDP 组播 + 广播，无需服务器 | hawk-server 设备列表 + WSS 信令 |
 | 数据通路 | 目标 daemon 的 hawk-app 直连端口（HTTP API，默认 27375） | 本机 daemon 会话代理 → iroh QUIC → 目标 daemon |
 | 鉴权 | 目标端审批后为该设备签发的 `[web].peer_keys` 直连密钥 | service-key + hawk-app key，两级验证 |
-| 写能力 | 直连密钥自身的 `write`；与网站 `keys` 独立 | `remote.writable` + `remote_writer` 白名单 |
+| 写能力 | 直连密钥自身的 `role`（viewer/editor）；与网站 `keys` 独立 | `remote.allow_import` + WAN 通道上限 |
 | NAT/公网 | 不支持（同网段） | iroh 打洞/中继 |
 
 两条链路互不放开权限：开启局域网写不会放开广域网写，反之亦然。
@@ -67,7 +67,7 @@
    `POST /api/v1/app/lan/pair-requests`
 
    ```json
-   { "client_name": "A", "writable": true, "reverse": { "peer_id": "...", "name": "A", "library_name": "A 的素材库", "urls": ["http://192.168.1.10:27375"], "token": "<A 为 B 签发的 peer key>", "writable": false } }
+   { "client_name": "A", "role": "editor", "reverse": { "peer_id": "...", "name": "A", "library_name": "A 的素材库", "urls": ["http://192.168.1.10:27375"], "peer_key": "<A 为 B 签发的 peer key>", "role": "viewer" } }
    ```
 
 3. B 的 hawk 主界面弹出全局配对请求，用户选择拒绝、仅读取或可读写。
@@ -150,7 +150,7 @@ remoteConn（广域网会话代理）
 
 ## 双向配对与在线状态
 
-- 源端发起请求前在本机签发一把反向 peer key，并把本机 peer_id、名称、素材库名、候选地址和 token 放进请求的 reverse 字段。
+- 源端发起请求前在本机签发一把反向 peer key，并把本机 peer_id、名称、素材库名、候选地址和 peer_key/role 放进请求的 reverse 字段。
 - 目标端批准后，decision 响应返回源端回连 profile；两端主进程各自保存已配对设备，因此一次审批即可双向连接。
 - 反向密钥默认只读，源端可在自己的已授权设备列表中调整或撤销。
 - 直连鉴权成功后 daemon 按 peer key 记录最近活跃时间；GET /api/v1/app/lan/clients 返回在线状态、权限和配对密钥中的 peer_id/库名/地址元数据，双方局域网互联面板都能显示同样完整的当前连接设备信息。
