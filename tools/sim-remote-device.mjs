@@ -70,7 +70,7 @@ function heartbeatBody(deviceId) {
   return {
     device_id: deviceId,
     library_name: LIBRARY_NAME,
-    allow_write: false,
+    allow_import: false,
     reachability: {
       public_ip: null,
       mapped_port: null,
@@ -235,7 +235,7 @@ async function main() {
       fingerprint: crypto.randomBytes(32).toString('hex'), // 64 位小写十六进制
       library_name: LIBRARY_NAME,
       allow_remote: true,
-      allow_write: false,
+      allow_import: false,
     });
     if (r.status !== 200) {
       log(`注册失败（${r.ms}ms）: HTTP ${r.status} ${JSON.stringify(r.body)}`);

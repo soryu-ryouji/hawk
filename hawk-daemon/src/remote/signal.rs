@@ -3,6 +3,7 @@
 //! 致命错误（401 key 无效、url 非法）返回给 supervisor 置错误状态，等配置变更重启。
 //! 协议契约见 docs/backend/remote-protocol.md。
 
+use crate::core::access::Role;
 use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
@@ -382,12 +383,13 @@ async fn handle_message(
         }
         Some("session.request") => {
             if let Some(session_id) = value.get("session_id").and_then(|s| s.as_str()) {
-                let requested_write = value.get("access").and_then(|a| a.as_str()) == Some("write");
+                let requested_write =
+                    value.get("role").and_then(|r| r.as_str()) == Some("importer");
                 // 时间线日志：与查看方日志按 session_id 对齐
                 tracing::info!(
                     "收到会话请求 {session_id}（access={}）",
                     value
-                        .get("access")
+                        .get("role")
                         .and_then(|a| a.as_str())
                         .unwrap_or_default()
                 );
@@ -399,7 +401,10 @@ async fn handle_message(
                 let writable = match credential {
                     Some(hash) => match ctx.keys.resolve(hash) {
                         Some(entry) => {
-                            if requested_write && !(entry.write && ctx.remote.current().writable) {
+                            if requested_write
+                                && !(entry.role == Role::Importer
+                                    && ctx.remote.current().allow_import)
+                            {
                                 tracing::info!(
                                     "拒绝广域网写会话 {session_id}：key 无写权限或未开启 writable"
                                 );
@@ -427,7 +432,7 @@ async fn handle_message(
                         // 访问密钥是给第三方、可逐把吊销的访问用的，自己的设备走设备身份，两者不混用；
                         // 写端点仍受 is_remote_writer_allowed 白名单限制（仅导入与新建文件夹）
                         if requested_write {
-                            if !ctx.remote.current().writable {
+                            if !ctx.remote.current().allow_import {
                                 tracing::info!("拒绝写会话 {session_id}：本机未开启广域网写入");
                                 reject_session(
                                     ctx.http,
@@ -455,8 +460,15 @@ async fn handle_message(
                     .and_then(|s| s.parse::<iroh::EndpointId>().ok());
                 match endpoint_id {
                     Some(endpoint_id) => {
-                        ctx.data_plane
-                            .allow_session(session_id, endpoint_id, writable);
+                        ctx.data_plane.allow_session(
+                            session_id,
+                            endpoint_id,
+                            if writable {
+                                Role::Importer
+                            } else {
+                                Role::Viewer
+                            },
+                        );
                         accepted_peers.insert(session_id.to_string(), endpoint_id);
                         // 接受后超时清理：60s 内对端未连接 → 收回放行（幂等，
                         // cancelled/重连时的重复收回无害）
@@ -531,7 +543,7 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<HeartbeatReply> {
         // 设备身份应用级：切换素材库后靠心跳把服务端设备表的库名收敛到当前库
         "library_name": library_name(ctx.library),
         // 远程查看模式无本地库可供写入，不上报写权限
-        "allow_write": ctx.library.is_some() && ctx.remote.current().writable,
+        "allow_import": ctx.library.is_some() && ctx.remote.current().allow_import,
         "addrs": ctx.data_plane.direct_addrs(),
     });
     let resp = ctx
@@ -632,7 +644,7 @@ async fn register(
         "library_name": library_name(library),
         // 远程查看模式无本地库：可被发现但不接受会话（没有素材可服务）
         "allow_remote": library.is_some(),
-        "allow_write": library.is_some() && remote.current().writable,
+        "allow_import": library.is_some() && remote.current().allow_import,
     });
     let resp = http
         .post(format!("{base}/api/v1/devices"))

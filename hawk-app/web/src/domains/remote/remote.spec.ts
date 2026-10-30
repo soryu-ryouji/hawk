@@ -10,7 +10,7 @@ const env = vi.hoisted(() => ({
     enabled: true,
     url: 'https://hub',
     service_key: 'hs_k',
-    writable: false,
+    allow_import: false,
     relay: false,
     status: { state: 'online', device_id: 'd_self' },
   } as RemoteDto,
@@ -18,7 +18,7 @@ const env = vi.hoisted(() => ({
   connectError: null as string | null,
   connection: null as ConnectionDescriptor | null,
   connCbs: [] as Array<(conn: ConnectionDescriptor) => void>,
-  keys: [] as Array<{ id: string; label: string; read: boolean; write: boolean; prefix: string; created_at_ms: number }>,
+  keys: [] as Array<{ id: string; label: string; role: string; prefix: string; created_at_ms: number }>,
   createKeyOk: true,
 }));
 
@@ -30,9 +30,9 @@ const shellMock = vi.hoisted(() => ({
   remoteDevices: vi.fn(() =>
     Promise.resolve({
       devices: [
-        { device_id: 'd_self', name: '本机', platform: 'macos', library_name: '库', online: true, allow_remote: true, allow_write: false },
-        { device_id: 'd_off', name: '离线机', platform: 'windows', library_name: '库2', online: false, allow_remote: true, allow_write: false },
-        { device_id: 'd_on', name: '台式机', platform: 'windows', library_name: '库3', online: true, allow_remote: true, allow_write: false },
+        { device_id: 'd_self', name: '本机', platform: 'macos', library_name: '库', online: true, allow_remote: true, allow_import: false },
+        { device_id: 'd_off', name: '离线机', platform: 'windows', library_name: '库2', online: false, allow_remote: true, allow_import: false },
+        { device_id: 'd_on', name: '台式机', platform: 'windows', library_name: '库3', online: true, allow_remote: true, allow_import: false },
       ],
     }),
   ),
@@ -98,11 +98,11 @@ describe('useRemoteStore', () => {
 
   it('saveConfig 成功回写 dto；失败写入 error 并返回 false', async () => {
     const store = useRemoteStore();
-    expect(await store.saveConfig({ enabled: true, url: 'https://hub', service_key: 'hs_k', writable: false, relay: false })).toBe(true);
+    expect(await store.saveConfig({ enabled: true, url: 'https://hub', service_key: 'hs_k', allow_import: false, relay: false })).toBe(true);
     expect(store.dto?.url).toBe('https://hub');
 
     env.putOk = false;
-    expect(await store.saveConfig({ enabled: true, url: '', service_key: '', writable: false, relay: false })).toBe(false);
+    expect(await store.saveConfig({ enabled: true, url: '', service_key: '', allow_import: false, relay: false })).toBe(false);
     expect(store.error).toBe('校验失败');
   });
 
@@ -145,12 +145,12 @@ describe('useRemoteStore', () => {
 
   it('访问密钥：签发返回明文并刷新列表；失败写 error', async () => {
     const store = useRemoteStore();
-    const created = await store.createKey({ label: '插件', read: true });
+    const created = await store.createKey({ label: '插件', role: 'viewer' });
     expect(created?.key).toBe('hk_plain-once');
-    expect(shellMock.remoteCreateKey).toHaveBeenCalledWith({ label: '插件', read: true });
+    expect(shellMock.remoteCreateKey).toHaveBeenCalledWith({ label: '插件', role: 'viewer' });
 
     env.createKeyOk = false;
-    const failed = await store.createKey({ read: true, write: true, custom: 'short' });
+    const failed = await store.createKey({ role: 'importer', custom: 'short' });
     expect(failed).toBeNull();
     expect(store.error).toContain('至少 12 个字符');
     env.createKeyOk = true;
@@ -159,12 +159,12 @@ describe('useRemoteStore', () => {
   it('访问密钥：改权限/吊销后列表同步', async () => {
     const store = useRemoteStore();
     store.dto = env.status;
-    env.keys = [{ id: 'k_1', label: '插件', read: true, write: false, prefix: 'hk_a', created_at_ms: 1 }];
+    env.keys = [{ id: 'k_1', label: '插件', role: 'viewer', prefix: 'hk_a', created_at_ms: 1 }];
     await store.refreshKeys();
     expect(store.keys).toHaveLength(1);
 
-    await store.patchKey('k_1', { write: true });
-    expect(store.keys[0].write).toBe(true);
+    await store.patchKey('k_1', { role: 'importer' });
+    expect(store.keys[0].role).toBe('importer');
 
     await store.deleteKey('k_1');
     expect(store.keys).toHaveLength(0);
@@ -172,7 +172,7 @@ describe('useRemoteStore', () => {
 
   it('refreshKeys 不依赖 dto 就绪/启用状态（密钥本地持久保管；挂载竞态回归）', async () => {
     const store = useRemoteStore();
-    env.keys = [{ id: 'k_1', label: '', read: true, write: false, prefix: 'hk_', created_at_ms: 1 }];
+    env.keys = [{ id: 'k_1', label: '', role: 'viewer', prefix: 'hk_', created_at_ms: 1 }];
     // dto 未拉取（null）与远程未启用两种形态下都必须照常列出
     store.dto = null;
     await store.refreshKeys();
@@ -197,12 +197,12 @@ it('refreshDevices 离线排序与状态过滤（信令未 online 时不拉取�
 
 it('访问密钥：签发返回明文并刷新列表；失败写 error', async () => {
   const store = useRemoteStore();
-  const created = await store.createKey({ label: '插件', read: true });
+  const created = await store.createKey({ label: '插件', role: 'viewer' });
   expect(created?.key).toBe('hk_plain-once');
-  expect(shellMock.remoteCreateKey).toHaveBeenCalledWith({ label: '插件', read: true });
+  expect(shellMock.remoteCreateKey).toHaveBeenCalledWith({ label: '插件', role: 'viewer' });
 
   env.createKeyOk = false;
-  const failed = await store.createKey({ read: true, write: true, custom: 'short' });
+  const failed = await store.createKey({ role: 'importer', custom: 'short' });
   expect(failed).toBeNull();
   expect(store.error).toContain('至少 12 个字符');
   env.createKeyOk = true;
@@ -211,12 +211,12 @@ it('访问密钥：签发返回明文并刷新列表；失败写 error', async (
 it('访问密钥：改权限/吊销后列表同步', async () => {
   const store = useRemoteStore();
   store.dto = env.status;
-  env.keys = [{ id: 'k_1', label: '插件', read: true, write: false, prefix: 'hk_a', created_at_ms: 1 }];
+  env.keys = [{ id: 'k_1', label: '插件', role: 'viewer', prefix: 'hk_a', created_at_ms: 1 }];
   await store.refreshKeys();
   expect(store.keys).toHaveLength(1);
 
-  await store.patchKey('k_1', { write: true });
-  expect(store.keys[0].write).toBe(true);
+  await store.patchKey('k_1', { role: 'importer' });
+  expect(store.keys[0].role).toBe('importer');
 
   await store.deleteKey('k_1');
   expect(store.keys).toHaveLength(0);
@@ -224,7 +224,7 @@ it('访问密钥：改权限/吊销后列表同步', async () => {
 
 it('refreshKeys 不依赖 dto 就绪/启用状态（密钥本地持久保管；挂载竞态回归）', async () => {
   const store = useRemoteStore();
-  env.keys = [{ id: 'k_1', label: '', read: true, write: false, prefix: 'hk_', created_at_ms: 1 }];
+  env.keys = [{ id: 'k_1', label: '', role: 'viewer', prefix: 'hk_', created_at_ms: 1 }];
   // dto 未拉取（null）与远程未启用两种形态下都必须照常列出
   store.dto = null;
   await store.refreshKeys();

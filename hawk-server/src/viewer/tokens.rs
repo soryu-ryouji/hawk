@@ -2,7 +2,7 @@
 //! 只存 sha256 哈希，不存明文；每条 bt 绑定访问级别、目标设备与查看者凭证
 //! （hawk-app key 的 sha256，建会话时透传给目标 daemon 本地执法），重启后仍生效。
 
-use crate::state::Access;
+use crate::state::Role;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -14,7 +14,7 @@ pub fn hash(token: &str) -> String {
 /// bt 承载的授权：访问级别 + 绑定的目标设备 + 查看者凭证（sha256(key)）
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Grant {
-    pub access: Access,
+    pub role: Role,
     pub device_id: String,
     /// hawk-app key 的验证子：会话时随 session.request 下发给目标 daemon 本地校验
     pub credential: String,
@@ -79,7 +79,7 @@ mod tests {
         tokens.insert(
             hash("hb_1"),
             Grant {
-                access: Access::Write,
+                role: Role::Importer,
                 device_id: "d_1".to_string(),
                 credential: "cred".to_string(),
             },
@@ -87,7 +87,7 @@ mod tests {
         save(&file, &tokens).unwrap();
         let loaded = load(&file);
         let grant = loaded.get(&hash("hb_1")).unwrap();
-        assert_eq!(grant.access, Access::Write);
+        assert_eq!(grant.role, Role::Importer);
         assert_eq!(grant.device_id, "d_1");
         assert_eq!(grant.credential, "cred");
     }

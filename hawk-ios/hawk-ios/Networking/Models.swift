@@ -178,14 +178,14 @@ nonisolated struct GateResponse: Decodable, Sendable {
 }
 
 nonisolated struct LoginResponse: Decodable, Sendable {
-    let token: String
-    let access: String
+    let browserToken: String
+    let role: String
     let deviceId: String
 }
 
 nonisolated struct ViewerSession: Decodable, Sendable {
     let sessionToken: String
-    let access: String
+    let role: String
     let targetDeviceId: String
     let targetName: String
     let targetLibraryName: String
@@ -240,7 +240,7 @@ nonisolated struct LoginRequest: Encodable, Sendable {
 
 nonisolated struct OpenSessionRequest: Encodable, Sendable {
     let targetDeviceId: String
-    let access: String
+    let role: String
 }
 
 nonisolated struct UnlockRequest: Encodable, Sendable {

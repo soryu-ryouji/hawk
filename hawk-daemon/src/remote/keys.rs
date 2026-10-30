@@ -3,6 +3,7 @@
 //! 查看者会话的 session.request 携带验证子，daemon 据此本地执法（权限以本地映射为准，
 //! server 声称的 access 只是参考）；每次变更与每次信令接入后全量推送给 server。
 
+use crate::core::access::Role;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -20,8 +21,7 @@ pub struct KeyEntry {
     pub hash: String,
     /// key 前 4 字符（列表识别用；自定义 key 前缀可能泄露弱前缀，可接受——完整 key 不可恢复）
     pub prefix: String,
-    pub read: bool,
-    pub write: bool,
+    pub role: Role,
     pub created_at_ms: u64,
 }
 
@@ -56,16 +56,15 @@ impl KeyStore {
     pub fn create(
         &self,
         label: &str,
-        read: bool,
-        write: bool,
+        role: Role,
         custom: Option<&str>,
     ) -> Result<(KeyEntry, String), String> {
-        if !read && !write {
-            return Err("读/写权限至少勾选一项".to_string());
+        if !matches!(role, Role::Viewer | Role::Importer) {
+            return Err("WAN access key 仅支持 viewer/importer".to_string());
         }
         let key = match custom.map(str::trim).filter(|c| !c.is_empty()) {
             Some(custom) => {
-                let min = if write {
+                let min = if role == Role::Importer {
                     MIN_CUSTOM_LEN_WRITE
                 } else {
                     MIN_CUSTOM_LEN_READ
@@ -73,7 +72,11 @@ impl KeyStore {
                 if custom.chars().count() < min {
                     return Err(format!(
                         "自定义密钥至少 {min} 个字符{}",
-                        if write { "（携带写权限）" } else { "" }
+                        if role == Role::Importer {
+                            "（导入权限）"
+                        } else {
+                            ""
+                        }
                     ));
                 }
                 custom.to_string()
@@ -89,8 +92,7 @@ impl KeyStore {
             label: label.trim().to_string(),
             hash,
             prefix: key.chars().take(4).collect(),
-            read,
-            write,
+            role,
             created_at_ms: now_ms(),
         };
         let mut entries = self.entries.lock().unwrap();
@@ -104,8 +106,7 @@ impl KeyStore {
         &self,
         id: &str,
         label: Option<&str>,
-        read: Option<bool>,
-        write: Option<bool>,
+        role: Option<Role>,
     ) -> Result<Option<KeyEntry>, String> {
         let mut entries = self.entries.lock().unwrap();
         let Some(entry) = entries.iter_mut().find(|e| e.id == id) else {
@@ -114,14 +115,11 @@ impl KeyStore {
         if let Some(label) = label {
             entry.label = label.trim().to_string();
         }
-        if let Some(read) = read {
-            entry.read = read;
-        }
-        if let Some(write) = write {
-            entry.write = write;
-        }
-        if !entry.read && !entry.write {
-            return Err("读/写权限至少保留一项".to_string());
+        if let Some(role) = role {
+            if !matches!(role, Role::Viewer | Role::Importer) {
+                return Err("WAN access key 仅支持 viewer/importer".to_string());
+            }
+            entry.role = role;
         }
         let updated = entry.clone();
         self.save_locked(&entries)?;
@@ -162,7 +160,7 @@ impl KeyStore {
         let keys: Vec<serde_json::Value> = self
             .list()
             .iter()
-            .map(|e| json!({ "s": e.hash, "read": e.read, "write": e.write }))
+            .map(|e| json!({ "s": e.hash, "role": e.role.as_str() }))
             .collect();
         let resp = http
             .put(format!("{base}/api/v1/devices/{device_id}/keys"))
@@ -245,7 +243,7 @@ mod tests {
     fn create_generated_and_resolve() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::open(dir.path().to_str().unwrap());
-        let (entry, key) = store.create("插件", true, false, None).unwrap();
+        let (entry, key) = store.create("插件", Role::Viewer, None).unwrap();
         assert!(key.starts_with("hk_"));
         assert_eq!(key.len(), "hk_".len() + 8 * 4 + 3);
         // 明文不落盘
@@ -253,7 +251,7 @@ mod tests {
         assert!(!raw.contains(&key));
         // 验证子可解析权限
         let found = store.resolve(&entry.hash).unwrap();
-        assert!(found.read && !found.write);
+        assert_eq!(found.role, Role::Viewer);
     }
 
     #[test]
@@ -261,36 +259,39 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::open(dir.path().to_str().unwrap());
         // 纯读 4 字符即可
-        assert!(store.create("a", true, false, Some("1234")).is_ok());
-        // 带写权限不足 12 字符拒绝
-        assert!(store.create("b", true, true, Some("short-key")).is_err());
-        assert!(store.create("b", true, true, Some("123456789012")).is_ok());
+        assert!(store.create("a", Role::Viewer, Some("1234")).is_ok());
+        // 导入权限不足 12 字符拒绝
+        assert!(store
+            .create("b", Role::Importer, Some("short-key"))
+            .is_err());
+        assert!(store
+            .create("b", Role::Importer, Some("123456789012"))
+            .is_ok());
         // 重复拒绝
-        assert!(store.create("c", true, false, Some("1234")).is_err());
-        // 权限全关拒绝
-        assert!(store.create("d", false, false, None).is_err());
+        assert!(store.create("c", Role::Viewer, Some("1234")).is_err());
+        // WAN 不接受 editor/admin
+        assert!(store.create("d", Role::Editor, None).is_err());
+        assert!(store.create("d", Role::Admin, None).is_err());
     }
 
     #[test]
     fn patch_and_remove() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::open(dir.path().to_str().unwrap());
-        let (entry, _) = store.create("a", true, false, None).unwrap();
+        let (entry, _) = store.create("a", Role::Viewer, None).unwrap();
         let updated = store
-            .patch(&entry.id, None, None, Some(true))
+            .patch(&entry.id, None, Some(Role::Importer))
             .unwrap()
             .unwrap();
-        assert!(updated.write);
+        assert_eq!(updated.role, Role::Importer);
         // 收窄回只读
         let updated = store
-            .patch(&entry.id, None, None, Some(false))
+            .patch(&entry.id, None, Some(Role::Viewer))
             .unwrap()
             .unwrap();
-        assert!(!updated.write);
+        assert_eq!(updated.role, Role::Viewer);
         // 权限全关拒绝
-        assert!(store
-            .patch(&entry.id, None, Some(false), Some(false))
-            .is_err());
+        assert!(store.patch(&entry.id, None, Some(Role::Admin)).is_err());
         assert!(store.remove(&entry.id).unwrap());
         assert!(!store.remove(&entry.id).unwrap());
         // 重启后仍为空

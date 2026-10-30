@@ -33,13 +33,13 @@ export interface RemoteDevice {
   library_name: string;
   online: boolean;
   allow_remote: boolean;
-  allow_write: boolean;
+  allow_import: boolean;
   last_seen_at_ms?: number;
 }
 
 interface ViewerSessionInfo {
   session_token: string;
-  access: 'read' | 'write';
+  role: 'viewer' | 'importer';
   target_device_id: string;
   target_name: string;
   target_library_name: string;
@@ -142,7 +142,7 @@ interface AppConnection {
   credential?: string;
   device_id?: string;
   label?: string;
-  writable: boolean;
+  role: 'viewer' | 'importer' | 'editor' | 'admin';
 }
 
 /**
@@ -165,7 +165,7 @@ export async function resolveLocalTarget(): Promise<ResolvedTarget> {
       kind: 'remote',
       base: conn.api_base,
       token: conn.credential,
-      writable: conn.writable,
+      writable: conn.role !== 'viewer',
       label: conn.label ?? '',
     };
   }
@@ -201,9 +201,9 @@ async function remoteLogin(settings: HawkSettings): Promise<RemoteLoginResult> {
     }
     throw e;
   }
-  let data: { token: string; access: string; device_id: string };
+  let data: { browser_token: string; role: string; device_id: string };
   try {
-    data = await call<{ token: string; access: string; device_id: string }>(
+    data = await call<{ browser_token: string; role: string; device_id: string }>(
       settings.remoteUrl,
       '/api/v1/viewer/login',
       { method: 'POST', body: { gate_token: gate.gate_token, key: settings.remoteKey } },
@@ -214,10 +214,10 @@ async function remoteLogin(settings: HawkSettings): Promise<RemoteLoginResult> {
     }
     throw e;
   }
-  if (data.access !== 'write') {
+  if (data.role !== 'importer') {
     throw new Error('该访问密钥没有写权限，请在 hawk 设置 → 远程中为该密钥开启写权限');
   }
-  return { token: data.token, deviceId: data.device_id };
+  return { token: data.browser_token, deviceId: data.device_id };
 }
 
 /** 确保当前令牌已绑定到目标素材库的写会话 */
@@ -232,7 +232,7 @@ async function ensureRemoteSession(
   );
   if (
     current &&
-    current.access === 'write' &&
+    current.role === 'importer' &&
     current.target_device_id === settings.targetDeviceId
   ) {
     return;
@@ -240,7 +240,7 @@ async function ensureRemoteSession(
   await call<ViewerSessionInfo>(settings.remoteUrl, '/api/v1/viewer/session', {
     method: 'POST',
     token,
-    body: { target_device_id: settings.targetDeviceId, access: 'write' },
+    body: { target_device_id: settings.targetDeviceId, role: 'importer' },
   });
 }
 

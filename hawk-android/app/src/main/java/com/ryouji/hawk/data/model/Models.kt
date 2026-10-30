@@ -134,15 +134,15 @@ data class GateResponse(
 
 @Serializable
 data class LoginResponse(
-    val token: String,
-    val access: String,
+    @SerialName("browser_token") val browserToken: String,
+    val role: String,
     @SerialName("device_id") val deviceId: String,
 )
 
 @Serializable
 data class ViewerSession(
     @SerialName("session_token") val sessionToken: String,
-    val access: String,
+    val role: String,
     @SerialName("target_device_id") val targetDeviceId: String,
     @SerialName("target_name") val targetName: String = "",
     @SerialName("target_library_name") val targetLibraryName: String = "",
@@ -186,7 +186,7 @@ data class LoginRequest(
 @Serializable
 data class OpenSessionRequest(
     @SerialName("target_device_id") val targetDeviceId: String,
-    val access: String = "read",
+    val role: String = "viewer",
 )
 
 // MARK: - 本地浏览状态

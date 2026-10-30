@@ -9,6 +9,10 @@
             "minimum": 0,
             "type": "integer"
           },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法）"
+          },
           "session_id": {
             "type": "string"
           },
@@ -24,10 +28,6 @@
           },
           "target_name": {
             "type": "string"
-          },
-          "writable": {
-            "description": "会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：\n只读会话的代理拒绝写请求，app 的写入口依此隐藏",
-            "type": "boolean"
           }
         },
         "required": [
@@ -37,7 +37,7 @@
           "target_library_name",
           "proxy_port",
           "session_token",
-          "writable"
+          "role"
         ],
         "type": "object"
       },
@@ -90,14 +90,14 @@
             "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
             "type": "string"
           },
-          "writable": {
-            "description": "当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）",
-            "type": "boolean"
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "当前连接角色（本地库 admin；远端库为会话角色）"
           }
         },
         "required": [
           "mode",
-          "writable"
+          "role"
         ],
         "type": "object"
       },
@@ -229,17 +229,11 @@
               "null"
             ]
           },
-          "read": {
-            "type": "boolean"
-          },
-          "write": {
-            "description": "写权限（广域网导入素材/新建文件夹；自定义 key 携带写权限时至少 12 字符）",
-            "type": "boolean"
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "viewer 只读，importer 允许导入；自定义 importer key 至少 12 字符"
           }
         },
-        "required": [
-          "read"
-        ],
         "type": "object"
       },
       "CreateKeyDto": {
@@ -399,6 +393,10 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "role": {
+                "$ref": "#/components/schemas/Role",
+                "description": "会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法）"
+              },
               "session_id": {
                 "type": "string"
               },
@@ -414,10 +412,6 @@
               },
               "target_name": {
                 "type": "string"
-              },
-              "writable": {
-                "description": "会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：\n只读会话的代理拒绝写请求，app 的写入口依此隐藏",
-                "type": "boolean"
               }
             },
             "required": [
@@ -427,7 +421,7 @@
               "target_library_name",
               "proxy_port",
               "session_token",
-              "writable"
+              "role"
             ],
             "type": "object"
           },
@@ -476,14 +470,14 @@
                 "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
                 "type": "string"
               },
-              "writable": {
-                "description": "当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）",
-                "type": "boolean"
+              "role": {
+                "$ref": "#/components/schemas/Role",
+                "description": "当前连接角色（本地库 admin；远端库为会话角色）"
               }
             },
             "required": [
               "mode",
-              "writable"
+              "role"
             ],
             "type": "object"
           },
@@ -1581,6 +1575,10 @@
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "role": {
+                    "$ref": "#/components/schemas/Role",
+                    "description": "会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法）"
+                  },
                   "session_id": {
                     "type": "string"
                   },
@@ -1596,10 +1594,6 @@
                   },
                   "target_name": {
                     "type": "string"
-                  },
-                  "writable": {
-                    "description": "会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：\n只读会话的代理拒绝写请求，app 的写入口依此隐藏",
-                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -1609,7 +1603,7 @@
                   "target_library_name",
                   "proxy_port",
                   "session_token",
-                  "writable"
+                  "role"
                 ],
                 "type": "object"
               }
@@ -1687,10 +1681,10 @@
         "properties": {
           "data": {
             "properties": {
-              "allow_remote": {
+              "allow_import": {
                 "type": "boolean"
               },
-              "allow_write": {
+              "allow_remote": {
                 "type": "boolean"
               },
               "device_id": {
@@ -1731,7 +1725,7 @@
               "library_name",
               "online",
               "allow_remote",
-              "allow_write"
+              "allow_import"
             ],
             "type": "object"
           },
@@ -1775,6 +1769,10 @@
         "properties": {
           "data": {
             "properties": {
+              "allow_import": {
+                "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
+                "type": "boolean"
+              },
               "enabled": {
                 "type": "boolean"
               },
@@ -1792,17 +1790,13 @@
               },
               "url": {
                 "type": "string"
-              },
-              "writable": {
-                "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
-                "type": "boolean"
               }
             },
             "required": [
               "enabled",
               "url",
               "service_key",
-              "writable",
+              "allow_import",
               "relay",
               "status"
             ],
@@ -3843,16 +3837,14 @@
               "null"
             ]
           },
-          "read": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "write": {
-            "type": [
-              "boolean",
-              "null"
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role"
+              }
             ]
           }
         },
@@ -3955,6 +3947,10 @@
       },
       "PutRemoteBody": {
         "properties": {
+          "allow_import": {
+            "description": "允许广域网会话导入素材/新建文件夹；省略时按关闭处理",
+            "type": "boolean"
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -3971,10 +3967,6 @@
           },
           "url": {
             "type": "string"
-          },
-          "writable": {
-            "description": "允许广域网会话导入素材/新建文件夹；省略时按关闭处理",
-            "type": "boolean"
           }
         },
         "required": [
@@ -4024,10 +4016,10 @@
       },
       "RemoteDeviceDto": {
         "properties": {
-          "allow_remote": {
+          "allow_import": {
             "type": "boolean"
           },
-          "allow_write": {
+          "allow_remote": {
             "type": "boolean"
           },
           "device_id": {
@@ -4068,7 +4060,7 @@
           "library_name",
           "online",
           "allow_remote",
-          "allow_write"
+          "allow_import"
         ],
         "type": "object"
       },
@@ -4088,6 +4080,10 @@
       },
       "RemoteDto": {
         "properties": {
+          "allow_import": {
+            "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
+            "type": "boolean"
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -4105,17 +4101,13 @@
           },
           "url": {
             "type": "string"
-          },
-          "writable": {
-            "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
-            "type": "boolean"
           }
         },
         "required": [
           "enabled",
           "url",
           "service_key",
-          "writable",
+          "allow_import",
           "relay",
           "status"
         ],
@@ -4138,18 +4130,14 @@
             "description": "key 前 4 字符（识别用；明文不存也不可得）",
             "type": "string"
           },
-          "read": {
-            "type": "boolean"
-          },
-          "write": {
-            "type": "boolean"
+          "role": {
+            "$ref": "#/components/schemas/Role"
           }
         },
         "required": [
           "id",
           "label",
-          "read",
-          "write",
+          "role",
           "prefix",
           "created_at_ms"
         ],

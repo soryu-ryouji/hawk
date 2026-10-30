@@ -23,7 +23,7 @@ pub struct RegisterRequest {
     library_name: String,
     allow_remote: bool,
     /// 允许广域网写会话（目标设备 [remote].writable）
-    allow_write: bool,
+    allow_import: bool,
 }
 
 #[derive(Deserialize)]
@@ -31,7 +31,7 @@ pub struct HeartbeatRequest {
     device_id: String,
     /// 目标设备当前是否允许广域网写入；变化时更新设备表，供查看面筛选
     #[serde(default)]
-    allow_write: Option<bool>,
+    allow_import: Option<bool>,
     /// 当前打开的素材库名（设备身份跨库共享，切换库后靠心跳收敛设备表）
     #[serde(default)]
     library_name: Option<String>,
@@ -75,7 +75,7 @@ pub async fn register(
         endpoint_id: req.endpoint_id,
         library_name: req.library_name,
         allow_remote: req.allow_remote,
-        allow_write: req.allow_write,
+        allow_import: req.allow_import,
         registered_at_ms: now_ms(),
     };
     let device_id = record.device_id.clone();
@@ -102,14 +102,14 @@ pub async fn heartbeat(
         .as_deref()
         .map(str::trim)
         .filter(|name| !name.is_empty() && *name != device.library_name);
-    if req.allow_write.is_some_and(|w| w != device.allow_write) || library_name.is_some() {
+    if req.allow_import.is_some_and(|w| w != device.allow_import) || library_name.is_some() {
         state
             .store
             .lock()
             .unwrap()
             .update(&req.device_id, |record| {
-                if let Some(allow_write) = req.allow_write {
-                    record.allow_write = allow_write;
+                if let Some(allow_import) = req.allow_import {
+                    record.allow_import = allow_import;
                 }
                 if let Some(library_name) = library_name {
                     record.library_name = library_name.to_string();
@@ -183,12 +183,6 @@ pub async fn sync_keys(
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "keys[].s 须为 64 位小写十六进制（sha256）",
-            ));
-        }
-        if !entry.read && !entry.write {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "keys[] 读/写权限至少一项",
             ));
         }
     }
@@ -362,7 +356,7 @@ fn device_view(record: &DeviceRecord, presence: Option<&Presence>, now: u64) -> 
         "last_seen_at_ms": last_seen,
         "endpoint_id": record.endpoint_id,
         "allow_remote": record.allow_remote,
-        "allow_write": record.allow_write,
+        "allow_import": record.allow_import,
         "addrs": addrs,
     })
 }

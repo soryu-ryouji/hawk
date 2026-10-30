@@ -205,7 +205,7 @@ export interface RemoteConfig {
   /** 服务端 service-key（池门禁凭证，hawk-server tenant add 生成） */
   service_key: string;
   /** 允许广域网会话导入素材/新建文件夹（与 [web] 局域网写权限独立） */
-  writable: boolean;
+  allow_import: boolean;
   /** 使用中继（服务端提供时；消耗自建带宽，设备级开关，默认关闭） */
   relay: boolean;
 }
@@ -231,7 +231,7 @@ export interface RemoteDevice {
   library_name: string;
   online: boolean;
   allow_remote: boolean;
-  allow_write: boolean;
+  allow_import: boolean;
   /** 是否有直连候选（UPnP 映射或全局 IPv6）；false = 直连必失败只能中继；缺省 = 无数据 */
   reachable?: boolean;
   last_seen_at_ms?: number;
@@ -245,14 +245,14 @@ export interface RemoteSessionDto {
   target_library_name: string;
   proxy_port: number;
   session_token: string;
+  role: AccessRole;
 }
 
 /** 访问密钥条目（daemon /remote/keys 单条；不含明文——明文只在签发响应出现一次） */
 export interface RemoteKeyEntry {
   id: string;
   label: string;
-  read: boolean;
-  write: boolean;
+  role: AccessRole;
   /** key 前 4 字符（列表识别用） */
   prefix: string;
   created_at_ms: number;
@@ -378,9 +378,9 @@ export interface HawkShell {
   /** 本机签发的访问密钥列表（不含明文） */
   remoteKeys(): Promise<{ keys: RemoteKeyEntry[] }>;
   /** 签发访问密钥（custom 省略 = 程序生成；明文只在返回值里出现一次） */
-  remoteCreateKey(input: { label?: string; read: boolean; write?: boolean; custom?: string }): Promise<RemoteKeyCreated>;
+  remoteCreateKey(input: { label?: string; role: AccessRole; custom?: string }): Promise<RemoteKeyCreated>;
   /** 更新访问密钥标签/权限 */
-  remotePatchKey(id: string, patch: { label?: string; read?: boolean; write?: boolean }): Promise<{ key: RemoteKeyEntry; synced: boolean }>;
+  remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry; synced: boolean }>;
   /** 吊销访问密钥 */
   remoteDeleteKey(id: string): Promise<{ synced: boolean }>;
   /** 探测同网段可配对的 hawk 设备（经本机 daemon 的 UDP 发现） */

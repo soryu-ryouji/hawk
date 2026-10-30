@@ -41,7 +41,7 @@ Eagle 主窗口的关键特征：
 
 严格遵循 architecture.md 的 sidecar 模式：前端不依赖 Electron IPC 做业务通信，主进程只管窗口、拉起/回收后端、注入 token。
 
-远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话/访问密钥）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。凭证模型为两级：service-key（池门禁，接入配置）+ hawk-app key（访问密钥，本机签发逐把读/写权限，分发给网页版/插件）。远端会话的写能力**由目标设备的「允许广域网保存素材」决定**：开启时本机以同租户设备身份拿到 `remote_writer`（仅导入素材与新建文件夹，编辑类写入口仍隐藏），关闭时自动降级只读；前端三态经 `app/info` 的 `access`/`writable` 驱动（`store.viewerMode` 只读 / `store.limitedWrite` 仅导入 / 其余可读写）。来源标识在侧栏左上角库名按钮（「库名 [远程]」，悬停提示带写能力；侧栏隐藏时为顶栏左组紧凑徽标），不在顶栏中段占位。
+远程访问扩展此模型（已落地）：主进程维护「当前活动连接」描述符，切换本地/远端库时通知渲染进程统一重置；远程管理面（状态/设备/会话/访问密钥）始终经本地 daemon REST。见 [远程访问设计](../backend/remote-access.md)。凭证模型为两级：service-key（池门禁，接入配置）+ hawk-app key（访问密钥，本机签发逐把读/写权限，分发给网页版/插件）。远端会话的写能力**由目标设备的「允许广域网保存素材」决定**：开启时本机以同租户设备身份拿到 `importer`（仅导入素材与新建文件夹，编辑类写入口仍隐藏），关闭时自动降级 viewer；前端经 `app/info` 的 `role`/`channel` 驱动（`store.viewerMode` 只读 / `store.limitedWrite` 仅导入 / 其余可读写）。来源标识在侧栏左上角库名按钮（「库名 [远程]」，悬停提示带写能力；侧栏隐藏时为顶栏左组紧凑徽标），不在顶栏中段占位。
 
 **局域网互联**复用同一连接描述符模型，但不需要 hawk-server：目标 daemon 通过 UDP `27374` 应答发现 probe；源端设置面板展示同网段设备，点击「申请配对」后由目标端现场选择拒绝/仅读取/可读写。一次审批会同时完成双向授权：源端为目标端签发只读反向 peer key，目标端保存源端回连 profile，两端无需再次申请。连接 `kind` 为 `local | remote | lan`，侧栏徽标相应显示「局域网 / 远程」；已配对设备存 `config.toml`（渲染层不见 token），支持冷启动恢复与 5s 健康检查回切。局域网互联与已授权设备列表都会展示当前连接/在线状态。完整协议、写权限与安全边界见 [局域网 hawk-app 互联](../backend/lan-interconnect.md)。
 
@@ -424,7 +424,7 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 `importEntries(entries, targetFolder?, fallbackFiles?)`（拖拽统一入口：targetFolder 缺省平铺导入，指定为侧栏
 结构化导入——目录树重建、文件按映射路径入库）、`importFiles(files)`（浏览器 multipart 上传主入口）。
 入库通道按连接选：`hasShell && access==='admin'`（本地库）走 `item/add` 路径导入（保留时间戳），
-远端库会话（`remote_writer`）与浏览器走 `item/upload` multipart——远端读不到本机路径语义。共享
+远端库会话（`importer`）与浏览器走 `item/upload` multipart——远端读不到本机路径语义。共享
 `logic/importBatch.runImportBatch` 状态机（重复策略 ask→首问整批生效、计数、进度推进，依赖注入可单测）。
 
 **预览子 store `usePreviewStore`（domains/preview/store.ts）**：预览浮层与图片编辑域。状态 `previewId`、

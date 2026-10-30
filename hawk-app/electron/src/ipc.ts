@@ -254,8 +254,8 @@ export function registerIpc(): void {
 
   // 访问密钥管理（透传 daemon；id 只接受字符串）
   ipcMain.handle(IPC.remoteKeys, () => remoteKeys());
-  ipcMain.handle(IPC.remoteCreateKey, (_event, input: { label?: string; read: boolean; write?: boolean; custom?: string }) => remoteCreateKey(input));
-  ipcMain.handle(IPC.remotePatchKey, (_event, id: unknown, patch: { label?: string; read?: boolean; write?: boolean }) => {
+  ipcMain.handle(IPC.remoteCreateKey, (_event, input: { label?: string; role: 'viewer' | 'importer'; custom?: string }) => remoteCreateKey(input));
+  ipcMain.handle(IPC.remotePatchKey, (_event, id: unknown, patch: { label?: string; role?: 'viewer' | 'importer' }) => {
     if (typeof id !== 'string' || !id) {
       throw new Error('非法密钥 id');
     }

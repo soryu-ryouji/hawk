@@ -13,7 +13,7 @@ pub const HAWK_ALPN: &[u8] = b"hawk/1";
 
 use crate::api::sessions::create_session_internal;
 use crate::identity::Identity;
-use crate::state::{Access, AppState, SessionState};
+use crate::state::{AppState, Role, SessionState};
 use crate::store::DeviceRecord;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub struct ViewerSession {
     pub session_token: String,
     pub hawk_session_id: String,
-    pub access: Access,
+    pub role: Role,
     pub target_device_id: String,
     pub target_name: String,
     pub target_library_name: String,
@@ -111,10 +111,10 @@ impl ViewerManager {
             rand::random::<u64>()
         );
         let grant = tokens::Grant {
-            access: if entry.write {
-                Access::Write
+            role: if entry.role == Role::Importer {
+                Role::Importer
             } else {
-                Access::Read
+                Role::Viewer
             },
             device_id: entry.device_id,
             credential: entry.s,
@@ -161,7 +161,7 @@ impl ViewerManager {
         self: &Arc<Self>,
         token: &str,
         target_device_id: &str,
-        access: Access,
+        role: Role,
     ) -> Result<Value, String> {
         let Some(grant) = self.validate(token) else {
             return Err("未登录或令牌无效".to_string());
@@ -169,14 +169,14 @@ impl ViewerManager {
         if target_device_id != grant.device_id {
             return Err("该令牌无权访问此设备".to_string());
         }
-        if access == Access::Write && grant.access != Access::Write {
+        if role == Role::Importer && grant.role != Role::Importer {
             return Err("当前令牌没有写入权限".to_string());
         }
         let bt_hash = tokens::hash(token);
         // 复用存活绑定（访问级别也必须一致）
         if let Some(existing) = self.session_for(token) {
             if existing.target_device_id == target_device_id
-                && existing.access == access
+                && existing.role == role
                 && existing.conn.close_reason().is_none()
             {
                 return Ok(session_view(&existing));
@@ -192,7 +192,7 @@ impl ViewerManager {
             &self.state,
             &source,
             target_device_id,
-            access,
+            role,
             Some(grant.credential.clone()),
         )
         .map_err(|e| e.message)?;
@@ -254,7 +254,7 @@ impl ViewerManager {
                 rand::random::<u64>()
             ),
             hawk_session_id: hawk_session_id.clone(),
-            access,
+            role,
             target_device_id: target_device_id.to_string(),
             target_name,
             target_library_name,
@@ -340,7 +340,7 @@ impl ViewerManager {
 fn session_view(session: &Arc<ViewerSession>) -> Value {
     json!({
         "session_token": session.session_token,
-        "access": session.access.as_str(),
+        "role": session.role.as_str(),
         "target_device_id": session.target_device_id,
         "target_name": session.target_name,
         "target_library_name": session.target_library_name,
@@ -366,7 +366,7 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
                 rec.library_name = "网页查看器".to_string();
                 rec.endpoint_id = identity.endpoint_id.clone();
                 rec.allow_remote = false;
-                rec.allow_write = false;
+                rec.allow_import = false;
             })
             .map_err(|e| format!("设备注册表写入失败: {e}"))?;
     } else {
@@ -379,7 +379,7 @@ pub fn ensure_viewer_device(state: &Arc<AppState>, identity: &Identity) -> Resul
                 endpoint_id: identity.endpoint_id.clone(),
                 library_name: "网页查看器".to_string(),
                 allow_remote: false,
-                allow_write: false,
+                allow_import: false,
                 registered_at_ms: crate::state::now_ms(),
             })
             .map_err(|e| format!("设备注册表写入失败: {e}"))?;

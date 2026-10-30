@@ -3,6 +3,7 @@
 
 use crate::api::envelope::{ApiError, Envelope};
 use crate::api::{require_manage, AccessContext, SharedState};
+use crate::core::access::Role;
 use axum::extract::{Extension, State};
 use axum::Json;
 use serde::Serialize;
@@ -306,8 +307,8 @@ struct AppConnectionDto {
     device_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
-    /// 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限）
-    writable: bool,
+    /// 当前连接角色（本地库 admin；远端库为会话角色）
+    role: Role,
 }
 
 /// 当前连接（远程查看模式下同样可用：无库 daemon 只暴露远程管理面与会话代理）
@@ -334,7 +335,7 @@ async fn connection(
             credential: Some(session.session_token),
             device_id: Some(session.target_device_id),
             label: Some(label),
-            writable: session.writable,
+            role: session.role,
         })));
     }
     let has_library = state.library.is_some();
@@ -344,6 +345,10 @@ async fn connection(
         credential: None,
         device_id: None,
         label: None,
-        writable: has_library,
+        role: if has_library {
+            Role::Admin
+        } else {
+            Role::Viewer
+        },
     })))
 }

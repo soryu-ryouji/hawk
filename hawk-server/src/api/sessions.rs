@@ -4,7 +4,7 @@
 
 use super::{ok, success, ApiError, JsonBody};
 use crate::auth::ServiceKey;
-use crate::state::{now_ms, Access, AppState, Session, SessionState};
+use crate::state::{now_ms, AppState, Role, Session, SessionState};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -19,7 +19,7 @@ pub struct CreateRequest {
     /// 请求的会话权限：read（缺省）/ write。app 间会话的写权限由目标设备的
     /// 「允许广域网保存素材」决定（单用户租户内设备互信），目标 daemon 会再本地执法一次
     #[serde(default)]
-    access: Option<Access>,
+    role: Option<Role>,
 }
 
 #[derive(Deserialize)]
@@ -47,7 +47,7 @@ pub async fn create(
         &state,
         &req.source_device_id,
         &req.target_device_id,
-        req.access.unwrap_or(Access::Read),
+        req.role.unwrap_or(Role::Viewer),
         None,
     )?;
     Ok(ok(
@@ -62,7 +62,7 @@ pub fn create_session_internal(
     state: &Arc<AppState>,
     source_device_id: &str,
     target_device_id: &str,
-    access: Access,
+    role: Role,
     credential: Option<String>,
 ) -> Result<(String, SessionState), ApiError> {
     if source_device_id == target_device_id {
@@ -77,7 +77,7 @@ pub fn create_session_internal(
     if !state.online(target_device_id) {
         return Err(ApiError::not_found("目标设备不在线"));
     }
-    if access == Access::Write && !target.allow_write {
+    if role == Role::Importer && !target.allow_import {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "目标设备未开启广域网写入",
@@ -94,7 +94,7 @@ pub fn create_session_internal(
         session_id: new_session_id(),
         source_device_id: source_device_id.to_string(),
         target_device_id: target_device_id.to_string(),
-        access,
+        role,
         credential,
         state: initial,
         created_at_ms: now_ms(),
@@ -123,7 +123,7 @@ pub fn create_session_internal(
                     // 网页版全局设备不在租户列表中，不走列表本来也查不到
                     "endpoint_id": source.as_ref().map(|s| s.endpoint_id.as_str()).unwrap_or_default(),
                 },
-                "access": access.as_str(),
+                "role": role.as_str(),
                 // 查看者会话的 key 验证子；app 间会话无此字段
                 "credential": credential,
             }),

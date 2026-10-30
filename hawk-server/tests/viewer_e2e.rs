@@ -6,6 +6,7 @@ use axum::extract::Request;
 use axum::routing::get;
 use axum::Router;
 use futures_util::StreamExt;
+use hawk_daemon::core::access::Role;
 use hawk_daemon::remote::data::{DataPlane, TunneledPeer};
 use hawk_daemon::remote::identity::Identity as DaemonIdentity;
 use hawk_server::api;
@@ -62,7 +63,7 @@ fn a_router() -> Router {
             "/api/v1/hello",
             get(|req: Request| async move {
                 match req.extensions().get::<TunneledPeer>() {
-                    Some(peer) if peer.writable => "write from A",
+                    Some(peer) if peer.role == Role::Importer => "write from A",
                     Some(_) => "hi from A",
                     None => "missing marker",
                 }
@@ -96,7 +97,7 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
         .bearer_auth(service_key)
         .json(&json!({
             "name": "家里台式机", "platform": "macos", "endpoint_id": identity.endpoint_id,
-            "library_name": "A 的库", "allow_remote": true, "allow_write": true,
+            "library_name": "A 的库", "allow_remote": true, "allow_import": true,
         }))
         .send()
         .await
@@ -111,8 +112,8 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
         .put(format!("http://{base}/api/v1/devices/{device_a}/keys"))
         .bearer_auth(service_key)
         .json(&json!({ "keys": [
-            { "s": sha256_hex(READ_KEY), "read": true, "write": false },
-            { "s": sha256_hex(WRITE_KEY), "read": true, "write": true },
+            { "s": sha256_hex(READ_KEY), "role": "viewer" },
+            { "s": sha256_hex(WRITE_KEY), "role": "importer" },
         ]}))
         .send()
         .await
@@ -171,7 +172,7 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
                 }
                 let session_id = v["session_id"].as_str().unwrap().to_string();
                 // 本地执法：credential 必须命中本地 key 映射，且写会话需写权限
-                let requested_write = v["access"].as_str() == Some("write");
+                let requested_write = v["role"].as_str() == Some("importer");
                 let credential = v["credential"].as_str().unwrap_or_default();
                 let granted = known_keys
                     .lock()
@@ -198,7 +199,15 @@ async fn start_device_a(base: &str, service_key: &str, dir: &Path) -> (String, A
                 else {
                     continue;
                 };
-                plane.allow_session(&session_id, peer, requested_write);
+                plane.allow_session(
+                    &session_id,
+                    peer,
+                    if requested_write {
+                        Role::Importer
+                    } else {
+                        Role::Viewer
+                    },
+                );
                 // accept（之后网页版宿主直接按 connect 的直连地址拨号过来）
                 let _resp = http
                     .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
@@ -289,8 +298,8 @@ async fn viewer_browses_library_through_domain() {
     // ---- 正确两级登录 → bt（绑定设备） ----
     let resp = gate_and_login(&base, &service_key, READ_KEY).await;
     assert_eq!(resp["status"], "success", "登录失败: {resp}");
-    let bt = resp["data"]["token"].as_str().unwrap().to_string();
-    assert_eq!(resp["data"]["access"], "read");
+    let bt = resp["data"]["browser_token"].as_str().unwrap().to_string();
+    assert_eq!(resp["data"]["role"], "viewer");
     assert_eq!(resp["data"]["device_id"], device_a);
 
     // ---- 设备列表只含 bt 绑定的设备（无池枚举面） ----
@@ -480,11 +489,11 @@ async fn viewer_write_requires_write_key() {
 
     // 只读 key 的 bt 不能开写会话
     let resp = gate_and_login(&base, &service_key, READ_KEY).await;
-    let read_bt = resp["data"]["token"].as_str().unwrap().to_string();
+    let read_bt = resp["data"]["browser_token"].as_str().unwrap().to_string();
     let resp = client
         .post(format!("http://{base}/api/v1/viewer/session"))
         .bearer_auth(&read_bt)
-        .json(&json!({ "target_device_id": device_a, "access": "write" }))
+        .json(&json!({ "target_device_id": device_a, "role": "importer" }))
         .send()
         .await
         .unwrap();
@@ -492,13 +501,13 @@ async fn viewer_write_requires_write_key() {
 
     // 写 key：bt access=write，写会话成功，隧道请求带 writable 标记
     let resp = gate_and_login(&base, &service_key, WRITE_KEY).await;
-    assert_eq!(resp["data"]["access"], "write");
-    let write_bt = resp["data"]["token"].as_str().unwrap().to_string();
+    assert_eq!(resp["data"]["role"], "importer");
+    let write_bt = resp["data"]["browser_token"].as_str().unwrap().to_string();
 
     let resp: Value = client
         .post(format!("http://{base}/api/v1/viewer/session"))
         .bearer_auth(&write_bt)
-        .json(&json!({ "target_device_id": device_a, "access": "write" }))
+        .json(&json!({ "target_device_id": device_a, "role": "importer" }))
         .send()
         .await
         .unwrap()
@@ -506,7 +515,7 @@ async fn viewer_write_requires_write_key() {
         .await
         .unwrap();
     assert_eq!(resp["status"], "success", "写会话建立失败: {resp}");
-    assert_eq!(resp["data"]["access"], "write");
+    assert_eq!(resp["data"]["role"], "importer");
 
     let resp = client
         .get(format!("http://{base}/api/v1/hello"))
@@ -533,7 +542,7 @@ async fn revoked_key_cannot_login() {
         .put(format!("http://{base}/api/v1/devices/{device_a}/keys"))
         .bearer_auth(&service_key)
         .json(&json!({ "keys": [
-            { "s": sha256_hex(WRITE_KEY), "read": true, "write": true },
+            { "s": sha256_hex(WRITE_KEY), "role": "importer" },
         ]}))
         .send()
         .await
@@ -553,7 +562,7 @@ async fn viewer_session_expires_when_tunnel_drops() {
     let (_device_a, plane_a) = start_device_a(&base, &service_key, a_dir.path()).await;
 
     let resp = gate_and_login(&base, &service_key, READ_KEY).await;
-    let bt = resp["data"]["token"].as_str().unwrap().to_string();
+    let bt = resp["data"]["browser_token"].as_str().unwrap().to_string();
     let device_a = resp["data"]["device_id"].as_str().unwrap().to_string();
     let client = reqwest::Client::new();
     client

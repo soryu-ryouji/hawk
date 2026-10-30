@@ -269,7 +269,9 @@ async fn auth(
     // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledPeer（HTTP 客户端无法伪造扩展，
     // 忽略其携带的任何 token 头）。角色与设备开关在每次请求重新计算。
     let access = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
-        let role = if tunnel.writable && state.remote.remote_config().current().writable {
+        let role = if tunnel.role == Role::Importer
+            && state.remote.remote_config().current().allow_import
+        {
             Role::Importer
         } else {
             Role::Viewer

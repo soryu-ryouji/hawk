@@ -3,6 +3,7 @@
 
 use super::envelope::{codes, ApiError, Envelope, SuccessOnly};
 use super::{require_manage, AccessContext, SharedState};
+use crate::core::access::Role;
 use crate::remote::config::RemoteSettings;
 use crate::remote::session::ActiveSessionDto;
 use crate::remote::RemoteStatus;
@@ -30,7 +31,7 @@ struct RemoteDto {
     /// 服务端 service-key（池门禁凭证，hawk-server tenant add 生成）
     service_key: String,
     /// 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）
-    writable: bool,
+    allow_import: bool,
     /// 使用中继（服务端提供时；消耗自建带宽，设备级开关）
     relay: bool,
     /// 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因
@@ -43,7 +44,7 @@ fn remote_dto(state: &SharedState) -> RemoteDto {
         enabled: cfg.enabled,
         url: cfg.url,
         service_key: cfg.service_key,
-        writable: cfg.writable,
+        allow_import: cfg.allow_import,
         relay: cfg.relay,
         status: state.remote.snapshot(),
     }
@@ -72,7 +73,7 @@ struct PutRemoteBody {
     service_key: String,
     /// 允许广域网会话导入素材/新建文件夹；省略时按关闭处理
     #[serde(default)]
-    writable: bool,
+    allow_import: bool,
     /// 使用中继（服务端提供时）；省略时保留现值
     #[serde(default)]
     relay: Option<bool>,
@@ -99,7 +100,7 @@ async fn put_remote(
         url: body.url.trim().trim_end_matches('/').to_string(),
         service_key: body.service_key.trim().to_string(),
         quic_port: state.remote.remote_config().current().quic_port,
-        writable: body.writable,
+        allow_import: body.allow_import,
         // 省略时保留现值（设置面板整体保存时会显式携带）
         relay: body
             .relay
@@ -178,7 +179,7 @@ struct RemoteDeviceDto {
     library_name: String,
     online: bool,
     allow_remote: bool,
-    allow_write: bool,
+    allow_import: bool,
     /// 是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。
     /// None = 无可达性数据（未心跳过）
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,7 +237,7 @@ async fn list_devices(
                     library_name: d["library_name"].as_str().unwrap_or_default().to_string(),
                     online: d["online"].as_bool().unwrap_or(false),
                     allow_remote: d["allow_remote"].as_bool().unwrap_or(false),
-                    allow_write: d["allow_write"].as_bool().unwrap_or(false),
+                    allow_import: d["allow_import"].as_bool().unwrap_or(false),
                     reachable: reachable_of(d),
                     last_seen_at_ms: d["last_seen_at_ms"].as_u64(),
                 })
@@ -417,7 +418,7 @@ async fn patch_device(
         library_name: d["library_name"].as_str().unwrap_or_default().to_string(),
         online: d["online"].as_bool().unwrap_or(false),
         allow_remote: d["allow_remote"].as_bool().unwrap_or(false),
-        allow_write: d["allow_write"].as_bool().unwrap_or(false),
+        allow_import: d["allow_import"].as_bool().unwrap_or(false),
         reachable: reachable_of(d),
         last_seen_at_ms: d["last_seen_at_ms"].as_u64(),
     })))
@@ -533,8 +534,7 @@ async fn rotate_device(
 struct RemoteKeyDto {
     id: String,
     label: String,
-    read: bool,
-    write: bool,
+    role: Role,
     /// key 前 4 字符（识别用；明文不存也不可得）
     prefix: String,
     created_at_ms: u64,
@@ -544,8 +544,7 @@ fn key_dto(entry: &crate::remote::keys::KeyEntry) -> RemoteKeyDto {
     RemoteKeyDto {
         id: entry.id.clone(),
         label: entry.label.clone(),
-        read: entry.read,
-        write: entry.write,
+        role: entry.role,
         prefix: entry.prefix.clone(),
         created_at_ms: entry.created_at_ms,
     }
@@ -577,10 +576,9 @@ struct CreateKeyBody {
     /// 展示标签（如「手机插件」；可空）
     #[serde(default)]
     label: Option<String>,
-    read: bool,
-    /// 写权限（广域网导入素材/新建文件夹；自定义 key 携带写权限时至少 12 字符）
+    /// viewer 只读，importer 允许导入；自定义 importer key 至少 12 字符
     #[serde(default)]
-    write: bool,
+    role: Role,
     /// 自定义密钥（可空 = 程序生成 128 位随机串）
     #[serde(default)]
     custom: Option<String>,
@@ -614,8 +612,7 @@ async fn create_key(
         .keys
         .create(
             body.label.as_deref().unwrap_or(""),
-            body.read,
-            body.write,
+            body.role,
             body.custom.as_deref(),
         )
         .map_err(|e| ApiError::new(codes::INVALID_PARAM, axum::http::StatusCode::BAD_REQUEST, e))?;
@@ -632,9 +629,7 @@ struct PatchKeyBody {
     #[serde(default)]
     label: Option<String>,
     #[serde(default)]
-    read: Option<bool>,
-    #[serde(default)]
-    write: Option<bool>,
+    role: Option<Role>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -662,7 +657,7 @@ async fn patch_key(
     let entry = state
         .remote
         .keys
-        .patch(&key_id, body.label.as_deref(), body.read, body.write)
+        .patch(&key_id, body.label.as_deref(), body.role)
         .map_err(|e| ApiError::new(codes::INVALID_PARAM, axum::http::StatusCode::BAD_REQUEST, e))?
         .ok_or_else(|| {
             ApiError::new(

@@ -22,7 +22,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 - service-key：`hawk-server tenant add` 程序生成（`hs_` + 256-bit 随机），明文只打印一次；服务端只存 `HMAC-SHA256(pepper, key)`。pepper 存数据目录 `pepper` 文件（0600，首启自生成），注册表泄露但没有 pepper 时哈希不可逆推 key
 - hawk-app key：daemon 本地签发保管（默认 `hk_` + 128-bit 随机；允许自定义，纯读 ≥4 字符、带写权限 ≥12 字符），**明文只在签发时返回一次**；daemon 本地存 `sha256(key)`（验证子 s），server 经 `PUT /devices/{id}/keys` 同步 `{ s, read, write }` 并只存 `HMAC-SHA256(pepper, s)`——server 全程不见 key 明文
 - 查看者登录时 server 计算 `HMAC(pepper, sha256(出示的 key))` 比对；比对命中后 bt 记录 `{ access, device_id, credential: s }`
-- 会话执法在目标 daemon：查看者会话的 `session.request` 携带 `credential`（s），daemon 比对本地 key 映射裁决权限——server 被攻破也无法把只读 key 放大成写权限；app 间会话（无凭证）的写权限只由目标 daemon 的 `remote.writable` 总开关裁决（单用户租户内设备互信）
+- 会话执法在目标 daemon：查看者会话的 `session.request` 携带 `credential`（s），daemon 比对本地 key 映射裁决权限——server 被攻破也无法把只读 key 放大成写权限；app 间会话（无凭证）的写权限只由目标 daemon 的 `remote.allow_import` 总开关裁决（单用户租户内设备互信）
 - 比较一律恒定时间
 
 **风控（限速）**：凭证验证面按来源 IP 与租户（池）双维度计失败：
@@ -82,14 +82,14 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
   "endpoint_id": "<hex，iroh EndpointId（Ed25519 公钥）>",
   "library_name": "我的素材库",
   "allow_remote": true,
-  "allow_write": false
+  "allow_import": false
 }
 // 响应
 { "status": "success", "data": { "device_id": "d_42" } }
 ```
 
 `allow_remote`：设备级开关，关闭时该设备的会话请求被直接置 `rejected`（UI 里可改）。
-`allow_write`：目标设备当前是否允许广域网写会话（对应应用级 `remote.toml` 的 `writable`）；由设备注册/心跳上报，服务端用于写会话预检，最终由目标 daemon 按本地 key 映射每请求裁决。
+`allow_import`：目标设备当前是否允许广域网写会话（对应应用级 `remote.toml` 的 `writable`）；由设备注册/心跳上报，服务端用于写会话预检，最终由目标 daemon 按本地 key 映射每请求裁决。
 `library_name`：设备当前打开的素材库名。设备身份跨库共享，同一台设备切换库后经心跳更新设备表，避免列表展示旧库名。
 
 ### `POST /api/v1/devices/heartbeat`
@@ -100,7 +100,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 // 请求（service-key 鉴权；device_id 标识本机）
 {
   "device_id": "d_42",
-  "allow_write": false,
+  "allow_import": false,
   "library_name": "我的素材库",   // 当前打开的库名；服务端据此收敛设备表（可省略）
   "addrs": [                      // iroh 上报的直连地址集（本机接口 + 端口映射/外部地址；
     "192.168.1.5:27373",          // 随网络环境刷新，心跳周期自然收敛），空数组 = 无直连地址
@@ -134,7 +134,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
         "last_seen_at_ms": 1750000000000,
         "endpoint_id": "...",
         "allow_remote": true,
-        "allow_write": false,
+        "allow_import": false,
         "addrs": ["192.168.1.5:27373", "1.2.3.4:27373"]
       }
     ]
@@ -169,12 +169,12 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 
 ```json
 // 请求
-{ "keys": [ { "s": "<sha256-hex>", "read": true, "write": false } ] }
+{ "keys": [ { "s": "<sha256-hex>", "role": "viewer" } ] }
 // 响应
 { "status": "success", "data": { "synced": 1 } }
 ```
 
-校验：`s` 须 64 位小写十六进制；`read`/`write` 至少一项；任一条目非法整体拒绝（400）。
+校验：`s` 须 64 位小写十六进制；`role` 为 viewer/importer；任一条目非法整体拒绝（400）。
 
 ## 查看面登录（两级验证）
 
@@ -199,7 +199,7 @@ hawk-app key（逐 key 权限：读 / 写 / 读+写）
 // 请求
 { "gate_token": "gt_...", "key": "hk_..." }
 // 响应：bt 绑定唯一目标设备（key 映射决定），access 为 read / write（write 含读）
-{ "status": "success", "data": { "token": "hb_...", "access": "write", "device_id": "d_42" } }
+{ "status": "success", "data": { "browser_token": "hb_...", "role": "importer", "device_id": "d_42" } }
 ```
 
 key 无效、已吊销、或不属于门令牌绑定的池，同按 401「访问密钥无效」处理（不泄露存在性）。
@@ -220,7 +220,7 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 | ------------------- | -------------------------------------------------------------------------------------- |
 | `hello`             | `{ "device_id", "server_time_ms" }`                                                    |
 | `ping`              | `{}`（保活，30s 间隔，两次未回 pong 断开）                                              |
-| `session.request`   | `{ "session_id", "from": { "device_id", "name", "library_name", "endpoint_id" }, "access": "read" \| "write", "credential": "<sha256-hex 或 null>" }` |
+| `session.request`   | `{ "session_id", "from": { "device_id", "name", "library_name", "endpoint_id" }, "role": "viewer" \| "importer", "credential": "<sha256-hex 或 null>" }` |
 | `session.update`    | `{ "session_id", "state", ... }`（状态变更推送双方；轮询为兜底）                         |
 | `session.cancelled` | `{ "session_id" }`                                                                     |
 
@@ -241,20 +241,20 @@ wss://<base>/api/v1/ws?device_id=<device_id>
 
 ### `POST /api/v1/sessions`
 
-发起会话（service-key 鉴权；双方设备须同池，跨池 404）。请求可带 `access: read | write`（缺省 read）；**无 mode 参数**——直连/打洞/中继的选择是传输层自治，不进控制面。`access=write` 要求目标设备 `allow_write=true`（否则 403）。授权口径分两路：查看面会话由 hawk-server 以「网页版」全局设备身份发起、携带查看者凭证，目标 daemon 按本地 key 映射裁决；app 间会话（同租户设备，无凭证）由目标 daemon 按本机 `remote.writable` 裁决——单用户租户内设备互信，不再要求访问密钥。
+发起会话（service-key 鉴权；双方设备须同池，跨池 404）。请求可带 `role: viewer | importer`（缺省 viewer）；**无 mode 参数**——直连/打洞/中继的选择是传输层自治，不进控制面。`role=importer` 要求目标设备 `allow_import=true`（否则 403）。授权口径分两路：查看面会话由 hawk-server 以「网页版」全局设备身份发起、携带查看者凭证，目标 daemon 按本地 key 映射裁决；app 间会话（同租户设备，无凭证）由目标 daemon 按本机 `remote.allow_import` 裁决——单用户租户内设备互信，不再要求访问密钥。
 
 ```json
 // 请求（access 可省略，缺省 read）
-{ "source_device_id": "d_77", "target_device_id": "d_42", "access": "write" }
+{ "source_device_id": "d_77", "target_device_id": "d_42", "role": "importer" }
 // 响应
 { "status": "success", "data": { "session_id": "s_9", "state": "pending" } }
 ```
 
 服务端流程：
 
-1. 校验来源/目标设备存在且同池、目标设备在线（不在线返回 404）；`allow_remote=false` 直接置会话状态 `rejected`；`access=write` 且目标 `allow_write=false` 返回 403
+1. 校验来源/目标设备存在且同池、目标设备在线（不在线返回 404）；`allow_remote=false` 直接置会话状态 `rejected`；`role=importer` 且目标 `allow_import=false` 返回 403
 2. 经 WSS 向目标推送 `session.request`（含 `access`、查看者会话含 `credential`）
-3. 目标回 `POST /api/v1/sessions/{id}/accept`（service-key 鉴权），响应 `{ "status": "success" }`；拒绝则回 reject，会话状态变 `rejected`。目标 daemon 本地执法：查看者会话查 key 存在性/权限，app 间写会话查本机 `remote.writable`，不通过即 reject
+3. 目标回 `POST /api/v1/sessions/{id}/accept`（service-key 鉴权），响应 `{ "status": "success" }`；拒绝则回 reject，会话状态变 `rejected`。目标 daemon 本地执法：查看者会话查 key 存在性/权限，app 间写会话查本机 `remote.allow_import`，不通过即 reject
 4. 服务端组装连接信息并置 ready，经 WSS `session.update` 推送双方（见下）
 
 发起方以 WSS 推送为准（轮询 1s 间隔、上限 30s 为兜底；超时状态变 `expired`）：
@@ -322,7 +322,7 @@ hawk-server 内嵌 [iroh-relay](https://docs.rs/iroh-relay)（库形态，不另
 - 隧道内 HTTP 请求必须携带会话标识头 `x-hawk-session: <session_id>`（B 侧代理写入，客户端自带的同名头一律覆盖）。A 侧校验会话已接受、且与该连接的对端 endpoint_id 一致后，在进程内插入 `TunneledPeer { writable }`；HTTP 客户端无法伪造该标记
 - A 侧按会话权限转发到本机 API：
   - 只读会话：viewer 级，仅 GET 与查询类 POST
-  - 写会话：`access=write` 且请求时 `remote.writable=true`，且来源合法（查看者会话 = key 带写权限；app 间会话 = 同租户设备）；仅放行 GET、查询类 POST、`POST /api/v1/item/add`（禁止 `path`）、`POST /api/v1/item/upload` 与 `POST /api/v1/folder/create`，其余写端点 403
+  - 写会话：`role=importer` 且请求时 `remote.allow_import=true`，且来源合法（查看者会话 = key 带写权限；app 间会话 = 同租户设备）；仅放行 GET、查询类 POST、`POST /api/v1/item/add`（禁止 `path`）、`POST /api/v1/item/upload` 与 `POST /api/v1/folder/create`，其余写端点 403
 - **隧道端必须拒绝转发 `GET /api/v1/app/admin-token`（直接返回 404）**。该端点免鉴权返回主 token（完全读写权限），仅服务于本机浏览器插件的零配置发现（插件直连环回，不经隧道）；远程查看方不需要它——B 侧已持有代理会话 token
 - B 侧本地代理：监听环回随机端口，每次会话随机 token，web 查看器以 `?token=` 携带；代理响应不带 CORS 头。代理端口由客户端会话建立时分配，会话 token 由 B 侧生成，web 查看器 URL 由客户端拼装，不经过服务端
 - 同一设备身份可同时承载多个查看会话（例如 hawk-server 的网页版与插件）：A 侧按会话放行，连接与会话绑定，取消一个会话只关闭该会话的连接与请求

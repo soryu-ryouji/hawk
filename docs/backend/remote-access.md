@@ -54,7 +54,7 @@
 
 - 信令客户端：设备注册、周期心跳（30s，携带当前库名与可达性）、WSS 控制通道（自动重连）、设备列表、会话发起与响应
 - 数据面：iroh endpoint（打洞/中继/路径迁移/映射保活全部由 iroh 自治）——A 侧 accept 循环按会话放行集合执法（连接建立后身份不符即断开），隧道内 HTTP 请求**在进程内转发**给自身路由，携带 viewer 级或受限远程写权限标记（见安全模型）；B 侧会话代理：环回监听器（supervisor 管理，同 LAN web 模型），每次会话随机 token，web 查看器以 `?token=` 携带，响应不带 CORS 头；连接死亡在原会话内重拨热替换（前端无感）
-**可选子系统约束**：应用级 `remote.toml` 的 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——接入参数变化热重启信令，`writable` 变更热生效不重启；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。热重启时旧数据面（QUIC 端点 + A 侧 accept 循环）随任务一起关停，supervisor 等其结束再拉起新任务，并对端口绑定做短暂重试——避免新一轮绑定自己刚占用的端口；停用后端口立即释放。
+**可选子系统约束**：应用级 `remote.toml` 的 `enabled = true` 且 url/key 非空才激活，supervisor reconcile 模型（同 LAN web）——接入参数变化热重启信令，`allow_import` 变更热生效不重启；绑定/连接失败只写状态不崩进程。未启用时任务不 spawn、端口不绑定，该能力在运行时不存在。热重启时旧数据面（QUIC 端点 + A 侧 accept 循环）随任务一起关停，supervisor 等其结束再拉起新任务，并对端口绑定做短暂重试——避免新一轮绑定自己刚占用的端口；停用后端口立即释放。
 
 **应用级配置与设备身份**：接入配置存 `~/.config/hawk/remote.toml`（Electron 经 `--remote-config` 传入），设备身份存同级的 `remote/identity.json`。两者不再随素材库切换：同一台机器在服务端始终是一台设备，切换库后心跳把设备表的 `library_name` 收敛到当前库。以 `local` 子命令独立运行 daemon 时可不传 `--remote-config`，回退到库内 `.hawk/remote.toml` 与 `.hawk/remote/`（测试/单库脚本用）。手工修改 `remote.toml` 需重启 daemon；设置面板经 API 写入即时生效。
 
@@ -64,7 +64,7 @@ enabled = true
 url = "https://hawk.example.com"
 service_key = "hs_<service-key>"
 quic_port = 27373
-writable = false
+allow_import = false
 relay = false
 ```
 
@@ -156,15 +156,15 @@ Connection {
 
 **6. 会话认证在 iroh 身份层，隧道内 HTTP 进程内授权**
 
-设备身份即 iroh EndpointId（Ed25519 公钥），注册时登记，握手按公钥认证（无单独钉扎环节）。隧道内 HTTP 由 A 侧隧道端在进程内标记权限：只读会话为 viewer 级；写会话需查看者 key 带写权限 + 目标设备 `remote.writable=true`，且仅开放导入素材/新建文件夹。查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到 daemon admin token。
+设备身份即 iroh EndpointId（Ed25519 公钥），注册时登记，握手按公钥认证（无单独钉扎环节）。隧道内 HTTP 由 A 侧隧道端在进程内标记权限：只读会话为 viewer 级；写会话需查看者 key 带写权限 + 目标设备 `remote.allow_import=true`，且仅开放导入素材/新建文件夹。查看方 B 全程不接触 daemon 的任何 token，服务端也接触不到 daemon admin token。
 
 ### 广域网写权限分层
 
 | 层 | 控制项 | 作用 |
 | -- | ------ | ---- |
 | hawk-server | hawk-app key 映射（HMAC 哈希） | 只有映射中带写权限的 key 能换发写作用域 bt；key 由目标设备 daemon 推送，吊销即失效 |
-| 目标设备 | `remote.writable` | 允许广域网写会话导入素材/新建文件夹（查看者 key 会话与同租户设备会话同受此开关约束）；默认关闭，每请求校验，关闭立即失效 |
-| 目标 daemon | 本地 key 映射执法 + `AccessLevel::RemoteWriter` 端点白名单 | 查看者会话按 key 验证子裁决；app 间会话（同租户设备）按本机 `remote.writable` 裁决（server 声称的 access 不采信）。只放行 GET、查询类 POST、`item/add`（禁止 `path`）、`item/upload`（可附带分类/标签）与 `folder/create`；其余写端点 403 |
+| 目标设备 | `remote.allow_import` | 允许广域网写会话导入素材/新建文件夹（查看者 key 会话与同租户设备会话同受此开关约束）；默认关闭，每请求校验，关闭立即失效 |
+| 目标 daemon | 本地 key 映射执法 + `AccessContext` 的 WAN 通道上限 | 查看者会话按 key 验证子裁决；app 间会话（同租户设备）按本机 `remote.allow_import` 裁决（server 声称的 role 不采信）。只放行 GET、查询类 POST、`item/add`（禁止 `path`）、`item/upload`（可附带分类/标签）与 `folder/create`；其余写端点 403 |
 
 局域网写权限 `[web]` 与以上链路完全独立：开启局域网写不会放开广域网写，反之亦然。
 
@@ -212,7 +212,7 @@ hawk-server 内嵌 iroh-relay（库形态，不另起进程），准入为共享
 | 控制面   | HTTPS/WSS（TLS 由前置反代终结）；service-key 程序生成 256-bit 随机（`tenant add`），服务端只存 HMAC-SHA256(pepper, key)，恒定时间比较；key 一律走 Authorization 头，不进 URL（防反代日志泄露） |
 | 凭证风控 | gate/login/控制面鉴权失败按来源 IP 计（10min/30 次 → 冷却 15min）；login 另按租户计（20 次 → 池冷却 15min 起指数增长封顶 24h，成功清零）；门令牌 5min TTL + 5 次尝试预算 |
 | 数据面   | iroh（QUIC/noq + TLS 1.3）端到端加密，endpoint_id 即公钥经控制面交换、握手认证；服务端接触不到素材内容（直连不过服务端，中继只见密文） |
-| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与对端身份（endpoint_id）匹配的会话标识，且目标 `remote.writable=true`（查看者会话另需 key 带写权限）。`GET /api/v1/app/admin-token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
+| 隧道端点 | 隧道内请求在进程内转发时标记 viewer 级或受限远程写权限；写会话必须携带与对端身份（endpoint_id）匹配的会话标识，且目标 `remote.allow_import=true`（查看者会话另需 key 带写权限）。`GET /api/v1/app/admin-token`（免鉴权返回主 token，Host 限定环回）在隧道端直接 404 |
 | 本地防护 | B 侧会话代理：每次会话随机 token、响应无 CORS、环回监听 |
 | 凭据存储 | 接入配置（url + service_key）存应用级 `~/.config/hawk/remote.toml`（与壳偏好 `config.toml` 分开，daemon 权威写入；明文，权限 0600）；设备身份（device_id、自签证书私钥）存同级 `remote/identity.json`、访问密钥验证子存同级 `remote/keys.json`（均 0600）。浏览器插件的 service-key 与访问密钥存 `browser.storage.local`，与本地 daemon token 同级 |
 | 网页版   | **隧道在服务器终结**：素材明文过服务器（自托管信任前提，与「中继只见密文」刻意不同的取舍）。浏览器令牌 bt 随机换发、服务端存 sha256 哈希与授权（作用域 + 绑定设备 + 凭证）、可随时注销；service-key 与 hawk-app key 都只出现在登录请求体（服务端只见 service-key 与 key 的哈希输入，key 明文以哈希落盘验证后即弃） |
@@ -230,7 +230,7 @@ hawk-server 内嵌 iroh-relay（库形态，不另起进程），准入为共享
 | -------------------------- | ---- |
 | `hawk-server/`             | 远程访问服务端（多租户：租户注册表 + key 映射 + 门令牌两步登录 + 风控；控制面 + 中继 + 查看面） |
 | `hawk-daemon/src/remote/`  | 模块：信令客户端 / iroh 数据面 / B 侧会话代理 / 访问密钥保管（keys.rs），supervisor reconcile 管理 |
-| `hawk-daemon` config       | 应用级 `remote.toml`（enabled/url/service_key/writable），保存即热生效（写开关不重启信令）；设备身份与 keys.json 同级 `remote/` |
+| `hawk-daemon` config       | 应用级 `remote.toml`（enabled/url/service_key/allow_import），保存即热生效（写开关不重启信令）；设备身份与 keys.json 同级 `remote/` |
 | `hawk-daemon` 鉴权中间件   | 进程内 viewer / remote_writer 权限标记（供隧道转发请求使用），无 remote 语义、无门控 |
 | `hawk-daemon` API          | `/api/v1/remote/*` 状态端点 + 访问密钥管理端点 + SSE remote 会话生命周期事件 |
 | `hawk-app`（主进程 + 前端） | 远程 UI（接入配置/访问密钥管理/设备列表/会话流程）；连接描述符与 `connection-changed`；订阅 daemon SSE remote 事件驱动断线回切 |

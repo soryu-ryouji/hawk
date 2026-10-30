@@ -5,6 +5,7 @@
 //! 单活动会话模型（查看方同时只看一个远端库）：新会话自动顶替并断开旧会话。
 //! 会话生命周期经 SSE `remote.session` 事件推送（app 断线回切依赖）。
 
+use crate::core::access::Role;
 use crate::core::events::EventBus;
 use crate::remote::data::{serve_proxy, ProxyContext, CONNECT_TIMEOUT, HAWK_ALPN};
 use crate::remote::identity::Identity;
@@ -67,9 +68,8 @@ pub struct ActiveSessionDto {
     pub proxy_port: u16,
     /// 会话代理临时凭证：web 查看器以 ?token= 携带
     pub session_token: String,
-    /// 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
-    /// 只读会话的代理拒绝写请求，app 的写入口依此隐藏
-    pub writable: bool,
+    /// 会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法）
+    pub role: Role,
 }
 
 struct ActiveSession {
@@ -203,7 +203,11 @@ impl SessionManager {
             conn: conn_cell.clone(),
             session_token: session_token.clone(),
             session_id: session_id.clone(),
-            writable,
+            role: if writable {
+                Role::Importer
+            } else {
+                Role::Viewer
+            },
         });
         tokio::spawn(async move {
             tokio::select! {
@@ -219,7 +223,11 @@ impl SessionManager {
             target_library_name,
             proxy_port,
             session_token,
-            writable,
+            role: if writable {
+                Role::Importer
+            } else {
+                Role::Viewer
+            },
         };
 
         // ---- 顶替旧会话（断开并尽力取消）。锁 guard 不跨 await：先取出再处理 ----
@@ -460,7 +468,7 @@ async fn create_session(
         .json(&json!({
             "source_device_id": self_device_id,
             "target_device_id": target_device_id,
-            "access": if writable { "write" } else { "read" },
+            "role": if writable { "importer" } else { "viewer" },
         }))
         .send()
         .await

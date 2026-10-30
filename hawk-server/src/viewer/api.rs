@@ -3,7 +3,7 @@
 
 use super::ViewerManager;
 use crate::api::{ok, ApiError, JsonBody};
-use crate::state::Access;
+use crate::state::Role;
 use axum::extract::{ConnectInfo, FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::http::StatusCode;
@@ -28,8 +28,8 @@ pub fn routes() -> Router<Arc<ViewerManager>> {
 
 /// 浏览器令牌鉴权提取器：Bearer 头或 ?token= 查询参数（SPA 的 img/SSE 场景）
 pub struct BrowserAuth {
-    pub token: String,
-    pub access: Access,
+    pub browser_token: String,
+    pub role: Role,
     /// bt 绑定的目标设备（登录时由 hawk-app key 映射确定）
     pub device_id: String,
 }
@@ -60,8 +60,8 @@ impl FromRequestParts<Arc<ViewerManager>> for BrowserAuth {
             return Err(ApiError::new(StatusCode::UNAUTHORIZED, "令牌无效或已注销"));
         };
         Ok(BrowserAuth {
-            token,
-            access: grant.access,
+            browser_token: token,
+            role: grant.role,
             device_id: grant.device_id,
         })
     }
@@ -140,15 +140,15 @@ async fn login(
         limiter.success_tenant(tenant_id);
     }
     Ok(ok(serde_json::json!({
-        "token": token,
-        "access": grant.access.as_str(),
+        "browser_token": token,
+        "role": grant.role.as_str(),
         "device_id": grant.device_id,
     })))
 }
 
 /// `POST /api/v1/viewer/logout`：注销当前令牌
 async fn logout(State(manager): State<Arc<ViewerManager>>, auth: BrowserAuth) -> Json<Value> {
-    manager.logout(&auth.token);
+    manager.logout(&auth.browser_token);
     crate::api::success()
 }
 
@@ -176,13 +176,13 @@ async fn devices(
 #[derive(Deserialize)]
 struct OpenSessionBody {
     target_device_id: String,
-    /// read（默认）/ write（需要写令牌 + 目标设备 allow_write）
-    #[serde(default = "default_access")]
-    access: String,
+    /// viewer（默认）/ importer（需要 importer 令牌 + 目标设备 allow_import）
+    #[serde(default = "default_role")]
+    role: String,
 }
 
-fn default_access() -> String {
-    "read".to_string()
+fn default_role() -> String {
+    "viewer".to_string()
 }
 
 /// `POST /api/v1/viewer/session`：打开（或复用）到目标设备的查看会话
@@ -191,24 +191,24 @@ async fn open_session(
     auth: BrowserAuth,
     JsonBody(body): JsonBody<OpenSessionBody>,
 ) -> Result<Json<Value>, ApiError> {
-    let access = match body.access.as_str() {
-        "read" => Access::Read,
-        "write" => Access::Write,
+    let role = match body.role.as_str() {
+        "viewer" => Role::Viewer,
+        "importer" => Role::Importer,
         _ => {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
-                "access 须为 read 或 write",
+                "role 须为 viewer 或 importer",
             ))
         }
     };
-    if access == Access::Write {
-        if auth.access != Access::Write {
+    if role == Role::Importer {
+        if auth.role != Role::Importer {
             return Err(ApiError::new(StatusCode::FORBIDDEN, "当前令牌没有写入权限"));
         }
         let Some(target) = manager.app_state().device(&body.target_device_id) else {
             return Err(ApiError::not_found("目标设备不存在"));
         };
-        if !target.allow_write {
+        if !target.allow_import {
             return Err(ApiError::new(
                 StatusCode::FORBIDDEN,
                 "目标设备未开启广域网写入",
@@ -217,7 +217,7 @@ async fn open_session(
     }
     // 失败日志在 open_session 内带 session_id 落（与中继配对日志对齐时间线）
     let view = manager
-        .open_session(&auth.token, &body.target_device_id, access)
+        .open_session(&auth.browser_token, &body.target_device_id, role)
         .await
         .map_err(|message| ApiError::new(StatusCode::BAD_GATEWAY, message))?;
     Ok(ok(view))
@@ -228,11 +228,11 @@ async fn current_session(
     State(manager): State<Arc<ViewerManager>>,
     auth: BrowserAuth,
 ) -> Json<Value> {
-    crate::api::ok(manager.current(&auth.token))
+    crate::api::ok(manager.current(&auth.browser_token))
 }
 
 /// `DELETE /api/v1/viewer/session`：断开当前查看会话（幂等）
 async fn disconnect(State(manager): State<Arc<ViewerManager>>, auth: BrowserAuth) -> Json<Value> {
-    manager.disconnect(&auth.token).await;
+    manager.disconnect(&auth.browser_token).await;
     crate::api::success()
 }

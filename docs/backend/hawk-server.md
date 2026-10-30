@@ -108,7 +108,7 @@ curl -X DELETE http://127.0.0.1:9110/api/v1/admin/tenants/t_xxxx
 | 访问密钥 `hawk-app key` | 查看者第二级验证（网页/插件登录）；逐把读/写权限，由目标 daemon 签发与吊销 | 登录请求体 |
 | 浏览器令牌 `bt` | 网页版/插件查看面（登录后的客户端） | `Authorization: Bearer <bt>` 或 `?token=`（SPA 的 img/SSE 场景）；静态子资源（`/assets/*`、`/icon.png`）用 `hawk_bt` cookie |
 
-`bt`（形如 `hb_...`）由两级登录换发：`POST /viewer/gate`（service-key → 门令牌，5 分钟、5 次尝试预算）→ `POST /viewer/login`（门令牌 + hawk-app key → bt）。bt 绑定唯一目标设备（key 映射决定）与作用域（read/write，write 含读），服务端只存 sha256 哈希。写令牌开写会话需目标设备 `allow_write`；**最终权限由目标 daemon 按本地 key 映射裁决**（会话请求携带 key 验证子，server 声称的权限不被采信）。
+`bt`（形如 `hb_...`）由两级登录换发：`POST /viewer/gate`（service-key → 门令牌，5 分钟、5 次尝试预算）→ `POST /viewer/login`（门令牌 + hawk-app key → bt）。bt 绑定唯一目标设备（key 映射决定）与作用域（read/write，write 含读），服务端只存 sha256 哈希。写令牌开写会话需目标设备 `allow_import`；**最终权限由目标 daemon 按本地 key 映射裁决**（会话请求携带 key 验证子，server 声称的权限不被采信）。
 
 `hawk_bt` cookie（`Path=/; HttpOnly; SameSite=Strict`，30 天）在页面 URL 带 `?token=` 时下发，供查看器的 `<script>`/`<img>` 等无法设请求头的子资源使用。`/api/*` 不认 cookie，只接受显式令牌，避免 cookie 自动携带带来的 CSRF 面；反代声明 `X-Forwarded-Proto: https` 时 cookie 才带 `Secure`。
 
@@ -151,10 +151,10 @@ curl -X DELETE http://127.0.0.1:9110/api/v1/admin/tenants/t_xxxx
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | POST | `/api/v1/viewer/gate` | `{ "service_key": "..." }` 换门令牌（免鉴权，IP 风控） |
-| POST | `/api/v1/viewer/login` | `{ "gate_token": "...", "key": "..." }` 换发 `bt`（IP + 租户风控）；响应含 `token`、`access`（read/write）与绑定的 `device_id` |
+| POST | `/api/v1/viewer/login` | `{ "gate_token": "...", "key": "..." }` 换发 `bt`（IP + 租户风控）；响应含 `browser_token`、`role`（viewer/importer）与绑定的 `device_id` |
 | POST | `/api/v1/viewer/logout` | 注销当前 `bt` |
 | GET | `/api/v1/viewer/devices` | bt 绑定设备的单元素列表（bt 即定位，无池枚举面） |
-| POST | `/api/v1/viewer/session` | `{ "target_device_id": "...", "access": "read" \| "write" }` 打开（或复用）查看会话；target 须等于 bt 绑定设备，write 需写令牌且目标 `allow_write` |
+| POST | `/api/v1/viewer/session` | `{ "target_device_id": "...", "role": "viewer" \| "importer" }` 打开（或复用）查看会话；target 须等于 bt 绑定设备，importer 需导入令牌且目标 `allow_import` |
 | GET | `/api/v1/viewer/session` | 当前绑定的会话，无则 `data: null` |
 | DELETE | `/api/v1/viewer/session` | 断开当前会话（幂等） |
 | GET | `/` | 登录页（免鉴权，两步表单：service-key → 访问密钥） |
@@ -238,7 +238,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 
 ### 设备管理
 
-- `GET /api/v1/devices` 看 `online`、`last_seen_at_ms`、`allow_remote`、`allow_write`、`reachability`（本池视角）
+- `GET /api/v1/devices` 看 `online`、`last_seen_at_ms`、`allow_remote`、`allow_import`、`reachability`（本池视角）
 - 「网页版 (hawk-server)」是全局设备（不属于任何池），不出现在设备列表中；它是服务端自身的网页版宿主身份，勿在 devices.json 里手工删除
 - 临时关闭某台设备的远程访问：`PATCH` 该设备 `{"allow_remote": false}`，新会话直接 `rejected`
 - 彻底移除设备：`DELETE /api/v1/devices/{device_id}`；设备侧心跳收到 404 会自动重新注册
@@ -272,7 +272,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://hawk.example.com/   # 200 表�
 | 查看器白屏、`/assets/*` 返回 401 | 浏览器丢了 `hawk_bt` cookie（清过站点数据/隐私模式拦截）：回 `/` 重新登录 |
 | 网页版列表/图片不更新、大文件超时 | 反代缓冲了 SSE 或超时过短：`proxy_buffering off`、加大 `proxy_read_timeout` |
 | 插件保存返回 413 | 反代请求体上限过小（nginx 默认 1MB）：配置 `client_max_body_size 256m` |
-| 插件保存返回 403 `目标设备未开启广域网写入` / `remote writer is limited...` | 目标设备未开启远程访问的 `writable`，或该 key 无写权限；按提示检查目标设备设置 |
+| 插件保存返回 403 `目标设备未开启广域网写入` / `remote writer is limited...` | 目标设备未开启 `allow_import`，或该 key 不是 importer；按提示检查目标设备设置 |
 | 心跳返回 429 | 心跳间隔小于 10s，检查客户端配置 |
 | 会话 `unreachable` | 本部署未提供中继且目标无直连地址（心跳 `addrs` 为空）；开中继（`--relay-url`）或换网络 |
 | 直连慢/一直停留在中继 | 打洞受 NAT 类型限制（对称型 NAT 打不通属预期，iroh 也同样）；`daemon.log` 看 iroh 日志 |

@@ -18,7 +18,7 @@ nonisolated struct RemoteAuthenticator: Sendable {
             "/api/v1/viewer/gate", GateRequest(serviceKey: serviceKey))
         let login: LoginResponse = try await guest.post(
             "/api/v1/viewer/login", LoginRequest(gateToken: gate.gateToken, key: appKey))
-        return SignedIn(token: login.token, deviceId: login.deviceId)
+        return SignedIn(token: login.browserToken, deviceId: login.deviceId)
     }
 
     /// 重换 bt 并把查看会话重新挂到同一目标设备上
@@ -29,7 +29,7 @@ nonisolated struct RemoteAuthenticator: Sendable {
         _ =
             try await client.post(
                 "/api/v1/viewer/session",
-                OpenSessionRequest(targetDeviceId: deviceId, access: "read")
+                OpenSessionRequest(targetDeviceId: deviceId, role: "viewer")
             ) as ViewerSession
         return signed.token
     }
@@ -121,7 +121,7 @@ nonisolated enum ConnectionLauncher {
         do {
             session = try await api.post(
                 "/api/v1/viewer/session",
-                OpenSessionRequest(targetDeviceId: deviceId, access: "read")
+                OpenSessionRequest(targetDeviceId: deviceId, role: "viewer")
             )
         } catch let error as APIError {
             throw ConnectionError.message(error.message)

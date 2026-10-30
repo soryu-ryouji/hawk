@@ -40,7 +40,7 @@ export const useRemoteStore = defineStore('remote', () => {
       enabled: current.enabled,
       url: current.url,
       service_key: current.service_key,
-      writable: current.writable,
+      allow_import: current.allow_import,
       relay: on,
     });
   }
@@ -77,7 +77,7 @@ export const useRemoteStore = defineStore('remote', () => {
   }
 
   /** 签发访问密钥：返回明文（只在本次返回值可见）；失败返回 null（error 已填） */
-  async function createKey(input: { label?: string; read: boolean; write?: boolean; custom?: string }): Promise<RemoteKeyCreated | null> {
+  async function createKey(input: { label?: string; role: 'viewer' | 'importer'; custom?: string }): Promise<RemoteKeyCreated | null> {
     error.value = null;
     try {
       const created = await shell.remoteCreateKey(input);
@@ -89,7 +89,7 @@ export const useRemoteStore = defineStore('remote', () => {
     }
   }
 
-  async function patchKey(id: string, patch: { label?: string; read?: boolean; write?: boolean }): Promise<boolean> {
+  async function patchKey(id: string, patch: { label?: string; role?: 'viewer' | 'importer' }): Promise<boolean> {
     try {
       await shell.remotePatchKey(id, patch);
       await refreshKeys();

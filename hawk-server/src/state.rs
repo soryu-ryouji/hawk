@@ -17,19 +17,20 @@ pub const HEARTBEAT_MIN_INTERVAL_MS: u64 = 10_000;
 /// 会话建立超时 30s（协议约定）
 pub const SESSION_TIMEOUT_MS: u64 = 30_000;
 
-/// 查看面令牌/会话的访问级别：read 只读浏览；write 仅限插件导入（目标 daemon 仍做端点白名单）
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// 查看面令牌/会话的角色：viewer 只读浏览；importer 仅限导入。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Access {
-    Read,
-    Write,
+pub enum Role {
+    #[default]
+    Viewer,
+    Importer,
 }
 
-impl Access {
+impl Role {
     pub fn as_str(self) -> &'static str {
         match self {
-            Access::Read => "read",
-            Access::Write => "write",
+            Role::Viewer => "viewer",
+            Role::Importer => "importer",
         }
     }
 }
@@ -89,8 +90,8 @@ pub struct Session {
     pub session_id: String,
     pub source_device_id: String,
     pub target_device_id: String,
-    /// read（只读查看）/ write（广域网受限写）
-    pub access: Access,
+    /// viewer（只读查看）/ importer（受限导入）
+    pub role: Role,
     /// 查看者凭证（hawk-app key 的 sha256）：仅网页版/插件发起的会话携带，
     /// 随 session.request 下发给目标 daemon 本地执法（server 声称的权限不可信）
     pub credential: Option<String>,

@@ -134,7 +134,7 @@ async function doLogin() {
       if (res.status === 401) backToServiceKey();
       throw new Error(env?.error?.message || '登录失败');
     }
-    token = env.data.token;
+    token = env.data.browser_token;
     localStorage.setItem(KEY, token);
     render();
   } catch (e) { $('loginErr').textContent = e.message; }

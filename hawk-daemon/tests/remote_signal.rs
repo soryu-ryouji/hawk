@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use hawk_daemon::core::access::Role;
 use hawk_daemon::core::config::LibraryConfig;
 use hawk_daemon::core::paths::LibraryPaths;
 use hawk_daemon::remote::config::{RemoteConfigStore, RemoteSettings};
@@ -171,7 +172,7 @@ async fn devices(headers: axum::http::HeaderMap) -> Response {
     let endpoint_id = "11".repeat(32); // 列表展示用（不走拨号，无需合法公钥）
     Json(json!({"status":"success","data":{"devices":[
         {"device_id":"d_other","name":"对方","platform":"macos","library_name":"库",
-         "online":true,"allow_remote":true,"allow_write":true,"endpoint_id":endpoint_id}
+         "online":true,"allow_remote":true,"allow_import":true,"endpoint_id":endpoint_id}
     ]}}))
     .into_response()
 }
@@ -240,7 +241,7 @@ async fn ws_channel(
             "session_id": "s_1",
             "from": {"device_id":"d_other","name":"对方","library_name":"库","endpoint_id": hub.peer_endpoint_id},
             "mode": "direct",
-            "access": if hub.write_request.load(Ordering::Relaxed) { "write" } else { "read" },
+            "role": if hub.write_request.load(Ordering::Relaxed) { "importer" } else { "viewer" },
             "credential": *hub.credential.lock().unwrap(),
         });
         socket
@@ -323,7 +324,7 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0, // OS 分配，避免测试间端口冲突
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -371,7 +372,7 @@ async fn signal_reports_fatal_on_invalid_key() {
             url: base,
             service_key: "wrong-key".to_string(),
             quic_port: 0,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -412,7 +413,7 @@ async fn signal_re_registers_when_server_forgets_device() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -482,7 +483,7 @@ async fn hot_restart_rebinds_quic_port() {
         url: url.to_string(),
         service_key: KEY.to_string(),
         quic_port: port,
-        writable: false,
+        allow_import: false,
         relay: false,
     };
     lib.remote.update(&remote(&base)).unwrap();
@@ -526,7 +527,7 @@ async fn hot_restart_rebinds_quic_port() {
             url: String::new(),
             service_key: String::new(),
             quic_port: port,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -558,7 +559,7 @@ async fn ws_404_triggers_re_register() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -621,7 +622,7 @@ async fn write_session_rejected_when_writable_off() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -631,7 +632,10 @@ async fn write_session_rejected_when_writable_off() {
         lib.remote.clone(),
     );
     // 签发一把带写权限的 key，mock 携带其验证子（writable=false 仍应拒绝）
-    let (entry, _) = supervisor.keys.create("插件", true, true, None).unwrap();
+    let (entry, _) = supervisor
+        .keys
+        .create("插件", Role::Importer, None)
+        .unwrap();
     *hub.credential.lock().unwrap() = Some(entry.hash.clone());
     let task = tokio::spawn(supervisor.clone().run(
         Some(hawk_daemon::remote::LibraryContext {
@@ -666,7 +670,7 @@ async fn write_session_from_device_rejected_when_writable_off() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -711,7 +715,7 @@ async fn write_session_from_device_accepted_when_writable_on() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: true,
+            allow_import: true,
             relay: false,
         })
         .unwrap();
@@ -760,7 +764,7 @@ async fn heartbeat_429_does_not_break_channel() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();
@@ -826,7 +830,7 @@ async fn viewer_session_rejected_with_unknown_credential() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: true,
+            allow_import: true,
             relay: false,
         })
         .unwrap();
@@ -871,7 +875,7 @@ async fn write_session_accepted_when_writable_on() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: true,
+            allow_import: true,
             relay: false,
         })
         .unwrap();
@@ -881,7 +885,10 @@ async fn write_session_accepted_when_writable_on() {
         lib.remote.clone(),
     );
     // 签发带写权限的 key，mock 携带其验证子
-    let (entry, _) = supervisor.keys.create("插件", true, true, None).unwrap();
+    let (entry, _) = supervisor
+        .keys
+        .create("插件", Role::Importer, None)
+        .unwrap();
     *hub.credential.lock().unwrap() = Some(entry.hash.clone());
     let task = tokio::spawn(supervisor.clone().run(
         Some(hawk_daemon::remote::LibraryContext {
@@ -920,7 +927,7 @@ async fn silent_channel_triggers_reconnect() {
             url: base,
             service_key: KEY.to_string(),
             quic_port: 0,
-            writable: false,
+            allow_import: false,
             relay: false,
         })
         .unwrap();

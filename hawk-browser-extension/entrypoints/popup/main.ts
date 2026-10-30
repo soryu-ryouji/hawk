@@ -57,7 +57,7 @@ function addTargetOption(deviceId: string, label: string, name: string, libraryN
 /** 设备列表填充：只展示在线、允许远程访问、允许广域网写入的素材库 */
 function fillTargets(preferredId: string) {
   targetSelect.innerHTML = '';
-  const writable = devices.filter((d) => d.online && d.allow_remote && d.allow_write);
+  const writable = devices.filter((d) => d.online && d.allow_remote && d.allow_import);
   if (writable.length === 0) {
     targetSelect.disabled = true;
     targetSelect.add(new Option('没有可写入的在线素材库', ''));
@@ -86,7 +86,7 @@ async function refreshDevices(showErrors = true): Promise<void> {
   try {
     devices = await listRemoteDevices(url, sk, key);
     fillTargets(targetSelect.value || settings.targetDeviceId);
-    const writable = devices.filter((d) => d.online && d.allow_remote && d.allow_write);
+    const writable = devices.filter((d) => d.online && d.allow_remote && d.allow_import);
     setStatus(
       writable.length > 0 ? `找到 ${writable.length} 个可写入素材库` : '没有在线且开启广域网写入的素材库',
       writable.length > 0 ? 'ok' : 'err',

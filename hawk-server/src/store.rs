@@ -20,7 +20,7 @@ pub struct DeviceRecord {
     pub allow_remote: bool,
     /// 目标设备是否允许广域网写会话（由设备注册/心跳上报）
     #[serde(default)]
-    pub allow_write: bool,
+    pub allow_import: bool,
     pub registered_at_ms: u64,
 }
 

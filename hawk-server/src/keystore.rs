@@ -8,6 +8,7 @@
 //!   s 用于随会话下发给目标 daemon 本地执法（server 被攻破不能放大权限）；
 //!   h 用于查看者登录验证。server 全程不见 key 明文
 
+use crate::state::Role;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::collections::HashMap;
@@ -62,8 +63,7 @@ pub struct AppKeyRecord {
     pub s: String,
     pub tenant_id: String,
     pub device_id: String,
-    pub read: bool,
-    pub write: bool,
+    pub role: Role,
 }
 
 /// 门令牌（内存，短时效）：service-key 验证通过 → 允许在 TTL 内尝试有限次 hawk-app key
@@ -169,8 +169,7 @@ impl KeyStore {
                 s: k.s.clone(),
                 tenant_id: tenant_id.to_string(),
                 device_id: device_id.to_string(),
-                read: k.read,
-                write: k.write,
+                role: k.role,
             });
         }
         let _guard = self.write_lock.lock().unwrap();
@@ -251,9 +250,8 @@ impl KeyStore {
 #[derive(Deserialize)]
 pub struct AppKeySync {
     pub s: String,
-    pub read: bool,
     #[serde(default)]
-    pub write: bool,
+    pub role: Role,
 }
 
 fn pepper_file(dir: &Path) -> PathBuf {
@@ -370,14 +368,13 @@ mod tests {
                 "d_1",
                 &[AppKeySync {
                     s: s.clone(),
-                    read: true,
-                    write: true,
+                    role: Role::Importer,
                 }],
             )
             .unwrap();
         let found = store.resolve_app_key("my-custom-key").unwrap();
         assert_eq!(found.device_id, "d_1");
-        assert!(found.read && found.write);
+        assert_eq!(found.role, Role::Importer);
         assert!(store.resolve_app_key("other").is_none());
         // 再次同步（空集合）= 清空该设备
         store.sync_device_keys(&tenant, "d_1", &[]).unwrap();
@@ -397,8 +394,7 @@ mod tests {
                 "d_old",
                 &[AppKeySync {
                     s: s.clone(),
-                    read: true,
-                    write: false,
+                    role: Role::Viewer,
                 }],
             )
             .unwrap();
@@ -409,8 +405,7 @@ mod tests {
                 "d_new",
                 &[AppKeySync {
                     s: s.clone(),
-                    read: true,
-                    write: false,
+                    role: Role::Viewer,
                 }],
             )
             .unwrap();

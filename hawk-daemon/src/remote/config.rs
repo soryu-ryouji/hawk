@@ -17,7 +17,7 @@ enabled = false
 url = ""
 service_key = ""
 quic_port = 27373
-writable = false
+allow_import = false
 relay = false
 "#;
 
@@ -33,9 +33,9 @@ pub struct RemoteSettings {
     /// QUIC 隧道 UDP 端口（UPnP 映射目标；0 = OS 分配）
     pub quic_port: u16,
     /// 允许广域网会话导入素材/新建文件夹（受限写，与 [web] 的局域网写权限独立）
-    pub writable: bool,
+    pub allow_import: bool,
     /// 使用中继（服务端内嵌 relay 提供时；消耗自建带宽，设备级开关，默认关闭）。
-    /// 请求级热配置（同 writable，不触发信令重启）
+    /// 请求级热配置（同 allow_import，不触发信令重启）
     pub relay: bool,
 }
 
@@ -46,7 +46,7 @@ impl Default for RemoteSettings {
             url: String::new(),
             service_key: String::new(),
             quic_port: DEFAULT_QUIC_PORT,
-            writable: false,
+            allow_import: false,
             relay: false,
         }
     }
@@ -122,7 +122,7 @@ impl RemoteConfigStore {
         doc["url"] = toml_edit::value(settings.url.trim());
         doc["service_key"] = toml_edit::value(settings.service_key.trim());
         doc["quic_port"] = toml_edit::value(i64::from(settings.quic_port));
-        doc["writable"] = toml_edit::value(settings.writable);
+        doc["allow_import"] = toml_edit::value(settings.allow_import);
         doc["relay"] = toml_edit::value(settings.relay);
         let tmp = file.with_extension("toml.tmp");
         std::fs::write(&tmp, doc.to_string())
@@ -177,8 +177,8 @@ impl RemoteConfigStore {
                     settings.quic_port = port as u16;
                 }
             }
-            settings.writable = table
-                .get("writable")
+            settings.allow_import = table
+                .get("allow_import")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             settings.relay = table
@@ -227,7 +227,7 @@ mod tests {
                 url: "https://hawk.example.com/".to_string(),
                 service_key: "secret".to_string(),
                 quic_port: 28000,
-                writable: true,
+                allow_import: true,
                 relay: true,
             })
             .unwrap();
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(current.url, "https://hawk.example.com/");
         assert_eq!(current.service_key, "secret");
         assert_eq!(current.quic_port, 28000);
-        assert!(current.writable);
+        assert!(current.allow_import);
     }
 
     #[test]

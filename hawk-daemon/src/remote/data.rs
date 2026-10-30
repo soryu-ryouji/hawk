@@ -5,6 +5,7 @@
 //! 每个请求开一条流转发。HTTP 解析两端的流式语义（SSE/缩略图）由 hyper 原生承载。
 //! 打洞/中继/路径迁移/映射保活全部是 iroh 内部事务，本模块不感知路径。
 
+use crate::core::access::Role;
 use crate::remote::identity::Identity;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode};
@@ -21,10 +22,10 @@ pub const HAWK_ALPN: &[u8] = b"hawk/1";
 pub const SESSION_HEADER: &str = "x-hawk-session";
 
 /// 进程内受托标记：仅由 A 侧隧道端插入请求扩展（HTTP 客户端无法伪造），
-/// 鉴权中间件按 writable 决定 viewer 只读或受限远程写
+/// 鉴权中间件按 role 决定 viewer 只读或受限远程写
 #[derive(Clone, Copy)]
 pub struct TunneledPeer {
-    pub writable: bool,
+    pub role: Role,
 }
 
 /// B 侧拨号超时（协议约定 15s；iroh 内部竞速直连/中继，首字节不等打洞结果）
@@ -35,7 +36,7 @@ type EndpointId = iroh::EndpointId;
 #[derive(Clone, Copy)]
 struct AcceptedSession {
     peer: EndpointId,
-    writable: bool,
+    role: Role,
 }
 
 /// 会话注册表：session_id → 权限与对端身份，以及连接与会话的绑定。
@@ -54,12 +55,12 @@ struct SessionRegistry {
 
 impl SessionRegistry {
     /// 登记会话；返回同一 session_id 的旧条目（重复推送时避免放行计数泄漏）
-    fn allow(&self, session_id: &str, peer: EndpointId, writable: bool) {
+    fn allow(&self, session_id: &str, peer: EndpointId, role: Role) {
         let previous = self
             .accepted
             .lock()
             .unwrap()
-            .insert(session_id.to_string(), AcceptedSession { peer, writable });
+            .insert(session_id.to_string(), AcceptedSession { peer, role });
         if previous.map(|p| p.peer) != Some(peer) {
             *self.peers.lock().unwrap().entry(peer).or_default() += 1;
         }
@@ -106,7 +107,7 @@ impl SessionRegistry {
         conn_id: usize,
         session_id: &str,
         peer: Option<EndpointId>,
-    ) -> Result<bool, StatusCode> {
+    ) -> Result<Role, StatusCode> {
         let session = self
             .accepted
             .lock()
@@ -131,7 +132,7 @@ impl SessionRegistry {
                     .push(conn_id);
             }
         }
-        Ok(session.writable)
+        Ok(session.role)
     }
 
     fn forget_conn(&self, conn_id: usize) {
@@ -260,8 +261,8 @@ impl DataPlane {
     }
 
     /// 放行会话对端身份并登记读写权限（session.request 接受时调用）
-    pub fn allow_session(&self, session_id: &str, peer: EndpointId, writable: bool) {
-        self.registry.allow(session_id, peer, writable);
+    pub fn allow_session(&self, session_id: &str, peer: EndpointId, role: Role) {
+        self.registry.allow(session_id, peer, role);
     }
 
     /// 等待该会话的首个隧道请求（接受会话后的超时清理用）
@@ -367,8 +368,8 @@ async fn serve_http(
             let Some(session_id) = session_id else {
                 return Ok(tunnel_response(StatusCode::UNAUTHORIZED));
             };
-            let writable = match registry.bind(conn_id, &session_id, peer) {
-                Ok(writable) => writable,
+            let role = match registry.bind(conn_id, &session_id, peer) {
+                Ok(role) => role,
                 Err(status) => return Ok(tunnel_response(status)),
             };
             // 首连通知：会话接受后的超时清理据此判断对端是否已接入
@@ -377,8 +378,8 @@ async fn serve_http(
             }
             let (mut parts, body) = req.into_parts();
             parts.headers.remove(SESSION_HEADER);
-            // 进程内受托标记：鉴权中间件按 writable 决定只读或受限远程写
-            parts.extensions.insert(TunneledPeer { writable });
+            // 进程内受托标记：鉴权中间件按 role 决定只读或受限远程写
+            parts.extensions.insert(TunneledPeer { role });
             let req = axum::http::Request::from_parts(parts, axum::body::Body::new(body));
             tower::ServiceExt::oneshot(router, req).await
         }
@@ -400,7 +401,7 @@ pub struct ProxyContext {
     /// 隧道会话 id：每个转发请求带上，A 侧据此判定读写权限
     pub session_id: String,
     /// 会话是否可写：只读会话在代理侧直接拦写请求（目标侧仍会二次执法，这里省一次隧道往返）
-    pub writable: bool,
+    pub role: Role,
 }
 
 /// 启动会话代理：环回 HTTP 监听，token 门禁，逐请求开流转发。
@@ -420,7 +421,7 @@ async fn proxy_handler(
         return Err(StatusCode::UNAUTHORIZED);
     }
     // 只读会话的纵深防御：与本地库验证同一套只读白名单（GET + 查询类 POST）
-    if !ctx.writable && !crate::api::is_viewer_allowed(&req) {
+    if ctx.role == Role::Viewer && !crate::api::is_viewer_allowed(&req) {
         return Err(StatusCode::FORBIDDEN);
     }
     // 客户端自带的会话头一律丢弃，改用服务端绑定的会话标识

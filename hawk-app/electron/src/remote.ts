@@ -138,14 +138,11 @@ export async function remoteKeys(): Promise<{ keys: RemoteKeyEntry[] }> {
   return daemonCall<{ keys: RemoteKeyEntry[] }>('GET', '/api/v1/remote/keys');
 }
 
-export async function remoteCreateKey(input: { label?: string; read: boolean; write?: boolean; custom?: string }): Promise<RemoteKeyCreated> {
+export async function remoteCreateKey(input: { label?: string; role: AccessRole; custom?: string }): Promise<RemoteKeyCreated> {
   return daemonCall<RemoteKeyCreated>('POST', '/api/v1/remote/keys', input);
 }
 
-export async function remotePatchKey(
-  id: string,
-  patch: { label?: string; read?: boolean; write?: boolean },
-): Promise<{ key: RemoteKeyEntry; synced: boolean }> {
+export async function remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry; synced: boolean }> {
   return daemonCall<{ key: RemoteKeyEntry; synced: boolean }>('PATCH', `/api/v1/remote/keys/${encodeURIComponent(id)}`, patch);
 }
 

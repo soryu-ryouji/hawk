@@ -66,7 +66,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     (
         "POST",
         "/api/v1/remote/keys",
-        Some(r#"{"label":"契约密钥","read":true,"write":false}"#),
+        Some(r#"{"label":"契约密钥","role":"viewer"}"#),
     ),
     ("GET", "/api/v1/item/count", None),
     (
@@ -895,7 +895,7 @@ async fn app_connection_reports_none_without_library() {
     assert_eq!(status, StatusCode::OK);
     let body: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(body["data"]["mode"], "none");
-    assert_eq!(body["data"]["writable"], false);
+    assert_eq!(body["data"]["role"], "viewer");
 }
 
 /// 固化产物同步：openapi.json 与代码生成语义相等（Value 比较，免疫键序/空白差异）
@@ -1245,7 +1245,7 @@ async fn app_info_marks_tunneled_transport() {
         .body(Body::empty())
         .unwrap();
     req.extensions_mut()
-        .insert(TunneledPeer { writable: false });
+        .insert(TunneledPeer { role: Role::Viewer });
     let resp = app.router.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
@@ -2443,7 +2443,7 @@ async fn aggregate_and_batch_remove() {
 async fn remote_writer_is_limited_to_import_and_folder_create() {
     let app = test_app("remote-writer");
     let mut remote = app.state.remote.remote_config().current();
-    remote.writable = true;
+    remote.allow_import = true;
     app.state.remote.remote_config().update(&remote).unwrap();
 
     fn tunnel_req(method: &str, uri: &str, body: Value, writable: bool) -> Request<Body> {
@@ -2454,7 +2454,13 @@ async fn remote_writer_is_limited_to_import_and_folder_create() {
             .header("host", "hawk-remote.tunnel")
             .body(Body::from(body.to_string()))
             .unwrap();
-        req.extensions_mut().insert(TunneledPeer { writable });
+        req.extensions_mut().insert(TunneledPeer {
+            role: if writable {
+                Role::Importer
+            } else {
+                Role::Viewer
+            },
+        });
         req
     }
 

@@ -87,7 +87,7 @@ async fn register(base: &str, key: &str, name: &str, allow_remote: bool) -> Stri
             "endpoint_id": format!("ep-{name}"),
             "library_name": "我的素材库",
             "allow_remote": allow_remote,
-            "allow_write": false,
+            "allow_import": false,
         }))
         .send()
         .await
@@ -398,8 +398,8 @@ async fn device_keys_sync_endpoint() {
         .put(format!("http://{base}/api/v1/devices/{device}/keys"))
         .bearer_auth(&key)
         .json(&json!({ "keys": [
-            { "s": s1, "read": true, "write": false },
-            { "s": s2, "read": true, "write": true },
+            { "s": s1, "role": "viewer" },
+            { "s": s2, "role": "importer" },
         ] }))
         .send()
         .await
@@ -410,7 +410,7 @@ async fn device_keys_sync_endpoint() {
     let resp = client()
         .put(format!("http://{base}/api/v1/devices/{device}/keys"))
         .bearer_auth(&key)
-        .json(&json!({ "keys": [ { "s": "short", "read": true } ] }))
+        .json(&json!({ "keys": [ { "s": "short", "role": "viewer" } ] }))
         .send()
         .await
         .unwrap();

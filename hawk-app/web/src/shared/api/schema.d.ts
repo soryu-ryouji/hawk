@@ -1230,17 +1230,14 @@ export interface components {
              * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
              */
             proxy_port: number;
+            /** @description 会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法） */
+            role: components["schemas"]["Role"];
             session_id: string;
             /** @description 会话代理临时凭证：web 查看器以 ?token= 携带 */
             session_token: string;
             target_device_id: string;
             target_library_name: string;
             target_name: string;
-            /**
-             * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
-             *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
-             */
-            writable: boolean;
         };
         /** @description admin token 发现端点响应（信封的 data 直接为 admin token 字符串） */
         AdminTokenResponse: {
@@ -1260,8 +1257,8 @@ export interface components {
             label?: string | null;
             /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
             mode: string;
-            /** @description 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限） */
-            writable: boolean;
+            /** @description 当前连接角色（本地库 admin；远端库为会话角色） */
+            role: components["schemas"]["Role"];
         };
         AppInfo: {
             /** @description 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan） */
@@ -1302,9 +1299,8 @@ export interface components {
             custom?: string | null;
             /** @description 展示标签（如「手机插件」；可空） */
             label?: string | null;
-            read: boolean;
-            /** @description 写权限（广域网导入素材/新建文件夹；自定义 key 携带写权限时至少 12 字符） */
-            write?: boolean;
+            /** @description viewer 只读，importer 允许导入；自定义 importer key 至少 12 字符 */
+            role?: components["schemas"]["Role"];
         };
         CreateKeyDto: {
             id: string;
@@ -1365,17 +1361,14 @@ export interface components {
                  * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
                  */
                 proxy_port: number;
+                /** @description 会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法） */
+                role: components["schemas"]["Role"];
                 session_id: string;
                 /** @description 会话代理临时凭证：web 查看器以 ?token= 携带 */
                 session_token: string;
                 target_device_id: string;
                 target_library_name: string;
                 target_name: string;
-                /**
-                 * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
-                 *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
-                 */
-                writable: boolean;
             };
             status: string;
         };
@@ -1394,8 +1387,8 @@ export interface components {
                 label?: string | null;
                 /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
                 mode: string;
-                /** @description 当前连接是否可写（本地库恒 true；远端库取决于会话是否争取到了写权限） */
-                writable: boolean;
+                /** @description 当前连接角色（本地库 admin；远端库为会话角色） */
+                role: components["schemas"]["Role"];
             };
             status: string;
         };
@@ -1716,17 +1709,14 @@ export interface components {
                  * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
                  */
                 proxy_port: number;
+                /** @description 会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法） */
+                role: components["schemas"]["Role"];
                 session_id: string;
                 /** @description 会话代理临时凭证：web 查看器以 ?token= 携带 */
                 session_token: string;
                 target_device_id: string;
                 target_library_name: string;
                 target_name: string;
-                /**
-                 * @description 会话是否可写（同租户设备互信 + 目标开启「允许广域网保存素材」才为 true）：
-                 *     只读会话的代理拒绝写请求，app 的写入口依此隐藏
-                 */
-                writable: boolean;
             };
             status: string;
         };
@@ -1751,8 +1741,8 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_RemoteDeviceDto: {
             data?: {
+                allow_import: boolean;
                 allow_remote: boolean;
-                allow_write: boolean;
                 device_id: string;
                 /** Format: int64 */
                 last_seen_at_ms?: number | null;
@@ -1778,6 +1768,8 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_RemoteDto: {
             data?: {
+                /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
+                allow_import: boolean;
                 enabled: boolean;
                 /** @description 使用中继（服务端提供时；消耗自建带宽，设备级开关） */
                 relay: boolean;
@@ -1786,8 +1778,6 @@ export interface components {
                 /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
                 status: components["schemas"]["RemoteStatus"];
                 url: string;
-                /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
-                writable: boolean;
             };
             status: string;
         };
@@ -2342,8 +2332,7 @@ export interface components {
         };
         PatchKeyBody: {
             label?: string | null;
-            read?: boolean | null;
-            write?: boolean | null;
+            role?: null | components["schemas"]["Role"];
         };
         PatchKeyDto: {
             key: components["schemas"]["RemoteKeyDto"];
@@ -2370,14 +2359,14 @@ export interface components {
             url?: string | null;
         };
         PutRemoteBody: {
+            /** @description 允许广域网会话导入素材/新建文件夹；省略时按关闭处理 */
+            allow_import?: boolean;
             enabled: boolean;
             /** @description 使用中继（服务端提供时）；省略时保留现值 */
             relay?: boolean | null;
             /** @description 服务端 service-key */
             service_key: string;
             url: string;
-            /** @description 允许广域网会话导入素材/新建文件夹；省略时按关闭处理 */
-            writable?: boolean;
         };
         RefreshCacheRequest: {
             /** @description folder | category | tag | library */
@@ -2392,8 +2381,8 @@ export interface components {
             removed: number;
         };
         RemoteDeviceDto: {
+            allow_import: boolean;
             allow_remote: boolean;
-            allow_write: boolean;
             device_id: string;
             /** Format: int64 */
             last_seen_at_ms?: number | null;
@@ -2411,6 +2400,8 @@ export interface components {
             devices: components["schemas"]["RemoteDeviceDto"][];
         };
         RemoteDto: {
+            /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
+            allow_import: boolean;
             enabled: boolean;
             /** @description 使用中继（服务端提供时；消耗自建带宽，设备级开关） */
             relay: boolean;
@@ -2419,8 +2410,6 @@ export interface components {
             /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
             status: components["schemas"]["RemoteStatus"];
             url: string;
-            /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
-            writable: boolean;
         };
         RemoteKeyDto: {
             /** Format: int64 */
@@ -2429,8 +2418,7 @@ export interface components {
             label: string;
             /** @description key 前 4 字符（识别用；明文不存也不可得） */
             prefix: string;
-            read: boolean;
-            write: boolean;
+            role: components["schemas"]["Role"];
         };
         RemoteKeysDto: {
             keys: components["schemas"]["RemoteKeyDto"][];

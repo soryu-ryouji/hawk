@@ -80,13 +80,13 @@ object ConnectionLauncher {
         val gate: GateResponse = guest.post("/api/v1/viewer/gate", GateRequest(serviceKey))
         val login: LoginResponse =
             guest.post("/api/v1/viewer/login", LoginRequest(gate.gateToken, appKey))
-        val api = ApiClient(baseUrl, login.token)
+        val api = ApiClient(baseUrl, login.browserToken)
 
         // 复用或重建查看会话：服务端对存活会话直接复用，对已断开的会话重新撮合。
         val session: ViewerSession = try {
             api.post(
                 "/api/v1/viewer/session",
-                OpenSessionRequest(targetDeviceId = login.deviceId, access = "read"),
+                OpenSessionRequest(targetDeviceId = login.deviceId, role = "viewer"),
             )
         } catch (error: ApiException) {
             throw ConnectionException(error.message)

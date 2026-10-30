@@ -166,7 +166,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 当前连接描述符：本地 hawk 现在在看哪个素材库。浏览器插件用它把「跟随本地 hawk」落到具体目标——本地库时返回 `local`（调用方继续用自己的环回地址 + admin token），正在浏览远端库时返回会话代理地址与会话令牌，插件直接打该代理即可把素材写进远端库；无本地库且无远端会话时返回 `none`。远程查看模式（无库 daemon）下同样可用。
 
-能否写入由 `writable` 表示：本地库恒 true；远端库取决于会话是否争取到写权限，即目标设备的「允许广域网保存素材」（目标 daemon 每请求二次执法）。
+连接角色由 `role` 表示：本地库为 admin；远端库为 viewer 或 importer，取决于目标设备的 allow_import 与会话授权（目标 daemon 每请求二次执法）。
 
 #### 响应
 
@@ -191,7 +191,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | credential | string? | 仅 remote：会话临时凭证（与 app 渲染进程同一把）             |
 | device_id| string? | 仅 remote：目标设备 id                                       |
 | label    | string? | 仅 remote：目标展示名（设备名 · 库名）                       |
-| writable | boolean | 当前连接是否可写                                             |
+| role | string | 当前连接角色：viewer / importer / editor / admin                                             |
 
 ### health
 
@@ -300,7 +300,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 | PUT | `/api/v1/remote` | 写回应用级 `remote.toml` 并热重启信令（admin 限定） |
 | GET | `/api/v1/remote/devices` | 拉取服务端设备列表（admin 限定） |
 | DELETE | `/api/v1/remote/devices/{device_id}` | 注销设备记录（admin 限定；转发服务端，会话与 key 映射一并清理；本机当前设备不可移除） |
-| PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定；allow_write 由目标设备配置上报，不经此端点修改） |
+| PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定；allow_import 由目标设备配置上报，不经此端点修改） |
 | POST | `/api/v1/remote/device/rotate` | 证书轮换（重新生成自签证书并同步服务端，admin 限定） |
 | GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
 | POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
@@ -325,7 +325,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
     "enabled": true,
     "url": "https://hawk.example.com",
     "service_key": "hs_<service-key>",
-    "writable": false,
+    "allow_import": false,
     "status": {
       "state": "online",
       "server_url": "https://hawk.example.com",
@@ -337,7 +337,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 
 `status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 service-key 无效，`error` 字段携带服务端返回的原因）。
 
-`writable` 对应应用级远程配置的 `writable`：允许广域网写会话向当前库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
+`allow_import` 对应应用级远程配置的 `allow_import`：允许广域网写会话向当前库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
 
 ---
 
@@ -348,10 +348,10 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 #### 请求
 
 ```json
-{ "enabled": true, "url": "https://hawk.example.com", "service_key": "hs_<service-key>", "writable": false }
+{ "enabled": true, "url": "https://hawk.example.com", "service_key": "hs_<service-key>", "allow_import": false }
 ```
 
-校验（`INVALID_PARAM`）：`enabled` 时 `url`/`service_key` 必填；`url` 须以 `http://` 或 `https://` 开头。`writable` 省略按 false。响应同 GET。
+校验（`INVALID_PARAM`）：`enabled` 时 `url`/`service_key` 必填；`url` 须以 `http://` 或 `https://` 开头。`allow_import` 省略按 false。响应同 GET。
 
 ---
 
@@ -373,7 +373,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
         "library_name": "我的素材库",
         "online": true,
         "allow_remote": true,
-        "allow_write": false,
+        "allow_import": false,
         "last_seen_at_ms": 1750000000000
       }
     ]
@@ -401,7 +401,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
     "target_name": "家里台式机",
     "target_library_name": "我的素材库",
     "proxy_port": 51234,
-    "token": "<会话代理 token>"
+    "session_token": "<会话代理 token>"
   }
 }
 ```
@@ -460,13 +460,13 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 
 `POST /api/v1/remote/keys`
 
-签发访问密钥。`read`/`write` 至少一项；`custom` 省略时程序生成 `hk_` 前缀的 128 位随机串，自定义时纯读至少 4 字符、携带写权限至少 12 字符（`INVALID_PARAM`）。签发后向 server 全量推送本设备的 key 映射（`PUT /devices/{id}/keys`，best-effort）。
+签发访问密钥。`role` 为 viewer/importer；`custom` 省略时程序生成 `hk_` 前缀的 128 位随机串，自定义时纯读至少 4 字符、携带写权限至少 12 字符（`INVALID_PARAM`）。签发后向 server 全量推送本设备的 key 映射（`PUT /devices/{id}/keys`，best-effort）。
 
 #### 请求与响应
 
 ```json
 // 请求
-{ "label": "手机插件", "read": true, "write": true, "custom": null }
+{ "label": "手机插件", "role": "importer", "custom": null }
 // 响应：key 明文只在本次出现；synced=false 表示远程未接入/推送失败（下次接入自动重试）
 { "status": "success", "data": { "id": "k_8f3a…", "key": "hk_a1b2…", "synced": true } }
 ```
@@ -475,7 +475,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 
 `PATCH /api/v1/remote/keys/{key_id}`
 
-更新标签/权限：`{ "label": "新名", "read": true, "write": false }`，至少保留一项权限。权限收窄对后续会话立即生效。响应 `{ "key": <条目>, "synced": true }`。
+更新标签/权限：`{ "label": "新名", "role": "viewer" }`。权限收窄对后续会话立即生效。响应 `{ "key": <条目>, "synced": true }`。
 
 ---
 

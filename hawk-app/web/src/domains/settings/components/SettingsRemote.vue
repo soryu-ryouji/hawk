@@ -54,7 +54,7 @@ onMounted(() => {
       enabled.value = store.dto.enabled;
       url.value = store.dto.url;
       serviceKey.value = store.dto.service_key;
-      writable.value = store.dto.writable;
+      writable.value = store.dto.allow_import;
     }
   });
   void store.refreshKeys();
@@ -117,7 +117,7 @@ async function save(): Promise<boolean> {
     enabled: enabled.value,
     url: url.value.trim(),
     service_key: serviceKey.value.trim(),
-    writable: writable.value,
+    allow_import: writable.value,
     relay: store.relayEnabled,
   });
   saving.value = false;
@@ -151,7 +151,7 @@ async function openPairing(): Promise<void> {
     return;
   }
   pairingBusy.value = true;
-  const created = await store.createKey({ label: '移动端配对', read: true });
+  const created = await store.createKey({ label: '移动端配对', role: 'viewer' });
   pairingBusy.value = false;
   if (!created) {
     error.value = store.error;
@@ -194,8 +194,7 @@ async function createKey() {
   creating.value = true;
   const created = await store.createKey({
     label: keyLabel.value.trim() || undefined,
-    read: true,
-    write: keyPermission.value === 'write',
+    role: keyPermission.value === 'write' ? 'importer' : 'viewer',
     custom: keyCustom.value.trim() || undefined,
   });
   creating.value = false;
@@ -230,13 +229,13 @@ function shareText(key: string): string {
   return [`服务器：${store.dto?.url ?? ''}`, `服务密钥：${store.dto?.service_key ?? ''}`, `访问密钥：${key}`].join('\n');
 }
 
-function keyPermissionValue(key: { write: boolean }): 'read' | 'write' {
-  return key.write ? 'write' : 'read';
+function keyPermissionValue(key: { role: string }): 'read' | 'write' {
+  return key.role === 'importer' ? 'write' : 'read';
 }
 
 async function setKeyPermission(id: string, value: string) {
   error.value = null;
-  const ok = await store.patchKey(id, { read: true, write: value === 'write' });
+  const ok = await store.patchKey(id, { role: value === 'write' ? 'importer' : 'viewer' });
   if (!ok) {
     error.value = store.error;
   }
@@ -436,7 +435,7 @@ async function removeDevice(deviceId: string, name: string) {
               <div class="row-main">
                 <div class="row-title">{{ device.name }}</div>
                 <div class="row-meta">
-                  {{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}{{ device.allow_write ? ' · 允许写入' : ''
+                  {{ device.library_name }} · {{ device.platform }}{{ device.allow_remote ? '' : ' · 已关闭访问' }}{{ device.allow_import ? ' · 允许写入' : ''
                   }}{{ device.online ? (device.reachable === true ? ' · 直连' : device.reachable === false ? ' · 中继' : '') : '' }}
                 </div>
               </div>
