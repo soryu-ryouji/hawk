@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -118,7 +117,7 @@ fun LibraryScreen(viewModel: AppViewModel, session: LibrarySession) {
         onPauseOrDispose {}
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize().background(HawkColors.Bg0)) {
+    Box(modifier = Modifier.fillMaxSize().background(HawkColors.Bg0)) {
         when {
             permanentSidebar -> {
                 Row(modifier = Modifier.fillMaxSize()) {

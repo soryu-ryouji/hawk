@@ -23,7 +23,7 @@ data class PairingPayload(
         "lan" -> {
             val accessToken = token?.trim().orEmpty()
             if (accessToken.isEmpty()) throw ConnectionException("配对二维码缺少访问 token")
-            val candidates = urls
+            val candidates = (urls + listOfNotNull(url))
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinctBy { it.lowercase() }
