@@ -97,20 +97,11 @@ impl Settings {
             eprintln!("素材库目录不存在: {library}");
             std::process::exit(2);
         }
-        let remote_config = args
-            .remote_config
-            .map(|path| path.trim().to_string())
-            .filter(|path| !path.is_empty());
-        Settings::from_parts(Some(library), args.daemon, remote_config)
+        Settings::from_parts(Some(library), args.daemon, args.remote_config)
     }
 
     pub fn from_remote(args: RemoteArgs) -> Settings {
-        let remote_config = args.remote_config.trim().to_string();
-        if remote_config.is_empty() {
-            eprintln!("远程配置路径不能为空");
-            std::process::exit(2);
-        }
-        Settings::from_parts(None, args.daemon, Some(remote_config))
+        Settings::from_parts(None, args.daemon, Some(args.remote_config))
     }
 
     fn from_parts(
@@ -118,6 +109,14 @@ impl Settings {
         daemon: DaemonArgs,
         remote_config: Option<String>,
     ) -> Settings {
+        let remote_config = remote_config
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty());
+        if library_root.is_none() && remote_config.is_none() {
+            eprintln!("remote 模式必须提供有效的 --remote-config");
+            std::process::exit(2);
+        }
+
         Settings {
             library_root,
             port: daemon.port,
