@@ -2,7 +2,7 @@
 
 面向新加入者的代码地图：`hawk-daemon/src/` 每个文件做什么、与谁协作，以及几条关键流程如何把代码串起来。
 设计背景见 [server-rust.md](server-rust.md)（技术选型与状态）、[storage.md](storage.md)（存储格式）、
-[server-rest-api-v1.md](server-rest-api-v1.md)（接口契约）、[architecture.md](../architecture.md)（进程模型）。
+[server-rest-api-v1.md](server-rest-api-v1.md)（接口契约）、[access-control.md](access-control.md)（权限与凭证）、[architecture.md](../architecture.md)（进程模型）。
 
 ## 总览
 

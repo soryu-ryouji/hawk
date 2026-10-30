@@ -119,6 +119,7 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 - [hawk-daemon（Rust 实现）](docs/backend/server-rust.md)：Rust 版实现细节、调试与压测方法
 - [hawk-daemon 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
+- [权限与凭证设计](docs/backend/access-control.md)：Capability、角色、通道上限与凭证职责
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
 - [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配
 - [pHash 相似图片查找](docs/backend/similar-images.md)：64 位感知哈希、近重复检索与阈值设计
