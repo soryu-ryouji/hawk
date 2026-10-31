@@ -350,12 +350,16 @@ async function removeDevice(deviceId: string, name: string) {
       <section class="settings-section">
         <div class="settings-section-title">访问密钥</div>
         <div class="settings-group">
-          <div class="remote-actions-row">
-            <button v-if="!props.libraryless" class="remote-button" :disabled="!canPair || saving || pairingBusy" @click="openPairing">
+          <div v-if="!props.libraryless" class="remote-actions-row">
+            <button class="remote-button primary-action" :disabled="!canPair || saving || pairingBusy" @click="openPairing">
               {{ pairingBusy ? '生成中…' : '生成配对二维码' }}
             </button>
-            <button class="remote-button" @click="openKeyCreate">新建访问密钥</button>
           </div>
+          <details class="manual-auth">
+            <summary>手动授权</summary>
+            <p>桌面端自动配对和移动端扫码都会自动创建密钥。仅在无法使用这些流程时手动新建。</p>
+            <button class="remote-button" @click="openKeyCreate">新建访问密钥</button>
+          </details>
 
           <div v-if="createdKey" class="created-key">
             <div class="created-key-title">新访问密钥</div>
@@ -619,6 +623,39 @@ async function removeDevice(deviceId: string, name: string) {
 
 .remote-button:hover:not(:disabled) {
   border-color: var(--fg-1);
+}
+
+.remote-button.primary-action {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.remote-button.primary-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  filter: brightness(1.08);
+}
+
+.manual-auth {
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
+.manual-auth summary {
+  padding: 9px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.manual-auth p {
+  margin: 0 0 9px;
+  line-height: 1.5;
+}
+
+.manual-auth .remote-button {
+  margin-bottom: 10px;
 }
 
 .created-key {
