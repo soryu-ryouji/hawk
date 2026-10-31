@@ -337,6 +337,30 @@ impl TestApp {
             .expect("upsert 被防抖延迟（mtime 已拨回，不应发生）");
         result.item.id
     }
+
+    /// 等后台 worker 的真实 pHash 完成回写，再允许测试覆盖成分组/排序用的固定值。
+    /// submit_upsert 只等待索引应用；pHash 暂存后按批延迟冲刷，缺少此同步会让旧计算结果
+    /// 在后续断言之间覆盖测试值（高负载 runner 上表现为相似组或相似排序随机消失）。
+    async fn wait_for_phash(&self, ids: &[&str]) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let ready = ids.iter().all(|id| {
+                self.lib()
+                    .store
+                    .try_get(id)
+                    .and_then(|meta| meta.phash)
+                    .is_some_and(|hash| {
+                        hash.version == crate::core::perceptual_hash::PHASH_VERSION
+                            && hash.value.is_some()
+                    })
+            });
+            if ready {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "pHash 补算超时");
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
 }
 
 /// 同一 AccessKey 可跨 LAN Web 与原生 Peer 使用，身份不随端口变化。
@@ -2133,6 +2157,7 @@ async fn similar_items_are_filtered_and_sorted_by_phash_distance() {
     let source = app.add_test_item("source.png", [1, 1, 1]).await;
     let near = app.add_test_item("near.png", [2, 2, 2]).await;
     let far = app.add_test_item("far.png", [3, 3, 3]).await;
+    app.wait_for_phash(&[&source, &near, &far]).await;
     let set_phash = |id: &str, value: Option<u64>| {
         let mut meta = app.lib().store.try_get(id).unwrap();
         meta.phash = Some(crate::core::metadata::PerceptualHash {
@@ -2276,6 +2301,8 @@ async fn duplicate_scan_groups_locations_and_similar_items() {
     let other = app.add_test_item("other.png", [3, 3, 3]).await;
     let other_near = app.add_test_item("other-near.png", [4, 4, 4]).await;
     let far = app.add_test_item("far.png", [5, 5, 5]).await;
+    app.wait_for_phash(&[&source, &near, &other, &other_near, &far])
+        .await;
     let set_phash = |id: &str, value: u64| {
         let mut meta = app.lib().store.try_get(id).unwrap();
         meta.phash = Some(crate::core::metadata::PerceptualHash {
