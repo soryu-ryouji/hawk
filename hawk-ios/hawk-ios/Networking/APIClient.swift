@@ -65,6 +65,7 @@ nonisolated final class APIClient: @unchecked Sendable {
     let credentials: SessionCredentials
     let tickets: UnlockTicketStore
     private let session: URLSession
+    var sessionToken: String { credentials.current() }
     /// SSE 长连接专用会话：必须由客户端持有，随请求销毁会让流被取消
     private let streamSession: URLSession
 
@@ -132,12 +133,9 @@ nonisolated final class APIClient: @unchecked Sendable {
 
     // MARK: - Media
 
-    /// 缩略图 / 原图地址：token 与解锁票据都走查询参数（img 请求无法设头）。
+    /// 缩略图 / 原图地址：使用 Session Cookie，解锁票据只表达锁可见范围。
     func mediaURL(path: String, id: String) -> URL? {
-        var query = [
-            URLQueryItem(name: "id", value: id),
-            URLQueryItem(name: "token", value: credentials.current()),
-        ]
+        var query = [URLQueryItem(name: "id", value: id)]
         if let unlock = tickets.headerValue() {
             query.append(URLQueryItem(name: "unlock", value: unlock))
         }
@@ -158,6 +156,7 @@ nonisolated final class APIClient: @unchecked Sendable {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 120
+        request.setValue("hawk_session=\(credentials.current())", forHTTPHeaderField: "Cookie")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw APIError(code: "NETWORK", message: "网络响应无效", status: 0)
@@ -172,18 +171,18 @@ nonisolated final class APIClient: @unchecked Sendable {
 
     // MARK: - Event stream
 
-    /// SSE 订阅请求：token 走查询参数（与 web 一致，避免代理层差异），解锁票据同理。
+    /// SSE 订阅请求：Bearer Session + Cookie，不在 URL 中携带长期凭证。
     func eventRequest() -> URLRequest? {
         guard
             let url = makeURL(
                 path: "/api/v1/events",
                 query: [
-                    URLQueryItem(name: "token", value: credentials.current()),
                     URLQueryItem(name: "unlock", value: tickets.headerValue() ?? ""),
                 ]
             )
         else { return nil }
         var request = URLRequest(url: url)
+        request.setValue("hawk_session=\(credentials.current())", forHTTPHeaderField: "Cookie")
         request.timeoutInterval = 3600
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")

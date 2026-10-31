@@ -9,7 +9,7 @@ struct ProfileFormView: View {
     @State private var name: String
     @State private var url: String
     @State private var token: String
-    @State private var serviceKey: String
+    @State private var targetIdentity: String
     @State private var appKey: String
     @State private var error: String?
 
@@ -23,7 +23,7 @@ struct ProfileFormView: View {
         _name = State(initialValue: existing?.name ?? "")
         _url = State(initialValue: existing?.url ?? "")
         _token = State(initialValue: existing?.token ?? "")
-        _serviceKey = State(initialValue: existing?.serviceKey ?? "")
+        _targetIdentity = State(initialValue: existing?.targetIdentity ?? "")
         _appKey = State(initialValue: existing?.appKey ?? "")
     }
 
@@ -44,7 +44,7 @@ struct ProfileFormView: View {
                     if kind == .lan {
                         Text("桌面端：设置 → 局域网 → 开启网页访问，复制监听地址与访问 token。")
                     } else {
-                        Text("hawk-server 的部署地址；service-key 与 hawk-app key 来自服务端与桌面端。")
+                        Text("hawk-server 的部署地址；target_identity 与 AccessKey 来自配对信息。")
                     }
                 }
 
@@ -56,10 +56,10 @@ struct ProfileFormView: View {
                     }
                 } else {
                     Section("访问凭证") {
-                        SecureField("service-key（hs_…）", text: $serviceKey)
+                        SecureField("target_identity（目标 iroh 公钥）", text: $targetIdentity)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                        SecureField("hawk-app key（hk_…）", text: $appKey)
+                        SecureField("AccessKey（hk_…）", text: $appKey)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                     }
@@ -95,7 +95,7 @@ struct ProfileFormView: View {
         case .lan:
             return !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .remote:
-            return !serviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return !targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -118,7 +118,7 @@ struct ProfileFormView: View {
             components.fragment = nil
             profile.url = components.string ?? profile.url
         }
-        profile.serviceKey = serviceKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        profile.targetIdentity = targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
         profile.appKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             _ = try profile.baseURL()

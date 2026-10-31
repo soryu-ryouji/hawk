@@ -28,7 +28,7 @@ Android 原生客户端（Kotlin + Jetpack Compose）。设计文档见 [../docs
 - 连接管理
   - 局域网直连：地址 + 访问 token，验证通过后记住；启动自动连接上次使用的连接
   - 广域网：`/viewer/gate` → `/viewer/login` 换 `bt`，再按 `bt` 绑定的设备打开查看会话；后续 `/api/v1/*` 由 hawk-server 隧道代理
-  - 扫码导入配对载荷（`v/kind/url/token/service_key/key`）与手动输入；版本不符提示升级
+  - 扫码导入配对载荷（`v/kind/url/token/tenant_key/key`）与手动输入；版本不符提示升级
   - 连接增删改、重新连接、切换连接、断开
 - 浏览
   - 在线首屏不建索引：库信息 + 全局隐藏集到位即进主界面；`item/list` 首页与 `item/skeleton` 并发，分类/标签与计数后台补齐
@@ -94,7 +94,7 @@ HAWK_ADMIN_TOKEN=smoke-token ../hawk-daemon/target/debug/hawk-daemon.exe \
 # 2) 模拟器内访问宿主机端口
 adb reverse tcp:27372 tcp:27372
 
-# 3) 写好连接（kind 为 lan / remote；remote 用 serviceKey + appKey）
+# 3) 写好连接（kind 为 lan / remote；remote 用 tenantKey + appKey）
 adb shell pm clear com.ryouji.hawk
 adb shell mkdir -p /sdcard/Android/data/com.ryouji.hawk/files
 mkdir -p .smoke
@@ -109,7 +109,7 @@ adb shell am start -n com.ryouji.hawk/.MainActivity
 真机冒烟仍需覆盖：
 
 1. 局域网：桌面端开 `[web]`，App 手填/扫码导入局域网地址 + token，浏览缩略图与预览
-2. 广域网：填服务端地址 + service-key + hawk-app key，进入绑定的在线设备
+2. 广域网：填服务端地址 + tenant-key + hawk-app key，进入绑定的在线设备
 3. 相册保存：保存原图，确认是原图而非 1024 缩略图（API 26–28 还需确认权限弹窗）
 4. 回前台：切后台再回来，列表刷新且不白屏
 

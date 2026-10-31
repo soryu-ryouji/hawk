@@ -46,13 +46,13 @@ fun ProfileFormDialog(
     var name by remember { mutableStateOf(existing?.name.orEmpty()) }
     var url by remember { mutableStateOf(existing?.url.orEmpty()) }
     var token by remember { mutableStateOf(existing?.token.orEmpty()) }
-    var serviceKey by remember { mutableStateOf(existing?.serviceKey.orEmpty()) }
+    var targetIdentity by remember { mutableStateOf(existing?.targetIdentity.orEmpty()) }
     var appKey by remember { mutableStateOf(existing?.appKey.orEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
 
     val canSave = url.trim().isNotEmpty() && when (kind) {
         ConnectionKind.Lan -> token.trim().isNotEmpty()
-        ConnectionKind.Remote -> serviceKey.trim().isNotEmpty() && appKey.trim().isNotEmpty()
+        ConnectionKind.Remote -> targetIdentity.trim().isNotEmpty() && appKey.trim().isNotEmpty()
     }
 
     Dialog(
@@ -78,7 +78,7 @@ fun ProfileFormDialog(
                     actions = {
                         TextButton(onClick = {
                             error = null
-                            val saved = buildProfile(kind, existing, name, url, token, serviceKey, appKey)
+                            val saved = buildProfile(kind, existing, name, url, token, targetIdentity, appKey)
                             try {
                                 saved.baseUrl()
                             } catch (exception: Exception) {
@@ -131,7 +131,7 @@ fun ProfileFormDialog(
                     text = if (kind == ConnectionKind.Lan) {
                         "桌面端：设置 → 局域网 → 开启网页访问，复制监听地址与访问 token。"
                     } else {
-                        "hawk-server 的部署地址；service-key 与 hawk-app key 来自服务端与桌面端。"
+                        "hawk-server 的部署地址；target_identity 与 AccessKey 来自配对信息。"
                     },
                     color = HawkColors.Fg1,
                     fontSize = 11.sp,
@@ -147,15 +147,15 @@ fun ProfileFormDialog(
                     )
                 } else {
                     SecretField(
-                        value = serviceKey,
-                        onValueChange = { serviceKey = it },
-                        placeholder = "service-key（hs_…）",
+                        value = targetIdentity,
+                        onValueChange = { targetIdentity = it },
+                        placeholder = "target_identity（目标 iroh 公钥）",
                         imeAction = ImeAction.Next,
                     )
                     SecretField(
                         value = appKey,
                         onValueChange = { appKey = it },
-                        placeholder = "hawk-app key（hk_…）",
+                        placeholder = "AccessKey（hk_…）",
                         imeAction = ImeAction.Done,
                     )
                 }
@@ -203,7 +203,7 @@ private fun buildProfile(
     name: String,
     url: String,
     token: String,
-    serviceKey: String,
+    targetIdentity: String,
     appKey: String,
 ): ConnectionProfile {
     var urlText = url.trim()
@@ -221,7 +221,7 @@ private fun buildProfile(
         name = name.trim(),
         url = urlText,
         token = accessToken,
-        serviceKey = serviceKey.trim(),
+        targetIdentity = targetIdentity.trim(),
         appKey = appKey.trim(),
     )
 }

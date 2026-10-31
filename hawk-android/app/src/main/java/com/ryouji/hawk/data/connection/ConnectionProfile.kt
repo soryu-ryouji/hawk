@@ -14,7 +14,7 @@ enum class ConnectionKind(val title: String, val defaultScheme: String) {
 
 class ConnectionException(message: String) : Exception(message)
 
-/** 一条连接配置。局域网用 url + token；广域网用 url + serviceKey + appKey。 */
+/** 一条连接配置。局域网用 url + token；广域网用 url + tenantKey + appKey。 */
 @Serializable
 data class ConnectionProfile(
     val id: String = UUID.randomUUID().toString(),
@@ -24,8 +24,13 @@ data class ConnectionProfile(
     /** 同一目标的候选地址；二维码可一次下发多个局域网地址。 */
     val urls: List<String> = emptyList(),
     val token: String = "",
-    val serviceKey: String = "",
+    val tenantKey: String = "",
     val appKey: String = "",
+    /** V2 统一配对：目标 iroh 公钥与库身份；不进入旧 viewer 登录。 */
+    val targetIdentity: String = "",
+    val targetLibraryId: String = "",
+    val targetDeviceId: String = "",
+    val tlsFingerprint: String = "",
 ) {
     val displayName: String
         get() {

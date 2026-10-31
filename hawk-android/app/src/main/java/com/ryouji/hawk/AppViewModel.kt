@@ -92,7 +92,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         connectJob = viewModelScope.launch {
             var scope: CoroutineScope? = null
             try {
-                val outcome = ConnectionLauncher.launch(profile)
+                val outcome = ConnectionLauncher.launch(getApplication<Application>(), profile)
                 ensureActive()
                 val saved = connections.upsert(profile)
                 connections.setActive(saved.id)
@@ -185,7 +185,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val session = _state.value.session ?: return
         if (!session.isRemote) return
         viewModelScope.launch {
-            runCatching { session.api.delete("/api/v1/viewer/session") }
+            runCatching { session.api.delete("/api/v1/remote/session") }
         }
     }
 

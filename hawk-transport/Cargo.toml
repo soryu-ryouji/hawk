@@ -1,0 +1,18 @@
+[package]
+name = "hawk-transport"
+version = "0.1.0"
+edition = "2021"
+authors = ["soryu-ryouji <helloryouji@outlook.com>"]
+description = " hawk 原生客户端的 iroh/AccessKey Loopback 传输库"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "hawk_transport"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+hawk-daemon = { path = "../hawk-daemon" }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+libc = "0.2"

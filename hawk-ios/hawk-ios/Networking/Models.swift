@@ -230,7 +230,7 @@ nonisolated struct ItemListRequest: Encodable, Sendable {
 }
 
 nonisolated struct GateRequest: Encodable, Sendable {
-    let serviceKey: String
+    let tenantKey: String
 }
 
 nonisolated struct LoginRequest: Encodable, Sendable {

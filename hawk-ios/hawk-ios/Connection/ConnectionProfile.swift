@@ -19,7 +19,7 @@ nonisolated enum ConnectionKind: String, Codable, Sendable {
     }
 }
 
-/// 一条连接配置。局域网用 url + token；广域网用 url + serviceKey + appKey。
+/// 一条连接配置。局域网用 url + token；广域网用 url + tenantKey + appKey。
 nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable {
     var id: UUID
     var kind: ConnectionKind
@@ -28,8 +28,13 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
     /// 同一目标的候选地址（二维码可一次下发多个局域网地址）；旧配置为空时只使用 url。
     var urls: [String]?
     var token: String
-    var serviceKey: String
+    var tenantKey: String
     var appKey: String
+    /// V2 统一配对：目标 iroh 公钥与库身份。
+    var targetIdentity: String
+    var targetLibraryId: String
+    var targetDeviceId: String
+    var tlsFingerprint: String
 
     init(
         id: UUID = UUID(),
@@ -38,8 +43,12 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         url: String,
         urls: [String]? = nil,
         token: String = "",
-        serviceKey: String = "",
-        appKey: String = ""
+        tenantKey: String = "",
+        appKey: String = "",
+        targetIdentity: String = "",
+        targetLibraryId: String = "",
+        targetDeviceId: String = "",
+        tlsFingerprint: String = ""
     ) {
         self.id = id
         self.kind = kind
@@ -47,8 +56,12 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         self.url = url
         self.urls = urls
         self.token = token
-        self.serviceKey = serviceKey
+        self.tenantKey = tenantKey
         self.appKey = appKey
+        self.targetIdentity = targetIdentity
+        self.targetLibraryId = targetLibraryId
+        self.targetDeviceId = targetDeviceId
+        self.tlsFingerprint = tlsFingerprint
     }
 
     var displayName: String {

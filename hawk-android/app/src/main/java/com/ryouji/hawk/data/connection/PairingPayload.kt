@@ -4,54 +4,41 @@ import com.ryouji.hawk.data.model.HawkJson
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/**
- * 桌面端生成的配对二维码载荷：
- * 局域网 `{ "v": 1, "kind": "lan", "urls": ["..."], "token": "..." }`
- * 广域网 `{ "v": 1, "kind": "remote", "url": "...", "service_key": "...", "key": "..." }`
- */
+/** V2 统一配对：AccessKey + target_identity + LAN/WAN endpoints，不携带 tenant key。 */
 @Serializable
 data class PairingPayload(
     val v: Int,
-    val kind: String,
-    val url: String? = null,
-    val urls: List<String> = emptyList(),
-    val token: String? = null,
-    @SerialName("service_key") val serviceKey: String? = null,
-    val key: String? = null,
+    @SerialName("target_library_id") val targetLibraryId: String? = null,
+    @SerialName("target_device_id") val targetDeviceId: String? = null,
+    @SerialName("target_identity") val targetIdentity: String = "",
+    @SerialName("tls_fingerprint") val tlsFingerprint: String? = null,
+    @SerialName("access_key") val accessKey: String = "",
+    @SerialName("lan_endpoints") val lanEndpoints: List<String> = emptyList(),
+    val wan: WanEndpoint? = null,
 ) {
-    fun toProfile(): ConnectionProfile = when (kind) {
-        "lan" -> {
-            val accessToken = token?.trim().orEmpty()
-            if (accessToken.isEmpty()) throw ConnectionException("配对二维码缺少访问 token")
-            val candidates = (urls + listOfNotNull(url))
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .distinctBy { it.lowercase() }
-            if (candidates.isEmpty()) throw ConnectionException("配对二维码缺少访问地址")
-            ConnectionProfile(
-                kind = ConnectionKind.Lan,
-                url = candidates.first(),
-                urls = candidates,
-                token = accessToken,
-            )
-        }
+    @Serializable
+    data class WanEndpoint(@SerialName("server_url") val serverUrl: String)
 
-        "remote" -> {
-            val remoteUrl = url?.trim().orEmpty()
-            val secret = serviceKey?.trim().orEmpty()
-            val appKeyValue = key?.trim().orEmpty()
-            if (remoteUrl.isEmpty() || secret.isEmpty() || appKeyValue.isEmpty()) {
-                throw ConnectionException("配对二维码缺少访问密钥")
-            }
-            ConnectionProfile(
-                kind = ConnectionKind.Remote,
-                url = remoteUrl,
-                serviceKey = secret,
-                appKey = appKeyValue,
-            )
+    fun toProfile(): ConnectionProfile {
+        if (targetIdentity.isBlank() || accessKey.isBlank()) {
+            throw ConnectionException("配对二维码缺少目标身份或 AccessKey")
         }
-
-        else -> throw ConnectionException("二维码类型不支持")
+        val candidates = lanEndpoints.map { it.trim() }.filter { it.isNotEmpty() }
+        val serverUrl = wan?.serverUrl?.trim().orEmpty()
+        val kind = if (serverUrl.isNotEmpty()) ConnectionKind.Remote else ConnectionKind.Lan
+        val url = if (serverUrl.isNotEmpty()) serverUrl else candidates.firstOrNull().orEmpty()
+        if (url.isEmpty()) throw ConnectionException("配对二维码缺少访问地址")
+        return ConnectionProfile(
+            kind = kind,
+            url = url,
+            urls = candidates,
+            token = accessKey,
+            appKey = accessKey,
+            targetIdentity = targetIdentity,
+            targetLibraryId = targetLibraryId.orEmpty(),
+            targetDeviceId = targetDeviceId.orEmpty(),
+            tlsFingerprint = tlsFingerprint.orEmpty(),
+        )
     }
 
     companion object {
@@ -61,7 +48,7 @@ data class PairingPayload(
             } catch (error: Exception) {
                 throw ConnectionException("这不是 hawk 的配对二维码")
             }
-            if (payload.v != 1) {
+            if (payload.v != 2) {
                 throw ConnectionException("二维码版本不支持，请升级 hawk Android 客户端")
             }
             return payload

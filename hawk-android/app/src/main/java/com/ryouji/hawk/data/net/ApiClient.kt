@@ -31,7 +31,7 @@ class ApiException(
 
 /**
  * hawk REST 客户端：所有响应都是 `{ status, data, error }` 信封。
- * 媒体地址把 token 放查询串（Coil 直接按 URL 取图，不需额外请求头）。
+ * 媒体请求复用同一 Session Cookie，不在 URL 中携带长期凭证。
  */
 class ApiClient(
     val baseUrl: HttpUrl,
@@ -79,6 +79,7 @@ class ApiClient(
         val request = Request.Builder()
             .url(fileUrl(id))
             .header("Accept", "*/*")
+            .header("Cookie", "hawk_session=$token")
             .build()
         return withContext(Dispatchers.IO) {
             try {
@@ -165,7 +166,7 @@ class ApiClient(
     }
 
     private fun mediaUrl(path: String, id: String): String =
-        buildUrl(path, listOf("id" to id, "token" to token)).toString()
+        buildUrl(path, listOf("id" to id)).toString()
 
     private fun parseError(text: String): ApiErrorPayload? = runCatching {
         json.decodeFromString(ErrorEnvelope.serializer(), text).error

@@ -1,17 +1,13 @@
 package com.ryouji.hawk.data.connection
 
+import android.content.Context
 import com.ryouji.hawk.data.model.AppInfo
-import com.ryouji.hawk.data.model.GateRequest
-import com.ryouji.hawk.data.model.GateResponse
-import com.ryouji.hawk.data.model.LoginRequest
-import com.ryouji.hawk.data.model.LoginResponse
-import com.ryouji.hawk.data.model.OpenSessionRequest
 import com.ryouji.hawk.data.model.StartupInfo
-import com.ryouji.hawk.data.model.ViewerSession
 import com.ryouji.hawk.data.net.ApiClient
 import com.ryouji.hawk.data.net.ApiException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /**
  * 连接启动：局域网直接验证 token；广域网走 gate → login → session，
@@ -26,9 +22,59 @@ object ConnectionLauncher {
         val targetLibraryName: String?,
     )
 
-    suspend fun launch(profile: ConnectionProfile): Outcome = when (profile.kind) {
-        ConnectionKind.Lan -> launchLanCandidates(profile)
-        ConnectionKind.Remote -> launchRemote(profile, profile.baseUrl())
+    suspend fun launch(context: Context, profile: ConnectionProfile): Outcome =
+        if (profile.targetIdentity.isNotBlank()) {
+            when (profile.kind) {
+                ConnectionKind.Lan -> launchNativeCandidates(context, profile)
+                ConnectionKind.Remote -> launchNative(context, profile, profile.baseUrl())
+            }
+        } else {
+            when (profile.kind) {
+                ConnectionKind.Lan -> launchLanCandidates(profile)
+                ConnectionKind.Remote -> throw ConnectionException("该连接缺少 target_identity，请重新配对")
+            }
+        }
+
+    private suspend fun launchNativeCandidates(
+        context: Context,
+        profile: ConnectionProfile,
+    ): Outcome {
+        var lastError: Exception? = null
+        for (baseUrl in profile.candidateBaseUrls()) {
+            try {
+                return launchNative(context, profile, baseUrl)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+        throw lastError ?: ConnectionException("没有可用的局域网地址")
+    }
+
+    private suspend fun launchNative(
+        context: Context,
+        profile: ConnectionProfile,
+        baseUrl: okhttp3.HttpUrl,
+    ): Outcome {
+        val connection = RustTransport.connect(
+            configDir = context.filesDir.resolve("transport").apply { mkdirs() }.absolutePath,
+            serverUrl = baseUrl.toString(),
+            targetDeviceId = profile.targetDeviceId,
+            targetIdentity = profile.targetIdentity,
+            accessKey = profile.token,
+        )
+        val api = ApiClient(connection.apiBase.toHttpUrl(), connection.credential)
+        val info: AppInfo = api.get("/api/v1/app/info")
+        if (!info.hasLibrary) throw ConnectionException("远端服务没有打开的素材库")
+        waitUntilReady(api)
+        return Outcome(
+            api = api,
+            info = info,
+            label = profile.displayName,
+            targetDeviceName = null,
+            targetLibraryName = profile.targetLibraryId.ifEmpty { null },
+        )
     }
 
     /** 二维码一次下发所有候选地址；逐个验证，哪个连通用哪个。 */
@@ -64,44 +110,6 @@ object ConnectionLauncher {
             label = profile.displayName,
             targetDeviceName = null,
             targetLibraryName = null,
-        )
-    }
-
-    private suspend fun launchRemote(
-        profile: ConnectionProfile,
-        baseUrl: okhttp3.HttpUrl,
-    ): Outcome {
-        val serviceKey = profile.serviceKey.trim()
-        val appKey = profile.appKey.trim()
-        if (serviceKey.isEmpty()) throw ConnectionException("请填写 service-key")
-        if (appKey.isEmpty()) throw ConnectionException("请填写 hawk-app key")
-
-        val guest = ApiClient(baseUrl, "")
-        val gate: GateResponse = guest.post("/api/v1/viewer/gate", GateRequest(serviceKey))
-        val login: LoginResponse =
-            guest.post("/api/v1/viewer/login", LoginRequest(gate.gateToken, appKey))
-        val api = ApiClient(baseUrl, login.browserToken)
-
-        // 复用或重建查看会话：服务端对存活会话直接复用，对已断开的会话重新撮合。
-        val session: ViewerSession = try {
-            api.post(
-                "/api/v1/viewer/session",
-                OpenSessionRequest(targetDeviceId = login.deviceId, role = "viewer"),
-            )
-        } catch (error: ApiException) {
-            throw ConnectionException(error.message)
-        }
-
-        val info: AppInfo = api.get("/api/v1/app/info")
-        if (!info.hasLibrary) throw ConnectionException("远端服务没有打开的素材库")
-        waitUntilReady(api)
-        val label = session.targetName.ifEmpty { profile.displayName }
-        return Outcome(
-            api = api,
-            info = info,
-            label = label,
-            targetDeviceName = session.targetName.ifEmpty { null },
-            targetLibraryName = session.targetLibraryName.ifEmpty { null },
         )
     }
 

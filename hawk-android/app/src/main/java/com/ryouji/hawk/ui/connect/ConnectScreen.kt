@@ -286,7 +286,7 @@ private fun ProfileList(
         if (profiles.isEmpty()) {
             Text(
                 text = "还没有连接。局域网连接需要桌面端「设置 → 局域网」里的地址和 token；" +
-                    "广域网连接需要服务器地址、service-key 与 hawk-app key。",
+                    "广域网连接需要服务器地址、tenant-key 与 hawk-app key。",
                 color = HawkColors.Fg1,
                 fontSize = 12.sp,
                 modifier = Modifier

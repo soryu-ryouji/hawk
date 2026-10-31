@@ -1,41 +1,6 @@
 import Foundation
 
-/// 广域网查看面登录：`gate` → `login` 换 bt。bt 短时效，401 时由
-/// `SessionCredentials` 用它重换一次，并重新打开查看会话。
-nonisolated struct RemoteAuthenticator: Sendable {
-    let baseURL: URL
-    let serviceKey: String
-    let appKey: String
-
-    struct SignedIn: Sendable {
-        let token: String
-        let deviceId: String
-    }
-
-    func signIn() async throws -> SignedIn {
-        let guest = APIClient(baseURL: baseURL, credentials: SessionCredentials(token: ""))
-        let gate: GateResponse = try await guest.post(
-            "/api/v1/viewer/gate", GateRequest(serviceKey: serviceKey))
-        let login: LoginResponse = try await guest.post(
-            "/api/v1/viewer/login", LoginRequest(gateToken: gate.gateToken, key: appKey))
-        return SignedIn(token: login.browserToken, deviceId: login.deviceId)
-    }
-
-    /// 重换 bt 并把查看会话重新挂到同一目标设备上
-    func reopenSession(deviceId: String) async throws -> String {
-        let signed = try await signIn()
-        let client = APIClient(
-            baseURL: baseURL, credentials: SessionCredentials(token: signed.token))
-        _ =
-            try await client.post(
-                "/api/v1/viewer/session",
-                OpenSessionRequest(targetDeviceId: deviceId, role: "viewer")
-            ) as ViewerSession
-        return signed.token
-    }
-}
-
-/// 连接启动：局域网直接验证 token；广域网走 gate → login → session，拿到 bt 后与 daemon API 同构。
+/// 连接启动：V2 统一使用 hawk-transport 的本机 Loopback 代理；旧手动 LAN 仍可直接验证 token。
 nonisolated enum ConnectionLauncher {
     struct Outcome: Sendable {
         let api: APIClient
@@ -50,12 +15,77 @@ nonisolated enum ConnectionLauncher {
     static func launch(_ profile: ConnectionProfile, progress: Progress? = nil) async throws
         -> Outcome
     {
+        if !profile.targetIdentity.isEmpty {
+            return try await launchNativeCandidates(profile, progress: progress)
+        }
         switch profile.kind {
         case .lan:
             return try await launchLAN(profile, progress: progress)
         case .remote:
-            return try await launchRemote(profile, progress: progress)
+            throw ConnectionError.message("该连接缺少 target_identity，请重新配对")
         }
+    }
+
+    private static func launchNativeCandidates(
+        _ profile: ConnectionProfile,
+        progress: Progress?
+    ) async throws -> Outcome {
+        var lastError: (any Error)?
+        for baseURL in try profile.candidateBaseURLs() {
+            do {
+                return try await launchNative(profile, baseURL: baseURL, progress: progress)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? ConnectionError.message("没有可用的连接地址")
+    }
+
+    private static func launchNative(
+        _ profile: ConnectionProfile,
+        baseURL: URL,
+        progress: Progress?
+    ) async throws -> Outcome {
+        progress?("正在建立端到端加密会话…")
+        let configDir = try transportDirectory()
+        let connection = try RustTransport.connect(
+            configDir: configDir,
+            serverUrl: baseURL.absoluteString,
+            targetDeviceId: profile.targetDeviceId,
+            targetIdentity: profile.targetIdentity,
+            accessKey: profile.token
+        )
+        guard let proxyURL = URL(string: connection.apiBase) else {
+            throw ConnectionError.message("原生代理地址无效")
+        }
+        let api = APIClient(
+            baseURL: proxyURL,
+            credentials: SessionCredentials(token: connection.credential)
+        )
+        let info: AppInfo = try await api.get("/api/v1/app/info")
+        guard info.hasLibrary else {
+            throw ConnectionError.message("远端服务没有打开的素材库")
+        }
+        progress?("正在等待素材库就绪…")
+        try await waitUntilReady(api)
+        return Outcome(
+            api: api,
+            info: info,
+            label: profile.displayName,
+            targetDeviceName: nil,
+            targetLibraryName: profile.targetLibraryId.isEmpty ? nil : profile.targetLibraryId
+        )
+    }
+
+    private static func transportDirectory() throws -> String {
+        let root = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let directory = root.appendingPathComponent("hawk/transport", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        return directory.path
     }
 
     private static func launchLAN(_ profile: ConnectionProfile, progress: Progress?) async throws
@@ -65,8 +95,7 @@ nonisolated enum ConnectionLauncher {
             throw ConnectionError.message("请填写局域网访问 token")
         }
         progress?("正在验证局域网连接…")
-        var lastError: any Error?
-        // 二维码一次下发所有候选地址；客户端逐个验证，哪个连通用哪个。
+        var lastError: (any Error)?
         for baseURL in try profile.candidateBaseURLs() {
             do {
                 let api = APIClient(
@@ -91,54 +120,6 @@ nonisolated enum ConnectionLauncher {
         throw lastError ?? ConnectionError.message("没有可用的局域网地址")
     }
 
-    private static func launchRemote(_ profile: ConnectionProfile, progress: Progress?) async throws
-        -> Outcome
-    {
-        let baseURL = try profile.baseURL()
-        let serviceKey = profile.serviceKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let appKey = profile.appKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !serviceKey.isEmpty else {
-            throw ConnectionError.message("请填写 service-key")
-        }
-        guard !appKey.isEmpty else {
-            throw ConnectionError.message("请填写 hawk-app key")
-        }
-
-        let authenticator = RemoteAuthenticator(
-            baseURL: baseURL, serviceKey: serviceKey, appKey: appKey)
-        progress?("正在登录查看面…")
-        let signed = try await authenticator.signIn()
-
-        let deviceId = signed.deviceId
-        let credentials = SessionCredentials(token: signed.token) {
-            try await authenticator.reopenSession(deviceId: deviceId)
-        }
-        let api = APIClient(baseURL: baseURL, credentials: credentials)
-
-        progress?("正在建立查看会话…")
-        // 复用或重建查看会话：服务端对存活会话直接复用，对已断开的会话重新撮合。
-        let session: ViewerSession
-        do {
-            session = try await api.post(
-                "/api/v1/viewer/session",
-                OpenSessionRequest(targetDeviceId: deviceId, role: "viewer")
-            )
-        } catch let error as APIError {
-            throw ConnectionError.message(error.message)
-        }
-
-        let info: AppInfo = try await api.get("/api/v1/app/info")
-        guard info.hasLibrary else {
-            throw ConnectionError.message("远端服务没有打开的素材库")
-        }
-        progress?("正在等待素材库就绪…")
-        try await waitUntilReady(api)
-        let label = session.targetName.isEmpty ? profile.displayName : session.targetName
-        return Outcome(
-            api: api, info: info, label: label,
-            targetDeviceName: session.targetName, targetLibraryName: session.targetLibraryName)
-    }
-
     /// 初始索引构建中 daemon 只放行 app/startup；400ms 轮询到 ready。
     private static func waitUntilReady(_ api: APIClient) async throws {
         let deadline = Date().addingTimeInterval(30)
@@ -157,7 +138,6 @@ nonisolated enum ConnectionLauncher {
                 if error.isUnauthorized {
                     throw error
                 }
-                // NOT_READY、网络抖动与服务端 5xx 都继续轮询，直到超时
             } catch is CancellationError {
                 throw CancellationError()
             } catch {

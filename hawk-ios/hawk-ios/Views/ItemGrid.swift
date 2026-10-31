@@ -5,6 +5,7 @@ import UIKit
 /// 新入库素材的缩略图由后台异步生成：首次 404 时短暂重试，避免网格留下永久占位。
 struct RemoteImage: View {
     let url: URL?
+    var sessionToken: String = ""
     var maxPixelSize: Int = 1024
     var contentMode: ContentMode = .fill
 
@@ -41,7 +42,7 @@ struct RemoteImage: View {
                 return
             }
             let loaded = await ImageStore.shared.loadWithRetry(
-                for: url, maxPixelSize: maxPixelSize)
+                for: url, maxPixelSize: maxPixelSize, sessionToken: sessionToken)
             guard !Task.isCancelled else { return }
             if let loaded {
                 withAnimation(.easeOut(duration: 0.15)) { image = loaded }
@@ -58,6 +59,7 @@ struct ItemCard: View {
     let cell: GridLayout.Cell
     let title: String
     let thumbnailURL: URL?
+    let sessionToken: String
     let starCount: Int
     let metaHeight: CGFloat
     /// 预览打开期间隐藏缩略图：回位落进空格子（相册行为），否则图片会叠在同一个缩略图上
@@ -71,7 +73,7 @@ struct ItemCard: View {
     private var thumbnail: some View {
         // 用透明度隐藏而不是把 RemoteImage 移出层级：否则回场时视图重建会重新走一遍
         // 「占位 → 加载 → 显示」，落位瞬间会闪一下
-        RemoteImage(url: thumbnailURL)
+        RemoteImage(url: thumbnailURL, sessionToken: sessionToken)
             .opacity(thumbHidden ? 0 : 1)
             .frame(width: cell.width, height: cell.height)
             .overlay(alignment: .topTrailing) {
@@ -112,7 +114,7 @@ struct ItemCard: View {
                 Divider()
                 Button("复制名称", systemImage: "doc.on.doc", action: onCopyName)
             } preview: {
-                RemoteImage(url: thumbnailURL)
+                RemoteImage(url: thumbnailURL, sessionToken: sessionToken)
                     .frame(width: min(cell.width * 1.6, 320), height: min(cell.height * 1.6, 320))
             }
         }
@@ -191,6 +193,7 @@ struct ItemGridView: View {
                                         cell: cell,
                                         title: ItemKey.displayName(item: cell.item, detail: detail),
                                         thumbnailURL: context.api.thumbnailURL(id: cell.item.id),
+                                        sessionToken: context.api.sessionToken,
                                         starCount: store.star(for: cell.item),
                                         metaHeight: metaHeight,
                                         thumbHidden: preview.hidesSource

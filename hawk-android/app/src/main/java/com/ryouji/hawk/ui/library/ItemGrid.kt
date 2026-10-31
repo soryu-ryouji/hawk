@@ -50,6 +50,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.ryouji.hawk.data.library.LibraryStore
@@ -108,6 +110,7 @@ fun ItemGrid(
                                 cell = cell,
                                 detail = state.details[cell.item.key],
                                 thumbnailUrl = store.api.thumbnailUrl(cell.item.id),
+                                sessionToken = store.api.token,
                                 onClick = { onOpen(cell.index) },
                             )
                         }
@@ -155,6 +158,7 @@ private fun ItemCard(
     cell: GridLayout.Cell,
     detail: Item?,
     thumbnailUrl: String?,
+    sessionToken: String,
     onClick: () -> Unit,
 ) {
     val title = displayTitle(cell.item, detail)
@@ -169,6 +173,7 @@ private fun ItemCard(
         Box(modifier = Modifier.width(cell.width.dp).height(cell.height.dp)) {
             ThumbnailImage(
                 url = thumbnailUrl,
+                sessionToken = sessionToken,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
@@ -216,6 +221,7 @@ private fun ItemCard(
 @Composable
 fun ThumbnailImage(
     url: String?,
+    sessionToken: String = "",
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     maxPixelSize: Int? = null,
@@ -243,6 +249,11 @@ fun ThumbnailImage(
     val request = remember(requestUrl, maxPixelSize) {
         ImageRequest.Builder(context)
             .data(requestUrl)
+            .apply {
+                if (sessionToken.isNotEmpty()) {
+                    httpHeaders(NetworkHeaders.Builder().add("Cookie", "hawk_session=$sessionToken").build())
+                }
+            }
             .crossfade(true)
             .apply { if (maxPixelSize != null) size(maxPixelSize, maxPixelSize) }
             .build()

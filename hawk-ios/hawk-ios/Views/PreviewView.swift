@@ -239,6 +239,7 @@ struct PreviewView: View {
         let isCurrent = slot == index
         return ZoomableImage(
             url: context.api.fileURL(id: item.id),
+            sessionToken: context.api.sessionToken,
             aspectRatio: item.aspectRatio,
             zoomController: isCurrent ? zoom : nil,
             onZoomChanged: { value in
@@ -502,7 +503,7 @@ struct PreviewView: View {
     private func prefetchNeighbours(_ value: Int) {
         let neighbours = [value - 1, value + 1].compactMap { store.item(at: $0) }
         let urls = neighbours.compactMap { context.api.fileURL(id: $0.id) }
-        ImageStore.shared.prefetchOriginals(urls)
+        ImageStore.shared.prefetchOriginals(urls, sessionToken: context.api.sessionToken)
     }
 }
 

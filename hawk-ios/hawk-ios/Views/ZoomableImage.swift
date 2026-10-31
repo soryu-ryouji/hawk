@@ -8,6 +8,7 @@ import UIKit
 /// 单指手势落到外层；放大后重新启用 pan，单指变为图片平移，外层通过 `GestureMask.none` 让出。
 struct ZoomableImage: UIViewRepresentable {
     let url: URL?
+    let sessionToken: String
     let aspectRatio: Double
     /// 只有当前页需要：收场前由预览侧无动画归零，避免缩放与 hero 两层变换叠加
     var zoomController: ZoomController?
@@ -18,7 +19,7 @@ struct ZoomableImage: UIViewRepresentable {
         let view = ZoomableScrollView()
         view.onZoomChanged = onZoomChanged
         view.onSingleTap = onSingleTap
-        view.configure(url: url, aspectRatio: aspectRatio)
+        view.configure(url: url, aspectRatio: aspectRatio, sessionToken: sessionToken)
         zoomController?.attach(view)
         return view
     }
@@ -26,7 +27,7 @@ struct ZoomableImage: UIViewRepresentable {
     func updateUIView(_ view: ZoomableScrollView, context: Context) {
         view.onZoomChanged = onZoomChanged
         view.onSingleTap = onSingleTap
-        view.configure(url: url, aspectRatio: aspectRatio)
+        view.configure(url: url, aspectRatio: aspectRatio, sessionToken: sessionToken)
         zoomController?.attach(view)
     }
 
@@ -124,7 +125,7 @@ final class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(url: URL?, aspectRatio: Double) {
+    func configure(url: URL?, aspectRatio: Double, sessionToken: String) {
         let ratio = aspectRatio > 0 ? CGFloat(aspectRatio) : 1
         if ratio != self.aspectRatio {
             self.aspectRatio = ratio
@@ -205,7 +206,7 @@ final class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
         }
         spinner.startAnimating()
         loadTask = Task { [weak self] in
-            let image = await ImageStore.shared.loadWithRetry(for: url, maxPixelSize: 4096)
+            let image = await ImageStore.shared.loadWithRetry(for: url, maxPixelSize: 4096, sessionToken: sessionToken)
             guard !Task.isCancelled, let self else { return }
             self.spinner.stopAnimating()
             if let image {

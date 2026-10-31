@@ -175,7 +175,7 @@ data class ItemListRequest(
 )
 
 @Serializable
-data class GateRequest(@SerialName("service_key") val serviceKey: String)
+data class GateRequest(@SerialName("tenant_key") val tenantKey: String)
 
 @Serializable
 data class LoginRequest(

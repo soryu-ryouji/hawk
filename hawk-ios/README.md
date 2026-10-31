@@ -37,7 +37,7 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 
 - 局域网直连：地址 + 访问 token，验证通过后记忆到 Keychain；二维码可带多个候选地址，客户端逐个探测
 - 广域网：`/viewer/gate` → `/viewer/login` 换 `bt` → `/viewer/session` 打开查看会话；`bt` 过期时 401 自动重换一次并重开会话（无需手动「重新连接」）
-- 扫码导入配对载荷（`v/kind/url/token/service_key/key`）、从剪贴板导入、手动填写；载荷版本不符时明确提示升级
+- 扫码导入配对载荷（`v/kind/url/token/tenant_key/key`）、从剪贴板导入、手动填写；载荷版本不符时明确提示升级
 - 连接阶段可视化（验证 → 登录 → 会话 → 索引就绪）与取消；失败回连接列表并展示服务端 message
 
 ### 浏览
@@ -83,7 +83,7 @@ xcodebuild test -scheme hawk-ios -destination 'platform=iOS Simulator,name=iPhon
 本地冒烟（Debug 构建）可用环境变量预置连接与落点，跳过手动输入：
 
 ```bash
-SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111","kind":"lan","name":"测试素材库","url":"http://127.0.0.1:27372","token":"<viewer-token>","serviceKey":"","appKey":""}' \
+SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111","kind":"lan","name":"测试素材库","url":"http://127.0.0.1:27372","token":"<viewer-token>","tenantKey":"","appKey":""}' \
   xcrun simctl launch booted com.soryu-ryouji.hawk
 ```
 
@@ -99,7 +99,7 @@ SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111
 均在 `#if DEBUG` 内，Release 构建不含这些路径。真机冒烟仍需覆盖：
 
 1. 局域网：桌面端开 `[web]`，App 手填或扫码导入地址 + token，浏览缩略图与预览
-2. 广域网：填服务端地址 + service-key + hawk-app key，进入绑定的在线设备
+2. 广域网：填服务端地址 + tenant-key + hawk-app key，进入绑定的在线设备
 3. 相册保存与分享：保存的是原图而非 1024 缩略图
 4. 锁定视图：输入密码解锁、退出重进需重新解锁
 5. 回前台：切后台再回来，列表刷新且不白屏

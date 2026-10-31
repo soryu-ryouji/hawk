@@ -24,15 +24,15 @@ final class ImageStore {
         originals.totalCostLimit = 320 * 1024 * 1024
     }
 
-    func thumbnail(for url: URL) async -> UIImage? {
-        await image(for: url, maxPixelSize: 1024, cache: thumbnails)
+    func thumbnail(for url: URL, sessionToken: String = "") async -> UIImage? {
+        await image(for: url, maxPixelSize: 1024, cache: thumbnails, sessionToken: sessionToken)
     }
 
-    func original(for url: URL, maxPixelSize: Int = 4096) async -> UIImage? {
-        await image(for: url, maxPixelSize: maxPixelSize, cache: originals)
+    func original(for url: URL, maxPixelSize: Int = 4096, sessionToken: String = "") async -> UIImage? {
+        await image(for: url, maxPixelSize: maxPixelSize, cache: originals, sessionToken: sessionToken)
     }
 
-    private func image(for url: URL, maxPixelSize: Int, cache: NSCache<NSString, UIImage>) async
+    private func image(for url: URL, maxPixelSize: Int, cache: NSCache<NSString, UIImage>, sessionToken: String) async
         -> UIImage?
     {
         let cacheKey = "\(url.absoluteString)#\(maxPixelSize)" as NSString
@@ -47,7 +47,11 @@ final class ImageStore {
         let downloads = session
         let task = Task<UIImage?, Never> {
             do {
-                let (data, response) = try await downloads.data(from: url)
+                var request = URLRequest(url: url)
+                if !sessionToken.isEmpty {
+                    request.setValue("hawk_session=\(sessionToken)", forHTTPHeaderField: "Cookie")
+                }
+                let (data, response) = try await downloads.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
                 else {
                     return nil
@@ -68,13 +72,13 @@ final class ImageStore {
 
     /// 带重试的加载：新入库素材的缩略图/原图可能短暂 404，失败后稍等再试，
     /// 避免网格与预览留下永久占位
-    func loadWithRetry(for url: URL, maxPixelSize: Int) async -> UIImage? {
+    func loadWithRetry(for url: URL, maxPixelSize: Int, sessionToken: String = "") async -> UIImage? {
         for attempt in 0..<3 {
             let image =
                 if maxPixelSize <= 1024 {
-                    await thumbnail(for: url)
+                    await thumbnail(for: url, sessionToken: sessionToken)
                 } else {
-                    await original(for: url, maxPixelSize: maxPixelSize)
+                    await original(for: url, maxPixelSize: maxPixelSize, sessionToken: sessionToken)
                 }
             if Task.isCancelled { return nil }
             if let image { return image }
@@ -86,10 +90,10 @@ final class ImageStore {
     }
 
     /// 预取相邻页的原图（左右滑动前先落缓存），失败静默
-    func prefetchOriginals(_ urls: [URL], maxPixelSize: Int = 4096) {
+    func prefetchOriginals(_ urls: [URL], maxPixelSize: Int = 4096, sessionToken: String = "") {
         for url in urls {
             Task(priority: .utility) {
-                _ = await original(for: url, maxPixelSize: maxPixelSize)
+                _ = await original(for: url, maxPixelSize: maxPixelSize, sessionToken: sessionToken)
             }
         }
     }
