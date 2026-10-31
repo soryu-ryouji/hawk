@@ -11,6 +11,7 @@ import { getMainWindow } from './window';
 import { API_PORT_RANGE, getApiPort, getLanTarget, getLibraryRoot, getRemoteTarget, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
 import { IPC, PORT_IN_USE, type ServerConn, type ServerFailure } from './ipc-contract';
 import { onServerReady, onServerStopped, restoreLanSession, restoreRemoteSession } from './remote';
+import { setResourceAuth } from './resource-auth';
 
 const isDev = !app.isPackaged;
 
@@ -147,6 +148,7 @@ async function notifyReady(): Promise<void> {
       return;
     }
   }
+  setResourceAuth(conn.address, conn.admin_token);
   getMainWindow()?.webContents.send(IPC.serverStarted, conn);
 }
 

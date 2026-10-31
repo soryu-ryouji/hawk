@@ -95,7 +95,7 @@ macOS 关窗后点 Dock 图标经 `activate` 唤起。
 重采样：Windows/Linux 32px、macOS 18px），该文件已列入 electron-builder `files`，
 打包后可用。
 
-token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History API），前端读取后保存在内存，不写 localStorage。
+token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History API），前端读取后保存在内存，不写 localStorage。普通 `fetch` 自带 Bearer；桌面端 `<img>` 与 `EventSource` 由主进程 `resource-auth.ts` 在 `onBeforeSendHeaders` 阶段仅为当前环回 API 来源补充 Bearer，不再把凭证拼进资源 URL。本地启动、daemon 重启及 LAN/WAN 连接切换都会先更新该凭证再通知渲染进程；LAN Web 则使用启动时换发的 Session Cookie。
 
 **preload 白名单**（contextBridge，只暴露这些，与业务数据无关）：
 
@@ -139,7 +139,7 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 
 - 前端 TS 类型从 OpenAPI schema 生成（openapi-typescript），**不手写对接口**
 - `npm run gen:types`：脚本启动 hawk-daemon（临时目录建库）→ 拉 `/openapi/v1.json` → 生成 `web/src/shared/api/schema.d.ts` → 杀掉 server。生成文件入库，schema 变更时重新生成
-- API client 统一处理：Bearer 头、信封解包（`status`/`data`/`error`）、错误码异常、SSE 用 `?token=`（EventSource 无法设请求头）
+- API client 统一处理：Bearer 头、信封解包（`status`/`data`/`error`）、错误码异常；桌面图片/SSE 的 Bearer 由主进程网络层补充，LAN Web 图片/SSE 复用 Session Cookie
 
 ## 前端信息架构
 
@@ -604,6 +604,7 @@ hawk-app/
 │   │   ├── main.ts         # 入口：单实例锁、app 生命周期、模块装配（业务数据一律走 REST，不经 IPC）
 │   │   ├── server.ts       # hawk-daemon 进程管理：二进制解析、端口取自配置（严格绑定，不静默漂移）、拉起/就绪轮询/回收、换库、端口冲突重试
 │   │   ├── window.ts       # 主窗口（macOS 原生红绿灯 / Windows/Linux 无边框）、可配关窗行为（默认退出/托盘驻留） + 系统托盘、退出标志
+│   │   ├── resource-auth.ts# 桌面图片/SSE 资源请求鉴权：按当前环回 API 来源在网络层注入 Bearer，连接切换同步更新
 │   │   ├── app-config.ts   # 用户配置（~/.config/hawk/config.toml，全平台统一，TOML 格式；Electron 会话数据在平台默认 userData，两目录分离）：最近素材库与历史记录、缓存父目录、当前库根会话状态
 │   │   ├── paths.ts        # 路径单一来源：应用配置目录、远程访问应用级配置 remote.toml（daemon --remote-config）
 │   │   ├── cache.ts        # 缓存父目录迁移编排（停 server → 逐库复制 → 删旧 → 写配置 → 重启；任一环节失败不改配置）

@@ -5,6 +5,7 @@ import os from 'node:os';
 import { lanAddresses } from './lan';
 import { getStartedConn } from './server';
 import { getMainWindow } from './window';
+import { setResourceAuth } from './resource-auth';
 import { getLanTarget, getRemoteTarget, getStoredLanPeer, listLanPeers, removeStoredLanPeer, setLanTarget, setRemoteTarget, upsertLanPeer } from './app-config';
 import {
   IPC,
@@ -45,6 +46,8 @@ export function currentDescriptor(): ConnectionDescriptor | null {
 
 /** 推送连接变更：渲染进程统一执行切换重置（abort 请求/SSE → 清 store → 重新注水） */
 function emitConnection(descriptor: ConnectionDescriptor): void {
+  // 先切换网络层凭证，再通知渲染进程注水，避免新连接的首批图片/SSE 沿用旧会话
+  setResourceAuth(descriptor.api_base, descriptor.credential);
   getMainWindow()?.webContents.send(IPC.connectionChanged, descriptor);
 }
 

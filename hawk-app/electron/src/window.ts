@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { APP_DIR, APP_ICON, ELECTRON_DIR } from './paths';
 import { getCloseAction } from './app-config';
 import { IPC, type ServerConn } from './ipc-contract';
+import { setResourceAuth } from './resource-auth';
 
 const isDev = !app.isPackaged;
 
@@ -35,6 +36,7 @@ export function showMainWindow(): void {
 }
 
 export function loadMainPage(conn?: ServerConn): void {
+  setResourceAuth(conn?.address, conn?.admin_token);
   const hash = conn ? `api=${encodeURIComponent(conn.address)}&token=${conn.admin_token}` : '';
   if (isDev) {
     mainWindow?.loadURL(`http://localhost:5173/${hash ? `#${hash}` : ''}`);

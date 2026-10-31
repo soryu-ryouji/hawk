@@ -284,7 +284,10 @@ try {
 
   // 缩略图真实加载（自然宽度 > 0）；共享 runner 上首次索引/缩略图生成远超 2s，轮询等待而非固定 sleep
   const thumbsLoaded = await waitFor(async () => {
-    const ok = await evaljs(`[...document.querySelectorAll('.card img')].every((i) => i.naturalWidth > 0)`);
+    const ok = await evaljs(`(() => {
+      const images = [...document.querySelectorAll('.card img')];
+      return images.length >= 10 && images.every((i) => i.naturalWidth > 0);
+    })()`);
     return ok ? true : null;
   }, 30_000).catch(async () => {
     // 诊断：complete=false 是仍在加载（生成慢）；complete=true 且 naturalWidth=0 是端点报错
@@ -298,8 +301,8 @@ try {
   // ---- 预览浮层：空格展开原图、滚轮缩放、双击复位、预览内 ←→ 切换 ----
   await evaljs(`[...document.querySelectorAll('.card')].find((c) => c.querySelector('.name')?.textContent?.startsWith('big.'))?.click()`);
   await evaljs(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }))`);
-  // carousel 结构（scale=1）：track-row 三段为 前|当前|后，中间子元素恒为当前图
-  const curImg = `.overlay .track-row > *:nth-child(2)`;
+  // carousel 结构（scale=1）：track-row 三段为 前|当前|后；必须等到中间当前图本身，失败占位 div 不算就绪
+  const curImg = `.overlay .track-row > img:nth-child(2)`;
   const overlayReady = await waitFor(async () => evaljs(`!!document.querySelector('${curImg}')`), 5_000);
   check('空格展开预览浮层', overlayReady, true);
   check('预览使用原图端点', await evaljs(`document.querySelector('${curImg}').src.includes('/api/v1/item/file')`), true);
