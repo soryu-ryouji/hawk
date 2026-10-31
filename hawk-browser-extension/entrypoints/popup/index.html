@@ -12,11 +12,6 @@
         <span id="status" class="status"><span class="status-text">…</span></span>
       </header>
 
-      <select id="mode" aria-label="连接方式">
-        <option value="local">本地 hawk</option>
-        <option value="remote">远程 hawk-server</option>
-      </select>
-
       <div id="local-fields">
         <!-- 本地模式零配置：端口由 hawk app 决定、插件自动发现，这里平时不需要填任何东西 -->
         <details id="local-advanced" class="advanced">
@@ -31,26 +26,6 @@
           </label>
           <p class="hint">默认按 127.0.0.1:27371–27400 自动寻找本机 hawk。只有把 hawk 的端口改到这段之外，才需要在这里填。</p>
         </details>
-      </div>
-
-      <div id="remote-fields" hidden>
-        <label>
-          hawk-server 域名
-          <input id="remote-url" type="text" placeholder="https://hawk.example.com" autocomplete="off" spellcheck="false" />
-        </label>
-        <label>
-          服务密钥（service-key）
-          <input id="service-key" type="password" placeholder="tenant add 生成的 hs_ 密钥" autocomplete="off" spellcheck="false" />
-        </label>
-        <label>
-          访问密钥（须带写权限）
-          <input id="remote-key" type="password" placeholder="hawk 设置 → 远程中签发" autocomplete="off" spellcheck="false" />
-        </label>
-        <label>
-          保存到素材库
-          <select id="target"></select>
-        </label>
-        <button id="refresh-targets" class="secondary" type="button">验证并查看素材库</button>
       </div>
 
       <div class="actions">

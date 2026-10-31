@@ -10,7 +10,7 @@ import {
   type FolderNode,
 } from '../lib/api';
 import { notify } from '../lib/notify';
-import { getSettings, targetLabel, type HawkSettings } from '../lib/settings';
+import { getSettings, type HawkSettings } from '../lib/settings';
 
 const MENU_ID = 'hawk-save-image';
 const SAVE_MESSAGE = 'hawk:save-image';
@@ -32,9 +32,6 @@ let foldersPending: { key: string; promise: Promise<FoldersResult> } | null = nu
 /** 目标标识 + 展示名：最近使用统计与文件夹树缓存按目标隔离（本机切库/切到远端库不串用），
  *  展示名同时给拖拽面板标题用（跟随远端库时告诉用户存进的是哪台设备） */
 async function targetInfo(settings: HawkSettings): Promise<{ key: string; label: string }> {
-  if (settings.mode === 'remote') {
-    return { key: `remote:${settings.remoteUrl}:${settings.targetDeviceId}`, label: targetLabel(settings) };
-  }
   const target = await resolveLocalTarget();
   return target.kind === 'remote'
     ? { key: `follow:${target.label}`, label: `跟随本地 hawk · ${target.label}` }
