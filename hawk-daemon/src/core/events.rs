@@ -48,8 +48,8 @@ impl LibraryEvents {
     pub const UPDATED: &'static str = "library.updated";
 }
 
-/// 局域网访问权限变更事件：目标端调整某把 peer key 的 write / 删除设备 / 保存网站设置后广播。
-/// 载荷不含任何凭证，收到后客户端重新请求 app/info 刷新自身读写能力。
+/// 统一 AccessKey 与访问权限变更事件：LAN 设备密钥、远程密钥或网站设置增改删后广播。
+/// 载荷不含任何凭证，客户端收到后刷新 app/info 角色与各设置页的密钥缓存。
 pub struct LanEvents;
 
 impl LanEvents {

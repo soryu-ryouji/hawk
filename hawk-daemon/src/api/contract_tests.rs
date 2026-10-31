@@ -430,6 +430,51 @@ async fn lan_access_key_works_across_channels() {
     assert_eq!(call_auth(peer_router, "web-token").await, StatusCode::OK);
 }
 
+/// 远程设置与 LAN 设置共用 AccessKey：远程密钥面的增改删也广播同一刷新事件。
+#[tokio::test]
+async fn remote_key_mutations_publish_access_changed() {
+    let app = test_app("remote-key-events");
+    let mut rx = app.state.bus.subscribe();
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        "/api/v1/remote/keys",
+        Some(json!({ "label": "事件测试", "role": "viewer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let created: Value = serde_json::from_slice(&bytes).unwrap();
+    let key_id = created["data"]["id"].as_str().unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.kind, crate::core::events::LanEvents::ACCESS_CHANGED);
+
+    let path = format!("/api/v1/remote/keys/{key_id}");
+    let (status, _) = call_json(
+        &app.router,
+        "PATCH",
+        &path,
+        Some(json!({ "role": "importer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.kind, crate::core::events::LanEvents::ACCESS_CHANGED);
+
+    let (status, _) = call_json(&app.router, "DELETE", &path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.kind, crate::core::events::LanEvents::ACCESS_CHANGED);
+}
+
 /// 无本地库查看方不携带 reverse：目标端只签发正向访问密钥，不返回回连设备。
 #[tokio::test]
 async fn pair_request_allows_one_way_without_reverse_profile() {

@@ -491,6 +491,8 @@ async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
     target_device_id: profile.target_device_id ?? '',
     target_identity: profile.target_identity,
     access_key: profile.peer_key,
+    // LAN 始终使用配对记录中的目标地址；hawk-server 只负责可选的 WAN 接入。
+    lan_url: profile.url,
   });
   // 切到局域网直连前，结束本地 daemon 上可能存在的远程会话（失败不阻断）
   if (remoteConn) {

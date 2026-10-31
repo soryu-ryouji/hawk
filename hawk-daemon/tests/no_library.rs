@@ -314,3 +314,76 @@ async fn no_library_mode_serves_remote_plane_only() {
     );
     assert_eq!(resp["error"]["code"], json!("NO_LIBRARY"));
 }
+
+/// LAN 配对后只携带目标 lan_url：即使源端完全未配置 hawk-server，也能建立会话并登录。
+#[tokio::test]
+async fn lan_access_connect_does_not_require_hawk_server() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let state_a = no_library_state(&dir_a);
+    let (_, access_key) = state_a
+        .remote
+        .keys
+        .create(
+            "test-library",
+            "LAN 查看方",
+            hawk_daemon::core::access::Role::Viewer,
+            None,
+        )
+        .unwrap();
+    let identity_a =
+        Identity::load_or_create(dir_a.path().join("remote").to_str().unwrap()).unwrap();
+    let plane_a = DataPlane::bind(&identity_a, 0, None, build_router(state_a.clone()))
+        .await
+        .unwrap();
+    *state_a.remote.endpoint_slot().write().unwrap() = Some(plane_a);
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let lan_port = listener.local_addr().unwrap().port();
+    let target = tokio::spawn(async move {
+        axum::serve(listener, build_router_for(state_a, ListenerMode::Peer))
+            .await
+            .unwrap();
+    });
+    let lan_url = format!("http://127.0.0.1:{lan_port}");
+
+    let dir_b = tempfile::tempdir().unwrap();
+    let state_b = no_library_state(&dir_b);
+    assert!(state_b.remote.remote_config().current().url.is_empty());
+    let source = build_router(state_b.clone());
+    let (status, body) = call(
+        &source,
+        "POST",
+        "/api/v1/remote/access-connect",
+        Some(json!({
+            "target_device_id": "d_lan_target",
+            "target_identity": identity_a.endpoint_id,
+            "access_key": access_key,
+            "lan_url": lan_url,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let proxy_port = body["data"]["proxy_port"].as_u64().unwrap();
+    let session_token = body["data"]["session_token"].as_str().unwrap();
+    let client = reqwest::Client::new();
+    let resp: Value = client
+        .get(format!("http://127.0.0.1:{proxy_port}/api/v1/app/info"))
+        .bearer_auth(session_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["status"], "success", "{resp}");
+    assert_eq!(resp["data"]["role"], "viewer");
+
+    state_b
+        .remote
+        .sessions
+        .disconnect(&client, &lan_url, "")
+        .await;
+    target.abort();
+}

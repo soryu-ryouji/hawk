@@ -141,6 +141,8 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     error.value = null;
     try {
       await api.deleteLanDeviceKey(id);
+      // LAN Web / 原生 Peer / 远程设置共用同一 AccessKey 注册表，本地两个视图同步移除。
+      keys.value = keys.value.filter((key) => key.id !== id);
       peerKeys.value = peerKeys.value.filter((key) => key.id !== id);
       return true;
     } catch (e) {

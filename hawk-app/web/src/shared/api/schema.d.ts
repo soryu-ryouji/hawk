@@ -978,7 +978,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** AccessKey-only 原生连接：server 仅编排，目标身份钉扎后在加密隧道内登录。 */
+        /** AccessKey 原生连接：LAN 使用目标地址，WAN 使用 hawk-server 编排；目标身份钉扎后在隧道内登录。 */
         post: operations["create_access_session"];
         delete?: never;
         options?: never;
@@ -1326,6 +1326,8 @@ export interface components {
         AccessConnectBody: {
             /** @description 仅经本机 Loopback 代理送入目标加密隧道，不发送给 hawk-server。 */
             access_key: string;
+            /** @description LAN 配对记录中的目标地址；提供时直接走 LAN rendezvous，无需配置 hawk-server。 */
+            lan_url?: string | null;
             target_device_id: string;
             /** @description 配对时带外取得的目标 iroh 公钥；server 返回的其他身份一律拒绝。 */
             target_identity: string;

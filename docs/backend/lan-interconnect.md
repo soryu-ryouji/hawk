@@ -102,6 +102,7 @@ remoteConn（广域网会话代理）
 - `kind` 字段区分 `local | remote | lan`；`remote` 布尔表示「非本机连接」，用于统一的来源展示与权限提示
 - 切换时前端收到 `connection-changed`，执行统一的 abort 请求/SSE → 清 store → `GET /app/info` → 重注水
 - 已配对设备保存在 `~/.config/hawk/config.toml` 的 `lanPeers`（含 URL 与 token，渲染层只拿脱敏 profile）
+- 建立连接时主进程把配对记录中的目标 URL 作为 `lan_url` 传给 `/api/v1/remote/access-connect`，直接走目标 daemon 的 LAN rendezvous；是否配置 hawk-server 不影响 LAN。只有 WAN 设备注册、设备列表与广域网会话才需要服务器配置
 - `lanTarget` 记录上次浏览的局域网设备；daemon 就绪后先尝试恢复，失败回退本地库
 - 主进程每 5 秒对当前目标 `GET /app/info` 健康检查；连续两次失败视为连接死亡，无声回切本地库并清除自动恢复目标（记录仍保留，可手动重连）
 - 显式断开、切本地库或选择其它连接时清理 `lanTarget`

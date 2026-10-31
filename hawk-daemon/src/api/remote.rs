@@ -214,9 +214,12 @@ struct AccessConnectBody {
     target_identity: String,
     /// 仅经本机 Loopback 代理送入目标加密隧道，不发送给 hawk-server。
     access_key: String,
+    /// LAN 配对记录中的目标地址；提供时直接走 LAN rendezvous，无需配置 hawk-server。
+    #[serde(default)]
+    lan_url: Option<String>,
 }
 
-/// AccessKey-only 原生连接：server 仅编排，目标身份钉扎后在加密隧道内登录。
+/// AccessKey 原生连接：LAN 使用目标地址，WAN 使用 hawk-server 编排；目标身份钉扎后在隧道内登录。
 #[utoipa::path(
     post,
     path = "/api/v1/remote/access-connect",
@@ -231,14 +234,19 @@ async fn create_access_session(
 ) -> Result<Json<Envelope<ActiveSessionDto>>, ApiError> {
     require_manage(&access)?;
     let cfg = state.remote.remote_config().current();
-    if cfg.url.is_empty() {
+    let base = body
+        .lan_url
+        .as_deref()
+        .unwrap_or(&cfg.url)
+        .trim_end_matches('/')
+        .to_string();
+    if base.is_empty() {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
             axum::http::StatusCode::BAD_REQUEST,
-            "未配置 hawk-server 地址",
+            "未配置局域网目标地址或 hawk-server 地址",
         ));
     }
-    let base = cfg.url.trim_end_matches('/').to_string();
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -813,6 +821,10 @@ async fn create_key(
             body.custom.as_deref(),
         )
         .map_err(|e| ApiError::new(codes::INVALID_PARAM, axum::http::StatusCode::BAD_REQUEST, e))?;
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
     let identity = crate::remote::identity::Identity::load_or_create(
         state.remote.remote_config().identity_dir(),
     )
@@ -877,6 +889,10 @@ async fn patch_key(
                 "密钥不存在",
             )
         })?;
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
     Ok(Json(Envelope::ok(PatchKeyDto {
         key: key_dto(&entry),
     })))
@@ -910,6 +926,10 @@ async fn delete_key(
             "密钥不存在",
         ));
     }
+    state.bus.publish(
+        crate::core::events::LanEvents::ACCESS_CHANGED,
+        serde_json::json!({ "changed": true }),
+    );
     Ok(super::envelope::success())
 }
 

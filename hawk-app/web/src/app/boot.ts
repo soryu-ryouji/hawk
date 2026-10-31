@@ -11,6 +11,8 @@ import { useStartup, type ServerFailure } from './startup';
 import { useLibraryStore } from '@/domains/library';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import { usePreviewStore } from '@/domains/preview';
+import { useRemoteStore } from '@/domains/remote';
+import { useLanSettingsStore } from '@/domains/settings';
 
 export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'remote' | 'error';
 
@@ -29,6 +31,8 @@ export function useBoot() {
     const store = useLibraryStore();
     const taxonomy = useTaxonomyStore();
     const preview = usePreviewStore();
+    const remote = useRemoteStore();
+    const lanSettings = useLanSettingsStore();
     try {
       // 换库/断开远程/应用设置重启复用本入口：先清上一库的预览/编辑浮层会话状态（跨 store 会话
       // 清理由装配层编排，store 之间不互相调用初始化逻辑），再按连接形态分流
@@ -72,6 +76,11 @@ export function useBoot() {
         onLocksChanged: (locks) => store.applyEvent('locks.changed', locks),
         onLanAccessChanged: () => {
           void store.refreshAccess();
+          // AccessKey 在远程与 LAN 设置页共用；仅本机 admin 可读取两份管理面缓存。
+          if (hasShell && store.role === 'admin') {
+            void remote.refreshKeys();
+            void lanSettings.load(true);
+          }
         },
         onReconnect: () => {
           void store.reloadSkeleton();

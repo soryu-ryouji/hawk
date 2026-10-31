@@ -7,6 +7,13 @@
             "description": "仅经本机 Loopback 代理送入目标加密隧道，不发送给 hawk-server。",
             "type": "string"
           },
+          "lan_url": {
+            "description": "LAN 配对记录中的目标地址；提供时直接走 LAN rendezvous，无需配置 hawk-server。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "target_device_id": {
             "type": "string"
           },
@@ -6695,7 +6702,7 @@
             "description": "OK"
           }
         },
-        "summary": "AccessKey-only 原生连接：server 仅编排，目标身份钉扎后在加密隧道内登录。",
+        "summary": "AccessKey 原生连接：LAN 使用目标地址，WAN 使用 hawk-server 编排；目标身份钉扎后在隧道内登录。",
         "tags": [
           "remote"
         ]

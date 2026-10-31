@@ -540,6 +540,7 @@ ApiError 统一在 store action 捕获 → `showToast`（错误码 → 中文文
 | `folder.changed` | 防抖重拉文件夹树（reason 恒为 external，忽略取值）；骨架成员与分类/标签计数无关，不触发 |
 | `library.updated` | 负载为完整库信息（改库显示名）：就地替换 store.library，页面标题经 watch 同步 |
 | `global_filter.changed` | 负载为完整隐藏集快照：两侧状态同步（applyGlobalFilter）→ 重查骨架 + 防抖刷新计数——隐藏集变更影响全局类视图（全部/根目录/未分类/未标签）成员 |
+| `lan.access.changed` | 刷新 `app/info` 角色；本机 admin 同步重拉 remote/lanSettings 两份统一 AccessKey 缓存，任一页签发、改权限或删除后另一页立即一致 |
 | 任何 item 事件 | 防抖刷新文件夹树与分类/标签计数（folder.changed 已覆盖目录结构变化，此项兜底文件夹内 item 计数变动） |
 
 断线自动重连（EventSource 原生行为），重连后 reloadSkeleton + refreshFolders 全量对齐。

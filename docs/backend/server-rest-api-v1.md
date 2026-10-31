@@ -289,7 +289,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 - `GET /api/v1/app/lan/clients`：目标端本机 admin 查看当前活跃直连设备（key_id、label、last_seen_ms、online、write，以及配对密钥持久化的 peer_id/library_name/url）；鉴权成功后按 peer key 记录最近活跃时间，30 秒窗口内视为在线。
 - POST /api/v1/app/lan/device-keys / PATCH / DELETE：设备访问密钥的独立管理面，只操作 [web].peer_keys，不要求存在网站访问密钥，也不会改变网站开关与 [web].keys。配对源端创建同名反向密钥、目标端审批创建访问密钥、设置面板切换权限/撤销设备均走这里。桌面配对创建的设备密钥会持久化可选的 `peer_id` / `library_name` / `url` 元数据，使服务提供方即使尚未加载对方回连 profile，也能显示对方计算机名、库名与直连地址。
 
-权限/设备变更通过 SSE `lan.access.changed` 通知已连接客户端重新读取 `app/info`；旧的一次性配对码端点已移除。
+LAN 设备密钥与 `/remote/keys` 的创建、权限变更、删除均通过 SSE `lan.access.changed` 通知客户端；客户端重新读取 `app/info` 及两处设置页的 AccessKey 缓存。旧的一次性配对码端点已移除。
 
 ## remote
 
@@ -306,7 +306,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 | GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
 | POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
 | DELETE | `/api/v1/remote/session` | 断开当前远程会话（admin 限定，幂等） |
-| POST | `/api/v1/remote/access-connect` | AccessKey-only 原生连接：rendezvous + target_identity 钉扎 + 隧道内登录 |
+| POST | `/api/v1/remote/access-connect` | AccessKey 原生连接：`lan_url` 存在时走目标 LAN rendezvous，否则走 hawk-server；target_identity 钉扎 + 隧道内登录 |
 | POST | `/api/v1/remote/access-session` | AccessKey rendezvous 的隧道内登录（未认证隧道仅此端点可用） |
 | POST | `/api/v1/remote/lease` | 已认证隧道续期，保持原角色并延长目标租约 |
 | POST | `/api/v1/rendezvous` | 原生 LAN AccessKey rendezvous，仅编排 iroh，不传输素材凭证 |

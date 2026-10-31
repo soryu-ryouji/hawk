@@ -13,7 +13,9 @@ const env = vi.hoisted(() => ({
   errorCb: null as null | ((e: { message: string; code?: string; port?: number }) => void),
   pullError: null as null | { message: string; code?: string; port?: number },
   clearStoredCredential: vi.fn(),
-  connectEvents: vi.fn(() => vi.fn()),
+  remoteKeys: vi.fn(() => Promise.resolve({ keys: [] })),
+  lanSettingsLoad: vi.fn(() => Promise.resolve()),
+  connectEvents: vi.fn((..._args: unknown[]) => vi.fn()),
 }));
 
 vi.mock('@/shared/api/client', async (importOriginal) => {
@@ -41,6 +43,7 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock('@/shared/api/endpoints', () => ({ api: apiMocks }));
 
 vi.mock('@/shared/api/events', () => ({ connectEvents: env.connectEvents }));
+vi.mock('@/domains/settings', () => ({ useLanSettingsStore: () => ({ load: env.lanSettingsLoad }) }));
 
 vi.mock('@/shared/lib/platform', () => ({
   get hasShell() {
@@ -62,6 +65,7 @@ vi.mock('@/shared/lib/platform', () => ({
     getServerConn: () => Promise.resolve(null),
     getServerError: () => Promise.resolve(env.pullError),
     remoteGetConnection: () => Promise.resolve(null),
+    remoteKeys: env.remoteKeys,
     onConnectionChanged: () => () => {},
     quitApp: () => {},
   },
@@ -98,6 +102,8 @@ beforeEach(() => {
   env.errorCb = null;
   env.pullError = null;
   env.clearStoredCredential.mockClear();
+  env.remoteKeys.mockClear();
+  env.lanSettingsLoad.mockClear();
   env.connectEvents.mockClear();
   for (const fn of Object.values(apiMocks)) fn.mockClear();
   apiMocks.startupStatus.mockImplementation(() => Promise.resolve({ status: 'ready' as const }));
@@ -172,6 +178,19 @@ describe('启动相位机', () => {
     expect(apiMocks.appInfo).toHaveBeenCalledTimes(1); // runBoot 预检结果直接交给 store.init，不重复请求
     expect(env.connectEvents).toHaveBeenCalledTimes(1);
     expect(boot.phase.value).toBe('ready');
+  });
+
+  it('lan.access.changed：同步刷新远程与 LAN 设置页的统一 AccessKey 缓存', async () => {
+    const boot = mountBoot();
+    await boot.runBoot();
+    expect(boot.phase.value).toBe('ready');
+    const handlers = env.connectEvents.mock.calls[0][0] as import('@/shared/api/events').EventHandlers;
+
+    handlers.onLanAccessChanged();
+    await flush();
+
+    expect(env.remoteKeys).toHaveBeenCalledTimes(1);
+    expect(env.lanSettingsLoad).toHaveBeenCalledWith(true);
   });
 
   it('远程查看模式（has_library=false）：转远程查看屏，不拉库数据', async () => {
