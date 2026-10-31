@@ -81,11 +81,11 @@ fn test_proxy_ctx(
         conn: Arc::new(std::sync::RwLock::new(conn)),
         session_token: token.to_string(),
         session_id: session_id.to_string(),
-        role: if writable {
+        role: std::sync::RwLock::new(if writable {
             Role::Importer
         } else {
             Role::Viewer
-        },
+        }),
     })
 }
 
@@ -117,7 +117,7 @@ async fn tunnel_carries_http_with_viewer_marker() {
     let plane_a = DataPlane::bind(&identity_a, 0, None, test_router())
         .await
         .unwrap();
-    plane_a.allow_session("s_tunnel", id_b, Role::Viewer);
+    plane_a.allow_session("s_tunnel", "d_b", id_b, Role::Viewer);
 
     // B 侧：拨号（直连地址取 A 的上报地址）
     let plane_b = bind_b(&identity_b).await;
@@ -143,11 +143,19 @@ async fn tunnel_carries_http_with_viewer_marker() {
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "hi from A");
 
-    // 查询参数 token 同样放行（EventSource/<img> 场景）
+    // Cookie 也可携带同一会话；URL 查询参数不再作为凭证。
     let resp = client
         .get(format!(
             "http://127.0.0.1:{proxy_port}/hello?token=session-token"
         ))
+        .header("cookie", "hawk_session=session-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/hello"))
+        .bearer_auth("session-token")
         .send()
         .await
         .unwrap();
@@ -165,8 +173,9 @@ async fn tunnel_carries_http_with_viewer_marker() {
     // 隧道端拦截 token 发现端点（协议安全模型）
     let resp = client
         .get(format!(
-            "http://127.0.0.1:{proxy_port}/api/v1/app/admin-token?token=session-token"
+            "http://127.0.0.1:{proxy_port}/api/v1/app/admin-token"
         ))
+        .bearer_auth("session-token")
         .send()
         .await;
     match resp {
@@ -196,7 +205,7 @@ async fn writable_session_forwards_writes_and_read_only_proxy_rejects() {
     let plane_a = DataPlane::bind(&identity_a, 0, None, test_router())
         .await
         .unwrap();
-    plane_a.allow_session("s_write", id_b, Role::Importer);
+    plane_a.allow_session("s_write", "d_b", id_b, Role::Importer);
 
     let plane_b = bind_b(&identity_b).await;
     let addr_b =
@@ -262,7 +271,7 @@ async fn await_first_conn_times_out_and_succeeds() {
         .unwrap();
 
     // 放行但无请求：超时返回 false（接受会话后的清理路径）
-    plane_a.allow_session("s_first", id_b, Role::Viewer);
+    plane_a.allow_session("s_first", "d_b", id_b, Role::Viewer);
     assert!(
         !plane_a
             .await_first_conn("s_first", Duration::from_millis(100))
@@ -318,8 +327,8 @@ async fn sessions_with_same_identity_are_isolated() {
     let plane_a = DataPlane::bind(&identity_a, 0, None, test_router())
         .await
         .unwrap();
-    plane_a.allow_session("s_a", id_b, Role::Viewer);
-    plane_a.allow_session("s_b", id_b, Role::Viewer);
+    plane_a.allow_session("s_a", "d_b", id_b, Role::Viewer);
+    plane_a.allow_session("s_b", "d_b", id_b, Role::Viewer);
 
     let plane_b = bind_b(&identity_b).await;
     let endpoint_b = plane_b.endpoint().unwrap();
@@ -396,7 +405,7 @@ async fn tunnel_rejects_unknown_identity() {
         .unwrap();
     // 放行的是另一台设备：B 的身份不在放行集合
     let id_other: iroh::EndpointId = iroh::SecretKey::generate().public();
-    plane_a.allow_session("s_wrong", id_other, Role::Viewer);
+    plane_a.allow_session("s_wrong", "d_other", id_other, Role::Viewer);
 
     let plane_b = bind_b(&identity_b).await;
     let addr =
@@ -505,7 +514,7 @@ async fn session_orchestration_end_to_end() {
     let plane_a = DataPlane::bind(&identity_a, 0, None, test_router())
         .await
         .unwrap();
-    plane_a.allow_session("s_1", id_b, Role::Viewer);
+    plane_a.allow_session("s_1", "d_b", id_b, Role::Viewer);
 
     let base = spawn_hub(&plane_a, &identity_a.endpoint_id).await;
     let http = reqwest::Client::new();
@@ -550,7 +559,7 @@ async fn session_rebuilds_in_place_when_connection_dies() {
     let plane_a = DataPlane::bind(&identity_a, 0, None, test_router())
         .await
         .unwrap();
-    plane_a.allow_session("s_1", id_b, Role::Viewer);
+    plane_a.allow_session("s_1", "d_b", id_b, Role::Viewer);
     let base = spawn_hub(&plane_a, &identity_a.endpoint_id).await;
 
     let http = reqwest::Client::new();
@@ -610,7 +619,7 @@ async fn relay_session_end_to_end() {
     )
     .await
     .unwrap();
-    plane_a.allow_session("s_1", id_b, Role::Viewer);
+    plane_a.allow_session("s_1", "d_b", id_b, Role::Viewer);
     let plane_b = DataPlane::bind(
         &identity_b,
         0,

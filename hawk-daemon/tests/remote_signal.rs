@@ -3,24 +3,22 @@
 //! mock 只复刻协议端点的最小行为，不复用 hawk-server 代码（两 crate 零代码共享）。
 
 use axum::extract::ws::Message;
-use axum::extract::{Query, State, WebSocketUpgrade};
+use axum::extract::{State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use hawk_daemon::core::access::Role;
 use hawk_daemon::core::config::LibraryConfig;
 use hawk_daemon::core::paths::LibraryPaths;
 use hawk_daemon::remote::config::{RemoteConfigStore, RemoteSettings};
 use hawk_daemon::remote::{RemoteState, Supervisor};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// mock 服务端的准入凭证（新模型下即 service-key）
-const KEY: &str = "hs_test-service-key";
+/// mock 服务端的准入凭证（新模型下即 tenant-key）
+const KEY: &str = "hs_test-tenant-key";
 
 /// 串行化数据面测试：hot_restart 使用固定 UDP 端口，并发测试的 quic_port=0 可能抢占它
 static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -33,8 +31,6 @@ struct MockHub {
     register_count: Arc<AtomicU64>,
     /// mock 服务端推送写会话请求（否则默认只读）
     write_request: Arc<std::sync::atomic::AtomicBool>,
-    /// session.request 携带的查看者凭证（sha256(key)）；None = app 间会话
-    credential: Arc<Mutex<Option<String>>>,
     /// 模拟服务端设备表丢失：心跳一律 404
     lost_devices: Arc<std::sync::atomic::AtomicBool>,
     /// 模拟服务端设备表丢失（控制通道面）：WS 握手 404 并踢掉已连接通道
@@ -86,12 +82,11 @@ async fn spawn_mock_hub() -> (String, MockHub) {
         ..MockHub::default()
     };
     let app = Router::new()
+        .route("/api/v1/tenant/session", post(tenant_session))
+        .route("/api/v1/device/challenge", post(device_challenge))
+        .route("/api/v1/device/session", post(device_session))
         .route("/api/v1/devices", post(register).get(devices))
         .route("/api/v1/devices/heartbeat", post(heartbeat))
-        .route(
-            "/api/v1/devices/{device_id}/keys",
-            axum::routing::put(sync_keys),
-        )
         .route("/api/v1/sessions/{session_id}/accept", post(accept))
         .route("/api/v1/sessions/{session_id}/reject", post(reject))
         .route("/api/v1/ws", get(ws_channel))
@@ -104,11 +99,41 @@ async fn spawn_mock_hub() -> (String, MockHub) {
     (format!("http://{addr}"), hub)
 }
 
+const TENANT_SESSION: &str = "tenant_session";
+const DEVICE_SESSION: &str = "device_session";
+
 fn authorized(headers: &axum::http::HeaderMap) -> bool {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        == Some(&format!("Bearer {KEY}")[..])
+        == Some(&format!("Bearer {DEVICE_SESSION}")[..])
+}
+
+fn tenant_authorized(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        == Some(&format!("Bearer {TENANT_SESSION}")[..])
+}
+
+async fn tenant_session(Json(body): Json<Value>) -> Response {
+    if body["tenant_key"] != KEY {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"status":"error","error":{"message":"访问密钥无效"}})),
+        )
+            .into_response();
+    }
+    Json(json!({"status":"success","data":{"session_token":TENANT_SESSION}})).into_response()
+}
+
+async fn device_challenge() -> Response {
+    Json(json!({"status":"success","data":{"nonce":"nonce_test","expires_at_ms":42}}))
+        .into_response()
+}
+
+async fn device_session() -> Response {
+    Json(json!({"status":"success","data":{"session_token":DEVICE_SESSION}})).into_response()
 }
 
 async fn register(
@@ -116,7 +141,7 @@ async fn register(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    if !authorized(&headers) {
+    if !tenant_authorized(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"status":"error","error":{"message":"访问密钥无效"}})),
@@ -201,18 +226,9 @@ async fn accept(
     Json(json!({"status":"success"})).into_response()
 }
 
-/// mock 的 key 映射同步端点：收下即成功（只验证鉴权）
-async fn sync_keys(headers: axum::http::HeaderMap) -> Response {
-    if !authorized(&headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    Json(json!({"status":"success","data":{"synced":0}})).into_response()
-}
-
 async fn ws_channel(
     State(hub): State<MockHub>,
     headers: axum::http::HeaderMap,
-    Query(query): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> Response {
     // 鉴权同 REST：Authorization 头（新协议 key 不走 URL）
@@ -226,7 +242,7 @@ async fn ws_channel(
         )
             .into_response();
     }
-    let device_id = query.get("device_id").cloned().unwrap_or_default();
+    let device_id = "d_1".to_string();
     hub.ws_connects.fetch_add(1, Ordering::Relaxed);
     ws.on_upgrade(move |mut socket| async move {
         let hello = json!({"type":"hello","device_id":device_id,"server_time_ms":0});
@@ -242,7 +258,6 @@ async fn ws_channel(
             "from": {"device_id":"d_other","name":"对方","library_name":"库","endpoint_id": hub.peer_endpoint_id},
             "mode": "direct",
             "role": if hub.write_request.load(Ordering::Relaxed) { "importer" } else { "viewer" },
-            "credential": *hub.credential.lock().unwrap(),
         });
         socket
             .send(Message::Text(request.to_string().into()))
@@ -307,7 +322,8 @@ async fn wait_state(supervisor: &Supervisor, want: RemoteState, timeout: Duratio
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "等待状态 {want:?} 超时"
+            "等待状态 {want:?} 超时（当前 {:?}）",
+            supervisor.snapshot()
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -322,7 +338,7 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: KEY.to_string(),
+            tenant_key: KEY.to_string(),
             quic_port: 0, // OS 分配，避免测试间端口冲突
             allow_import: false,
             relay: false,
@@ -344,7 +360,14 @@ async fn signal_registers_heartbeats_and_accepts_sessions() {
     // 注册 + WSS 连接 → Online；首次心跳即刻发出
     wait_state(&supervisor, RemoteState::Online, Duration::from_secs(10)).await;
     assert_eq!(supervisor.snapshot().device_id.as_deref(), Some("d_1"));
-    assert!(hub.heartbeat_count() >= 1);
+    let heartbeat_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while hub.heartbeat_count() == 0 {
+        assert!(
+            tokio::time::Instant::now() < heartbeat_deadline,
+            "首次心跳超时"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
     // 设备身份落盘（含服务端分配的 device_id）
     let identity =
@@ -370,7 +393,7 @@ async fn signal_reports_fatal_on_invalid_key() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: "wrong-key".to_string(),
+            tenant_key: "wrong-key".to_string(),
             quic_port: 0,
             allow_import: false,
             relay: false,
@@ -411,7 +434,7 @@ async fn signal_re_registers_when_server_forgets_device() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: KEY.to_string(),
+            tenant_key: KEY.to_string(),
             quic_port: 0,
             allow_import: false,
             relay: false,
@@ -481,7 +504,7 @@ async fn hot_restart_rebinds_quic_port() {
     let remote = |url: &str| RemoteSettings {
         enabled: true,
         url: url.to_string(),
-        service_key: KEY.to_string(),
+        tenant_key: KEY.to_string(),
         quic_port: port,
         allow_import: false,
         relay: false,
@@ -525,7 +548,7 @@ async fn hot_restart_rebinds_quic_port() {
         .update(&RemoteSettings {
             enabled: false,
             url: String::new(),
-            service_key: String::new(),
+            tenant_key: String::new(),
             quic_port: port,
             allow_import: false,
             relay: false,
@@ -534,14 +557,8 @@ async fn hot_restart_rebinds_quic_port() {
     supervisor.wake();
     wait_state(&supervisor, RemoteState::Disabled, Duration::from_secs(5)).await;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        if std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok() {
-            break;
-        }
-        assert!(tokio::time::Instant::now() < deadline, "停用后端口未释放");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    // V2：enabled=false 只停用 WAN 控制面，LAN iroh 数据面继续保留。
+    // 不再要求 UDP 端口立即释放；端口随 LAN/进程停止或传输配置重建而回收。
     task.abort();
 }
 
@@ -557,7 +574,7 @@ async fn ws_404_triggers_re_register() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: KEY.to_string(),
+            tenant_key: KEY.to_string(),
             quic_port: 0,
             allow_import: false,
             relay: false,
@@ -609,54 +626,6 @@ async fn ws_404_triggers_re_register() {
     task.abort();
 }
 
-/// 查看者写会话：本地执法三重裁决——无凭证拒、key 无写权限拒、本机 writable 关闭拒
-#[tokio::test]
-async fn write_session_rejected_when_writable_off() {
-    let _guard = TEST_LOCK.lock().await;
-    let (base, hub) = spawn_mock_hub().await;
-    hub.set_write_request(true);
-    let lib = test_library();
-    lib.remote
-        .update(&RemoteSettings {
-            enabled: true,
-            url: base,
-            service_key: KEY.to_string(),
-            quic_port: 0,
-            allow_import: false,
-            relay: false,
-        })
-        .unwrap();
-
-    let supervisor = Supervisor::new(
-        hawk_daemon::core::events::EventBus::new(),
-        lib.remote.clone(),
-    );
-    // 签发一把带写权限的 key，mock 携带其验证子（writable=false 仍应拒绝）
-    let (entry, _) = supervisor
-        .keys
-        .create("插件", Role::Importer, None)
-        .unwrap();
-    *hub.credential.lock().unwrap() = Some(entry.hash.clone());
-    let task = tokio::spawn(supervisor.clone().run(
-        Some(hawk_daemon::remote::LibraryContext {
-            paths: lib.paths.clone(),
-            config: lib.config.clone(),
-        }),
-        axum::Router::new(),
-    ));
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if !hub.rejected_sessions().is_empty() {
-            break;
-        }
-        assert!(tokio::time::Instant::now() < deadline, "写会话未被拒绝");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(hub.accepted_sessions().is_empty(), "写会话不应被接受");
-    task.abort();
-}
-
 /// app 间写会话（同租户设备互信，无查看者凭证）：本机 writable 关闭 → 拒绝
 #[tokio::test]
 async fn write_session_from_device_rejected_when_writable_off() {
@@ -668,7 +637,7 @@ async fn write_session_from_device_rejected_when_writable_off() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: KEY.to_string(),
+            tenant_key: KEY.to_string(),
             quic_port: 0,
             allow_import: false,
             relay: false,
@@ -713,7 +682,7 @@ async fn write_session_from_device_accepted_when_writable_on() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: KEY.to_string(),
+            tenant_key: KEY.to_string(),
             quic_port: 0,
             allow_import: true,
             relay: false,
@@ -762,7 +731,7 @@ async fn heartbeat_429_does_not_break_channel() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: KEY.to_string(),
+            tenant_key: KEY.to_string(),
             quic_port: 0,
             allow_import: false,
             relay: false,
@@ -816,100 +785,6 @@ async fn heartbeat_429_does_not_break_channel() {
     unsafe { std::env::remove_var("HAWK_REMOTE_HEARTBEAT_MS") };
 }
 
-/// 查看者会话携带已吊销/未知 key 的验证子 → 拒绝（本地执法不认 server 单方面声称）
-#[tokio::test]
-async fn viewer_session_rejected_with_unknown_credential() {
-    let _guard = TEST_LOCK.lock().await;
-    let (base, hub) = spawn_mock_hub().await;
-    // 只读请求，但凭证本地查无（等效吊销后重放）
-    *hub.credential.lock().unwrap() = Some(hawk_daemon::remote::keys::sha256_hex("revoked-key"));
-    let lib = test_library();
-    lib.remote
-        .update(&RemoteSettings {
-            enabled: true,
-            url: base,
-            service_key: KEY.to_string(),
-            quic_port: 0,
-            allow_import: true,
-            relay: false,
-        })
-        .unwrap();
-
-    let supervisor = Supervisor::new(
-        hawk_daemon::core::events::EventBus::new(),
-        lib.remote.clone(),
-    );
-    let task = tokio::spawn(supervisor.clone().run(
-        Some(hawk_daemon::remote::LibraryContext {
-            paths: lib.paths.clone(),
-            config: lib.config.clone(),
-        }),
-        axum::Router::new(),
-    ));
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if !hub.rejected_sessions().is_empty() {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "未知凭证会话未被拒绝"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(hub.accepted_sessions().is_empty());
-    task.abort();
-}
-
-/// 开启 writable 且 key 有写权限后写会话正常接受
-#[tokio::test]
-async fn write_session_accepted_when_writable_on() {
-    let _guard = TEST_LOCK.lock().await;
-    let (base, hub) = spawn_mock_hub().await;
-    hub.set_write_request(true);
-    let lib = test_library();
-    lib.remote
-        .update(&RemoteSettings {
-            enabled: true,
-            url: base,
-            service_key: KEY.to_string(),
-            quic_port: 0,
-            allow_import: true,
-            relay: false,
-        })
-        .unwrap();
-
-    let supervisor = Supervisor::new(
-        hawk_daemon::core::events::EventBus::new(),
-        lib.remote.clone(),
-    );
-    // 签发带写权限的 key，mock 携带其验证子
-    let (entry, _) = supervisor
-        .keys
-        .create("插件", Role::Importer, None)
-        .unwrap();
-    *hub.credential.lock().unwrap() = Some(entry.hash.clone());
-    let task = tokio::spawn(supervisor.clone().run(
-        Some(hawk_daemon::remote::LibraryContext {
-            paths: lib.paths.clone(),
-            config: lib.config.clone(),
-        }),
-        axum::Router::new(),
-    ));
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if !hub.accepted_sessions().is_empty() {
-            break;
-        }
-        assert!(tokio::time::Instant::now() < deadline, "写会话未被接受");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(hub.rejected_sessions().is_empty(), "写会话不应被拒绝");
-    task.abort();
-}
-
 /// 半开连接回归：反代切换/NAT 会话老化可致通道下行静默死亡（上行 REST 心跳照常），
 /// 服务端的保活 ping 与推送全都到不了客户端。daemon 必须以「收不到服务端帧」为判据
 /// 主动拆通道重连——否则设备永远假在线，session.request 全丢（会话永远 pending）。
@@ -925,7 +800,7 @@ async fn silent_channel_triggers_reconnect() {
         .update(&RemoteSettings {
             enabled: true,
             url: base,
-            service_key: KEY.to_string(),
+            tenant_key: KEY.to_string(),
             quic_port: 0,
             allow_import: false,
             relay: false,

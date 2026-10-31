@@ -32,6 +32,7 @@ pub mod locks;
 pub mod openapi;
 pub mod remote;
 pub mod taxonomy;
+pub mod tls;
 pub mod trash;
 pub mod view;
 pub mod web_dist;
@@ -115,8 +116,15 @@ pub struct LibraryState {
     pub locks: Arc<Locks>,
 }
 
+type WebSession = (String, String, String, Role, std::time::Instant);
+
 pub struct AppState {
     pub settings: Settings,
+    /// LAN Web 的有期 Session：token → (library_id, key_id, credential_hash, role, expires)
+    pub web_sessions: std::sync::Mutex<std::collections::HashMap<String, WebSession>>,
+    /// 本机插件的受限 Session（token → 过期时间）；只在 Loopback 使用。
+    pub integration_sessions:
+        std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
     /// 启动进度（无库模式无索引构建，监听就绪即 ready）
     pub startup: Arc<StartupState>,
     /// 事件总线（库事件与远程事件共用；远程 supervisor 依赖它，故不属于 LibraryState）
@@ -233,10 +241,9 @@ async fn cors(
     resp
 }
 
-/// Token 鉴权：/api/* 请求必须携带 Authorization: Bearer <token>；
-/// SSE 端点（/api/v1/events）无法设置请求头，改用查询参数 ?token=。
-/// 双 token：admin（Electron 启动时生成，全权限）与 viewer（config.toml [web].token，只读）。
-/// 例外：GET /api/v1/app/admin-token（token 发现端点）无鉴权，安全性见端点实现。
+/// 鉴权：普通 API 使用 Authorization Bearer；LAN Web 图片/SSE 可复用 HttpOnly Session Cookie。
+/// admin（Electron 启动注入）、LocalIntegration、AccessKey 与 Device/Access Session 按入口区分。
+/// 例外：GET /api/v1/app/admin-token（本机集成发现）与 POST /api/v1/app/session（LAN Web 登录）。
 async fn auth(
     axum::extract::State(state): axum::extract::State<SharedState>,
     mut req: axum::extract::Request,
@@ -251,7 +258,16 @@ async fn auth(
         .get::<ListenerMode>()
         .copied()
         .unwrap_or(ListenerMode::Local);
+    if mode == ListenerMode::Peer && !peer_control_allowed(path) {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
     if path == "/api/v1/app/admin-token" && req.method() == axum::http::Method::GET {
+        return next.run(req).await;
+    }
+    if path == "/api/v1/app/session"
+        && req.method() == axum::http::Method::POST
+        && mode == ListenerMode::Web
+    {
         return next.run(req).await;
     }
     // 局域网自动配对免 Bearer：源端创建请求、随后用随机 request_id 轮询目标端决策。
@@ -262,27 +278,46 @@ async fn auth(
         && path
             .strip_prefix("/api/v1/app/lan/pair-requests/")
             .is_some_and(|id| !id.is_empty() && !id.contains('/'));
-    if is_pair_request_create || is_pair_request_status {
+    let is_rendezvous_create =
+        path == "/api/v1/rendezvous" && req.method() == axum::http::Method::POST;
+    let is_rendezvous_status = matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::DELETE
+    ) && path
+        .strip_prefix("/api/v1/rendezvous/")
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'));
+    if is_pair_request_create
+        || is_pair_request_status
+        || is_rendezvous_create
+        || is_rendezvous_status
+    {
         return next.run(req).await;
     }
 
-    // 进程内受托标记优先：remote 隧道端转发时已插入 TunneledPeer（HTTP 客户端无法伪造扩展，
-    // 忽略其携带的任何 token 头）。角色与设备开关在每次请求重新计算。
-    let access = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
-        let role = if tunnel.role == Role::Importer
-            && state.remote.remote_config().current().allow_import
+    // 进程内受托标记优先：隧道端已插入真实 Session 和来源主体。
+    // AccessKey 未登录时只放行隧道内登录；登录后每请求重新读取 key 与设备开关。
+    if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
+        if tunnel
+            .access
+            .as_ref()
+            .is_some_and(|access| !access.authenticated)
         {
-            Role::Importer
-        } else {
-            Role::Viewer
-        };
-        AccessContext::new(
-            Principal::Session {
-                id: "tunnel".to_string(),
-            },
-            role,
-            Channel::Wan,
-        )
+            if path == remote::ACCESS_SESSION_PATH && req.method() == axum::http::Method::POST {
+                return next.run(req).await;
+            }
+            return envelope::ApiError::new(
+                envelope::codes::UNAUTHORIZED,
+                axum::http::StatusCode::UNAUTHORIZED,
+                "AccessKey 尚未认证",
+            )
+            .into_response();
+        }
+    }
+    let access = if let Some(tunnel) = req.extensions().get::<crate::remote::data::TunneledPeer>() {
+        match tunnel_access(&state, tunnel) {
+            Ok(access) => access,
+            Err(error) => return error.into_response(),
+        }
     } else {
         let Some(access) = resolve_access(&state, &req, mode) else {
             return (
@@ -295,6 +330,25 @@ async fn auth(
         };
         access
     };
+    if mode == ListenerMode::Web
+        && !matches!(
+            *req.method(),
+            axum::http::Method::GET | axum::http::Method::OPTIONS
+        )
+        && req
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .is_none()
+        && req.headers().get(axum::http::header::COOKIE).is_some()
+        && !cookie_write_allowed(&req)
+    {
+        return envelope::ApiError::new(
+            envelope::codes::READ_ONLY,
+            axum::http::StatusCode::FORBIDDEN,
+            "Cookie 写请求缺少合法 Origin 或 X-Hawk-Client",
+        )
+        .into_response();
+    }
     if mode == ListenerMode::Peer {
         if let Principal::AccessKey { id } = &access.principal {
             state.lan.record_peer_activity(id);
@@ -322,6 +376,15 @@ async fn auth(
     };
     req.extensions_mut().insert(guard);
     next.run(req).await
+}
+
+fn peer_control_allowed(path: &str) -> bool {
+    path == "/health"
+        || path == "/api/v1/app/info"
+        || path == "/api/v1/rendezvous"
+        || path.starts_with("/api/v1/rendezvous/")
+        || path == "/api/v1/app/lan/pair-requests"
+        || path.starts_with("/api/v1/app/lan/pair-requests/")
 }
 
 /// 解锁票据采集：`X-Hawk-Unlock` 头（逗号分隔多票）+ GET 的 `?unlock=` 查询参数
@@ -362,6 +425,66 @@ fn parse_unlock_tickets(req: &axum::extract::Request) -> Vec<String> {
     tickets
 }
 
+fn tunnel_access(
+    state: &AppState,
+    tunnel: &crate::remote::data::TunneledPeer,
+) -> Result<AccessContext, envelope::ApiError> {
+    let (principal, role) = if let Some(access) = &tunnel.access {
+        let Some(credential) = &access.credential else {
+            return Err(envelope::ApiError::new(
+                envelope::codes::UNAUTHORIZED,
+                axum::http::StatusCode::UNAUTHORIZED,
+                "AccessKey 尚未认证",
+            ));
+        };
+        let library_id = state
+            .library
+            .as_ref()
+            .map(|lib| crate::core::paths::library_key(&lib.paths.root));
+        let Some(entry) = state
+            .remote
+            .keys
+            .resolve_for_library(library_id.as_deref(), credential)
+        else {
+            return Err(envelope::ApiError::new(
+                envelope::codes::UNAUTHORIZED,
+                axum::http::StatusCode::UNAUTHORIZED,
+                "AccessKey 已吊销",
+            ));
+        };
+        (
+            Principal::AccessKey { id: entry.id },
+            narrower_role(tunnel.role, entry.role),
+        )
+    } else {
+        (
+            Principal::Device {
+                id: tunnel
+                    .source_device_id
+                    .clone()
+                    .unwrap_or_else(|| tunnel.session_id.clone()),
+            },
+            tunnel.role,
+        )
+    };
+    let role =
+        if matches!(role, Role::Viewer) || state.remote.remote_config().current().allow_import {
+            role
+        } else {
+            Role::Viewer
+        };
+    Ok(AccessContext::new(principal, role, Channel::Wan))
+}
+
+fn narrower_role(requested: Role, current: Role) -> Role {
+    match (requested, current) {
+        (Role::Viewer, _) | (_, Role::Viewer) => Role::Viewer,
+        (Role::Importer, _) | (_, Role::Importer) => Role::Importer,
+        (Role::Editor, _) | (_, Role::Editor) => Role::Editor,
+        _ => Role::Admin,
+    }
+}
+
 /// 解析请求凭证：admin token 仅接受 Loopback，其余凭证按监听通道和密钥角色解析。
 fn resolve_access(
     state: &AppState,
@@ -377,24 +500,70 @@ fn resolve_access(
         return Some(context);
     }
 
-    // EventSource 与 <img> 均无法设置请求头，这几个 GET 端点放行查询参数 token
-    let path = req.uri().path();
-    let allow_query_token = req.method() == axum::http::Method::GET
-        && matches!(
-            path,
-            "/api/v1/events" | "/api/v1/item/thumbnail" | "/api/v1/item/file"
-        );
-    if !allow_query_token {
+    web_cookie_access(state, req, mode)
+}
+
+fn cookie_write_allowed(req: &axum::extract::Request) -> bool {
+    if req
+        .headers()
+        .get("x-hawk-client")
+        .and_then(|value| value.to_str().ok())
+        != Some("web")
+    {
+        return false;
+    }
+    let Some(host) = req
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(origin) = req
+        .headers()
+        .get(axum::http::header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    origin == format!("https://{host}") || origin == format!("http://{host}")
+}
+
+fn web_cookie_access(
+    state: &AppState,
+    req: &axum::extract::Request,
+    mode: ListenerMode,
+) -> Option<AccessContext> {
+    if mode != ListenerMode::Web {
         return None;
     }
-    let credential = req.uri().query().and_then(|query| {
-        query
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .find(|(key, _)| *key == "token")
-            .map(|(_, value)| value)
-    });
-    resolve_credential(state, credential, mode)
+    let token = req
+        .headers()
+        .get(axum::http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())?
+        .split(';')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(name, _)| *name == "hawk_session")
+        .map(|(_, value)| value)?;
+    let (library_id, key_id, credential, _, expires) =
+        state.web_sessions.lock().unwrap().get(token).cloned()?;
+    if expires <= std::time::Instant::now() {
+        state.web_sessions.lock().unwrap().remove(token);
+        return None;
+    }
+    let lib = state.library.as_ref()?;
+    if crate::core::paths::library_key(&lib.paths.root) != library_id {
+        return None;
+    }
+    let entry = state
+        .remote
+        .keys
+        .resolve_for_library(Some(&library_id), &credential)?;
+    Some(AccessContext::new(
+        Principal::AccessKey { id: key_id },
+        entry.role,
+        Channel::LanWeb,
+    ))
 }
 
 fn resolve_credential(
@@ -410,43 +579,68 @@ fn resolve_credential(
             Channel::Loopback,
         ));
     }
+    if mode == ListenerMode::Local {
+        let integration = state
+            .integration_sessions
+            .lock()
+            .unwrap()
+            .get(credential)
+            .is_some_and(|expires| *expires > std::time::Instant::now());
+        if integration {
+            return Some(AccessContext::new(
+                Principal::LocalIntegration {
+                    id: credential.chars().take(8).collect(),
+                },
+                Role::Importer,
+                Channel::Loopback,
+            ));
+        }
+    }
     viewer_access(state, credential, mode)
 }
 
-/// LAN access key 每请求解析，密钥吊销和角色变化立即生效。
+/// AccessKey 每请求按当前库解析，吊销和 grant_version 变化立即生效。
 fn viewer_access(state: &AppState, credential: &str, mode: ListenerMode) -> Option<AccessContext> {
-    let web = &state.library.as_ref()?.config.current().web;
-    let (keys, channel) = match mode {
-        ListenerMode::Web if web.enabled => (&web.keys, Channel::LanWeb),
-        ListenerMode::Web => return None,
-        ListenerMode::Peer => (&web.peer_keys, Channel::LanPeer),
-        ListenerMode::Local => {
-            if let Some(access) =
-                viewer_access_in_keys(&web.peer_keys, credential, Channel::Loopback)
-            {
-                return Some(access);
-            }
-            if !web.enabled {
-                return None;
-            }
-            (&web.keys, Channel::Loopback)
+    let lib = state.library.as_ref()?;
+    let web = &lib.config.current().web;
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    if matches!(mode, ListenerMode::Peer | ListenerMode::Local) {
+        let channel = if mode == ListenerMode::Peer {
+            Channel::LanPeer
+        } else {
+            Channel::Loopback
+        };
+        if let Some(entry) = state.remote.keys.resolve_for_library(
+            Some(&library_id),
+            &crate::remote::keys::sha256_hex(credential),
+        ) {
+            return Some(AccessContext::new(
+                Principal::AccessKey { id: entry.id },
+                entry.role,
+                channel,
+            ));
         }
+        if mode == ListenerMode::Peer {
+            return None;
+        }
+    }
+    if mode == ListenerMode::Web && !web.enabled {
+        return None;
+    }
+    let channel = match mode {
+        ListenerMode::Web => Channel::LanWeb,
+        ListenerMode::Peer => Channel::LanPeer,
+        ListenerMode::Local => Channel::Loopback,
     };
-    viewer_access_in_keys(keys, credential, channel)
-}
-
-fn viewer_access_in_keys(
-    keys: &[crate::core::config::WebAccessKey],
-    credential: &str,
-    channel: Channel,
-) -> Option<AccessContext> {
-    keys.iter().find(|key| key.secret == credential).map(|key| {
-        AccessContext::new(
-            Principal::AccessKey { id: key.id.clone() },
-            key.role,
-            channel,
-        )
-    })
+    let entry = state.remote.keys.resolve_for_library(
+        Some(&library_id),
+        &crate::remote::keys::sha256_hex(credential),
+    )?;
+    Some(AccessContext::new(
+        Principal::AccessKey { id: entry.id },
+        entry.role,
+        channel,
+    ))
 }
 
 /// 只读会话代理的粗粒度前置拦截；目标 daemon 仍会按完整路由能力表二次执法。

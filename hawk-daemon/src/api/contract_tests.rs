@@ -60,7 +60,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     (
         "PUT",
         "/api/v1/remote",
-        Some(r#"{"enabled":false,"url":"","service_key":""}"#),
+        Some(r#"{"enabled":false,"url":"","tenant_key":""}"#),
     ),
     ("GET", "/api/v1/remote/keys", None),
     (
@@ -133,6 +133,7 @@ const WRITE_SCRIPT: &[(&str, &str)] = &[
 
 /// 只校验路由存在的端点：app/lan PUT 需运行中的 LAN supervisor 收敛，不在测试内成功调用
 const ROUTE_ONLY: &[(&str, &str)] = &[
+    ("POST", "/api/v1/app/session"),
     ("PUT", "/api/v1/app/lan"),
     // 局域网发现依赖真实网卡与目标设备；自动配对请求/轮询由双端串联验证
     ("GET", "/api/v1/app/lan/peers"),
@@ -154,6 +155,13 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     ("PATCH", "/api/v1/remote/device"),
     ("POST", "/api/v1/remote/device/rotate"),
     ("DELETE", "/api/v1/remote/devices/{device_id}"),
+    // AccessKey-only 编排依赖存活 hawk-server / LAN 对端
+    ("POST", "/api/v1/remote/access-connect"),
+    ("POST", "/api/v1/remote/access-session"),
+    ("POST", "/api/v1/remote/lease"),
+    ("POST", "/api/v1/rendezvous"),
+    ("GET", "/api/v1/rendezvous/{session_id}"),
+    ("DELETE", "/api/v1/rendezvous/{session_id}"),
     // key 的 PATCH/DELETE 路径参数依赖前置签发，由 SUCCESS_CASES 的 POST 覆盖创建路径
     ("PATCH", "/api/v1/remote/keys/{key_id}"),
     ("DELETE", "/api/v1/remote/keys/{key_id}"),
@@ -245,6 +253,8 @@ fn test_app_at(base: PathBuf) -> TestApp {
     let remote_config = crate::remote::config::RemoteConfigStore::open(None, Some(&paths));
     let state: SharedState = Arc::new(AppState {
         settings,
+        web_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+        integration_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
         startup,
         bus: bus.clone(),
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
@@ -329,9 +339,9 @@ impl TestApp {
     }
 }
 
-/// 网站端口与 hawk-app 直连端口必须各自只接受本命名空间的密钥。
+/// 同一 AccessKey 可跨 LAN Web 与原生 Peer 使用，身份不随端口变化。
 #[tokio::test]
-async fn lan_ports_enforce_separate_key_namespaces() {
+async fn lan_access_key_works_across_channels() {
     let app = test_app("lan-port-auth");
     let lib = app.state.library.as_ref().unwrap();
     lib.config
@@ -347,15 +357,28 @@ async fn lan_ports_enforce_separate_key_namespaces() {
                 created_at_ms: 0,
                 ..Default::default()
             }],
-            peer_keys: vec![WebAccessKey {
-                id: "peer".into(),
-                label: "peer".into(),
-                secret: "peer-token".into(),
-                role: Role::Viewer,
-                created_at_ms: 0,
-                ..Default::default()
-            }],
+            peer_keys: vec![],
         })
+        .unwrap();
+    app.state
+        .remote
+        .keys
+        .create(
+            &crate::core::paths::library_key(&lib.paths.root),
+            "web",
+            Role::Viewer,
+            Some("web-token"),
+        )
+        .unwrap();
+    app.state
+        .remote
+        .keys
+        .create(
+            &crate::core::paths::library_key(&lib.paths.root),
+            "peer",
+            Role::Viewer,
+            Some("peer-token"),
+        )
         .unwrap();
     let web_router = build_router_for(app.state.clone(), ListenerMode::Web);
     let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
@@ -375,18 +398,12 @@ async fn lan_ports_enforce_separate_key_namespaces() {
         call_auth(web_router.clone(), "web-token").await,
         StatusCode::OK
     );
-    assert_eq!(
-        call_auth(web_router, "peer-token").await,
-        StatusCode::UNAUTHORIZED
-    );
+    assert_eq!(call_auth(web_router, "peer-token").await, StatusCode::OK);
     assert_eq!(
         call_auth(peer_router.clone(), "peer-token").await,
         StatusCode::OK
     );
-    assert_eq!(
-        call_auth(peer_router, "web-token").await,
-        StatusCode::UNAUTHORIZED
-    );
+    assert_eq!(call_auth(peer_router, "web-token").await, StatusCode::OK);
 }
 
 /// 配对协议 v2 为破坏性更新：缺少 reverse 回连 profile 的旧请求必须直接拒绝。
@@ -442,12 +459,18 @@ async fn lan_device_keys_are_independent_from_website_keys() {
     let created: Value = serde_json::from_slice(&bytes).unwrap();
     let key_id = created["data"]["id"].as_str().unwrap().to_string();
     assert_eq!(created["data"]["label"], "Target-Mac");
-    assert_eq!(created["data"]["peer_id"], "peer-source");
-    assert_eq!(created["data"]["library_name"], "Source Library");
-    assert_eq!(created["data"]["url"], "http://192.168.1.10:27375");
     let web = lib.config.current().web;
     assert!(web.keys.is_empty(), "不得隐式创建网站访问密钥");
-    assert_eq!(web.peer_keys.len(), 1);
+    assert!(web.peer_keys.is_empty(), "不再写入旧 peer_keys 配置");
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    assert_eq!(
+        app.state
+            .remote
+            .keys
+            .list_for_library(Some(&library_id))
+            .len(),
+        1
+    );
 
     let path = format!("/api/v1/app/lan/device-keys/{key_id}");
     let (status, _) = call_json(
@@ -458,11 +481,16 @@ async fn lan_device_keys_are_independent_from_website_keys() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(lib.config.current().web.peer_keys[0].role == Role::Editor);
+    assert!(app.state.remote.keys.list_for_library(Some(&library_id))[0].role == Role::Editor);
 
     let (status, _) = call_json(&app.router, "DELETE", &path, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(lib.config.current().web.peer_keys.is_empty());
+    assert!(app
+        .state
+        .remote
+        .keys
+        .list_for_library(Some(&library_id))
+        .is_empty());
 }
 
 /// 目标端能看到某把 peer key 最近通过直连端口发过请求（在线状态的数据源）。
@@ -476,17 +504,19 @@ async fn lan_peer_activity_reports_online_client() {
             port: 27372,
             peer_port: 27375,
             keys: vec![],
-            peer_keys: vec![WebAccessKey {
-                id: "peer".into(),
-                label: "Test-Mac".into(),
-                secret: "peer-token".into(),
-                role: Role::Viewer,
-                created_at_ms: 0,
-                peer_id: Some("source-peer".into()),
-                library_name: Some("Source Library".into()),
-                url: Some("http://192.168.1.20:27375".into()),
-            }],
+            peer_keys: vec![],
         })
+        .unwrap();
+    let (entry, _) = app
+        .state
+        .remote
+        .keys
+        .create(
+            &crate::core::paths::library_key(&lib.paths.root),
+            "Test-Mac",
+            Role::Viewer,
+            Some("peer-token"),
+        )
         .unwrap();
     let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
     let req = Request::builder()
@@ -504,15 +534,9 @@ async fn lan_peer_activity_reports_online_client() {
     let (status, bytes) = call_json(&app.router, "GET", "/api/v1/app/lan/clients", None).await;
     assert_eq!(status, StatusCode::OK);
     let data: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(data["data"]["clients"][0]["key_id"], "peer");
+    assert_eq!(data["data"]["clients"][0]["key_id"], entry.id);
     assert_eq!(data["data"]["clients"][0]["online"], true);
     assert_eq!(data["data"]["clients"][0]["role"], "viewer");
-    assert_eq!(data["data"]["clients"][0]["peer_id"], "source-peer");
-    assert_eq!(data["data"]["clients"][0]["library_name"], "Source Library");
-    assert_eq!(
-        data["data"]["clients"][0]["url"],
-        "http://192.168.1.20:27375"
-    );
 }
 
 /// 桌面自动配对：源端创建请求 → 目标端列表看到 → 允许 → 源端轮询拿到 token。
@@ -535,7 +559,9 @@ async fn put_lan_auto_pair_request_flow() {
                 "library_name": "Source Library",
                 "urls": ["http://192.168.1.10:27375"],
                 "peer_key": "reverse-token",
-                "role": "viewer"
+                "role": "viewer",
+                "target_identity": "source-endpoint",
+                "target_library_id": "source-library"
             }
         })),
     )
@@ -579,18 +605,17 @@ async fn put_lan_auto_pair_request_flow() {
     assert_eq!(decision["data"]["peer"]["id"], "source-peer");
     assert_eq!(decision["data"]["peer"]["url"], "http://192.168.1.10:27375");
     assert_eq!(decision["data"]["peer"]["peer_key"], "reverse-token");
-    let peer_key = &app
+    let lib = app.state.library.as_ref().unwrap();
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    let peer_key = app
         .state
-        .library
-        .as_ref()
-        .unwrap()
-        .config
-        .current()
-        .web
-        .peer_keys[0];
-    assert_eq!(peer_key.peer_id.as_deref(), Some("source-peer"));
-    assert_eq!(peer_key.library_name.as_deref(), Some("Source Library"));
-    assert_eq!(peer_key.url.as_deref(), Some("http://192.168.1.10:27375"));
+        .remote
+        .keys
+        .list_for_library(Some(&library_id))
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(peer_key.label, "MacBook");
 
     let status_path = format!("/api/v1/app/lan/pair-requests/{request_id}");
     let (status, bytes) = call_json(&peer_router, "GET", &status_path, None).await;
@@ -611,12 +636,11 @@ async fn put_lan_auto_pair_request_flow() {
         .as_str()
         .is_some_and(|id| !id.is_empty()));
 
-    let lib = app.state.library.as_ref().unwrap();
-    assert!(lib
-        .config
-        .current()
-        .web
-        .peer_keys
+    assert!(app
+        .state
+        .remote
+        .keys
+        .list_for_library(Some(&library_id))
         .iter()
         .any(|key| key.role == Role::Editor && key.label == "MacBook"));
 }
@@ -881,6 +905,8 @@ async fn app_connection_reports_none_without_library() {
             web_dist: None,
             remote_config: None,
         },
+        web_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+        integration_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
         startup: Arc::new(StartupState::default()),
         bus: bus.clone(),
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
@@ -920,8 +946,12 @@ fn every_endpoint_declares_capability() {
             }
             let exempt = path == "/health"
                 || (path == "/api/v1/app/admin-token" && method == "get")
+                || (path == "/api/v1/app/session" && method == "post")
                 || (path == "/api/v1/app/lan/pair-requests" && method == "post")
-                || (path == "/api/v1/app/lan/pair-requests/{request_id}" && method == "get");
+                || (path == "/api/v1/app/lan/pair-requests/{request_id}" && method == "get")
+                || (path == "/api/v1/rendezvous" && method == "post")
+                || (path == "/api/v1/rendezvous/{session_id}"
+                    && matches!(method, "get" | "delete"));
             if exempt {
                 continue;
             }
@@ -1244,8 +1274,12 @@ async fn app_info_marks_tunneled_transport() {
         .header("host", "hawk-remote.tunnel")
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut()
-        .insert(TunneledPeer { role: Role::Viewer });
+    req.extensions_mut().insert(TunneledPeer {
+        session_id: "s_test".to_string(),
+        source_device_id: Some("d_test".to_string()),
+        role: Role::Viewer,
+        access: None,
+    });
     let resp = app.router.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
@@ -2455,11 +2489,14 @@ async fn wan_importer_is_limited_to_import_and_folder_create() {
             .body(Body::from(body.to_string()))
             .unwrap();
         req.extensions_mut().insert(TunneledPeer {
+            session_id: "s_test".to_string(),
+            source_device_id: Some("d_test".to_string()),
             role: if writable {
                 Role::Importer
             } else {
                 Role::Viewer
             },
+            access: None,
         });
         req
     }
@@ -2532,4 +2569,124 @@ async fn wan_importer_is_limited_to_import_and_folder_create() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn lan_web_session_cookie_replaces_url_token() {
+    let app = test_app("lan-web-session");
+    let lib = app.state.library.as_ref().unwrap();
+    lib.config
+        .update_web(&WebSettings {
+            enabled: true,
+            port: 27372,
+            peer_port: 27375,
+            keys: vec![],
+            peer_keys: vec![],
+        })
+        .unwrap();
+    let (entry, _) = app
+        .state
+        .remote
+        .keys
+        .create(
+            &crate::core::paths::library_key(&lib.paths.root),
+            "browser",
+            Role::Viewer,
+            Some("cookie-secret"),
+        )
+        .unwrap();
+    let router = build_router_for(app.state.clone(), ListenerMode::Web);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/app/session")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"access_key":"cookie-secret"}).to_string(),
+        ))
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cookie = resp
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(cookie.contains("HttpOnly") && cookie.contains("Secure"));
+    let token = cookie
+        .strip_prefix("hawk_session=")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/app/info")
+        .header("cookie", format!("hawk_session={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/app/info?token=cookie-secret")
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    app.state.remote.keys.remove(&entry.id).unwrap();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/app/info")
+        .header("cookie", format!("hawk_session={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn access_key_revoke_and_demote_apply_to_existing_tunnel() {
+    let app = test_app("access-key-lifecycle");
+    let mut remote = app.state.remote.remote_config().current();
+    remote.allow_import = true;
+    app.state.remote.remote_config().update(&remote).unwrap();
+    let (entry, _) = app
+        .state
+        .remote
+        .keys
+        .create(
+            &crate::core::paths::library_key(&app.state.library.as_ref().unwrap().paths.root),
+            "手机",
+            Role::Importer,
+            None,
+        )
+        .unwrap();
+    let tunnel = TunneledPeer {
+        session_id: "s_access".to_string(),
+        source_device_id: None,
+        role: Role::Importer,
+        access: Some(crate::remote::data::TunnelAccess {
+            credential: Some(entry.hash.clone()),
+            authenticated: true,
+        }),
+    };
+    let access = super::tunnel_access(&app.state, &tunnel).unwrap();
+    assert!(access.require(super::Capability::Import).is_ok());
+
+    app.state
+        .remote
+        .keys
+        .patch(&entry.id, None, Some(Role::Viewer))
+        .unwrap();
+    let access = super::tunnel_access(&app.state, &tunnel).unwrap();
+    assert!(access.require(super::Capability::Read).is_ok());
+    assert!(access.require(super::Capability::Import).is_err());
+
+    app.state.remote.keys.remove(&entry.id).unwrap();
+    assert!(super::tunnel_access(&app.state, &tunnel).is_err());
 }

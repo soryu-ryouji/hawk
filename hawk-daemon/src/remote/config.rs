@@ -15,21 +15,21 @@ const DEFAULT_CONFIG: &str = r#"# hawk 远程访问配置（应用级，跨素�
 # 由设置面板「远程」分区写入；手工修改后需重启 hawk-daemon 生效。
 enabled = false
 url = ""
-service_key = ""
+tenant_key = ""
 quic_port = 27373
 allow_import = false
 relay = false
 "#;
 
 /// 远程访问接入设置：自托管 hawk-server 的接入信息。
-/// service_key 明文存放（与 [web] token 同级先例）
+/// tenant_key 明文存放（与 [web] token 同级先例）
 #[derive(Clone, PartialEq)]
 pub struct RemoteSettings {
     pub enabled: bool,
     /// 服务端地址（http(s):// 开头；TLS 由前置反代终结）
     pub url: String,
-    /// 服务端 service-key（池门禁；hawk-server tenant add 生成）
-    pub service_key: String,
+    /// 服务端 tenant-key（池门禁；hawk-server tenant add 生成）
+    pub tenant_key: String,
     /// QUIC 隧道 UDP 端口（UPnP 映射目标；0 = OS 分配）
     pub quic_port: u16,
     /// 允许广域网会话导入素材/新建文件夹（受限写，与 [web] 的局域网写权限独立）
@@ -44,7 +44,7 @@ impl Default for RemoteSettings {
         RemoteSettings {
             enabled: false,
             url: String::new(),
-            service_key: String::new(),
+            tenant_key: String::new(),
             quic_port: DEFAULT_QUIC_PORT,
             allow_import: false,
             relay: false,
@@ -120,7 +120,7 @@ impl RemoteConfigStore {
         });
         doc["enabled"] = toml_edit::value(settings.enabled);
         doc["url"] = toml_edit::value(settings.url.trim());
-        doc["service_key"] = toml_edit::value(settings.service_key.trim());
+        doc["tenant_key"] = toml_edit::value(settings.tenant_key.trim());
         doc["quic_port"] = toml_edit::value(i64::from(settings.quic_port));
         doc["allow_import"] = toml_edit::value(settings.allow_import);
         doc["relay"] = toml_edit::value(settings.relay);
@@ -169,8 +169,8 @@ impl RemoteConfigStore {
             if let Some(url) = table.get("url").and_then(|v| v.as_str()) {
                 settings.url = url.trim().to_string();
             }
-            if let Some(key) = table.get("service_key").and_then(|v| v.as_str()) {
-                settings.service_key = key.trim().to_string();
+            if let Some(key) = table.get("tenant_key").and_then(|v| v.as_str()) {
+                settings.tenant_key = key.trim().to_string();
             }
             if let Some(port) = table.get("quic_port").and_then(|v| v.as_integer()) {
                 if (0..=65535).contains(&port) {
@@ -225,7 +225,7 @@ mod tests {
             .update(&RemoteSettings {
                 enabled: true,
                 url: "https://hawk.example.com/".to_string(),
-                service_key: "secret".to_string(),
+                tenant_key: "secret".to_string(),
                 quic_port: 28000,
                 allow_import: true,
                 relay: true,
@@ -236,7 +236,7 @@ mod tests {
         let current = reloaded.current();
         assert!(current.enabled);
         assert_eq!(current.url, "https://hawk.example.com/");
-        assert_eq!(current.service_key, "secret");
+        assert_eq!(current.tenant_key, "secret");
         assert_eq!(current.quic_port, 28000);
         assert!(current.allow_import);
     }

@@ -86,8 +86,9 @@ impl Channel {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Principal {
     ProcessAdmin,
+    LocalIntegration { id: String },
+    Device { id: String },
     AccessKey { id: String },
-    Session { id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +132,14 @@ impl AccessContext {
 /// 路由能力表：所有非豁免端点必须在这里声明，未知方法/路径返回 None 并拒绝。
 /// 认证豁免（admin-token、配对创建与状态轮询）在 auth 中间件中单独处理。
 pub(crate) fn required_capability(method: &Method, path: &str) -> Option<Capability> {
+    if path == "/api/v1/app/connection" {
+        return if method == Method::GET {
+            Some(Capability::Import)
+        } else {
+            None
+        };
+    }
+
     if path == "/api/v1/library/info" {
         return if method == Method::GET {
             Some(Capability::Read)
@@ -184,6 +193,9 @@ const GET_READ_PATHS: &[&str] = &[
 ];
 
 const POST_READ_PATHS: &[&str] = &[
+    "/api/v1/remote/access-session",
+    "/api/v1/remote/lease",
+    "/api/v1/app/session",
     "/api/v1/item/aggregate",
     "/api/v1/item/list",
     "/api/v1/item/skeleton",
@@ -235,6 +247,7 @@ const MANAGE_PATHS: &[&str] = &[
     "/api/v1/remote",
     "/api/v1/remote/device",
     "/api/v1/remote/device/rotate",
+    "/api/v1/remote/access-connect",
     "/api/v1/remote/devices",
     "/api/v1/remote/keys",
     "/api/v1/remote/session",
@@ -255,7 +268,7 @@ mod tests {
         assert!(editor.require(Capability::Manage).is_err());
 
         let remote = AccessContext::new(
-            Principal::Session { id: "s".into() },
+            Principal::Device { id: "s".into() },
             Role::Editor,
             Channel::Wan,
         );

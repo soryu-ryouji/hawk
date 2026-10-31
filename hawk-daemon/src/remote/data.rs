@@ -23,9 +23,20 @@ pub const SESSION_HEADER: &str = "x-hawk-session";
 
 /// 进程内受托标记：仅由 A 侧隧道端插入请求扩展（HTTP 客户端无法伪造），
 /// 鉴权中间件按 role 决定 viewer 只读或受限远程写
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+pub struct TunnelAccess {
+    /// AccessKey 的 SHA-256 验证子；仅目标 daemon 使用，不发送给 hawk-server。
+    pub credential: Option<String>,
+    pub authenticated: bool,
+}
+
+#[derive(Clone)]
 pub struct TunneledPeer {
+    pub session_id: String,
+    pub source_device_id: Option<String>,
     pub role: Role,
+    /// Some = AccessKey rendezvous；None = 已注册 Device 会话。
+    pub access: Option<TunnelAccess>,
 }
 
 /// B 侧拨号超时（协议约定 15s；iroh 内部竞速直连/中继，首字节不等打洞结果）
@@ -33,15 +44,17 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 type EndpointId = iroh::EndpointId;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct AcceptedSession {
     peer: EndpointId,
+    source_device_id: Option<String>,
     role: Role,
+    access: Option<TunnelAccess>,
+    lease_expires_at: std::time::Instant,
 }
 
 /// 会话注册表：session_id → 权限与对端身份，以及连接与会话的绑定。
-/// hawk-server 的网页版与插件共用同一个设备身份，取消单个会话不能误伤其他会话。
-/// （迁移 iroh 后 A 侧执法点在连接建立后：对端身份不在放行集合即断开——
+/// （A 侧执法点在连接建立后：对端身份不在放行集合即断开——
 /// 与握手期拒绝语义等价，代价是多完成一次握手）
 #[derive(Clone, Default)]
 struct SessionRegistry {
@@ -54,13 +67,29 @@ struct SessionRegistry {
 }
 
 impl SessionRegistry {
-    /// 登记会话；返回同一 session_id 的旧条目（重复推送时避免放行计数泄漏）
-    fn allow(&self, session_id: &str, peer: EndpointId, role: Role) {
-        let previous = self
-            .accepted
-            .lock()
-            .unwrap()
-            .insert(session_id.to_string(), AcceptedSession { peer, role });
+    /// 登记 Device 会话；重复推送替换授权而不增加对端引用计数。
+    fn allow(
+        &self,
+        session_id: &str,
+        source_device_id: Option<String>,
+        peer: EndpointId,
+        role: Role,
+        access_rendezvous: bool,
+    ) {
+        let access = access_rendezvous.then_some(TunnelAccess {
+            credential: None,
+            authenticated: false,
+        });
+        let previous = self.accepted.lock().unwrap().insert(
+            session_id.to_string(),
+            AcceptedSession {
+                peer,
+                source_device_id,
+                role,
+                access,
+                lease_expires_at: std::time::Instant::now() + Duration::from_secs(15 * 60),
+            },
+        );
         if previous.map(|p| p.peer) != Some(peer) {
             *self.peers.lock().unwrap().entry(peer).or_default() += 1;
         }
@@ -69,6 +98,41 @@ impl SessionRegistry {
             .unwrap()
             .entry(session_id.to_string())
             .or_default();
+    }
+
+    fn renew(&self, session_id: &str) -> Result<(), StatusCode> {
+        let mut accepted = self.accepted.lock().unwrap();
+        let Some(session) = accepted.get_mut(session_id) else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        if session
+            .access
+            .as_ref()
+            .is_some_and(|access| !access.authenticated)
+        {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        session.lease_expires_at = std::time::Instant::now() + Duration::from_secs(15 * 60);
+        Ok(())
+    }
+
+    fn authenticate_access(
+        &self,
+        session_id: &str,
+        credential: String,
+        role: Role,
+    ) -> Result<(), StatusCode> {
+        let mut accepted = self.accepted.lock().unwrap();
+        let Some(session) = accepted.get_mut(session_id) else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        let Some(access) = &mut session.access else {
+            return Err(StatusCode::FORBIDDEN);
+        };
+        access.credential = Some(credential);
+        access.authenticated = true;
+        session.role = role;
+        Ok(())
     }
 
     /// 移除会话及其连接，返回 (对端身份, 连接 id 列表)
@@ -107,16 +171,19 @@ impl SessionRegistry {
         conn_id: usize,
         session_id: &str,
         peer: Option<EndpointId>,
-    ) -> Result<Role, StatusCode> {
+    ) -> Result<TunneledPeer, StatusCode> {
         let session = self
             .accepted
             .lock()
             .unwrap()
             .get(session_id)
-            .copied()
+            .cloned()
             .ok_or(StatusCode::UNAUTHORIZED)?;
         if peer != Some(session.peer) {
             return Err(StatusCode::FORBIDDEN);
+        }
+        if session.lease_expires_at <= std::time::Instant::now() {
+            return Err(StatusCode::UNAUTHORIZED);
         }
         let mut conn_sessions = self.conn_sessions.lock().unwrap();
         match conn_sessions.get(&conn_id) {
@@ -132,7 +199,12 @@ impl SessionRegistry {
                     .push(conn_id);
             }
         }
-        Ok(session.role)
+        Ok(TunneledPeer {
+            session_id: session_id.to_string(),
+            source_device_id: session.source_device_id,
+            role: session.role,
+            access: session.access,
+        })
     }
 
     fn forget_conn(&self, conn_id: usize) {
@@ -260,9 +332,41 @@ impl DataPlane {
             .unwrap_or_default()
     }
 
-    /// 放行会话对端身份并登记读写权限（session.request 接受时调用）
-    pub fn allow_session(&self, session_id: &str, peer: EndpointId, role: Role) {
-        self.registry.allow(session_id, peer, role);
+    /// 放行 Device 会话对端身份并登记权限。
+    pub fn allow_session(
+        &self,
+        session_id: &str,
+        source_device_id: &str,
+        peer: EndpointId,
+        role: Role,
+    ) {
+        self.registry.allow(
+            session_id,
+            Some(source_device_id.to_string()),
+            peer,
+            role,
+            false,
+        );
+    }
+
+    /// 放行 AccessKey rendezvous；完成隧道内登录前不授予素材能力。
+    pub fn allow_access_session(&self, session_id: &str, peer: EndpointId) {
+        self.registry
+            .allow(session_id, None, peer, Role::Viewer, true);
+    }
+
+    pub fn authenticate_access_session(
+        &self,
+        session_id: &str,
+        credential: String,
+        role: Role,
+    ) -> Result<(), StatusCode> {
+        self.registry
+            .authenticate_access(session_id, credential, role)
+    }
+
+    pub fn renew_session(&self, session_id: &str) -> Result<(), StatusCode> {
+        self.registry.renew(session_id)
     }
 
     /// 等待该会话的首个隧道请求（接受会话后的超时清理用）
@@ -368,8 +472,8 @@ async fn serve_http(
             let Some(session_id) = session_id else {
                 return Ok(tunnel_response(StatusCode::UNAUTHORIZED));
             };
-            let role = match registry.bind(conn_id, &session_id, peer) {
-                Ok(role) => role,
+            let tunnel = match registry.bind(conn_id, &session_id, peer) {
+                Ok(tunnel) => tunnel,
                 Err(status) => return Ok(tunnel_response(status)),
             };
             // 首连通知：会话接受后的超时清理据此判断对端是否已接入
@@ -378,8 +482,8 @@ async fn serve_http(
             }
             let (mut parts, body) = req.into_parts();
             parts.headers.remove(SESSION_HEADER);
-            // 进程内受托标记：鉴权中间件按 role 决定只读或受限远程写
-            parts.extensions.insert(TunneledPeer { role });
+            // 进程内受托标记：鉴权中间件按 Session 和当前 Grant 逐请求授权
+            parts.extensions.insert(tunnel);
             let req = axum::http::Request::from_parts(parts, axum::body::Body::new(body));
             tower::ServiceExt::oneshot(router, req).await
         }
@@ -400,8 +504,8 @@ pub struct ProxyContext {
     pub session_token: String,
     /// 隧道会话 id：每个转发请求带上，A 侧据此判定读写权限
     pub session_id: String,
-    /// 会话是否可写：只读会话在代理侧直接拦写请求（目标侧仍会二次执法，这里省一次隧道往返）
-    pub role: Role,
+    /// 当前角色：AccessKey 登录后可从 viewer 升级，后续仍由目标逐请求执法。
+    pub role: std::sync::RwLock<Role>,
 }
 
 /// 启动会话代理：环回 HTTP 监听，token 门禁，逐请求开流转发。
@@ -420,8 +524,11 @@ async fn proxy_handler(
     if !credential_valid(&req, &ctx.session_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    // 只读会话的纵深防御：与本地库验证同一套只读白名单（GET + 查询类 POST）
-    if ctx.role == Role::Viewer && !crate::api::is_viewer_allowed(&req) {
+    // AccessKey 登录必须先于素材只读白名单；其余请求沿用只读检查。
+    if req.uri().path() != crate::api::remote::ACCESS_SESSION_PATH
+        && *ctx.role.read().unwrap() == Role::Viewer
+        && !crate::api::is_viewer_allowed(&req)
+    {
         return Err(StatusCode::FORBIDDEN);
     }
     // 客户端自带的会话头一律丢弃，改用服务端绑定的会话标识
@@ -463,25 +570,14 @@ async fn proxy_handler(
     ))
 }
 
-/// 会话 token 校验：Bearer 头或查询参数（events/thumbnail/file 等 EventSource、<img> 场景）
+/// 会话 token 校验：仅 Authorization Bearer，不接受 URL 查询参数
 fn credential_valid(req: &axum::extract::Request, credential: &str) -> bool {
     let bearer = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    if let Some(value) = bearer {
-        return value == credential;
-    }
-    req.uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .filter_map(|pair| pair.split_once('='))
-                .find(|(k, _)| *k == "token")
-                .map(|(_, v)| v)
-        })
-        .is_some_and(|value| value == credential)
+    bearer.is_some_and(|value| value == credential)
 }
 
 /// Windows 防火墙入站规则（首次启用隧道监听时添加，幂等）：无规则时入站 UDP 会被静默丢弃。

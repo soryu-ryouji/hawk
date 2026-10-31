@@ -14,10 +14,15 @@ use serde_json::Value;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+pub(crate) const ACCESS_SESSION_PATH: &str = "/api/v1/remote/access-session";
+
 pub fn routes() -> OpenApiRouter<SharedState> {
     OpenApiRouter::new()
+        .routes(routes!(authenticate_access_session))
+        .routes(routes!(renew_lease))
         .routes(routes!(get_remote, put_remote))
         .routes(routes!(list_devices))
+        .routes(routes!(create_access_session))
         .routes(routes!(get_session, create_session, delete_session))
         .routes(routes!(patch_device, rotate_device, delete_device))
         .routes(routes!(list_keys, create_key))
@@ -28,8 +33,8 @@ pub fn routes() -> OpenApiRouter<SharedState> {
 struct RemoteDto {
     enabled: bool,
     url: String,
-    /// 服务端 service-key（池门禁凭证，hawk-server tenant add 生成）
-    service_key: String,
+    /// 服务端 tenant-key（池门禁凭证，hawk-server tenant add 生成）
+    tenant_key: String,
     /// 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）
     allow_import: bool,
     /// 使用中继（服务端提供时；消耗自建带宽，设备级开关）
@@ -43,7 +48,7 @@ fn remote_dto(state: &SharedState) -> RemoteDto {
     RemoteDto {
         enabled: cfg.enabled,
         url: cfg.url,
-        service_key: cfg.service_key,
+        tenant_key: cfg.tenant_key,
         allow_import: cfg.allow_import,
         relay: cfg.relay,
         status: state.remote.snapshot(),
@@ -69,8 +74,8 @@ async fn get_remote(
 struct PutRemoteBody {
     enabled: bool,
     url: String,
-    /// 服务端 service-key
-    service_key: String,
+    /// 服务端 tenant-key
+    tenant_key: String,
     /// 允许广域网会话导入素材/新建文件夹；省略时按关闭处理
     #[serde(default)]
     allow_import: bool,
@@ -98,7 +103,7 @@ async fn put_remote(
     let new_remote = RemoteSettings {
         enabled: body.enabled,
         url: body.url.trim().trim_end_matches('/').to_string(),
-        service_key: body.service_key.trim().to_string(),
+        tenant_key: body.tenant_key.trim().to_string(),
         quic_port: state.remote.remote_config().current().quic_port,
         allow_import: body.allow_import,
         // 省略时保留现值（设置面板整体保存时会显式携带）
@@ -107,11 +112,11 @@ async fn put_remote(
             .unwrap_or_else(|| state.remote.remote_config().current().relay),
     };
     if new_remote.enabled {
-        if new_remote.url.is_empty() || new_remote.service_key.is_empty() {
+        if new_remote.url.is_empty() || new_remote.tenant_key.is_empty() {
             return Err(ApiError::new(
                 codes::INVALID_PARAM,
                 axum::http::StatusCode::BAD_REQUEST,
-                "启用远程访问需要填写服务端地址与服务密钥（service-key）",
+                "启用远程访问需要填写服务端地址与服务密钥（tenant-key）",
             ));
         }
         if !new_remote.url.starts_with("http://") && !new_remote.url.starts_with("https://") {
@@ -137,12 +142,172 @@ async fn put_remote(
     Ok(Json(Envelope::ok(remote_dto(&state))))
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+struct AccessSessionBody {
+    /// 只在客户端与目标 daemon 的加密隧道内提交，不经过 hawk-server。
+    access_key: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct AccessSessionDto {
+    session_id: String,
+    role: Role,
+}
+
+/// AccessKey rendezvous 的隧道内登录；未认证隧道只能调用此端点。
+#[utoipa::path(
+    post,
+    path = "/api/v1/remote/access-session",
+    tags = ["remote"],
+    request_body = AccessSessionBody,
+    responses((status = 200, description = "OK", body = Envelope<AccessSessionDto>))
+)]
+async fn authenticate_access_session(
+    State(state): State<SharedState>,
+    Extension(tunnel): Extension<crate::remote::data::TunneledPeer>,
+    Json(body): Json<AccessSessionBody>,
+) -> Result<Json<Envelope<AccessSessionDto>>, ApiError> {
+    let Some(access) = &tunnel.access else {
+        return Err(ApiError::new(
+            codes::UNAUTHORIZED,
+            axum::http::StatusCode::UNAUTHORIZED,
+            "仅 AccessKey rendezvous 可登录",
+        ));
+    };
+    if access.authenticated {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::CONFLICT,
+            "AccessKey 会话已认证",
+        ));
+    }
+    let credential = crate::remote::keys::sha256_hex(&body.access_key);
+    let library_id = state
+        .library
+        .as_ref()
+        .map(|lib| crate::core::paths::library_key(&lib.paths.root));
+    let Some(entry) = state
+        .remote
+        .keys
+        .resolve_for_library(library_id.as_deref(), &credential)
+    else {
+        return Err(ApiError::new(
+            codes::UNAUTHORIZED,
+            axum::http::StatusCode::UNAUTHORIZED,
+            "AccessKey 无效",
+        ));
+    };
+    state
+        .remote
+        .authenticate_access_session(&tunnel.session_id, credential, entry.role)
+        .map_err(|status| ApiError::new(codes::UNAUTHORIZED, status, "AccessKey 会话无效"))?;
+    Ok(Json(Envelope::ok(AccessSessionDto {
+        session_id: tunnel.session_id,
+        role: entry.role,
+    })))
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct AccessConnectBody {
+    target_device_id: String,
+    /// 配对时带外取得的目标 iroh 公钥；server 返回的其他身份一律拒绝。
+    target_identity: String,
+    /// 仅经本机 Loopback 代理送入目标加密隧道，不发送给 hawk-server。
+    access_key: String,
+}
+
+/// AccessKey-only 原生连接：server 仅编排，目标身份钉扎后在加密隧道内登录。
+#[utoipa::path(
+    post,
+    path = "/api/v1/remote/access-connect",
+    tags = ["remote"],
+    request_body = AccessConnectBody,
+    responses((status = 200, description = "OK", body = Envelope<ActiveSessionDto>))
+)]
+async fn create_access_session(
+    State(state): State<SharedState>,
+    Extension(access): Extension<AccessContext>,
+    Json(body): Json<AccessConnectBody>,
+) -> Result<Json<Envelope<ActiveSessionDto>>, ApiError> {
+    require_manage(&access)?;
+    let cfg = state.remote.remote_config().current();
+    if cfg.url.is_empty() {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "未配置 hawk-server 地址",
+        ));
+    }
+    let base = cfg.url.trim_end_matches('/').to_string();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| bad_gateway(format!("HTTP 客户端构建失败: {e}")))?;
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    let dto = state
+        .remote
+        .sessions
+        .connect_access(
+            &http,
+            &base,
+            &identity,
+            &body.target_device_id,
+            &body.target_identity,
+            &body.access_key,
+        )
+        .await
+        .map_err(|e| {
+            if e.is_server {
+                bad_gateway(e.message)
+            } else {
+                ApiError::new(
+                    codes::REMOTE_SESSION_FAILED,
+                    axum::http::StatusCode::CONFLICT,
+                    e.message,
+                )
+            }
+        })?;
+    Ok(Json(Envelope::ok(dto)))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct LeaseDto {
+    expires_in: u64,
+}
+
+/// 已认证隧道续期：延长目标 daemon 的会话租约，不改变原始角色。
+#[utoipa::path(
+    post,
+    path = "/api/v1/remote/lease",
+    tags = ["remote"],
+    responses((status = 200, description = "OK", body = Envelope<LeaseDto>))
+)]
+async fn renew_lease(
+    State(state): State<SharedState>,
+    Extension(tunnel): Extension<crate::remote::data::TunneledPeer>,
+) -> Result<Json<Envelope<LeaseDto>>, ApiError> {
+    state
+        .remote
+        .renew_session(&tunnel.session_id)
+        .map_err(|status| ApiError::new(codes::UNAUTHORIZED, status, "会话已过期"))?;
+    Ok(Json(Envelope::ok(LeaseDto { expires_in: 900 })))
+}
+
 // ---------- 设备列表与会话（admin 限定；转发自 hawk-server，key 不出本进程） ----------
 
 /// 取接入配置并构建信令 HTTP 客户端；未配置返回 400
 fn signal_client(state: &SharedState) -> Result<(reqwest::Client, String, String), ApiError> {
     let cfg = state.remote.remote_config().current();
-    if cfg.url.is_empty() || cfg.service_key.is_empty() {
+    if cfg.url.is_empty() || cfg.tenant_key.is_empty() {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
             axum::http::StatusCode::BAD_REQUEST,
@@ -160,7 +325,14 @@ fn signal_client(state: &SharedState) -> Result<(reqwest::Client, String, String
                 format!("HTTP 客户端构建失败: {e}"),
             )
         })?;
-    Ok((client, base, cfg.service_key))
+    let session = state.remote.control_session().ok_or_else(|| {
+        ApiError::new(
+            codes::REMOTE_UPSTREAM,
+            axum::http::StatusCode::CONFLICT,
+            "设备正在接入或重新认证，请稍后重试",
+        )
+    })?;
+    Ok((client, base, session))
 }
 
 fn bad_gateway(message: String) -> ApiError {
@@ -430,7 +602,7 @@ struct RotateDeviceDto {
     endpoint_id: String,
 }
 
-/// 注销设备记录（admin 限定）：转发服务端 DELETE /devices/{id}（其进行中会话与 key 映射一并清理）。
+/// 注销设备记录（TenantAdmin 鉴权）：转发服务端 DELETE /devices/{id}，其进行中会话一并取消。
 /// 本机当前设备不可经此移除（会删掉自己的信令身份）；先关闭远程接入是唯一安全路径
 #[utoipa::path(
     delete,
@@ -457,7 +629,15 @@ async fn delete_device(
             ));
         }
     }
-    let (http, base, key) = signal_client(&state)?;
+    let cfg = state.remote.remote_config().current();
+    let base = cfg.url.trim_end_matches('/').to_string();
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| bad_gateway(format!("HTTP 客户端构建失败: {e}")))?;
+    let key = crate::remote::signal::tenant_session_token(&http, &base, &cfg.tenant_key)
+        .await
+        .map_err(bad_gateway)?;
     let resp = http
         .delete(format!("{base}/api/v1/devices/{device_id}"))
         .bearer_auth(&key)
@@ -567,7 +747,17 @@ async fn list_keys(
     Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<RemoteKeysDto>>, ApiError> {
     require_manage(&access)?;
-    let keys = state.remote.keys.list().iter().map(key_dto).collect();
+    let library_id = state
+        .library
+        .as_ref()
+        .map(|lib| crate::core::paths::library_key(&lib.paths.root));
+    let keys = state
+        .remote
+        .keys
+        .list_for_library(library_id.as_deref())
+        .iter()
+        .map(key_dto)
+        .collect();
     Ok(Json(Envelope::ok(RemoteKeysDto { keys })))
 }
 
@@ -587,13 +777,17 @@ struct CreateKeyBody {
 #[derive(Serialize, utoipa::ToSchema)]
 struct CreateKeyDto {
     id: String,
-    /// 明文 key：只在本次响应出现，服务端/本地均不存明文
+    /// 明文 key：只在本次响应出现，本地不存明文，也不发送给 hawk-server
     key: String,
-    /// 是否已同步到 server 映射（false = 远程未接入/推送失败，下次接入自动重试）
-    synced: bool,
+    /// 配对时必须钉扎的目标 iroh 公钥
+    target_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_library_id: Option<String>,
 }
 
-/// 签发访问密钥（admin 限定）：本地保管验证子，推送 server 哈希映射（best-effort）
+/// 签发访问密钥（admin 限定）：本地保管验证子，只供加密隧道内的目标端认证
 #[utoipa::path(
     post,
     path = "/api/v1/remote/keys",
@@ -607,20 +801,38 @@ async fn create_key(
     Json(body): Json<CreateKeyBody>,
 ) -> Result<Json<Envelope<CreateKeyDto>>, ApiError> {
     require_manage(&access)?;
+    let lib = state.require_library()?;
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
     let (entry, key) = state
         .remote
         .keys
         .create(
+            &library_id,
             body.label.as_deref().unwrap_or(""),
             body.role,
             body.custom.as_deref(),
         )
         .map_err(|e| ApiError::new(codes::INVALID_PARAM, axum::http::StatusCode::BAD_REQUEST, e))?;
-    let synced = sync_keys_to_server(&state).await;
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    let target_library_id = state
+        .library
+        .as_ref()
+        .map(|lib| crate::core::paths::library_key(&lib.paths.root));
     Ok(Json(Envelope::ok(CreateKeyDto {
         id: entry.id,
         key,
-        synced,
+        target_identity: identity.endpoint_id.clone(),
+        target_device_id: identity.device_id,
+        target_library_id,
     })))
 }
 
@@ -635,7 +847,6 @@ struct PatchKeyBody {
 #[derive(Serialize, utoipa::ToSchema)]
 struct PatchKeyDto {
     key: RemoteKeyDto,
-    synced: bool,
 }
 
 /// 更新访问密钥的标签/权限（admin 限定；权限收窄对后续会话立即生效）
@@ -666,31 +877,24 @@ async fn patch_key(
                 "密钥不存在",
             )
         })?;
-    let synced = sync_keys_to_server(&state).await;
     Ok(Json(Envelope::ok(PatchKeyDto {
         key: key_dto(&entry),
-        synced,
     })))
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
-struct DeleteKeyDto {
-    synced: bool,
-}
-
-/// 吊销访问密钥（admin 限定）：本地删除并推送 server 移除映射，该 key 的后续会话即被拒
+/// 吊销访问密钥（admin 限定）：本地删除，目标 daemon 拒绝该 key 的后续会话
 #[utoipa::path(
     delete,
     path = "/api/v1/remote/keys/{key_id}",
     tags = ["remote"],
     params(("key_id" = String, Path, description = "密钥 id")),
-    responses((status = 200, description = "OK", body = Envelope<DeleteKeyDto>))
+    responses((status = 200, description = "OK", body = SuccessOnly))
 )]
 async fn delete_key(
     State(state): State<SharedState>,
     Extension(access): Extension<AccessContext>,
     axum::extract::Path(key_id): axum::extract::Path<String>,
-) -> Result<Json<Envelope<DeleteKeyDto>>, ApiError> {
+) -> Result<Json<SuccessOnly>, ApiError> {
     require_manage(&access)?;
     let removed = state.remote.keys.remove(&key_id).map_err(|e| {
         ApiError::new(
@@ -706,24 +910,7 @@ async fn delete_key(
             "密钥不存在",
         ));
     }
-    let synced = sync_keys_to_server(&state).await;
-    Ok(Json(Envelope::ok(DeleteKeyDto { synced })))
-}
-
-/// 变更后全量推送 key 映射到 server（best-effort：远程未配置/未注册返回 false）
-async fn sync_keys_to_server(state: &SharedState) -> bool {
-    let Ok((http, base, key)) = signal_client(state) else {
-        return false;
-    };
-    let Ok(device_id) = registered_device_id(state) else {
-        return false;
-    };
-    state
-        .remote
-        .keys
-        .sync_to_server(&http, &base, &key, &device_id)
-        .await
-        .is_ok()
+    Ok(super::envelope::success())
 }
 
 /// 本机已注册的 device_id（未注册 → 400）

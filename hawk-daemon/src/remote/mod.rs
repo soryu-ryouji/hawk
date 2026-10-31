@@ -9,12 +9,13 @@ pub mod keys;
 pub mod session;
 pub mod signal;
 
+use crate::core::access::Role;
 use crate::core::config::LibraryConfig;
 use crate::core::events::EventBus;
 use crate::core::paths::LibraryPaths;
 use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// SSE 事件名（信令状态变化推送，负载即 RemoteStatus）
 pub const REMOTE_STATUS_EVENT: &str = "remote.status";
@@ -52,7 +53,7 @@ pub struct RemoteStatus {
     pub error: Option<String>,
 }
 
-/// remote supervisor：期望态（enabled && url/service_key 非空 → 信令运行中）与实际任务的 reconcile
+/// remote supervisor：期望态（enabled && url/tenant_key 非空 → 信令运行中）与实际任务的 reconcile
 pub struct Supervisor {
     notify: tokio::sync::Notify,
     status: Mutex<RemoteStatus>,
@@ -64,6 +65,8 @@ pub struct Supervisor {
     endpoint_slot: session::EndpointSlot,
     /// 访问密钥（hawk-app key）本地签发与保管（查看者会话的本地执法依据）
     pub keys: Arc<keys::KeyStore>,
+    /// 当前 Device Session：信令通道与 daemon REST 转发共用，过期由信令重新签发。
+    control_session: RwLock<Option<String>>,
     /// 应用级远程配置（接入参数跨素材库共享；身份目录由配置位置派生）
     config: Arc<RemoteConfigStore>,
 }
@@ -82,12 +85,48 @@ impl Supervisor {
             keys: keys::KeyStore::open(config.identity_dir()),
             endpoint_slot,
             bus,
+            control_session: RwLock::new(None),
             config,
         })
     }
 
     pub fn remote_config(&self) -> &Arc<RemoteConfigStore> {
         &self.config
+    }
+
+    pub fn control_session(&self) -> Option<String> {
+        self.control_session.read().unwrap().clone()
+    }
+
+    pub fn authenticate_access_session(
+        &self,
+        session_id: &str,
+        credential: String,
+        role: Role,
+    ) -> Result<(), axum::http::StatusCode> {
+        let plane = self.endpoint_slot.read().unwrap().clone();
+        let Some(plane) = plane else {
+            return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        };
+        plane.authenticate_access_session(session_id, credential, role)
+    }
+
+    pub fn renew_session(&self, session_id: &str) -> Result<(), axum::http::StatusCode> {
+        let plane = self.endpoint_slot.read().unwrap().clone();
+        let Some(plane) = plane else {
+            return Err(axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        };
+        plane.renew_session(session_id)
+    }
+
+    pub fn disallow_session(&self, session_id: &str) {
+        if let Some(plane) = self.endpoint_slot.read().unwrap().clone() {
+            plane.disallow_session(session_id);
+        }
+    }
+
+    pub(crate) fn set_control_session(&self, session: Option<String>) {
+        *self.control_session.write().unwrap() = session;
     }
 
     /// 数据面槽位访问（signal 任务发布/清空，SessionManager 读取）
@@ -122,45 +161,36 @@ impl Supervisor {
             // 只有接入参数变化才需要重建连接。
             let need_restart = match current.as_ref() {
                 Some((active, _)) => !same_connection(active, &cfg),
-                None => activatable(&cfg),
+                // 数据面独立常驻：即使未启用 WAN，也要能接受到本机的 LAN iroh 会话。
+                None => true,
             };
             if need_restart {
+                self.set_control_session(None);
                 if let Some((_, handle)) = current.take() {
                     handle.abort();
                     // 等旧任务真正结束：数据面的 Drop 守卫在此时才关停 QUIC 端点，
                     // 不等就会出现「新任务绑定自己刚占用的端口」→ EADDRINUSE
                     let _ = handle.await;
                 }
-                current = if activatable(&cfg) {
-                    tracing::info!("远程访问信令启动: {}", cfg.url);
-                    self.set_status(RemoteStatus {
-                        state: RemoteState::Connecting,
-                        server_url: Some(cfg.url.clone()),
-                        device_id: None,
-                        error: None,
-                    });
-                    let handle = tokio::spawn(signal::run(
-                        library.clone(),
-                        self.config.clone(),
-                        cfg.clone(),
-                        self.clone(),
-                        router.clone(),
-                    ));
-                    Some((cfg, handle))
-                } else {
-                    if cfg.enabled {
-                        tracing::warn!("远程访问已启用但缺少 url 或 key，远程访问未启动");
-                        self.set_status(RemoteStatus {
-                            state: RemoteState::Error,
-                            server_url: None,
-                            device_id: None,
-                            error: Some("已启用但 url 或 key 未配置".to_string()),
-                        });
+                tracing::info!("远程数据面启动（WAN 接入={})", activatable(&cfg));
+                self.set_status(RemoteStatus {
+                    state: if activatable(&cfg) {
+                        RemoteState::Connecting
                     } else {
-                        self.set_status(RemoteStatus::default());
-                    }
-                    None
-                };
+                        RemoteState::Disabled
+                    },
+                    server_url: activatable(&cfg).then_some(cfg.url.clone()),
+                    device_id: None,
+                    error: None,
+                });
+                let handle = tokio::spawn(signal::run(
+                    library.clone(),
+                    self.config.clone(),
+                    cfg.clone(),
+                    self.clone(),
+                    router.clone(),
+                ));
+                current = Some((cfg, handle));
             } else if let Some((active, _)) = current.as_mut() {
                 // 仅 writable 等非连接字段变化：保留运行中的信令/数据面
                 *active = cfg;
@@ -170,15 +200,15 @@ impl Supervisor {
     }
 }
 
-fn activatable(cfg: &RemoteSettings) -> bool {
-    cfg.enabled && !cfg.url.is_empty() && !cfg.service_key.is_empty()
+pub(crate) fn activatable(cfg: &RemoteSettings) -> bool {
+    cfg.enabled && !cfg.url.is_empty() && !cfg.tenant_key.is_empty()
 }
 
 /// 是否需要重建信令/数据面：写权限等运行期配置不算连接参数
 fn same_connection(a: &RemoteSettings, b: &RemoteSettings) -> bool {
     a.enabled == b.enabled
         && a.url == b.url
-        && a.service_key == b.service_key
+        && a.tenant_key == b.tenant_key
         && a.quic_port == b.quic_port
 }
 

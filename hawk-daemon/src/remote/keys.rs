@@ -1,11 +1,9 @@
 //! 访问密钥（hawk-app key）的本地签发与保管：`<identity_dir>/keys.json`。
 //! key 明文只在签发时经 API 返回一次；本地只存 sha256 验证子与前缀预览。
-//! 查看者会话的 session.request 携带验证子，daemon 据此本地执法（权限以本地映射为准，
-//! server 声称的 access 只是参考）；每次变更与每次信令接入后全量推送给 server。
+//! AccessKey 只在客户端与目标 daemon 的加密通道内验证，不同步到 hawk-server。
 
 use crate::core::access::Role;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -16,12 +14,15 @@ const MIN_CUSTOM_LEN_WRITE: usize = 12;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KeyEntry {
     pub id: String,
+    /// 授权绑定的素材库；LAN/WAN 共用，但切换库后不能复用。
+    pub library_id: String,
     pub label: String,
     /// sha256(key) hex：上送 server 的验证子（server 存 HMAC(pepper, s)），查看者会话执法依据
     pub hash: String,
     /// key 前 4 字符（列表识别用；自定义 key 前缀可能泄露弱前缀，可接受——完整 key 不可恢复）
     pub prefix: String,
     pub role: Role,
+    pub grant_version: u64,
     pub created_at_ms: u64,
 }
 
@@ -47,20 +48,27 @@ impl KeyStore {
         })
     }
 
-    pub fn list(&self) -> Vec<KeyEntry> {
-        self.entries.lock().unwrap().clone()
+    pub fn list_for_library(&self, library_id: Option<&str>) -> Vec<KeyEntry> {
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|entry| library_id.is_none_or(|id| entry.library_id == id))
+            .cloned()
+            .collect()
     }
 
     /// 签发：custom 为 None 时程序生成（hk_ + 四组十六进制，128 位）；
     /// 返回 (条目, 明文 key)——明文只在此刻可见
     pub fn create(
         &self,
+        library_id: &str,
         label: &str,
         role: Role,
         custom: Option<&str>,
     ) -> Result<(KeyEntry, String), String> {
-        if !matches!(role, Role::Viewer | Role::Importer) {
-            return Err("WAN access key 仅支持 viewer/importer".to_string());
+        if !matches!(role, Role::Viewer | Role::Importer | Role::Editor) {
+            return Err("AccessKey 仅支持 viewer/importer/editor".to_string());
         }
         let key = match custom.map(str::trim).filter(|c| !c.is_empty()) {
             Some(custom) => {
@@ -89,10 +97,12 @@ impl KeyStore {
         }
         let entry = KeyEntry {
             id: format!("k_{:016x}", random_u64()),
+            library_id: library_id.to_string(),
             label: label.trim().to_string(),
             hash,
             prefix: key.chars().take(4).collect(),
             role,
+            grant_version: 1,
             created_at_ms: now_ms(),
         };
         let mut entries = self.entries.lock().unwrap();
@@ -101,7 +111,7 @@ impl KeyStore {
         Ok((entry, key))
     }
 
-    /// 更新标签/权限（权限收窄立即生效：server 映射与本地映射同步更新）
+    /// 更新标签/权限（权限收窄由目标 daemon 在后续请求中生效）
     pub fn patch(
         &self,
         id: &str,
@@ -116,17 +126,18 @@ impl KeyStore {
             entry.label = label.trim().to_string();
         }
         if let Some(role) = role {
-            if !matches!(role, Role::Viewer | Role::Importer) {
-                return Err("WAN access key 仅支持 viewer/importer".to_string());
+            if !matches!(role, Role::Viewer | Role::Importer | Role::Editor) {
+                return Err("AccessKey 仅支持 viewer/importer/editor".to_string());
             }
             entry.role = role;
+            entry.grant_version += 1;
         }
         let updated = entry.clone();
         self.save_locked(&entries)?;
         Ok(Some(updated))
     }
 
-    /// 吊销（本地删除 + 调用方负责推送 server；进行中的会话由 daemon 会话侧感知）
+    /// 吊销（本地删除；进行中的会话由 daemon 会话侧感知）
     pub fn remove(&self, id: &str) -> Result<bool, String> {
         let mut entries = self.entries.lock().unwrap();
         let before = entries.len();
@@ -138,49 +149,14 @@ impl KeyStore {
         Ok(true)
     }
 
-    /// 查看者会话执法：验证子（sha256）→ 权限
-    pub fn resolve(&self, hash: &str) -> Option<KeyEntry> {
+    /// 会话执法：验证子 + 当前库 → 当前角色与授权版本。
+    pub fn resolve_for_library(&self, library_id: Option<&str>, hash: &str) -> Option<KeyEntry> {
         self.entries
             .lock()
             .unwrap()
             .iter()
-            .find(|e| e.hash == hash)
+            .find(|entry| entry.hash == hash && library_id.is_none_or(|id| entry.library_id == id))
             .cloned()
-    }
-
-    /// 全量推送本设备的 key 映射到 server（覆盖式；service-key 鉴权）。
-    /// 设备未注册/远程未配置时返回 Err，调用方按可重试场景处理
-    pub async fn sync_to_server(
-        &self,
-        http: &reqwest::Client,
-        base: &str,
-        service_key: &str,
-        device_id: &str,
-    ) -> Result<(), String> {
-        let keys: Vec<serde_json::Value> = self
-            .list()
-            .iter()
-            .map(|e| json!({ "s": e.hash, "role": e.role.as_str() }))
-            .collect();
-        let resp = http
-            .put(format!("{base}/api/v1/devices/{device_id}/keys"))
-            .bearer_auth(service_key)
-            .json(&json!({ "keys": keys }))
-            .send()
-            .await
-            .map_err(|e| format!("访问密钥同步失败: {e}"))?;
-        if resp.status().is_success() {
-            Ok(())
-        } else {
-            let status = resp.status();
-            let message = resp
-                .json::<serde_json::Value>()
-                .await
-                .ok()
-                .and_then(|v| v["error"]["message"].as_str().map(String::from))
-                .unwrap_or_else(|| status.to_string());
-            Err(format!("访问密钥同步失败（{status}）: {message}"))
-        }
     }
 
     fn save_locked(&self, entries: &[KeyEntry]) -> Result<(), String> {
@@ -203,10 +179,14 @@ impl KeyStore {
     }
 }
 
-/// 程序生成的 key：`hk_` + 四组八位十六进制（128 位随机；门令牌保护下不可在线爆破）
+/// 程序生成的 key：`hk_` + 八组八位十六进制（256 位随机）
 fn generate_key() -> String {
     format!(
-        "hk_{:08x}-{:08x}-{:08x}-{:08x}",
+        "hk_{:08x}-{:08x}-{:08x}-{:08x}-{:08x}-{:08x}-{:08x}-{:08x}",
+        random_u64() as u32,
+        random_u64() as u32,
+        random_u64() as u32,
+        random_u64() as u32,
         random_u64() as u32,
         random_u64() as u32,
         random_u64() as u32,
@@ -243,14 +223,14 @@ mod tests {
     fn create_generated_and_resolve() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::open(dir.path().to_str().unwrap());
-        let (entry, key) = store.create("插件", Role::Viewer, None).unwrap();
+        let (entry, key) = store.create("lib", "插件", Role::Viewer, None).unwrap();
         assert!(key.starts_with("hk_"));
-        assert_eq!(key.len(), "hk_".len() + 8 * 4 + 3);
+        assert_eq!(key.len(), "hk_".len() + 8 * 8 + 7);
         // 明文不落盘
         let raw = std::fs::read_to_string(dir.path().join("keys.json")).unwrap();
         assert!(!raw.contains(&key));
         // 验证子可解析权限
-        let found = store.resolve(&entry.hash).unwrap();
+        let found = store.resolve_for_library(Some("lib"), &entry.hash).unwrap();
         assert_eq!(found.role, Role::Viewer);
     }
 
@@ -259,26 +239,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::open(dir.path().to_str().unwrap());
         // 纯读 4 字符即可
-        assert!(store.create("a", Role::Viewer, Some("1234")).is_ok());
+        assert!(store.create("lib", "a", Role::Viewer, Some("1234")).is_ok());
         // 导入权限不足 12 字符拒绝
         assert!(store
-            .create("b", Role::Importer, Some("short-key"))
+            .create("lib", "b", Role::Importer, Some("short-key"))
             .is_err());
         assert!(store
-            .create("b", Role::Importer, Some("123456789012"))
+            .create("lib", "b", Role::Importer, Some("123456789012"))
             .is_ok());
         // 重复拒绝
-        assert!(store.create("c", Role::Viewer, Some("1234")).is_err());
-        // WAN 不接受 editor/admin
-        assert!(store.create("d", Role::Editor, None).is_err());
-        assert!(store.create("d", Role::Admin, None).is_err());
+        assert!(store
+            .create("lib", "c", Role::Viewer, Some("1234"))
+            .is_err());
+        // editor 可在 LAN 使用；admin 不作为可分享角色
+        assert!(store.create("lib", "d", Role::Editor, None).is_ok());
+        assert!(store.create("lib", "d", Role::Admin, None).is_err());
     }
 
     #[test]
     fn patch_and_remove() {
         let dir = tempfile::tempdir().unwrap();
         let store = KeyStore::open(dir.path().to_str().unwrap());
-        let (entry, _) = store.create("a", Role::Viewer, None).unwrap();
+        let (entry, _) = store.create("lib", "a", Role::Viewer, None).unwrap();
         let updated = store
             .patch(&entry.id, None, Some(Role::Importer))
             .unwrap()
@@ -296,6 +278,6 @@ mod tests {
         assert!(!store.remove(&entry.id).unwrap());
         // 重启后仍为空
         let reopened = KeyStore::open(dir.path().to_str().unwrap());
-        assert!(reopened.list().is_empty());
+        assert!(reopened.list_for_library(None).is_empty());
     }
 }

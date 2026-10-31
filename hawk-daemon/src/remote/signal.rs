@@ -8,6 +8,7 @@ use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
 use crate::remote::{LibraryContext, RemoteState, RemoteStatus, Supervisor};
+use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -51,6 +52,8 @@ enum SignalError {
     Transient(String),
     /// 服务端已不再认识本设备（设备表丢失/被注销）→ 清除 device_id 重注册
     Unregistered,
+    /// Device Session 过期或被吊销：重新执行设备签名认证，不重建设备身份
+    Reauthenticate,
     /// 服务端中继配置变化（心跳下发的 relay 字段变更）→ 重建数据面后重连通道
     RelayChanged(Option<(String, String)>),
 }
@@ -87,7 +90,11 @@ async fn run_inner(
     supervisor: &Arc<Supervisor>,
     router: axum::Router,
 ) -> Result<()> {
-    let base = normalize_base(&cfg.url)?;
+    let base = if crate::remote::activatable(cfg) {
+        normalize_base(&cfg.url)?
+    } else {
+        String::new()
+    };
     let http = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
@@ -100,17 +107,33 @@ async fn run_inner(
     // 否则 UDP 端口被本进程泄漏，下次激活直接绑定失败。
     // relay 配置来自服务端心跳下发；变化时经 RelayChanged 重建数据面
     let mut current_relay: Option<(String, String)> = None;
-    let mut data_plane = PlaneGuard::new(
+    let data_plane = PlaneGuard::new(
         bind_data_plane(&identity, cfg, None, router.clone()).await?,
         supervisor.endpoint_slot().clone(),
     );
 
+    if !crate::remote::activatable(cfg) {
+        if cfg.enabled {
+            supervisor.set_status(RemoteStatus {
+                state: RemoteState::Error,
+                server_url: None,
+                device_id: None,
+                error: Some("已启用但 url 或 tenant_key 未配置".to_string()),
+            });
+        } else {
+            supervisor.set_status(RemoteStatus::default());
+        }
+        // 仅持有 LAN 数据面；配置变化由 supervisor 中止本任务并重建。
+        futures_util::future::pending::<()>().await;
+    }
+
+    let mut data_plane = data_plane;
     let mut retry = RETRY_MIN;
     let mut chan_retry = CHANNEL_RETRY_MIN;
     loop {
         // 注册（含服务端设备表丢失后的重注册）：瞬时失败退避重试，直到成功或致命
         while identity.device_id.is_none() {
-            match register(&http, &base, &cfg.service_key, library, remote, &identity).await {
+            match register(&http, &base, &cfg.tenant_key, library, remote, &identity).await {
                 Ok(device_id) => {
                     tracing::info!("远程访问设备已注册: {device_id}（{base}）");
                     identity.device_id = Some(device_id);
@@ -124,23 +147,48 @@ async fn run_inner(
                     tokio::time::sleep(retry).await;
                     retry = (retry * 2).min(RETRY_MAX);
                 }
-                Err(SignalError::Unregistered) | Err(SignalError::RelayChanged(_)) => {
-                    unreachable!("注册阶段不产生 Unregistered/RelayChanged")
+                Err(SignalError::Unregistered)
+                | Err(SignalError::Reauthenticate)
+                | Err(SignalError::RelayChanged(_)) => {
+                    unreachable!("注册阶段不产生 Unregistered/Reauthenticate/RelayChanged")
                 }
             }
         }
         let device_id = identity.device_id.clone().unwrap();
+        let control_session = match device_session(&http, &base, &identity).await {
+            Ok(session) => {
+                supervisor.set_control_session(Some(session.clone()));
+                session
+            }
+            Err(SignalError::Unregistered) => {
+                identity.device_id = None;
+                identity
+                    .persist(remote.identity_dir())
+                    .map_err(SignalError::Fatal)?;
+                supervisor.set_control_session(None);
+                continue;
+            }
+            Err(SignalError::Transient(msg)) => {
+                tracing::warn!("设备签名认证失败（{retry:?} 后重试）: {msg}");
+                tokio::time::sleep(retry).await;
+                retry = (retry * 2).min(RETRY_MAX);
+                continue;
+            }
+            Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
+            Err(SignalError::Reauthenticate) | Err(SignalError::RelayChanged(_)) => {
+                unreachable!("设备认证阶段不产生 Reauthenticate/RelayChanged")
+            }
+        };
 
         let ctx = ChannelContext {
             current_relay: &mut current_relay,
             http: &http,
             base: &base,
-            key: &cfg.service_key,
+            key: &control_session,
             device_id: &device_id,
             data_plane: &data_plane.plane,
             library,
             remote,
-            keys: &supervisor.keys,
         };
         match channel_loop(&ctx, supervisor).await {
             // 对端正常关闭：立即重连（无退避、不闪「接入中」）
@@ -155,11 +203,17 @@ async fn run_inner(
                 identity
                     .persist(remote.identity_dir())
                     .map_err(SignalError::Fatal)?;
+                supervisor.set_control_session(None);
                 retry = RETRY_MIN;
                 chan_retry = CHANNEL_RETRY_MIN;
                 continue;
             }
             Err(SignalError::Fatal(msg)) => return Err(SignalError::Fatal(msg)),
+            Err(SignalError::Reauthenticate) => {
+                supervisor.set_control_session(None);
+                chan_retry = CHANNEL_RETRY_MIN;
+                continue;
+            }
             Err(SignalError::RelayChanged(relay)) => {
                 // 服务端中继配置变化：重建数据面（旧连接断开由 B 侧重拨兜底）后立刻重连
                 tracing::info!("服务端中继配置变化，重建数据面");
@@ -252,21 +306,19 @@ struct ChannelContext<'a> {
     current_relay: &'a mut Option<(String, String)>,
     http: &'a reqwest::Client,
     base: &'a str,
-    /// service-key（池门禁凭证）
+    /// Device Session（控制通道与同进程 REST 转发共用）
     key: &'a str,
     device_id: &'a str,
     data_plane: &'a Arc<DataPlane>,
     /// 本地库上下文（None = 远程查看模式）
     library: &'a Option<LibraryContext>,
     remote: &'a Arc<RemoteConfigStore>,
-    /// 访问密钥本地存储（查看者会话执法 + 接入后推送 server）
-    keys: &'a Arc<crate::remote::keys::KeyStore>,
 }
 
 /// 一轮控制通道：WSS 连接 → hello/hello_ack → 心跳与推送处理，直到断开
 async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) -> Result<()> {
     let (base, key, device_id) = (ctx.base, ctx.key, ctx.device_id);
-    let request = ws_request(base, key, device_id)?;
+    let request = ws_request(base, key)?;
     let (mut ws, _) = tokio_tungstenite::connect_async(request)
         .await
         .map_err(ws_connect_error)?;
@@ -295,23 +347,6 @@ async fn channel_loop(ctx: &ChannelContext<'_>, supervisor: &Arc<Supervisor>) ->
         error: None,
     });
     tracing::info!("远程访问控制通道已连接: {device_id}");
-
-    // 接入成功：全量推送本机访问密钥映射到 server（覆盖式幂等；失败等下次变更/重连重试）
-    {
-        let keys = ctx.keys.clone();
-        let http = ctx.http.clone();
-        let base = base.to_string();
-        let service_key = key.to_string();
-        let device_id = device_id.to_string();
-        tokio::spawn(async move {
-            if let Err(e) = keys
-                .sync_to_server(&http, &base, &service_key, &device_id)
-                .await
-            {
-                tracing::warn!("访问密钥同步失败（下次变更或重连时重试）: {e}");
-            }
-        });
-    }
 
     // 通道（重）建立：上一轮会话的放行与连接全部失效（B 侧会感知断开自行收尾）
     ctx.data_plane.reset_peers();
@@ -393,64 +428,28 @@ async fn handle_message(
                         .and_then(|a| a.as_str())
                         .unwrap_or_default()
                 );
-                // 本地执法（权限以本机 key 映射为准，server 声称的 access 只是参考）：
-                // - 查看者会话（携带 key 验证子）：key 必须存在且权限覆盖请求；
-                //   写会话另需本机 writable 总开关
-                // - app 间会话（无验证子）：不开放写（写只对 key 持有者开放）
-                let credential = value.get("credential").and_then(|c| c.as_str());
-                let writable = match credential {
-                    Some(hash) => match ctx.keys.resolve(hash) {
-                        Some(entry) => {
-                            if requested_write
-                                && !(entry.role == Role::Importer
-                                    && ctx.remote.current().allow_import)
-                            {
-                                tracing::info!(
-                                    "拒绝广域网写会话 {session_id}：key 无写权限或未开启 writable"
-                                );
-                                reject_session(
-                                    ctx.http,
-                                    ctx.base,
-                                    ctx.key,
-                                    session_id,
-                                    ctx.device_id,
-                                )
-                                .await?;
-                                return Ok(());
-                            }
-                            requested_write
-                        }
-                        None => {
-                            tracing::info!("拒绝查看者会话 {session_id}：访问密钥已吊销");
-                            reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id)
-                                .await?;
-                            return Ok(());
-                        }
-                    },
-                    None => {
-                        // app 间会话（同租户设备互信）：写权限只看本机「允许广域网保存素材」总开关。
-                        // 访问密钥是给第三方、可逐把吊销的访问用的，自己的设备走设备身份，两者不混用；
-                        // 写端点仍受 WAN 通道的 Import 上限限制（仅导入与新建文件夹）
-                        if requested_write {
-                            if !ctx.remote.current().allow_import {
-                                tracing::info!("拒绝写会话 {session_id}：本机未开启广域网写入");
-                                reject_session(
-                                    ctx.http,
-                                    ctx.base,
-                                    ctx.key,
-                                    session_id,
-                                    ctx.device_id,
-                                )
-                                .await?;
-                                return Ok(());
-                            }
-                            tracing::info!(
-                                "放行同租户设备写会话 {session_id}（来源 {}）",
-                                value["from"]["device_id"].as_str().unwrap_or_default()
-                            );
-                        }
-                        requested_write
+                let access_rendezvous = value
+                    .get("access_rendezvous")
+                    .and_then(|flag| flag.as_bool())
+                    .unwrap_or(false);
+                // 同租户 Device 会话：写权限只看目标设备的 WAN 导入开关。
+                // AccessKey 只标记匿名 rendezvous，实际权限在隧道内登录后计算。
+                let writable = if access_rendezvous {
+                    false
+                } else if requested_write {
+                    if !ctx.remote.current().allow_import {
+                        tracing::info!("拒绝写会话 {session_id}：本机未开启广域网写入");
+                        reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id)
+                            .await?;
+                        return Ok(());
                     }
+                    tracing::info!(
+                        "放行同租户设备写会话 {session_id}（来源 {}）",
+                        value["from"]["device_id"].as_str().unwrap_or_default()
+                    );
+                    true
+                } else {
+                    false
                 };
 
                 // 对端身份（endpoint_id）随 session.request 下发（服务端持有双方设备记录），
@@ -460,15 +459,20 @@ async fn handle_message(
                     .and_then(|s| s.parse::<iroh::EndpointId>().ok());
                 match endpoint_id {
                     Some(endpoint_id) => {
-                        ctx.data_plane.allow_session(
-                            session_id,
-                            endpoint_id,
-                            if writable {
-                                Role::Importer
-                            } else {
-                                Role::Viewer
-                            },
-                        );
+                        if access_rendezvous {
+                            ctx.data_plane.allow_access_session(session_id, endpoint_id);
+                        } else {
+                            ctx.data_plane.allow_session(
+                                session_id,
+                                value["from"]["device_id"].as_str().unwrap_or_default(),
+                                endpoint_id,
+                                if writable {
+                                    Role::Importer
+                                } else {
+                                    Role::Viewer
+                                },
+                            );
+                        }
                         accepted_peers.insert(session_id.to_string(), endpoint_id);
                         // 接受后超时清理：60s 内对端未连接 → 收回放行（幂等，
                         // cancelled/重连时的重复收回无害）
@@ -484,7 +488,7 @@ async fn handle_message(
                         });
                     }
                     None => {
-                        if writable {
+                        if access_rendezvous || writable {
                             reject_session(ctx.http, ctx.base, ctx.key, session_id, ctx.device_id)
                                 .await?;
                             return Ok(());
@@ -539,7 +543,6 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<HeartbeatReply> {
     // 寻址：iroh endpoint 自报的直连地址集（映射/外部地址由 iroh 自己维护刷新）。
     // public_ip 不自报——以服务端 public_ip_seen 为准
     let body = json!({
-        "device_id": ctx.device_id,
         // 设备身份应用级：切换素材库后靠心跳把服务端设备表的库名收敛到当前库
         "library_name": library_name(ctx.library),
         // 远程查看模式无本地库可供写入，不上报写权限
@@ -563,6 +566,8 @@ async fn send_heartbeat(ctx: &ChannelContext<'_>) -> Result<HeartbeatReply> {
         Ok(HeartbeatReply::Ok(relay))
     } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
         Err(SignalError::Unregistered)
+    } else if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        Err(SignalError::Reauthenticate)
     } else if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         tracing::debug!("心跳被服务端限速（10s 最小间隔），跳过本跳");
         Ok(HeartbeatReply::Skipped)
@@ -590,6 +595,9 @@ async fn accept_session(
         tracing::debug!("会话 {session_id} 接受时已结束");
         return Ok(());
     }
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(SignalError::Reauthenticate);
+    }
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -615,11 +623,123 @@ async fn reject_session(
         tracing::debug!("会话 {session_id} 拒绝时已结束");
         return Ok(());
     }
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(SignalError::Reauthenticate);
+    }
     if resp.status().is_success() {
         Ok(())
     } else {
         Err(response_error(resp, "会话拒绝").await)
     }
+}
+
+const DEVICE_SIGNATURE_DOMAIN: &[u8] = b"hawk-device-auth-v2\0";
+
+fn device_signature_message(device_id: &str, nonce: &str, expires_at_ms: u64) -> Vec<u8> {
+    let mut message = Vec::with_capacity(
+        DEVICE_SIGNATURE_DOMAIN.len() + 8 + device_id.len() + 8 + nonce.len() + 8,
+    );
+    message.extend_from_slice(DEVICE_SIGNATURE_DOMAIN);
+    message.extend_from_slice(&(device_id.len() as u64).to_be_bytes());
+    message.extend_from_slice(device_id.as_bytes());
+    message.extend_from_slice(&(nonce.len() as u64).to_be_bytes());
+    message.extend_from_slice(nonce.as_bytes());
+    message.extend_from_slice(&expires_at_ms.to_be_bytes());
+    message
+}
+
+async fn tenant_session(http: &reqwest::Client, base: &str, tenant_key: &str) -> Result<String> {
+    let resp = http
+        .post(format!("{base}/api/v1/tenant/session"))
+        .json(&json!({ "tenant_key": tenant_key }))
+        .send()
+        .await
+        .map_err(|e| SignalError::Transient(format!("租户认证请求失败: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(response_error(resp, "租户认证").await);
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SignalError::Transient(format!("租户认证响应解析失败: {e}")))?;
+    body["data"]["session_token"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| SignalError::Transient("租户认证响应缺少 session_token".to_string()))
+}
+
+pub(crate) async fn tenant_session_token(
+    http: &reqwest::Client,
+    base: &str,
+    tenant_key: &str,
+) -> std::result::Result<String, String> {
+    tenant_session(http, base, tenant_key)
+        .await
+        .map_err(|error| match error {
+            SignalError::Fatal(message) | SignalError::Transient(message) => message,
+            SignalError::Unregistered => "设备未注册".to_string(),
+            SignalError::Reauthenticate => "租户认证已过期".to_string(),
+            SignalError::RelayChanged(_) => "中继配置变化".to_string(),
+        })
+}
+
+async fn device_session(http: &reqwest::Client, base: &str, identity: &Identity) -> Result<String> {
+    let device_id = identity
+        .device_id
+        .as_deref()
+        .ok_or(SignalError::Unregistered)?;
+    let resp = http
+        .post(format!("{base}/api/v1/device/challenge"))
+        .json(&json!({ "device_id": device_id }))
+        .send()
+        .await
+        .map_err(|e| SignalError::Transient(format!("设备挑战请求失败: {e}")))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(SignalError::Unregistered);
+    }
+    if !resp.status().is_success() {
+        return Err(response_error(resp, "设备挑战").await);
+    }
+    let challenge: Value = resp
+        .json()
+        .await
+        .map_err(|e| SignalError::Transient(format!("设备挑战响应解析失败: {e}")))?;
+    let nonce = challenge["data"]["nonce"]
+        .as_str()
+        .ok_or_else(|| SignalError::Transient("设备挑战缺少 nonce".to_string()))?;
+    let expires_at_ms = challenge["data"]["expires_at_ms"]
+        .as_u64()
+        .ok_or_else(|| SignalError::Transient("设备挑战缺少 expires_at_ms".to_string()))?;
+    let message = device_signature_message(device_id, nonce, expires_at_ms);
+    let signature = identity
+        .secret_key()
+        .map_err(SignalError::Fatal)?
+        .sign(&message);
+    let signature = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+    let resp = http
+        .post(format!("{base}/api/v1/device/session"))
+        .json(&json!({
+            "device_id": device_id,
+            "nonce": nonce,
+            "signature": signature,
+        }))
+        .send()
+        .await
+        .map_err(|e| SignalError::Transient(format!("设备签名认证请求失败: {e}")))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(SignalError::Unregistered);
+    }
+    if !resp.status().is_success() {
+        return Err(response_error(resp, "设备签名认证").await);
+    }
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| SignalError::Transient(format!("设备认证响应解析失败: {e}")))?;
+    body["data"]["session_token"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| SignalError::Transient("设备认证响应缺少 session_token".to_string()))
 }
 
 async fn register(
@@ -637,6 +757,7 @@ async fn register(
     } else {
         hostname.trim().to_string()
     };
+    let session = tenant_session(http, base, key).await?;
     let body = json!({
         "name": name,
         "platform": std::env::consts::OS,
@@ -648,7 +769,7 @@ async fn register(
     });
     let resp = http
         .post(format!("{base}/api/v1/devices"))
-        .bearer_auth(key)
+        .bearer_auth(session)
         .json(&body)
         .send()
         .await
@@ -667,14 +788,14 @@ async fn register(
 }
 
 /// 控制通道握手失败归一：404 = 服务端不认识本设备（设备表丢失/服务端换了数据目录）→ 重注册；
-/// 401/403 = key 失效 → 致命；其余瞬时重连。
+/// 401/403 = Device Session 失效 → 重新签名认证；其余瞬时重连。
 /// 若不区分，404 会被当成网络抖动无限重连，状态永远停在「接入中」（心跳在通道内部发，
 /// 没通道就不会发现 404，只能靠这里触发重注册）
 fn ws_connect_error(e: tokio_tungstenite::tungstenite::Error) -> SignalError {
     if let tokio_tungstenite::tungstenite::Error::Http(resp) = &e {
         match resp.status().as_u16() {
             404 => return SignalError::Unregistered,
-            401 | 403 => return SignalError::Fatal(format!("控制通道鉴权失败: {e}")),
+            401 | 403 => return SignalError::Reauthenticate,
             _ => {}
         }
     }
@@ -709,18 +830,12 @@ fn normalize_base(url: &str) -> Result<String> {
     }
 }
 
-/// REST base → WSS 控制通道请求。service-key 走 Authorization 头而非 URL 查询串
-/// （反代 access log 会记录完整 URL，查询串带 key 等于明文落日志）
-fn ws_request(
-    base: &str,
-    key: &str,
-    device_id: &str,
-) -> Result<tokio_tungstenite::tungstenite::http::Request<()>> {
+/// REST base → WSS 控制通道请求。Device Session 走 Authorization 头，device_id 不走 URL。
+fn ws_request(base: &str, key: &str) -> Result<tokio_tungstenite::tungstenite::http::Request<()>> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let mut url = reqwest::Url::parse(base)
         .map_err(|e| SignalError::Fatal(format!("remote url 解析失败: {e}")))?;
     url.set_path("/api/v1/ws");
-    url.query_pairs_mut().append_pair("device_id", device_id);
     let scheme = if base.starts_with("https://") {
         "wss"
     } else {
@@ -736,7 +851,7 @@ fn ws_request(
         tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
         format!("Bearer {key}")
             .parse()
-            .map_err(|_| SignalError::Fatal("service-key 含非法字符".to_string()))?,
+            .map_err(|_| SignalError::Fatal("session token 含非法字符".to_string()))?,
     );
     Ok(request)
 }
@@ -754,16 +869,10 @@ mod tests {
 
     #[test]
     fn ws_request_switches_scheme_and_carries_bearer_header() {
-        let req = ws_request("https://hawk.example.com", "k+e/y=", "d_1").unwrap();
-        assert_eq!(
-            req.uri().to_string(),
-            "wss://hawk.example.com/api/v1/ws?device_id=d_1"
-        );
+        let req = ws_request("https://hawk.example.com", "k+e/y=").unwrap();
+        assert_eq!(req.uri().to_string(), "wss://hawk.example.com/api/v1/ws");
         assert_eq!(req.headers().get("authorization").unwrap(), "Bearer k+e/y=");
-        let req = ws_request("http://127.0.0.1:9100", "abc", "d_1").unwrap();
-        assert_eq!(
-            req.uri().to_string(),
-            "ws://127.0.0.1:9100/api/v1/ws?device_id=d_1"
-        );
+        let req = ws_request("http://127.0.0.1:9100", "abc").unwrap();
+        assert_eq!(req.uri().to_string(), "ws://127.0.0.1:9100/api/v1/ws");
     }
 }

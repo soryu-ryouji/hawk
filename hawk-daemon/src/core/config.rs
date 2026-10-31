@@ -99,6 +99,7 @@ pub struct LibraryConfig {
 impl LibraryConfig {
     pub fn new(paths: LibraryPaths) -> LibraryConfig {
         ensure_default(&paths);
+        remove_legacy_web_secrets(&paths);
         // 启动期解析失败没有「上次有效配置」可回退：用默认值继续，并记录错误（app/status 暴露）
         let (snapshot, error) = match load(&paths) {
             Ok(snapshot) => (snapshot, None),
@@ -295,6 +296,28 @@ fn keys_to_toml(keys: &[WebAccessKey]) -> toml_edit::Item {
         tables.push(table);
     }
     toml_edit::Item::ArrayOfTables(tables)
+}
+
+/// V2 启动清理：旧库内明文 AccessKey 不再作为认证来源，直接剥离，避免继续随库同步。
+fn remove_legacy_web_secrets(paths: &LibraryPaths) {
+    let Ok(text) = std::fs::read_to_string(&paths.config_file) else {
+        return;
+    };
+    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return;
+    };
+    let Some(web) = doc["web"].as_table_mut() else {
+        return;
+    };
+    let removed_keys = web.remove("keys").is_some();
+    let removed_peers = web.remove("peer_keys").is_some();
+    if !removed_keys && !removed_peers {
+        return;
+    }
+    let tmp = format!("{}.tmp", paths.config_file);
+    if std::fs::write(&tmp, doc.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, &paths.config_file);
+    }
 }
 
 /// 库首次打开时生成带注释的默认 config.toml（已存在则不覆盖）
@@ -756,6 +779,25 @@ mod tests {
         assert_eq!(cfg.current().name, None);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn startup_removes_legacy_web_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("library");
+        std::fs::create_dir_all(root.join(".hawk")).unwrap();
+        let paths = LibraryPaths::new(root.to_str().unwrap(), None);
+        std::fs::write(
+            &paths.config_file,
+            "[web]\nenabled = true\n[[web.keys]]\nid = 'old'\nsecret = 'legacy-secret'\n[[web.peer_keys]]\nid = 'peer'\nsecret = 'peer-secret'\n",
+        )
+        .unwrap();
+        let config = LibraryConfig::new(paths.clone());
+        assert!(config.current().web.keys.is_empty());
+        assert!(config.current().web.peer_keys.is_empty());
+        let text = std::fs::read_to_string(&paths.config_file).unwrap();
+        assert!(!text.contains("legacy-secret"));
+        assert!(!text.contains("peer-secret"));
     }
 
     #[test]

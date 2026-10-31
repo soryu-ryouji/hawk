@@ -4,10 +4,12 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use hawk_daemon::api::{build_router, AppState, SharedState};
+use hawk_daemon::api::{build_router, build_router_for, AppState, ListenerMode, SharedState};
 use hawk_daemon::core::events::EventBus;
 use hawk_daemon::core::startup::StartupState;
 use hawk_daemon::remote::config::RemoteConfigStore;
+use hawk_daemon::remote::data::{serve_proxy, DataPlane, ProxyContext, HAWK_ALPN};
+use hawk_daemon::remote::identity::Identity;
 use hawk_daemon::settings::Settings;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -37,6 +39,8 @@ fn no_library_state(dir: &tempfile::TempDir) -> SharedState {
     let remote_config = RemoteConfigStore::open(settings.remote_config.as_deref(), None);
     Arc::new(AppState {
         settings,
+        web_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+        integration_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
         startup,
         bus: bus.clone(),
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
@@ -44,6 +48,176 @@ fn no_library_state(dir: &tempfile::TempDir) -> SharedState {
         remote: hawk_daemon::remote::Supervisor::new(bus, remote_config),
         library: None,
     })
+}
+
+#[tokio::test]
+async fn lan_rendezvous_issues_target_identity_and_scoped_ticket() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = no_library_state(&dir);
+    let identity = Identity::load_or_create(dir.path().join("remote").to_str().unwrap()).unwrap();
+    let plane = DataPlane::bind(&identity, 0, None, axum::Router::new())
+        .await
+        .unwrap();
+    *state.remote.endpoint_slot().write().unwrap() = Some(plane);
+    let router = build_router_for(state.clone(), ListenerMode::Peer);
+    let source = iroh::SecretKey::generate();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/rendezvous")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "source_endpoint_id": source.public().to_string(),
+                "source_name": "手机",
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let session_id = body["data"]["session_id"].as_str().unwrap();
+    let ticket = body["data"]["rendezvous_token"].as_str().unwrap();
+    assert_eq!(body["data"]["state"], "ready");
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/v1/rendezvous/{session_id}"))
+        .header("authorization", format!("Bearer {ticket}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["data"]["connect"]["endpoint_id"], identity.endpoint_id);
+    assert!(!body["data"]["connect"]["direct_addresses"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/v1/rendezvous/{session_id}"))
+        .header("authorization", format!("Bearer {ticket}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/v1/rendezvous/{session_id}"))
+        .header("authorization", format!("Bearer {ticket}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn access_key_login_and_revocation_work_over_iroh() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let state = no_library_state(&dir_a);
+    let mut remote = state.remote.remote_config().current();
+    remote.allow_import = true;
+    state.remote.remote_config().update(&remote).unwrap();
+    let (entry, access_key) = state
+        .remote
+        .keys
+        .create(
+            "test-library",
+            "手机",
+            hawk_daemon::core::access::Role::Importer,
+            None,
+        )
+        .unwrap();
+    let identity_a =
+        Identity::load_or_create(dir_a.path().join("identity-a").to_str().unwrap()).unwrap();
+    let id_a: iroh::EndpointId = identity_a.endpoint_id.parse().unwrap();
+    let plane_a = DataPlane::bind(&identity_a, 0, None, build_router(state.clone()))
+        .await
+        .unwrap();
+    *state.remote.endpoint_slot().write().unwrap() = Some(plane_a.clone());
+    let dir_b = tempfile::tempdir().unwrap();
+    let identity_b =
+        Identity::load_or_create(dir_b.path().join("identity-b").to_str().unwrap()).unwrap();
+    let id_b: iroh::EndpointId = identity_b.endpoint_id.parse().unwrap();
+    plane_a.allow_access_session("s_access", id_b);
+    let plane_b = DataPlane::bind(&identity_b, 0, None, axum::Router::new())
+        .await
+        .unwrap();
+    let addr =
+        iroh::EndpointAddr::new(id_a).with_addrs(plane_a.endpoint().unwrap().addr().addrs.clone());
+    let conn = plane_b
+        .endpoint()
+        .unwrap()
+        .connect(addr, HAWK_ALPN)
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let ctx = std::sync::Arc::new(ProxyContext {
+        conn: std::sync::Arc::new(std::sync::RwLock::new(conn)),
+        session_token: "proxy-token".to_string(),
+        session_id: "s_access".to_string(),
+        role: std::sync::RwLock::new(hawk_daemon::core::access::Role::Viewer),
+    });
+    tokio::spawn(serve_proxy(ctx, listener));
+    let client = reqwest::Client::new();
+
+    // 未登录：只能调用登录端点，其他 API 即使存在也拒绝。
+    let resp = client
+        .get(format!("http://127.0.0.1:{port}/api/v1/app/info"))
+        .bearer_auth("proxy-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let resp: Value = client
+        .post(format!(
+            "http://127.0.0.1:{port}/api/v1/remote/access-session"
+        ))
+        .bearer_auth("proxy-token")
+        .json(&json!({ "access_key": access_key }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["status"], "success", "{resp}");
+    assert_eq!(resp["data"]["role"], "importer");
+    let resp: Value = client
+        .get(format!("http://127.0.0.1:{port}/api/v1/app/info"))
+        .bearer_auth("proxy-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["data"]["role"], "importer");
+
+    // 删除 AccessKey 后，已有隧道下一请求立即失效。
+    state.remote.keys.remove(&entry.id).unwrap();
+    let resp = client
+        .get(format!("http://127.0.0.1:{port}/api/v1/app/info"))
+        .bearer_auth("proxy-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
 }
 
 async fn call(
@@ -114,7 +288,7 @@ async fn no_library_mode_serves_remote_plane_only() {
         &router,
         "PUT",
         "/api/v1/remote",
-        Some(json!({"enabled": false, "url": "", "service_key": ""})),
+        Some(json!({"enabled": false, "url": "", "tenant_key": ""})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "PUT remote");

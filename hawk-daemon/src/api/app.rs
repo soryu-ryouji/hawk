@@ -5,8 +5,9 @@ use crate::api::envelope::{ApiError, Envelope};
 use crate::api::{require_manage, AccessContext, SharedState};
 use crate::core::access::Role;
 use axum::extract::{Extension, State};
+use axum::response::IntoResponse;
 use axum::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -17,6 +18,7 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(status))
         .routes(routes!(info))
         .routes(routes!(connection))
+        .routes(routes!(create_app_session))
         .routes(routes!(admin_token))
 }
 
@@ -244,11 +246,92 @@ async fn info(
     }))
 }
 
-/// Token 发现：浏览器插件零配置接入。
-/// 安全性依赖两点：响应不带 CORS 头（cors 中间件为该端点例外）；
-/// Host 限定环回地址（防 DNS rebinding 伪装同源读取）。
-/// 注意：远程访问隧道转发的请求 Host 同样是环回（B 侧代理地址），此检查对隧道无效——
-/// remote 模块的隧道端必须拒绝转发本端点（见 docs/backend/remote-protocol.md 数据面）
+#[derive(Deserialize, utoipa::ToSchema)]
+struct AppSessionBody {
+    access_key: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+struct AppSessionDto {
+    role: Role,
+    channel: &'static str,
+    expires_in: u64,
+}
+
+/// LAN Web：AccessKey 换有期 Session，并以 HttpOnly/Secure Cookie 下发。
+#[utoipa::path(
+    post,
+    path = "/api/v1/app/session",
+    tags = ["app"],
+    request_body = AppSessionBody,
+    responses((status = 200, description = "OK", body = Envelope<AppSessionDto>))
+)]
+async fn create_app_session(
+    State(state): State<SharedState>,
+    Extension(mode): Extension<super::ListenerMode>,
+    Json(body): Json<AppSessionBody>,
+) -> Result<axum::response::Response, ApiError> {
+    if mode != super::ListenerMode::Web {
+        return Err(ApiError::new(
+            "INVALID_CHANNEL",
+            axum::http::StatusCode::NOT_FOUND,
+            "App Session 仅用于 LAN Web",
+        ));
+    }
+    let lib = state.require_library()?;
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    let credential = crate::remote::keys::sha256_hex(&body.access_key);
+    let Some(entry) = state
+        .remote
+        .keys
+        .resolve_for_library(Some(&library_id), &credential)
+    else {
+        return Err(ApiError::new(
+            "UNAUTHORIZED",
+            axum::http::StatusCode::UNAUTHORIZED,
+            "AccessKey 无效",
+        ));
+    };
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| {
+        ApiError::new(
+            "RANDOM_FAILED",
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Session 生成失败: {e}"),
+        )
+    })?;
+    let token = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let expires = std::time::Instant::now() + std::time::Duration::from_secs(30 * 24 * 60 * 60);
+    let mut sessions = state.web_sessions.lock().unwrap();
+    sessions.retain(|_, session| session.4 > std::time::Instant::now());
+    if sessions.len() >= 64 {
+        sessions.clear();
+    }
+    sessions.insert(
+        token.clone(),
+        (library_id, entry.id, credential, entry.role, expires),
+    );
+    let mut response = Json(Envelope::ok(AppSessionDto {
+        role: entry.role,
+        channel: "lan_web",
+        expires_in: 30 * 24 * 60 * 60,
+    }))
+    .into_response();
+    response.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        format!(
+            "hawk_session={token}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age={}",
+            30 * 24 * 60 * 60
+        )
+        .parse()
+        .unwrap(),
+    );
+    Ok(response)
+}
+
+/// LocalIntegration 发现：浏览器插件零配置接入。
+/// 返回 Loopback 限定的 importer Session，而不是进程 admin token。
+/// 响应不带 CORS 头且 Host 限定环回；远程隧道端必须直接拒绝本端点。
 #[utoipa::path(
     get,
     path = "/api/v1/app/admin-token",
@@ -278,13 +361,33 @@ async fn admin_token(
             "token discovery requires loopback host",
         ));
     }
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| {
+        ApiError::new(
+            "RANDOM_FAILED",
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("集成本地会话生成失败: {e}"),
+        )
+    })?;
+    let token = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut sessions = state.integration_sessions.lock().unwrap();
+    let now = std::time::Instant::now();
+    sessions.retain(|_, expires| *expires > now);
+    if sessions.len() >= 32 {
+        sessions.clear();
+    }
+    sessions.insert(
+        token.clone(),
+        now + std::time::Duration::from_secs(24 * 60 * 60),
+    );
+    drop(sessions);
     Ok(Json(AdminTokenResponse {
         status: "success",
-        data: state.settings.admin_token.clone(),
+        data: token,
     }))
 }
 
-/// admin token 发现端点响应（信封的 data 直接为 admin token 字符串）
+/// LocalIntegration Session 发现响应（data 为短期 importer token）
 #[derive(Serialize, utoipa::ToSchema)]
 struct AdminTokenResponse {
     status: &'static str,
@@ -322,7 +425,12 @@ async fn connection(
     State(state): State<SharedState>,
     Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<AppConnectionDto>>, ApiError> {
-    require_manage(&access)?;
+    if !matches!(
+        &access.principal,
+        crate::api::Principal::LocalIntegration { .. }
+    ) {
+        require_manage(&access)?;
+    }
     if let Some(session) = state.remote.sessions.snapshot() {
         let label = if session.target_library_name.is_empty() {
             session.target_name.clone()

@@ -16,6 +16,7 @@ use crate::core::config::WebSettings;
 use axum::extract::{Extension, Path, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -75,6 +76,10 @@ pub struct LanStatuses {
     pub peer: LanStatus,
 }
 
+struct LanAccessSession {
+    token: String,
+}
+
 pub struct LanSupervisor {
     notify: tokio::sync::Notify,
     /// (收敛代数, 两个监听器状态)：每轮收敛完成（含 no-op 轮）代数 +1，
@@ -82,6 +87,8 @@ pub struct LanSupervisor {
     status: Mutex<(u64, LanStatuses)>,
     /// 桌面端自动配对请求：源端创建后等待目标端用户确认；只在内存中保存。
     pair_requests: Mutex<Vec<PairRequestTicket>>,
+    /// 原生 AccessKey rendezvous；只保存编排票据，不保存 AccessKey。
+    access_sessions: Mutex<std::collections::HashMap<String, LanAccessSession>>,
     /// 每把 peer key 最近一次通过直连端口发起请求的时间（毫秒时间戳）。
     /// HTTP 无长连接状态，用近期活跃度呈现当前连接；不保存任何 token。
     peer_activity: Mutex<std::collections::HashMap<String, u64>>,
@@ -95,6 +102,7 @@ impl LanSupervisor {
             notify: tokio::sync::Notify::new(),
             status: Mutex::new((0, LanStatuses::default())),
             pair_requests: Mutex::new(Vec::new()),
+            access_sessions: Mutex::new(std::collections::HashMap::new()),
             peer_activity: Mutex::new(std::collections::HashMap::new()),
             listeners: tokio::sync::Mutex::new(LanListeners::default()),
         })
@@ -204,6 +212,42 @@ impl LanSupervisor {
     /// 唤醒收敛（watcher 回调同步调用；Notify 无等待者时记 permit，不丢事件）
     pub fn wake(&self) {
         self.notify.notify_one();
+    }
+
+    pub fn create_access_rendezvous(
+        &self,
+        state: &SharedState,
+        peer: iroh::EndpointId,
+    ) -> Option<(String, String)> {
+        let plane = state.remote.endpoint_slot().read().unwrap().clone()?;
+        let mut sessions = self.access_sessions.lock().unwrap();
+        if sessions.len() >= 32 {
+            return None;
+        }
+        let session_id = format!("la_{}", random_hex(16));
+        let token = format!("rt_{}", random_hex(32));
+        sessions.insert(
+            session_id.clone(),
+            LanAccessSession {
+                token: token.clone(),
+            },
+        );
+        drop(sessions);
+        plane.allow_access_session(&session_id, peer);
+        Some((session_id, token))
+    }
+
+    pub fn access_rendezvous_valid(&self, session_id: &str, token: &str) -> bool {
+        self.access_sessions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .is_some_and(|session| session.token == token)
+    }
+
+    pub fn cancel_access_rendezvous(&self, state: &SharedState, session_id: &str) {
+        self.access_sessions.lock().unwrap().remove(session_id);
+        state.remote.disallow_session(session_id);
     }
 
     /// 当前两个监听器状态快照
@@ -367,16 +411,66 @@ async fn reconcile_listener(
         Ok(listener) => {
             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
             let app = crate::api::build_router_for(state.clone(), mode);
-            let handle = tokio::spawn(async move {
-                if let Err(e) = axum::serve(listener, app)
-                    .with_graceful_shutdown(async move {
-                        let _ = shutdown_rx.await;
-                    })
-                    .await
+            let handle = if mode == super::ListenerMode::Web {
+                let tls = match crate::api::tls::load_or_create(
+                    state.remote.remote_config().identity_dir(),
+                    local_ipv4_candidates()
+                        .into_iter()
+                        .map(|ip| ip.to_string())
+                        .collect(),
+                )
+                .await
                 {
-                    tracing::error!("{label}监听退出: {e}");
-                }
-            });
+                    Ok(tls) => tls,
+                    Err(error) => {
+                        tracing::error!("LAN HTTPS 身份加载失败: {error}");
+                        return LanStatus {
+                            active: false,
+                            port: None,
+                            error: Some(error),
+                        };
+                    }
+                };
+                let addr = match listener.local_addr() {
+                    Ok(addr) => addr,
+                    Err(error) => {
+                        return LanStatus {
+                            active: false,
+                            port: None,
+                            error: Some(format!("LAN HTTPS 地址读取失败: {error}")),
+                        };
+                    }
+                };
+                drop(listener);
+                let server_handle = axum_server::Handle::new();
+                let shutdown_handle = server_handle.clone();
+                tokio::spawn(async move {
+                    let server = axum_server::tls_rustls::bind_rustls(addr, tls.config)
+                        .handle(server_handle)
+                        .serve(app.into_make_service());
+                    tokio::select! {
+                        result = server => {
+                            if let Err(e) = result {
+                                tracing::error!("LAN HTTPS 监听退出: {e}");
+                            }
+                        }
+                        _ = shutdown_rx => {
+                            shutdown_handle.graceful_shutdown(Some(DRAIN_TIMEOUT));
+                        }
+                    }
+                })
+            } else {
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(listener, app)
+                        .with_graceful_shutdown(async move {
+                            let _ = shutdown_rx.await;
+                        })
+                        .await
+                    {
+                        tracing::error!("{label}监听退出: {e}");
+                    }
+                })
+            };
             *current = Some((port, handle, shutdown_tx));
             tracing::info!("{label}监听已启动: 0.0.0.0:{port}");
             LanStatus {
@@ -645,6 +739,23 @@ async fn discover_peers(state: &SharedState) -> Result<Vec<LanPeerDto>, ApiError
     }
     drop(sender);
 
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    let tls_fingerprint =
+        crate::api::tls::fingerprint_if_exists(state.remote.remote_config().identity_dir());
+    let target_library_id = state
+        .library
+        .as_ref()
+        .map(|lib| crate::core::paths::library_key(&lib.paths.root))
+        .unwrap_or_default();
     let mut found: std::collections::HashMap<String, LanPeerDto> = std::collections::HashMap::new();
     while let Some((data, peer)) = receiver.recv().await {
         let Ok(message) = serde_json::from_slice::<DiscoveryMessage>(&data) else {
@@ -672,6 +783,10 @@ async fn discover_peers(state: &SharedState) -> Result<Vec<LanPeerDto>, ApiError
                 url: format!("http://{host}:{}", message.port),
                 writable: message.writable,
                 requires_pairing: true,
+                target_identity: identity.endpoint_id.clone(),
+                target_device_id: identity.device_id.clone(),
+                target_library_id: target_library_id.clone(),
+                tls_fingerprint: tls_fingerprint.clone(),
             },
         );
     }
@@ -687,6 +802,153 @@ async fn discover_peers(state: &SharedState) -> Result<Vec<LanPeerDto>, ApiError
         );
     }
     Ok(peers)
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+struct AccessRendezvousBody {
+    #[serde(default)]
+    target_device_id: Option<String>,
+    source_endpoint_id: String,
+    #[serde(default)]
+    source_name: Option<String>,
+}
+
+fn peer_only(mode: super::ListenerMode) -> Result<(), ApiError> {
+    if mode != super::ListenerMode::Peer {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::NOT_FOUND,
+            "AccessKey rendezvous 仅在原生直连端口可用",
+        ));
+    }
+    Ok(())
+}
+
+/// 原生 LAN AccessKey rendezvous：只编排 iroh，不传输 AccessKey 或素材明文。
+#[utoipa::path(
+    post,
+    path = "/api/v1/rendezvous",
+    tags = ["app"],
+    request_body = AccessRendezvousBody,
+    responses((status = 200, description = "OK"))
+)]
+async fn create_access_rendezvous(
+    State(state): State<SharedState>,
+    Extension(mode): Extension<super::ListenerMode>,
+    Json(body): Json<AccessRendezvousBody>,
+) -> Result<Json<Value>, ApiError> {
+    peer_only(mode)?;
+    let _ = (&body.target_device_id, &body.source_name);
+    let Ok(peer) = body.source_endpoint_id.parse::<iroh::EndpointId>() else {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::BAD_REQUEST,
+            "source_endpoint_id 必须是有效的 iroh 公钥",
+        ));
+    };
+    let Some((session_id, token)) = state.lan.create_access_rendezvous(&state, peer) else {
+        return Err(ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "iroh 数据面未就绪或会话数已达上限",
+        ));
+    };
+    Ok(Json(json!({
+        "status": "success",
+        "data": {
+            "session_id": session_id,
+            "state": "ready",
+            "rendezvous_token": token,
+        }
+    })))
+}
+
+fn rendezvous_connect(state: &SharedState) -> Result<Value, ApiError> {
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    let mut direct_addresses = state
+        .remote
+        .endpoint_slot()
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(|plane| plane.direct_addrs())
+        .unwrap_or_default();
+    if direct_addresses.is_empty() {
+        let port = state.remote.remote_config().current().quic_port;
+        direct_addresses = local_ipv4_candidates()
+            .into_iter()
+            .map(|ip| format!("{ip}:{port}"))
+            .collect();
+    }
+    Ok(json!({
+        "endpoint_id": identity.endpoint_id,
+        "direct_addresses": direct_addresses,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/rendezvous/{session_id}",
+    tags = ["app"],
+    responses((status = 200, description = "OK"))
+)]
+async fn get_access_rendezvous(
+    State(state): State<SharedState>,
+    Extension(mode): Extension<super::ListenerMode>,
+    Path(session_id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    peer_only(mode)?;
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    if !state.lan.access_rendezvous_valid(&session_id, token) {
+        return Err(ApiError::not_found("会话不存在"));
+    }
+    Ok(Json(json!({
+        "status": "success",
+        "data": {
+            "session_id": session_id,
+            "state": "ready",
+            "connect": rendezvous_connect(&state)?,
+        }
+    })))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/rendezvous/{session_id}",
+    tags = ["app"],
+    responses((status = 200, description = "OK"))
+)]
+async fn cancel_access_rendezvous(
+    State(state): State<SharedState>,
+    Extension(mode): Extension<super::ListenerMode>,
+    Path(session_id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    peer_only(mode)?;
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    if !state.lan.access_rendezvous_valid(&session_id, token) {
+        return Err(ApiError::not_found("会话不存在"));
+    }
+    state.lan.cancel_access_rendezvous(&state, &session_id);
+    Ok(Json(json!({"status":"success"})))
 }
 
 // ---------- app/lan 端点：LAN 查看配置的读写（admin 限定） ----------
@@ -705,6 +967,8 @@ pub fn routes() -> OpenApiRouter<SharedState> {
         .routes(routes!(list_lan_pair_requests))
         .routes(routes!(get_lan_pair_request_status))
         .routes(routes!(decide_lan_pair_request))
+        .routes(routes!(create_access_rendezvous))
+        .routes(routes!(get_access_rendezvous, cancel_access_rendezvous))
 }
 
 /// 发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。
@@ -716,6 +980,12 @@ struct LanPeerDto {
     url: String,
     writable: bool,
     requires_pairing: bool,
+    target_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_device_id: Option<String>,
+    target_library_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_fingerprint: Option<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -753,6 +1023,12 @@ struct LanReversePeerDto {
     urls: Vec<String>,
     peer_key: String,
     role: Role,
+    target_identity: String,
+    #[serde(default)]
+    target_device_id: Option<String>,
+    target_library_id: String,
+    #[serde(default)]
+    tls_fingerprint: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -774,6 +1050,12 @@ struct LanPairedPeerDto {
     url: String,
     role: Role,
     peer_key: String,
+    target_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_device_id: Option<String>,
+    target_library_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_fingerprint: Option<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -803,6 +1085,14 @@ struct LanPairRequestStatusDto {
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     access_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_library_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     role: Option<Role>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -870,6 +1160,8 @@ async fn create_lan_pair_request(
     if reverse.peer_id.trim().is_empty()
         || reverse.name.trim().is_empty()
         || reverse.peer_key.trim().is_empty()
+        || reverse.target_identity.trim().is_empty()
+        || reverse.target_library_id.trim().is_empty()
         || !reverse
             .urls
             .iter()
@@ -920,6 +1212,19 @@ async fn get_lan_pair_request_status(
         ));
     }
     let lib = state.require_library()?;
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(|e| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            e,
+        )
+    })?;
+    let tls_fingerprint =
+        crate::api::tls::fingerprint_if_exists(state.remote.remote_config().identity_dir());
+    let target_library_id = crate::core::paths::library_key(&lib.paths.root);
     let Some((status, access_key, role)) = state.lan.pair_request_status(&request_id) else {
         return Ok(Json(Envelope::ok(LanPairRequestStatusDto {
             protocol: PAIR_PROTOCOL_VERSION,
@@ -929,6 +1234,10 @@ async fn get_lan_pair_request_status(
             peer_id: None,
             name: None,
             library_name: None,
+            target_identity: None,
+            target_device_id: None,
+            target_library_id: None,
+            tls_fingerprint: None,
         })));
     };
     let approved = status == "approved";
@@ -940,6 +1249,10 @@ async fn get_lan_pair_request_status(
         peer_id: approved.then(|| local_peer_id(lib)),
         name: approved.then(|| gethostname::gethostname().to_string_lossy().to_string()),
         library_name: approved.then(|| local_library_name(lib)),
+        target_identity: approved.then(|| identity.endpoint_id.clone()),
+        target_device_id: approved.then(|| identity.device_id.clone()).flatten(),
+        target_library_id: approved.then(|| target_library_id.clone()),
+        tls_fingerprint: approved.then(|| tls_fingerprint.clone()).flatten(),
     })))
 }
 
@@ -1015,8 +1328,8 @@ async fn decide_lan_pair_request(
         .find(|url| url.starts_with("http://") || url.starts_with("https://"))
         .cloned()
         .expect("reverse urls validated when request was created");
-    let mut web = lib.config.current().web;
-    if web.peer_keys.len() >= 32 {
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    if state.remote.keys.list_for_library(Some(&library_id)).len() >= 32 {
         state
             .lan
             .finish_pair_request(&request_id, PairRequestState::Denied);
@@ -1026,29 +1339,25 @@ async fn decide_lan_pair_request(
             "直连访问密钥已达上限，请先删除不再使用的设备",
         ));
     }
-    let access_key = random_hex(32);
-    let key_id = format!("peer_{}", random_hex(8));
-    web.peer_keys.push(crate::core::config::WebAccessKey {
-        id: key_id,
-        label: request.client_name.clone(),
-        secret: access_key.clone(),
-        role: body.role,
-        created_at_ms: unix_ms_now(),
-        peer_id: Some(reverse.peer_id.clone()),
-        library_name: Some(reverse.library_name.clone()),
-        url: Some(reverse_url.clone()),
-    });
-    if let Err(error) = lib.config.update_web(&web) {
-        state
-            .lan
-            .finish_pair_request(&request_id, PairRequestState::Denied);
-        return Err(ApiError::new(
-            codes::INTERNAL,
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            error,
-        ));
-    }
-    state.lan.wake();
+    let (entry, access_key) =
+        match state
+            .remote
+            .keys
+            .create(&library_id, &request.client_name, body.role, None)
+        {
+            Ok(created) => created,
+            Err(error) => {
+                state
+                    .lan
+                    .finish_pair_request(&request_id, PairRequestState::Denied);
+                return Err(ApiError::new(
+                    codes::INTERNAL,
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    error,
+                ));
+            }
+        };
+    let _ = entry;
     state.lan.finish_pair_request(
         &request_id,
         PairRequestState::Approved {
@@ -1067,6 +1376,10 @@ async fn decide_lan_pair_request(
         url: reverse_url,
         role: reverse.role,
         peer_key: reverse.peer_key.clone(),
+        target_identity: reverse.target_identity.clone(),
+        target_device_id: reverse.target_device_id.clone(),
+        target_library_id: reverse.target_library_id.clone(),
+        tls_fingerprint: reverse.tls_fingerprint.clone(),
     };
     tracing::info!(
         "局域网配对请求已允许: {}（request={request_id}, role={}）",
@@ -1110,23 +1423,24 @@ async fn list_lan_clients(
 ) -> Result<Json<Envelope<LanClientsDto>>, ApiError> {
     require_manage(&access)?;
     let lib = state.require_library()?;
-    let web = lib.config.current().web;
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    let keys = state.remote.keys.list_for_library(Some(&library_id));
     let now = unix_ms_now();
     let clients = state
         .lan
         .peer_activity_snapshot()
         .into_iter()
         .filter_map(|(key_id, last_seen_ms)| {
-            let key = web.peer_keys.iter().find(|key| key.id == key_id)?;
+            let key = keys.iter().find(|key| key.id == key_id)?;
             Some(LanClientDto {
                 key_id,
                 label: key.label.clone(),
                 last_seen_ms,
                 online: now.saturating_sub(last_seen_ms) <= PEER_ONLINE_WINDOW_MS,
                 role: key.role,
-                peer_id: key.peer_id.clone(),
-                library_name: key.library_name.clone(),
-                url: key.url.clone(),
+                peer_id: None,
+                library_name: None,
+                url: None,
             })
         })
         .collect();
@@ -1155,38 +1469,33 @@ async fn create_lan_device_key(
             "设备密钥名称不能为空",
         ));
     }
-    let mut web = lib.config.current().web;
-    if web.peer_keys.len() >= 32 {
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    if state.remote.keys.list_for_library(Some(&library_id)).len() >= 32 {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
             axum::http::StatusCode::BAD_REQUEST,
             "同类访问密钥最多 32 把",
         ));
     }
-    let key = crate::core::config::WebAccessKey {
-        id: format!("peer_{}", random_hex(8)),
-        label: label.to_string(),
-        secret: random_hex(32),
-        role: body.role,
-        created_at_ms: unix_ms_now(),
-        peer_id: body.peer_id,
-        library_name: body.library_name,
-        url: body.url,
-    };
-    web.peer_keys.push(key.clone());
-    lib.config.update_web(&web).map_err(|error| {
-        ApiError::new(
-            codes::INTERNAL,
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            error,
-        )
-    })?;
-    state.lan.wake();
+    let (entry, secret) = state
+        .remote
+        .keys
+        .create(&library_id, label, body.role, None)
+        .map_err(|error| {
+            ApiError::new(
+                codes::INVALID_PARAM,
+                axum::http::StatusCode::BAD_REQUEST,
+                error,
+            )
+        })?;
     state.bus.publish(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
     );
-    Ok(Json(Envelope::ok(access_key_dto(key))))
+    Ok(Json(Envelope::ok(unified_access_key_dto(
+        entry,
+        Some(secret),
+    ))))
 }
 
 /// 调整一把设备访问密钥的读写权限。
@@ -1205,30 +1514,30 @@ async fn update_lan_device_key(
     Json(body): Json<LanDeviceKeyUpdateBody>,
 ) -> Result<Json<Envelope<LanAccessKeyDto>>, ApiError> {
     require_manage(&access)?;
-    let lib = state.require_library()?;
-    let mut web = lib.config.current().web;
-    let Some(key) = web.peer_keys.iter_mut().find(|key| key.id == key_id) else {
+    state.require_library()?;
+    let Some(entry) = state
+        .remote
+        .keys
+        .patch(&key_id, None, Some(body.role))
+        .map_err(|error| {
+            ApiError::new(
+                codes::INVALID_PARAM,
+                axum::http::StatusCode::BAD_REQUEST,
+                error,
+            )
+        })?
+    else {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
             axum::http::StatusCode::NOT_FOUND,
             "设备密钥不存在",
         ));
     };
-    key.role = body.role;
-    let updated = key.clone();
-    lib.config.update_web(&web).map_err(|error| {
-        ApiError::new(
-            codes::INTERNAL,
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            error,
-        )
-    })?;
-    state.lan.wake();
     state.bus.publish(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
     );
-    Ok(Json(Envelope::ok(access_key_dto(updated))))
+    Ok(Json(Envelope::ok(unified_access_key_dto(entry, None))))
 }
 
 /// 删除一把设备访问密钥（撤销该设备共享）。
@@ -1245,25 +1554,21 @@ async fn delete_lan_device_key(
     Path(key_id): Path<String>,
 ) -> Result<Json<Envelope<LanDeviceKeyDeletedDto>>, ApiError> {
     require_manage(&access)?;
-    let lib = state.require_library()?;
-    let mut web = lib.config.current().web;
-    let before = web.peer_keys.len();
-    web.peer_keys.retain(|key| key.id != key_id);
-    if web.peer_keys.len() == before {
-        return Err(ApiError::new(
-            codes::INVALID_PARAM,
-            axum::http::StatusCode::NOT_FOUND,
-            "设备密钥不存在",
-        ));
-    }
-    lib.config.update_web(&web).map_err(|error| {
+    state.require_library()?;
+    let removed = state.remote.keys.remove(&key_id).map_err(|error| {
         ApiError::new(
             codes::INTERNAL,
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             error,
         )
     })?;
-    state.lan.wake();
+    if !removed {
+        return Err(ApiError::new(
+            codes::INVALID_PARAM,
+            axum::http::StatusCode::NOT_FOUND,
+            "设备密钥不存在",
+        ));
+    }
     state.bus.publish(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
@@ -1292,12 +1597,6 @@ struct LanDeviceKeyCreateBody {
     label: String,
     #[serde(default)]
     role: Role,
-    #[serde(default)]
-    peer_id: Option<String>,
-    #[serde(default)]
-    library_name: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1310,16 +1609,19 @@ struct LanDeviceKeyDeletedDto {
     deleted: bool,
 }
 
-fn access_key_dto(key: crate::core::config::WebAccessKey) -> LanAccessKeyDto {
+fn unified_access_key_dto(
+    entry: crate::remote::keys::KeyEntry,
+    secret: Option<String>,
+) -> LanAccessKeyDto {
     LanAccessKeyDto {
-        id: key.id,
-        label: key.label,
-        access_key: key.secret,
-        role: key.role,
-        created_at_ms: key.created_at_ms,
-        peer_id: key.peer_id,
-        library_name: key.library_name,
-        url: key.url,
+        id: entry.id,
+        label: entry.label,
+        access_key: secret.unwrap_or_default(),
+        role: entry.role,
+        created_at_ms: entry.created_at_ms,
+        peer_id: None,
+        library_name: None,
+        url: None,
     }
 }
 
@@ -1329,6 +1631,14 @@ struct LanSettingsDto {
     port: u16,
     peer_port: u16,
     peer_id: String,
+    /// 配对时钉扎的目标 iroh 公钥
+    target_identity: String,
+    /// LAN Web 自签证书 SHA-256 指纹（HTTPS 监听首次启动后存在）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_device_id: Option<String>,
+    target_library_id: String,
     name: String,
     library_name: String,
     keys: Vec<LanAccessKeyDto>,
@@ -1343,49 +1653,44 @@ struct LanSettingsDto {
     peer_error: Option<String>,
 }
 
-fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> LanSettingsDto {
+fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> Result<LanSettingsDto, String> {
     let web = lib.config.current().web;
     let status = state.lan.snapshot();
-    LanSettingsDto {
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )?;
+    Ok(LanSettingsDto {
         enabled: web.enabled,
         port: web.port,
         peer_port: web.peer_port,
         peer_id: local_peer_id(lib),
+        target_identity: identity.endpoint_id,
+        tls_fingerprint: crate::api::tls::fingerprint_if_exists(
+            state.remote.remote_config().identity_dir(),
+        ),
+        target_device_id: identity.device_id,
+        target_library_id: crate::core::paths::library_key(&lib.paths.root),
         name: gethostname::gethostname().to_string_lossy().to_string(),
         library_name: local_library_name(lib),
-        keys: web
+        keys: state
+            .remote
             .keys
+            .list_for_library(Some(&crate::core::paths::library_key(&lib.paths.root)))
             .into_iter()
-            .map(|key| LanAccessKeyDto {
-                id: key.id,
-                label: key.label,
-                access_key: key.secret,
-                role: key.role,
-                created_at_ms: key.created_at_ms,
-                peer_id: key.peer_id,
-                library_name: key.library_name,
-                url: key.url,
-            })
+            .map(|entry| unified_access_key_dto(entry, None))
             .collect(),
-        peer_keys: web
-            .peer_keys
+        peer_keys: state
+            .remote
+            .keys
+            .list_for_library(Some(&crate::core::paths::library_key(&lib.paths.root)))
             .into_iter()
-            .map(|key| LanAccessKeyDto {
-                id: key.id,
-                label: key.label,
-                access_key: key.secret,
-                role: key.role,
-                created_at_ms: key.created_at_ms,
-                peer_id: key.peer_id,
-                library_name: key.library_name,
-                url: key.url,
-            })
+            .map(|entry| unified_access_key_dto(entry, None))
             .collect(),
         active: status.web.active,
         error: status.web.error,
         peer_active: status.peer.active,
         peer_error: status.peer.error,
-    }
+    })
 }
 
 /// 读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权）
@@ -1401,7 +1706,14 @@ async fn get_lan(
 ) -> Result<Json<Envelope<LanSettingsDto>>, ApiError> {
     require_manage(&access)?;
     let lib = state.require_library()?;
-    Ok(Json(Envelope::ok(lan_dto(&state, lib))))
+    let dto = lan_dto(&state, lib).map_err(|error| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error,
+        )
+    })?;
+    Ok(Json(Envelope::ok(dto)))
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -1554,12 +1866,16 @@ async fn put_lan(
             for key in input {
                 let id = key.id.trim().to_string();
                 let access_key = key.access_key.trim().to_string();
-                if id.is_empty() || access_key.is_empty() {
+                if id.is_empty() {
                     return Err(ApiError::new(
                         codes::INVALID_PARAM,
                         axum::http::StatusCode::BAD_REQUEST,
-                        "访问密钥的 id 与 access_key 不能为空",
+                        "访问密钥的 id 不能为空",
                     ));
+                }
+                // 列表不再返回明文；空 access_key 表示已有 key，而不是新建输入。
+                if access_key.is_empty() {
+                    continue;
                 }
                 if !ids.insert(id.clone()) || !secrets.insert(access_key.clone()) {
                     return Err(ApiError::new(
@@ -1591,7 +1907,8 @@ async fn put_lan(
             Ok(out)
         };
     let keys = parse_keys(body.keys)?;
-    let peer_keys = parse_keys(body.peer_keys)?;
+    // 原生 AccessKey 统一由 device-keys / remote/keys 管理，不再随 [web] 整表写回。
+    let _ = body.peer_keys;
     if body.enabled && keys.is_empty() {
         return Err(ApiError::new(
             codes::INVALID_PARAM,
@@ -1644,12 +1961,28 @@ async fn put_lan(
     let new_web = WebSettings {
         enabled: body.enabled,
         port: web_port,
-        keys,
-        peer_keys,
+        keys: Vec::new(),
+        peer_keys: Vec::new(),
         peer_port,
     };
 
     let lib = state.require_library()?;
+    let library_id = crate::core::paths::library_key(&lib.paths.root);
+    let mut created = Vec::new();
+    for key in &keys {
+        let (entry, _) = state
+            .remote
+            .keys
+            .create(&library_id, &key.label, key.role, Some(&key.secret))
+            .map_err(|error| {
+                ApiError::new(
+                    codes::INVALID_PARAM,
+                    axum::http::StatusCode::BAD_REQUEST,
+                    error,
+                )
+            })?;
+        created.push(entry.id);
+    }
     let old_web = lib.config.current().web;
     let epoch0 = state.lan.snapshot_epoch().0;
     lib.config.update_web(&new_web).map_err(|e| {
@@ -1665,6 +1998,9 @@ async fn put_lan(
 
     if let Err(err) = wait_converged(&state, &new_web, epoch0).await {
         // 失败回滚：写回旧配置，走同一条热更路径收敛回旧态（尽力，结果不敏感）
+        for id in created {
+            let _ = state.remote.keys.remove(&id);
+        }
         if lib.config.update_web(&old_web).is_ok() {
             let epoch1 = state.lan.snapshot_epoch().0;
             state.lan.wake();
@@ -1681,7 +2017,14 @@ async fn put_lan(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
     );
-    Ok(Json(Envelope::ok(lan_dto(&state, lib))))
+    let dto = lan_dto(&state, lib).map_err(|error| {
+        ApiError::new(
+            codes::INTERNAL,
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error,
+        )
+    })?;
+    Ok(Json(Envelope::ok(dto)))
 }
 
 #[cfg(test)]

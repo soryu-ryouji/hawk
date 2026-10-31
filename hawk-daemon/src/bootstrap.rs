@@ -149,6 +149,8 @@ fn build_state(settings: Settings) -> SharedState {
     // 组件图落位：字段分组见 AppState 定义处注释
     Arc::new(api::AppState {
         settings,
+        web_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+        integration_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
         startup,
         bus,
         sse_lagged: std::sync::atomic::AtomicU64::new(0),
