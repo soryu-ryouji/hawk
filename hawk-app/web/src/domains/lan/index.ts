@@ -15,6 +15,10 @@ function ipcPeer(peer: LanPeer): LanPeer {
     url: String(peer.url),
     writable: Boolean(peer.writable),
     requires_pairing: Boolean(peer.requires_pairing),
+    target_identity: String(peer.target_identity),
+    target_device_id: peer.target_device_id ?? null,
+    target_library_id: String(peer.target_library_id),
+    tls_fingerprint: peer.tls_fingerprint ?? null,
   };
 }
 

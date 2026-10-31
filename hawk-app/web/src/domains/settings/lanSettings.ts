@@ -28,6 +28,10 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
   const active = ref(false);
   const peerActive = ref(false);
   const peerError = ref<string | null>(null);
+  const targetIdentity = ref('');
+  const tlsFingerprint = ref<string | undefined>(undefined);
+  const targetDeviceId = ref<string | undefined>(undefined);
+  const targetLibraryId = ref('');
 
   const portValid = computed(() => validPort(port.value));
   const peerPortValid = computed(() => validPort(peerPort.value));
@@ -46,15 +50,24 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     active: boolean;
     peer_active: boolean;
     peer_error?: string | null;
+    target_identity: string;
+    tls_fingerprint?: string | null;
+    target_device_id?: string | null;
+    target_library_id: string;
   }): void {
     enabled.value = dto.enabled;
     port.value = String(dto.port);
     peerPort.value = String(dto.peer_port);
     keys.value = dto.keys.map((key) => ({ ...key }));
-    peerKeys.value = dto.peer_keys.map((key) => ({ ...key }));
+    // LAN Web 与原生 Peer 已统一为同一 AccessKey；peer_keys 仅为旧 DTO 字段。
+    peerKeys.value = dto.keys.map((key) => ({ ...key }));
     active.value = dto.active;
     peerActive.value = dto.peer_active;
     peerError.value = dto.peer_error ?? null;
+    targetIdentity.value = dto.target_identity;
+    tlsFingerprint.value = dto.tls_fingerprint ?? undefined;
+    targetDeviceId.value = dto.target_device_id ?? undefined;
+    targetLibraryId.value = dto.target_library_id;
   }
 
   async function load(force = false): Promise<void> {
@@ -79,8 +92,17 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     return key;
   }
 
-  function removeKey(id: string): void {
-    keys.value = keys.value.filter((key) => key.id !== id);
+  async function removeKey(id: string): Promise<boolean> {
+    error.value = null;
+    try {
+      await api.deleteLanDeviceKey(id);
+      keys.value = keys.value.filter((key) => key.id !== id);
+      peerKeys.value = peerKeys.value.filter((key) => key.id !== id);
+      return true;
+    } catch (e) {
+      error.value = '删除访问密钥失败：' + errorText(e);
+      return false;
+    }
   }
 
   /** 设备访问密钥走独立端点，和网站访问密钥/网站开关完全解耦。 */
@@ -103,6 +125,10 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
       const index = peerKeys.value.findIndex((key) => key.id === id);
       if (index >= 0) {
         peerKeys.value[index] = updated;
+      }
+      const webIndex = keys.value.findIndex((key) => key.id === id);
+      if (webIndex >= 0) {
+        keys.value[webIndex] = updated;
       }
       return true;
     } catch (e) {
@@ -190,6 +216,10 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     active,
     peerActive,
     peerError,
+    targetIdentity,
+    tlsFingerprint,
+    targetDeviceId,
+    targetLibraryId,
     portValid,
     peerPortValid,
     PORT_ERROR,

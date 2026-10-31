@@ -165,6 +165,10 @@ export interface LanPeer {
   /** 目标设备是否允许局域网写操作 */
   writable: boolean;
   requires_pairing: boolean;
+  target_identity: string;
+  target_device_id?: string | null;
+  target_library_id: string;
+  tls_fingerprint?: string | null;
 }
 
 /** 目标端待确认的自动配对请求（仅展示字段，无访问凭证） */
@@ -196,14 +200,18 @@ export interface LanPeerProfile {
   writable: boolean;
   /** 最近成功连接时间（Unix ms；仅展示排序用） */
   last_connected_at_ms: number;
+  target_identity: string;
+  target_device_id?: string | null;
+  target_library_id: string;
+  tls_fingerprint?: string | null;
 }
 
 /** 远程访问接入配置（读写 daemon /remote 的载荷；应用级，跨素材库共享） */
 export interface RemoteConfig {
   enabled: boolean;
   url: string;
-  /** 服务端 service-key（池门禁凭证，hawk-server tenant add 生成） */
-  service_key: string;
+  /** 服务端 tenant-key（池门禁凭证，hawk-server tenant add 生成） */
+  tenant_key: string;
   /** 允许广域网会话导入素材/新建文件夹（与 [web] 局域网写权限独立） */
   allow_import: boolean;
   /** 使用中继（服务端提供时；消耗自建带宽，设备级开关，默认关闭） */
@@ -262,8 +270,9 @@ export interface RemoteKeyEntry {
 export interface RemoteKeyCreated {
   id: string;
   key: string;
-  /** 是否已同步到 server 映射（false = 远程未接入/推送失败，接入后自动重试） */
-  synced: boolean;
+  target_identity: string;
+  target_device_id?: string;
+  target_library_id?: string;
 }
 
 /** server 索引进度事件负载（total=0 表示不定态） */
@@ -380,9 +389,9 @@ export interface HawkShell {
   /** 签发访问密钥（custom 省略 = 程序生成；明文只在返回值里出现一次） */
   remoteCreateKey(input: { label?: string; role: AccessRole; custom?: string }): Promise<RemoteKeyCreated>;
   /** 更新访问密钥标签/权限 */
-  remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry; synced: boolean }>;
+  remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry }>;
   /** 吊销访问密钥 */
-  remoteDeleteKey(id: string): Promise<{ synced: boolean }>;
+  remoteDeleteKey(id: string): Promise<void>;
   /** 探测同网段可配对的 hawk 设备（经本机 daemon 的 UDP 发现） */
   lanDiscover(): Promise<{ peers: LanPeer[] }>;
   /** 向目标设备发起自动配对请求，等待目标端用户确认后保存连接并切换 */

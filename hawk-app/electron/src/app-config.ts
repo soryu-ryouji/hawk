@@ -155,7 +155,18 @@ export function setRemoteTarget(deviceId: string | null): void {
 /** 已配对局域网设备（最近连接在前；只返回展示字段，token 不出主进程） */
 export function listLanPeers(): LanPeerProfile[] {
   return storedLanPeers()
-    .map(({ id, name, library_name, url, writable, last_connected_at_ms }) => ({ id, name, library_name, url, writable, last_connected_at_ms }))
+    .map(({ id, name, library_name, url, writable, last_connected_at_ms, target_identity, target_device_id, target_library_id, tls_fingerprint }) => ({
+      id,
+      name,
+      library_name,
+      url,
+      writable,
+      last_connected_at_ms,
+      target_identity,
+      target_device_id,
+      target_library_id,
+      tls_fingerprint,
+    }))
     .sort((a, b) => b.last_connected_at_ms - a.last_connected_at_ms);
 }
 

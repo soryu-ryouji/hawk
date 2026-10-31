@@ -39,7 +39,7 @@ export const useRemoteStore = defineStore('remote', () => {
     await saveConfig({
       enabled: current.enabled,
       url: current.url,
-      service_key: current.service_key,
+      tenant_key: current.tenant_key,
       allow_import: current.allow_import,
       relay: on,
     });

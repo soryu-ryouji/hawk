@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 远程访问分区（仅 Electron）：接入自托管 hawk-server（应用级 remote.toml）+ 访问密钥管理 +
-// 设备列表与会话入口。凭证模型：service-key（池门禁，server 侧 tenant add 生成）准入后，
+// 设备列表与会话入口。凭证模型：tenant-key（池门禁，server 侧 tenant add 生成）准入后，
 //  hawk-app key（本机签发，逐把读/写权限）分发给网页版/插件等外部查看者。
 // 配置读写/设备列表/密钥管理/会话动作全部经 IPC 委托主进程（切到远程后渲染进程的 API base 已指向
 // 会话代理，管理面必须在主进程）。设置面板内保存由 footer 委托，RemoteScreen 保留内联保存；打开期间轮询信令状态。
@@ -24,7 +24,7 @@ const library = useLibraryStore();
 
 const enabled = ref(false);
 const url = ref('');
-const serviceKey = ref('');
+const tenantKey = ref('');
 const writable = ref(false);
 const saving = ref(false);
 
@@ -53,7 +53,7 @@ onMounted(() => {
     if (store.dto) {
       enabled.value = store.dto.enabled;
       url.value = store.dto.url;
-      serviceKey.value = store.dto.service_key;
+      tenantKey.value = store.dto.tenant_key;
       writable.value = store.dto.allow_import;
     }
   });
@@ -116,7 +116,7 @@ async function save(): Promise<boolean> {
   const ok = await store.saveConfig({
     enabled: enabled.value,
     url: url.value.trim(),
-    service_key: serviceKey.value.trim(),
+    tenant_key: tenantKey.value.trim(),
     allow_import: writable.value,
     relay: store.relayEnabled,
   });
@@ -134,7 +134,7 @@ function busy(): boolean {
 defineExpose({ save, busy });
 
 /** 配对二维码可用条件：启用、服务端地址与服务密钥已填写（保存由按钮动作完成） */
-const canPair = computed(() => enabled.value && url.value.trim().length > 0 && serviceKey.value.trim().length > 0);
+const canPair = computed(() => enabled.value && url.value.trim().length > 0 && tenantKey.value.trim().length > 0);
 
 /** 保存接入配置 → 签发只读访问密钥 → 生成移动端配对二维码 */
 async function openPairing(): Promise<void> {
@@ -146,7 +146,7 @@ async function openPairing(): Promise<void> {
     return;
   }
   const dto = store.dto;
-  if (!dto?.enabled || !dto.url.trim() || !dto.service_key.trim()) {
+  if (!dto?.enabled || !dto.url.trim() || !dto.tenant_key.trim()) {
     error.value = '请先保存并接入远程访问';
     return;
   }
@@ -157,20 +157,21 @@ async function openPairing(): Promise<void> {
     error.value = store.error;
     return;
   }
+  if (!created.target_device_id) {
+    error.value = '目标设备尚未完成注册，无法生成广域网配对信息';
+    return;
+  }
   createdKey.value = created;
   const serverURL = dto.url.trim().replace(/\/+$/, '');
   const warnings: string[] = [];
-  if (!created.synced) {
-    warnings.push('访问密钥尚未同步到服务端；本机远程接入在线后会自动重试，这之前 iOS 登录会失败。');
-  }
   if (dto.status.state !== 'online') {
     warnings.push('远程信令当前未在线；目标设备上线后才能连接。');
   }
   pairing.value = {
-    payload: encodePairingPayload(remotePairingPayload(serverURL, dto.service_key.trim(), created.key)),
+    payload: encodePairingPayload(remotePairingPayload(serverURL, created.key, created.target_identity, created.target_device_id, created.target_library_id)),
     details: [
       { label: '服务器', value: serverURL },
-      { label: '服务密钥', value: dto.service_key.trim() },
+      { label: '目标设备', value: created.target_device_id },
       { label: '访问密钥', value: created.key },
     ],
     warning: warnings.join(' '),
@@ -226,7 +227,7 @@ async function copyText(text: string, tag: string) {
 
 /** 分享串：查看者需要三段（服务器地址 + 服务密钥 + 访问密钥） */
 function shareText(key: string): string {
-  return [`服务器：${store.dto?.url ?? ''}`, `服务密钥：${store.dto?.service_key ?? ''}`, `访问密钥：${key}`].join('\n');
+  return [`服务器：${store.dto?.url ?? ''}`, `服务密钥：${store.dto?.tenant_key ?? ''}`, `访问密钥：${key}`].join('\n');
 }
 
 function keyPermissionValue(key: { role: string }): 'read' | 'write' {
@@ -328,7 +329,7 @@ async function removeDevice(deviceId: string, name: string) {
           <label class="remote-field">
             <span class="remote-field-label">服务密钥</span>
             <input
-              v-model="serviceKey"
+              v-model="tenantKey"
               class="settings-input"
               type="password"
               placeholder="hawk-server tenant add 生成的 hs_ 密钥"
@@ -364,7 +365,6 @@ async function removeDevice(deviceId: string, name: string) {
               <button class="remote-button" @click="copyText(shareText(createdKey.key), 'share')">{{ copied === 'share' ? '已复制' : '复制分享串' }}</button>
               <button class="remote-button" @click="createdKey = null">完成</button>
             </div>
-            <div class="row-meta">{{ createdKey.synced ? '已同步到服务端' : '远程未在线，待自动同步' }}</div>
           </div>
 
           <div v-if="store.keys.length === 0" class="empty-row">暂无访问密钥</div>

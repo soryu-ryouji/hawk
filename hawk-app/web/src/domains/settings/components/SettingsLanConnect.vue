@@ -20,6 +20,7 @@ const savedMessage = ref<string | null>(null);
 /** 手动配对兜底：广播/组播被访客网络隔离时，直接输入目标 hawk-app 直连地址。 */
 const manualOpen = ref(false);
 const manualUrl = ref('');
+const manualIdentity = ref('');
 /** 局域网测速（当前实现为 app/info 往返延迟中位数） */
 const testingSpeed = ref(false);
 const speedMs = ref<number | null>(null);
@@ -106,6 +107,7 @@ async function confirmPairPermission(): Promise<void> {
   if (ok && manual) {
     manualOpen.value = false;
     manualUrl.value = '';
+    manualIdentity.value = '';
   }
 }
 async function submitManualPair(): Promise<void> {
@@ -120,6 +122,10 @@ async function submitManualPair(): Promise<void> {
     url,
     writable: true,
     requires_pairing: true,
+    target_identity: manualIdentity.value.trim(),
+    target_device_id: null,
+    target_library_id: '',
+    tls_fingerprint: null,
   };
   openPairPermission(peer);
 }
@@ -229,8 +235,9 @@ async function testSpeed(): Promise<void> {
     <div v-if="manualOpen" class="pair-box">
       <div class="pair-title">手动配对</div>
       <input v-model="manualUrl" placeholder="http://192.168.1.5:27375" autocomplete="off" spellcheck="false" />
+      <input v-model="manualIdentity" placeholder="target_identity（目标 iroh 公钥）" autocomplete="off" spellcheck="false" />
       <div class="pair-actions">
-        <button class="primary" :disabled="!manualUrl.trim() || store.connectingId !== null" @click="submitManualPair">
+        <button class="primary" :disabled="!manualUrl.trim() || !manualIdentity.trim() || store.connectingId !== null" @click="submitManualPair">
           {{ store.connectingId ? '等待对方确认…' : '申请配对' }}
         </button>
       </div>

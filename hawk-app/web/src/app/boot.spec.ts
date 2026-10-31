@@ -29,6 +29,7 @@ vi.mock('@/shared/api/client', async (importOriginal) => {
 const apiMocks = vi.hoisted(() => ({
   startupStatus: vi.fn(() => Promise.resolve({ status: 'ready' as const })),
   appInfo: vi.fn(() => Promise.resolve({ role: 'admin', channel: 'loopback', has_library: true })),
+  appSession: vi.fn(() => Promise.resolve({ role: 'viewer', channel: 'lan_web', expires_in: 100 })),
   libraryInfo: vi.fn(() => Promise.resolve({ name: '库', path: '/lib' })),
   viewPreferences: vi.fn(() => Promise.resolve({})),
   itemSkeleton: vi.fn(() => Promise.resolve({ items: [], total_size: 0 })),

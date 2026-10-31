@@ -142,12 +142,12 @@ export async function remoteCreateKey(input: { label?: string; role: AccessRole;
   return daemonCall<RemoteKeyCreated>('POST', '/api/v1/remote/keys', input);
 }
 
-export async function remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry; synced: boolean }> {
-  return daemonCall<{ key: RemoteKeyEntry; synced: boolean }>('PATCH', `/api/v1/remote/keys/${encodeURIComponent(id)}`, patch);
+export async function remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry }> {
+  return daemonCall<{ key: RemoteKeyEntry }>('PATCH', `/api/v1/remote/keys/${encodeURIComponent(id)}`, patch);
 }
 
-export async function remoteDeleteKey(id: string): Promise<{ synced: boolean }> {
-  return daemonCall<{ synced: boolean }>('DELETE', `/api/v1/remote/keys/${encodeURIComponent(id)}`);
+export async function remoteDeleteKey(id: string): Promise<void> {
+  return daemonCall<void>('DELETE', `/api/v1/remote/keys/${encodeURIComponent(id)}`);
 }
 
 /** 建立远程会话并切换连接描述符；失败抛错（message 直接展示）。
@@ -278,6 +278,10 @@ interface LanSettingsDto {
   port: number;
   peer_port: number;
   peer_id: string;
+  target_identity: string;
+  target_device_id?: string | null;
+  target_library_id: string;
+  tls_fingerprint?: string | null;
   name: string;
   library_name: string;
   keys: LanKeyDto[];
@@ -293,6 +297,10 @@ interface ReversePeerProfile {
   urls: string[];
   peer_key: string;
   role: AccessRole;
+  target_identity: string;
+  target_device_id?: string | null;
+  target_library_id: string;
+  tls_fingerprint?: string | null;
 }
 
 interface LanPairedPeer {
@@ -302,6 +310,10 @@ interface LanPairedPeer {
   url: string;
   role: AccessRole;
   peer_key: string;
+  target_identity: string;
+  target_device_id?: string | null;
+  target_library_id: string;
+  tls_fingerprint?: string | null;
 }
 /** 源端发起配对前在本机创建一把同名设备密钥；失败则整体配对失败。 */
 async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ keyId: string; profile: ReversePeerProfile }> {
@@ -323,6 +335,10 @@ async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ 
         urls: lanAddresses().map((ip) => 'http://' + ip + ':' + settings.peer_port),
         peer_key: key.access_key,
         role: key.role,
+        target_identity: settings.target_identity,
+        target_device_id: settings.target_device_id,
+        target_library_id: settings.target_library_id,
+        tls_fingerprint: settings.tls_fingerprint,
       },
     };
   } catch (error) {
@@ -363,6 +379,10 @@ export async function lanDecidePairRequest(requestId: string, body: { allow: boo
       url: normalizeLanURL(result.peer.url),
       writable: result.peer.role === 'editor',
       peer_key: result.peer.peer_key,
+      target_identity: result.peer.target_identity,
+      target_device_id: result.peer.target_device_id,
+      target_library_id: result.peer.target_library_id,
+      tls_fingerprint: result.peer.tls_fingerprint,
       last_connected_at_ms: 0,
     });
   }
@@ -401,6 +421,10 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
         peer_id?: string;
         name?: string;
         library_name?: string;
+        target_identity?: string;
+        target_device_id?: string | null;
+        target_library_id?: string;
+        tls_fingerprint?: string | null;
       }>(base, '/api/v1/app/lan/pair-requests/' + encodeURIComponent(requestId), '', 'GET');
       if (status.protocol !== 2) {
         throw new Error('目标端配对协议版本不兼容，请将两端 hawk 升级到同一版本');
@@ -430,6 +454,10 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
         url: base,
         writable: status.role === 'editor',
         peer_key: status.access_key,
+        target_identity: status.target_identity || input.peer.target_identity,
+        target_device_id: status.target_device_id ?? input.peer.target_device_id,
+        target_library_id: status.target_library_id || input.peer.target_library_id,
+        tls_fingerprint: status.tls_fingerprint ?? input.peer.tls_fingerprint,
         last_connected_at_ms: Date.now(),
       });
       return connectLanPeer(peerId);
@@ -451,10 +479,14 @@ async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
   if (!profile) {
     throw new Error('局域网设备记录不存在，请重新配对');
   }
-  const info = await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
-  if (!info.has_library) {
-    throw new Error('目标设备未打开素材库');
+  if (!profile.target_identity) {
+    throw new Error('配对记录缺少 target_identity，请重新配对');
   }
+  const session = await daemonCall<RemoteSessionDto>('POST', '/api/v1/remote/access-connect', {
+    target_device_id: profile.target_device_id ?? '',
+    target_identity: profile.target_identity,
+    access_key: profile.peer_key,
+  });
   // 切到局域网直连前，结束本地 daemon 上可能存在的远程会话（失败不阻断）
   if (remoteConn) {
     try {
@@ -467,8 +499,8 @@ async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
   remoteConn = null;
   upsertLanPeer({ ...profile, last_connected_at_ms: Date.now() });
   lanConn = {
-    api_base: profile.url,
-    credential: profile.peer_key,
+    api_base: `http://127.0.0.1:${session.proxy_port}`,
+    credential: session.session_token,
     label: `${profile.name}（${profile.library_name}）`,
     remote: true,
     kind: 'lan',

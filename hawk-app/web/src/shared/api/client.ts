@@ -35,6 +35,11 @@ export function initApi(): ApiConfig | null {
   // token 优先级：hash（Electron 注入）> ?token= 查询参数 > 本地存储（按 api 地址隔离，记住上次验证通过的 token）
   const credential = hash.get('token') || search.get('token') || loadText(credentialStorageKey(api)) || '';
   config = { api, credential };
+  if (!hasShell && search.has('token')) {
+    const url = new URL(location.href);
+    url.searchParams.delete('token');
+    history.replaceState(null, '', url);
+  }
   return config;
 }
 

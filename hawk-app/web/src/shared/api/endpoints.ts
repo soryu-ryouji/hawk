@@ -50,6 +50,11 @@ export interface ItemBatchPatch {
 export const api = {
   appInfo: () => request<AppInfo>('GET', '/api/v1/app/info'),
   startupStatus: () => request<StartupInfo>('GET', '/api/v1/app/startup'),
+  /** LAN Web：AccessKey 换有期 Session Cookie（图片/SSE 自动复用） */
+  appSession: (accessKey: string) =>
+    request<components['schemas']['AppSessionDto']>('POST', '/api/v1/app/session', {
+      body: { access_key: accessKey },
+    }),
   /** 局域网 web 查看配置与运行状态（admin 限定，daemon 权威读写） */
   appLan: () => request<components['schemas']['LanSettingsDto']>('GET', '/api/v1/app/lan'),
   /** 保存 [web] 配置并热重绑监听（失败 daemon 侧自动回滚并返回错误） */
@@ -164,18 +169,18 @@ export const api = {
     request<void>('PUT', '/api/v1/view/preference', { body: { scope, order_by: orderBy, order } }),
   viewPreferenceReset: (scope: string) => request<void>('DELETE', '/api/v1/view/preference', { query: { scope } }),
 
-  /** 缩略图 URL：<img> 无法带请求头，token/unlock 走查询参数（后端已放行该端点） */
+  /** 缩略图 URL：使用启动时换发的 Session Cookie；unlock 仅表达锁可见范围 */
   thumbnailUrl(id: string, size?: ThumbnailSize): string {
-    const { api: base, credential } = apiConfig();
+    const { api: base } = apiConfig();
     const unlock = unlockQueryValue();
     const sizeQuery = size ? `&size=${size}` : '';
-    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}&token=${encodeURIComponent(credential)}${sizeQuery}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
+    return `${base}/api/v1/item/thumbnail?id=${encodeURIComponent(id)}${sizeQuery}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
   },
 
-  /** 原图 URL：预览浮层用；token/unlock 同样走查询参数 */
+  /** 原图 URL：使用同一 Session Cookie，不携带长期 token */
   fileUrl(id: string): string {
-    const { api: base, credential } = apiConfig();
+    const { api: base } = apiConfig();
     const unlock = unlockQueryValue();
-    return `${base}/api/v1/item/file?id=${encodeURIComponent(id)}&token=${encodeURIComponent(credential)}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
+    return `${base}/api/v1/item/file?id=${encodeURIComponent(id)}${unlock ? `&unlock=${encodeURIComponent(unlock)}` : ''}`;
   },
 };

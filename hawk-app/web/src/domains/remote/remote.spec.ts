@@ -9,7 +9,7 @@ const env = vi.hoisted(() => ({
   status: {
     enabled: true,
     url: 'https://hub',
-    service_key: 'hs_k',
+    tenant_key: 'hs_k',
     allow_import: false,
     relay: false,
     status: { state: 'online', device_id: 'd_self' },
@@ -47,16 +47,22 @@ const shellMock = vi.hoisted(() => ({
   remoteKeys: vi.fn(() => Promise.resolve({ keys: env.keys })),
   remoteCreateKey: vi.fn(() =>
     env.createKeyOk
-      ? Promise.resolve({ id: 'k_new', key: 'hk_plain-once', synced: true })
+      ? Promise.resolve({
+          id: 'k_new',
+          key: 'hk_plain-once',
+          target_identity: 'ep_target',
+          target_device_id: 'd_target',
+          target_library_id: 'lib_target',
+        })
       : Promise.reject(new Error('自定义密钥至少 12 个字符（携带写权限）')),
   ),
   remotePatchKey: vi.fn((_id: string, patch: { read?: boolean; write?: boolean }) => {
     env.keys = env.keys.map((k) => (k.id === _id ? { ...k, ...patch } : k));
-    return Promise.resolve({ key: env.keys.find((k) => k.id === _id)!, synced: true });
+    return Promise.resolve({ key: env.keys.find((k) => k.id === _id)! });
   }),
   remoteDeleteKey: vi.fn((id: string) => {
     env.keys = env.keys.filter((k) => k.id !== id);
-    return Promise.resolve({ synced: true });
+    return Promise.resolve();
   }),
   remoteGetConnection: vi.fn(() => Promise.resolve(env.connection)),
   onConnectionChanged: vi.fn((cb: (conn: ConnectionDescriptor) => void) => {
@@ -98,11 +104,11 @@ describe('useRemoteStore', () => {
 
   it('saveConfig 成功回写 dto；失败写入 error 并返回 false', async () => {
     const store = useRemoteStore();
-    expect(await store.saveConfig({ enabled: true, url: 'https://hub', service_key: 'hs_k', allow_import: false, relay: false })).toBe(true);
+    expect(await store.saveConfig({ enabled: true, url: 'https://hub', tenant_key: 'hs_k', allow_import: false, relay: false })).toBe(true);
     expect(store.dto?.url).toBe('https://hub');
 
     env.putOk = false;
-    expect(await store.saveConfig({ enabled: true, url: '', service_key: '', allow_import: false, relay: false })).toBe(false);
+    expect(await store.saveConfig({ enabled: true, url: '', tenant_key: '', allow_import: false, relay: false })).toBe(false);
     expect(store.error).toBe('校验失败');
   });
 

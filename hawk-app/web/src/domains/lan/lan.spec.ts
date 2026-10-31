@@ -32,6 +32,10 @@ describe('useLanStore', () => {
       url: 'http://192.168.1.2:27375',
       writable: true,
       requires_pairing: true,
+      target_identity: 'ep_target',
+      target_device_id: 'd_target',
+      target_library_id: 'lib_target',
+      tls_fingerprint: null,
     });
 
     const store = useLanStore();
@@ -47,6 +51,10 @@ describe('useLanStore', () => {
       url: 'http://192.168.1.2:27375',
       writable: true,
       requires_pairing: true,
+      target_identity: 'ep_target',
+      target_device_id: 'd_target',
+      target_library_id: 'lib_target',
+      tls_fingerprint: null,
     });
     expect(payload.writable).toBe(true);
     expect(payload.reverseWritable).toBe(false);

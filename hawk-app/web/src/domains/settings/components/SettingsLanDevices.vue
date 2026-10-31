@@ -190,7 +190,7 @@ async function confirmQr(): Promise<void> {
     qrPermissionOpen.value = false;
     const urls = addresses.value.map((addr) => 'http://' + addr + ':' + lan.peerPort);
     pairing.value = {
-      payload: encodePairingPayload(lanPairingPayload(urls, key.access_key)),
+      payload: encodePairingPayload(lanPairingPayload(urls, key.access_key, lan.targetIdentity, lan.targetLibraryId, lan.targetDeviceId, lan.tlsFingerprint)),
       details: [
         { label: '地址（客户端自动择优）', value: urls.join('\n') },
         { label: '访问密钥', value: key.access_key },

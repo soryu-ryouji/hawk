@@ -92,8 +92,8 @@ defineExpose({ save, busy });
           <span class="field-label">访问地址列表</span>
           <ul class="addrs">
             <li v-for="ip in addresses" :key="ip">
-              <a :href="portValid ? `http://${ip}:${lan.port}` : undefined" target="_blank" rel="noreferrer">http://{{ ip }}:{{ lan.port }}</a>
-              <button class="icon-btn" :disabled="!portValid" title="复制地址" @click="copy(`http://${ip}:${lan.port}`)">
+              <a :href="portValid ? `https://${ip}:${lan.port}` : undefined" target="_blank" rel="noreferrer">https://{{ ip }}:{{ lan.port }}</a>
+              <button class="icon-btn" :disabled="!portValid" title="复制地址" @click="copy(`https://${ip}:${lan.port}`)">
                 <Icon name="copy" :size="13" />
               </button>
             </li>

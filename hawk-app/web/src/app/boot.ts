@@ -34,6 +34,10 @@ export function useBoot() {
       // 清理由装配层编排，store 之间不互相调用初始化逻辑），再按连接形态分流
       preview.closePreview();
       preview.closeEditor();
+      // 浏览器先以 AccessKey 换 Session Cookie，后续图片/SSE 不再通过 URL 传 token。
+      if (!hasShell) {
+        await api.appSession(apiConfig().credential);
+      }
       // 远程查看模式（本地无库）：库端点不可用，进远程查看屏（配置服务端/选设备）；
       // 连上远程库后连接描述符切换会重新进本流程（此时 api 指向远程库，has_library=true）
       const info = await api.appInfo();

@@ -31,8 +31,8 @@ export interface EventHandlers {
 }
 
 export function connectEvents(handlers: EventHandlers): () => void {
-  const { api, credential } = apiConfig();
-  const source = new EventSource(`${api}/api/v1/events?token=${encodeURIComponent(credential)}`);
+  const { api } = apiConfig();
+  const source = new EventSource(`${api}/api/v1/events`);
   let hadError = false;
 
   source.onopen = () => {

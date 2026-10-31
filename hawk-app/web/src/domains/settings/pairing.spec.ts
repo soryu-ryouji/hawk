@@ -2,30 +2,34 @@ import { describe, expect, it } from 'vitest';
 import { encodePairingPayload, lanPairingPayload, PAIRING_PAYLOAD_VERSION, remotePairingPayload } from './pairing';
 
 describe('pairing payload', () => {
-  it('局域网载荷使用 snake_case 协议字段', () => {
-    const payload = lanPairingPayload(['http://192.168.1.5:27372', 'http://10.0.0.5:27372'], 'tok');
+  it('LAN/WAN 共用 AccessKey 与 target_identity，不携带 tenant key', () => {
+    const payload = remotePairingPayload('https://hawk.example.com/', 'hk_app', 'ep_target', 'd_target', 'lib_target', ['http://192.168.1.5:27375']);
     expect(payload).toEqual({
       v: PAIRING_PAYLOAD_VERSION,
-      kind: 'lan',
-      urls: ['http://192.168.1.5:27372', 'http://10.0.0.5:27372'],
-      token: 'tok',
+      target_library_id: 'lib_target',
+      target_device_id: 'd_target',
+      target_identity: 'ep_target',
+      access_key: 'hk_app',
+      lan_endpoints: ['http://192.168.1.5:27375'],
+      wan: { server_url: 'https://hawk.example.com' },
     });
     expect(JSON.parse(encodePairingPayload(payload))).toEqual(payload);
+    expect(encodePairingPayload(payload)).not.toContain('tenant_key');
   });
 
-  it('广域网载荷携带 service_key 与 key', () => {
-    const payload = remotePairingPayload('https://hawk.example.com', 'hs_service', 'hk_app');
+  it('LAN 载荷可以只携带局域网端点', () => {
+    const payload = lanPairingPayload(['http://192.168.1.5:27375'], 'hk_app', 'ep_target', 'lib_target');
     expect(payload).toEqual({
       v: PAIRING_PAYLOAD_VERSION,
-      kind: 'remote',
-      url: 'https://hawk.example.com',
-      service_key: 'hs_service',
-      key: 'hk_app',
+      target_library_id: 'lib_target',
+      target_device_id: undefined,
+      target_identity: 'ep_target',
+      access_key: 'hk_app',
+      lan_endpoints: ['http://192.168.1.5:27375'],
     });
-    expect(Object.keys(JSON.parse(encodePairingPayload(payload))).sort()).toEqual(['key', 'kind', 'service_key', 'url', 'v']);
   });
 
-  it('版本号固定为 1（客户端据此判定协议兼容）', () => {
-    expect(PAIRING_PAYLOAD_VERSION).toBe(1);
+  it('版本号固定为 2', () => {
+    expect(PAIRING_PAYLOAD_VERSION).toBe(2);
   });
 });
