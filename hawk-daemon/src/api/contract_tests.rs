@@ -430,20 +430,48 @@ async fn lan_access_key_works_across_channels() {
     assert_eq!(call_auth(peer_router, "web-token").await, StatusCode::OK);
 }
 
-/// 配对协议 v2 为破坏性更新：缺少 reverse 回连 profile 的旧请求必须直接拒绝。
+/// 无本地库查看方不携带 reverse：目标端只签发正向访问密钥，不返回回连设备。
 #[tokio::test]
-async fn pair_request_rejects_missing_reverse_profile() {
-    let app = test_app("lan-pair-v2-required");
+async fn pair_request_allows_one_way_without_reverse_profile() {
+    let app = test_app("lan-pair-one-way");
     app.state.lan.mark_peer_active_for_test(27375);
     let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
-    let (status, _) = call_json(
+    let (status, bytes) = call_json(
         &peer_router,
         "POST",
         "/api/v1/app/lan/pair-requests",
-        Some(json!({ "client_name": "OldClient", "role": "editor" })),
+        Some(json!({ "client_name": "LibrarylessClient", "role": "viewer" })),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let created: Value = serde_json::from_slice(&bytes).unwrap();
+    let request_id = created["data"]["request_id"].as_str().unwrap();
+
+    let decision_path = format!("/api/v1/app/lan/pair-requests/{request_id}/decision");
+    let (status, bytes) = call_json(
+        &app.router,
+        "POST",
+        &decision_path,
+        Some(json!({ "allow": true, "role": "viewer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let decision: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decision["data"]["status"], "approved");
+    assert!(decision["data"]["peer"].is_null());
+
+    let status_path = format!("/api/v1/app/lan/pair-requests/{request_id}");
+    let (status, bytes) = call_json(&peer_router, "GET", &status_path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let approved: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(approved["data"]["status"], "approved");
+    assert_eq!(approved["data"]["protocol"], 3);
+    assert!(approved["data"]["access_key"].is_string());
 }
 
 /// 设备访问密钥与网站访问密钥完全分离：网站未配置 key 时也能创建设备 key。
@@ -651,7 +679,7 @@ async fn put_lan_auto_pair_request_flow() {
     );
     let approved: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(approved["data"]["status"], "approved");
-    assert_eq!(approved["data"]["protocol"], 2);
+    assert_eq!(approved["data"]["protocol"], 3);
     assert_eq!(approved["data"]["role"], "editor");
     assert!(approved["data"]["access_key"]
         .as_str()

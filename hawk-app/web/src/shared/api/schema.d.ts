@@ -2350,8 +2350,7 @@ export interface components {
         LanPairRequestCreateBody: {
             /** @description 源端设备名（仅用于目标端确认提示） */
             client_name: string;
-            /** @description 源端回连 profile：目标端批准后据此保存可反向连接的设备。 */
-            reverse: components["schemas"]["LanReversePeerDto"];
+            reverse?: null | components["schemas"]["LanReversePeerDto"];
             /** @description 源端希望获得的角色；最终由目标端用户决定 */
             role?: components["schemas"]["Role"];
         };

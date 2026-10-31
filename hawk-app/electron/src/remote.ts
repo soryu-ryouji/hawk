@@ -318,8 +318,12 @@ interface LanPairedPeer {
   target_library_id: string;
   tls_fingerprint?: string | null;
 }
-/** 源端发起配对前在本机创建一把同名设备密钥；失败则整体配对失败。 */
-async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ keyId: string; profile: ReversePeerProfile }> {
+/** 有本地库时创建反向设备密钥；无本地库查看方返回 null，配对退化为仅目标 → 查看方的单向授权。 */
+async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ keyId: string; profile: ReversePeerProfile } | null> {
+  const info = await daemonCall<TargetAppInfo>('GET', '/api/v1/app/info');
+  if (!info.has_library) {
+    return null;
+  }
   const key = await daemonCall<LanKeyDto>('POST', '/api/v1/app/lan/device-keys', {
     label: target.name,
     role: writable ? 'editor' : 'viewer',
@@ -371,10 +375,8 @@ export async function lanDecidePairRequest(requestId: string, body: { allow: boo
     '/api/v1/app/lan/pair-requests/' + encodeURIComponent(requestId) + '/decision',
     body,
   );
-  if (result.status === 'approved') {
-    if (!result.peer) {
-      throw new Error('目标端未返回双向配对信息，请确认两端 hawk 已升级到同一版本');
-    }
+  if (result.status === 'approved' && result.peer) {
+    // 有 reverse 时保存回连设备；无本地库源端发起的是单向配对，没有 profile 可保存。
     upsertLanPeer({
       id: result.peer.id,
       name: result.peer.name,
@@ -401,7 +403,7 @@ export async function lanForget(peerId: string): Promise<void> {
   removeStoredLanPeer(peerId);
 }
 
-/** 向目标设备发起自动配对请求；目标端批准后双方各自保存一台可反向连接的设备。 */
+/** 向目标设备发起自动配对请求；双方都有本地库时保存双向授权，无库查看方仅保存目标设备。 */
 export async function lanPair(input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }): Promise<ConnectionDescriptor> {
   const reverse = await addReversePeerKey(input.peer, input.reverseWritable);
   let approved = false;
@@ -410,7 +412,7 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
     const created = await directCall<{ request_id: string; expires_in_seconds: number }>(base, '/api/v1/app/lan/pair-requests', '', 'POST', {
       client_name: os.hostname(),
       role: input.writable ? 'editor' : 'viewer',
-      reverse: reverse.profile,
+      reverse: reverse?.profile ?? null,
     });
     const requestId = created.request_id;
     const deadline = Date.now() + Math.min(Math.max(created.expires_in_seconds, 1), 95) * 1000;
@@ -429,7 +431,7 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
         target_library_id?: string;
         tls_fingerprint?: string | null;
       }>(base, '/api/v1/app/lan/pair-requests/' + encodeURIComponent(requestId), '', 'GET');
-      if (status.protocol !== 2) {
+      if (status.protocol !== 3) {
         throw new Error('目标端配对协议版本不兼容，请将两端 hawk 升级到同一版本');
       }
       if (status.status === 'denied') {
@@ -467,7 +469,7 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
     }
     throw new Error('等待对方确认超时，请重新发起配对');
   } finally {
-    if (!approved) {
+    if (!approved && reverse) {
       await removeReversePeerKey(reverse.keyId).catch(() => {});
     }
   }

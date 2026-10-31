@@ -3533,8 +3533,15 @@
             "type": "string"
           },
           "reverse": {
-            "$ref": "#/components/schemas/LanReversePeerDto",
-            "description": "源端回连 profile：目标端批准后据此保存可反向连接的设备。"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LanReversePeerDto",
+                "description": "源端回连 profile：有本地库时携带；无本地库查看方省略，表示单向配对。"
+              }
+            ]
           },
           "role": {
             "$ref": "#/components/schemas/Role",
@@ -3542,8 +3549,7 @@
           }
         },
         "required": [
-          "client_name",
-          "reverse"
+          "client_name"
         ],
         "type": "object"
       },

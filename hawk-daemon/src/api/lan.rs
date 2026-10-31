@@ -38,8 +38,8 @@ const PAIR_REQUEST_TTL: Duration = Duration::from_secs(90);
 const MAX_PENDING_PAIR_REQUESTS: usize = 8;
 /// 源端健康检查约每 5 秒一次；30 秒内有请求即视为在线，容忍短暂卡顿。
 const PEER_ONLINE_WINDOW_MS: u64 = 30_000;
-/// 桌面配对协议版本：v2 起必须携带 reverse 回连 profile，旧版本直接拒绝。
-const PAIR_PROTOCOL_VERSION: u32 = 2;
+/// 桌面配对协议版本：v3 支持无本地库查看方发起单向配对（reverse 可空）。
+const PAIR_PROTOCOL_VERSION: u32 = 3;
 /// 自动配对请求的状态机。
 #[derive(Clone)]
 enum PairRequestState {
@@ -57,8 +57,8 @@ struct PairRequestTicket {
     created_at_ms: u64,
     expires_at: Instant,
     state: PairRequestState,
-    /// 源端回连凭据：目标端批准后据此保存一台可反向连接的设备。
-    reverse: LanReversePeerDto,
+    /// 源端回连凭据：有本地库时由目标端保存；无本地库查看方为 None（单向配对）。
+    reverse: Option<LanReversePeerDto>,
 }
 
 /// 单个 LAN 监听器状态快照（app/info 序列化 + 日志）
@@ -114,7 +114,7 @@ impl LanSupervisor {
         &self,
         client_name: &str,
         requested_role: Role,
-        reverse: LanReversePeerDto,
+        reverse: Option<LanReversePeerDto>,
     ) -> Option<(String, u64)> {
         let now = Instant::now();
         let mut requests = self.pair_requests.lock().unwrap();
@@ -123,6 +123,7 @@ impl LanSupervisor {
             matches!(request.state, PairRequestState::Pending)
                 && request.client_name == client_name
                 && request.requested_role == requested_role
+                && request.reverse.is_some() == reverse.is_some()
         }) {
             return Some((
                 existing.id.clone(),
@@ -1038,8 +1039,8 @@ struct LanPairRequestCreateBody {
     /// 源端希望获得的角色；最终由目标端用户决定
     #[serde(default)]
     role: Role,
-    /// 源端回连 profile：目标端批准后据此保存可反向连接的设备。
-    reverse: LanReversePeerDto,
+    /// 源端回连 profile：有本地库时携带；无本地库查看方省略，表示单向配对。
+    reverse: Option<LanReversePeerDto>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -1156,22 +1157,23 @@ async fn create_lan_pair_request(
         ));
     }
     let client_name = sanitized_client_name(&body.client_name);
-    let reverse = &body.reverse;
-    if reverse.peer_id.trim().is_empty()
-        || reverse.name.trim().is_empty()
-        || reverse.peer_key.trim().is_empty()
-        || reverse.target_identity.trim().is_empty()
-        || reverse.target_library_id.trim().is_empty()
-        || !reverse
-            .urls
-            .iter()
-            .any(|url| url.starts_with("http://") || url.starts_with("https://"))
-    {
-        return Err(ApiError::new(
-            codes::INVALID_PARAM,
-            axum::http::StatusCode::BAD_REQUEST,
-            "配对请求缺少有效的源端回连信息",
-        ));
+    if let Some(reverse) = &body.reverse {
+        if reverse.peer_id.trim().is_empty()
+            || reverse.name.trim().is_empty()
+            || reverse.peer_key.trim().is_empty()
+            || reverse.target_identity.trim().is_empty()
+            || reverse.target_library_id.trim().is_empty()
+            || !reverse
+                .urls
+                .iter()
+                .any(|url| url.starts_with("http://") || url.starts_with("https://"))
+        {
+            return Err(ApiError::new(
+                codes::INVALID_PARAM,
+                axum::http::StatusCode::BAD_REQUEST,
+                "配对请求的源端回连信息无效",
+            ));
+        }
     }
     let Some((request_id, expires_in_seconds)) =
         state
@@ -1321,13 +1323,26 @@ async fn decide_lan_pair_request(
             peer: None,
         })));
     }
-    let reverse = &request.reverse;
-    let reverse_url = reverse
-        .urls
-        .iter()
-        .find(|url| url.starts_with("http://") || url.starts_with("https://"))
-        .cloned()
-        .expect("reverse urls validated when request was created");
+    let reverse_peer = request.reverse.as_ref().map(|reverse| {
+        let reverse_url = reverse
+            .urls
+            .iter()
+            .find(|url| url.starts_with("http://") || url.starts_with("https://"))
+            .cloned()
+            .expect("reverse urls validated when request was created");
+        LanPairedPeerDto {
+            id: reverse.peer_id.clone(),
+            name: reverse.name.clone(),
+            library_name: reverse.library_name.clone(),
+            url: reverse_url,
+            role: reverse.role,
+            peer_key: reverse.peer_key.clone(),
+            target_identity: reverse.target_identity.clone(),
+            target_device_id: reverse.target_device_id.clone(),
+            target_library_id: reverse.target_library_id.clone(),
+            tls_fingerprint: reverse.tls_fingerprint.clone(),
+        }
+    });
     let library_id = crate::core::paths::library_key(&lib.paths.root);
     if state.remote.keys.list_for_library(Some(&library_id)).len() >= 32 {
         state
@@ -1369,18 +1384,6 @@ async fn decide_lan_pair_request(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
     );
-    let reverse_peer = LanPairedPeerDto {
-        id: reverse.peer_id.clone(),
-        name: reverse.name.clone(),
-        library_name: reverse.library_name.clone(),
-        url: reverse_url,
-        role: reverse.role,
-        peer_key: reverse.peer_key.clone(),
-        target_identity: reverse.target_identity.clone(),
-        target_device_id: reverse.target_device_id.clone(),
-        target_library_id: reverse.target_library_id.clone(),
-        tls_fingerprint: reverse.tls_fingerprint.clone(),
-    };
     tracing::info!(
         "局域网配对请求已允许: {}（request={request_id}, role={}）",
         request.client_name,
@@ -1388,7 +1391,7 @@ async fn decide_lan_pair_request(
     );
     Ok(Json(Envelope::ok(LanPairDecisionDto {
         status: "approved".to_string(),
-        peer: Some(reverse_peer),
+        peer: reverse_peer,
     })))
 }
 

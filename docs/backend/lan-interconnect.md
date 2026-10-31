@@ -64,7 +64,7 @@
 ## 配对流程
 
 1. A 在「局域网互联」扫描到 B，点击「申请配对」。
-2. A 先弹出设备密钥权限弹窗，确认后通过 `POST /api/v1/app/lan/device-keys` 在本机创建一把与 B 同名的设备密钥（默认只读），然后请求 B 的直连端口：
+2. A 有本地库时先弹出设备密钥权限弹窗，确认后通过 `POST /api/v1/app/lan/device-keys` 在本机创建一把与 B 同名的设备密钥（默认只读），然后请求 B 的直连端口；无本地库的查看方跳过反向密钥创建，请求不携带 `reverse`：
 
    `POST /api/v1/app/lan/pair-requests`
 
@@ -75,13 +75,13 @@
 3. B 的 hawk 主界面弹出全局配对请求，用户选择拒绝、仅读取或可读写。
 4. B 调用本机 admin 端点 `POST /api/v1/app/lan/pair-requests/{id}/decision`：
    - 允许时为 A 创建一把专用 peer key；
-   - 响应除 `status=approved` 外，还返回 `peer`（A 的回连 profile），B 主进程据此保存 A 为已配对设备。
-5. A 轮询 `GET /api/v1/app/lan/pair-requests/{id}`，校验协议版本 `protocol=2`，取得目标 token 后保存 B 并建立连接。
-6. 两端此后都拥有对方的连接 profile，无需再次申请配对，可从已配对设备列表直接连接。
+   - 双向请求除 `status=approved` 外还返回 `peer`（A 的回连 profile），B 主进程据此保存 A 为已配对设备；单向请求的 `peer=null`。
+5. A 轮询 `GET /api/v1/app/lan/pair-requests/{id}`，校验协议版本 `protocol=3`，取得目标 token 后保存 B 并建立连接。
+6. 双方都有本地库时，两端此后都拥有对方的连接 profile，无需再次申请配对；无库查看方只保存 B 的连接 profile。
 
 协议要点：
 
-- 配对协议 v2 为破坏性协议：`reverse` 必填，状态响应必须携带 `protocol=2`；缺少反向信息的旧请求直接 422。
+- 配对协议 v3 同时支持双向与单向授权：有本地库的源端携带 `reverse`，无本地库查看方省略；状态响应携带 `protocol=3`，携带回连信息时仍会校验其完整性。
 - 请求 id 为随机高熵值，90 秒过期；待确认请求数量有上限，重复点击会复用同一请求。
 - 目标端确认时通过独立设备密钥面创建一把与 A 同名的 peer key，不需要预先创建网站密钥或生成配对码；设备密钥与网站访问密钥完全分离。
 - 目标端可随时把该设备切换为仅读取/可读写，或删除设备撤销共享；权限变更广播 `lan.access.changed`。
@@ -135,7 +135,7 @@ remoteConn（广域网会话代理）
 | hawk-daemon/src/api/lan.rs | 双监听 supervisor、UDP 发现、自动配对请求/审批、独立设备密钥管理端点、权限变更事件 |
 | `hawk-daemon/src/bootstrap.rs` | 启动发现响应器任务 |
 | `hawk-daemon/src/api/mod.rs` | 配对请求创建/状态端点免 Bearer（仍受随机 request_id 与目标端审批保护）；peer 直连接口鉴权成功后记录 peer key 活跃时间，供 `/app/lan/clients` 展示在线状态 |
-| `hawk-app/electron/src/remote.ts` | 源端发现/双向配对/回连 profile 保存、连接描述符、健康检查、冷启动恢复；目标端批准时保存源端 profile |
+| `hawk-app/electron/src/remote.ts` | 源端发现、双向/单向配对、回连 profile 保存、连接描述符、健康检查、冷启动恢复；目标端批准双向请求时保存源端 profile |
 | `hawk-app/electron/src/app-config.ts` | `lanPeers` / `lanTarget` 持久化 |
 | `hawk-app/web/src/domains/lan/` | 源端发现、已配对设备与配对状态 |
 | `hawk-app/web/src/domains/settings/components/SettingsLanConnect.vue` | 局域网互联 UI |
@@ -156,4 +156,5 @@ remoteConn（广域网会话代理）
 - 目标端批准后，decision 响应返回源端回连 profile；两端主进程各自保存已配对设备，因此一次审批即可双向连接。
 - 反向密钥默认只读，源端可在自己的已授权设备列表中调整或撤销。
 - 直连鉴权成功后 daemon 按 peer key 记录最近活跃时间；GET /api/v1/app/lan/clients 返回在线状态、权限和配对密钥中的 peer_id/库名/地址元数据，双方局域网互联面板都能显示同样完整的当前连接设备信息。
-- 配对协议为破坏性更新：配对请求必须携带 reverse 回连 profile，两端版本需要一致。
+- 无本地库的查看方不创建反向密钥，配对请求省略 reverse，目标端只签发正向访问密钥。
+- 配对协议 v3 的 reverse 可选，两端版本需要一致。
