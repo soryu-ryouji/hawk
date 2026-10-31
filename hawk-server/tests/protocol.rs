@@ -1,12 +1,14 @@
 //! 协议级集成测试：模拟 hawk-remote 客户端行为，覆盖注册/心跳/列表/会话全流程/鉴权/持久化/
 //! 租户隔离/key 映射同步/风控。
 
+use base64::Engine;
 use futures_util::StreamExt;
 use hawk_server::{api, keystore::KeyStore, state::AppState, store::Store};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -14,13 +16,24 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// 拉起服务并创建一个租户，返回（地址，service-key）
+static DEVICE_KEYS: OnceLock<Mutex<HashMap<String, iroh::SecretKey>>> = OnceLock::new();
+static SESSION_SOURCES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn device_keys() -> &'static Mutex<HashMap<String, iroh::SecretKey>> {
+    DEVICE_KEYS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn session_sources() -> &'static Mutex<HashMap<String, String>> {
+    SESSION_SOURCES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 拉起服务并创建一个租户，返回（地址，tenant-key）
 async fn spawn_server(dir: &Path) -> (String, String) {
     let (base, keys) = spawn_server_multi(dir, 1).await;
     (base, keys.into_iter().next().unwrap())
 }
 
-/// 拉起服务并创建多个租户（同一运行实例，多池形态），返回（地址，各租户 service-key）
+/// 拉起服务并创建多个租户（同一运行实例，多池形态），返回（地址，各租户 tenant-key）
 async fn spawn_server_multi(dir: &Path, tenants: usize) -> (String, Vec<String>) {
     let (base, keys) = spawn_server_full(dir, tenants, false).await;
     (base, keys)
@@ -34,7 +47,7 @@ async fn spawn_server_with_relay(dir: &Path) -> (String, String) {
 
 async fn spawn_server_full(dir: &Path, tenants: usize, with_relay: bool) -> (String, Vec<String>) {
     let keys = KeyStore::open(dir).unwrap();
-    let service_keys: Vec<String> = (0..tenants)
+    let tenant_keys: Vec<String> = (0..tenants)
         .map(|i| keys.tenant_add(&format!("pool-{i}")).unwrap().1)
         .collect();
     let mut state = AppState::new(Arc::new(keys), Store::load(dir).unwrap());
@@ -45,46 +58,89 @@ async fn spawn_server_full(dir: &Path, tenants: usize, with_relay: bool) -> (Str
         }));
     }
     let state = Arc::new(state);
-    let identity = hawk_server::identity::Identity::load_or_create(dir).unwrap();
-    let device_id = hawk_server::viewer::ensure_viewer_device(&state, &identity).unwrap();
-    let mut identity = identity;
-    if identity.device_id.is_none() {
-        identity.device_id = Some(device_id);
-        identity.persist(dir).unwrap();
-    }
-    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
-        .alpns(vec![hawk_daemon::remote::data::HAWK_ALPN.to_vec()])
-        .secret_key(identity.secret_key().unwrap())
-        .relay_mode(iroh::RelayMode::Disabled)
-        .bind()
-        .await
-        .unwrap();
-    let viewer = hawk_server::viewer::ViewerManager::new(state.clone(), identity, endpoint, dir);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
         axum::serve(
             listener,
-            api::router(state, viewer).into_make_service_with_connect_info::<SocketAddr>(),
+            api::router(state).into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .unwrap();
     });
-    (format!("127.0.0.1:{port}"), service_keys)
+    (format!("127.0.0.1:{port}"), tenant_keys)
 }
 
 fn client() -> reqwest::Client {
     reqwest::Client::new()
 }
 
+async fn tenant_session(base: &str, key: &str) -> String {
+    let resp: Value = client()
+        .post(format!("http://{base}/api/v1/tenant/session"))
+        .json(&json!({ "tenant_key": key }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["status"], "success", "tenant auth failed: {resp}");
+    resp["data"]["session_token"].as_str().unwrap().to_string()
+}
+
+async fn device_session(base: &str, device_id: &str) -> String {
+    let challenge: Value = client()
+        .post(format!("http://{base}/api/v1/device/challenge"))
+        .json(&json!({ "device_id": device_id }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        challenge["status"], "success",
+        "device challenge failed: {challenge}"
+    );
+    let nonce = challenge["data"]["nonce"].as_str().unwrap();
+    let expires_at_ms = challenge["data"]["expires_at_ms"].as_u64().unwrap();
+    let secret = device_keys()
+        .lock()
+        .unwrap()
+        .get(device_id)
+        .cloned()
+        .unwrap();
+    let message = hawk_server::auth::device_signature_message(device_id, nonce, expires_at_ms);
+    let signature =
+        base64::engine::general_purpose::STANDARD.encode(secret.sign(&message).to_bytes());
+    let resp: Value = client()
+        .post(format!("http://{base}/api/v1/device/session"))
+        .json(&json!({
+            "device_id": device_id,
+            "nonce": nonce,
+            "signature": signature,
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["status"], "success", "device auth failed: {resp}");
+    resp["data"]["session_token"].as_str().unwrap().to_string()
+}
+
 async fn register(base: &str, key: &str, name: &str, allow_remote: bool) -> String {
+    let tenant = tenant_session(base, key).await;
+    let secret = iroh::SecretKey::generate();
     let resp: Value = client()
         .post(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(key)
+        .bearer_auth(tenant)
         .json(&json!({
             "name": name,
             "platform": "macos",
-            "endpoint_id": format!("ep-{name}"),
+            "endpoint_id": secret.public().to_string(),
             "library_name": "我的素材库",
             "allow_remote": allow_remote,
             "allow_import": false,
@@ -96,14 +152,20 @@ async fn register(base: &str, key: &str, name: &str, allow_remote: bool) -> Stri
         .await
         .unwrap();
     assert_eq!(resp["status"], "success", "register failed: {resp}");
-    resp["data"]["device_id"].as_str().unwrap().to_string()
+    let device_id = resp["data"]["device_id"].as_str().unwrap().to_string();
+    device_keys()
+        .lock()
+        .unwrap()
+        .insert(device_id.clone(), secret);
+    device_id
 }
 
-async fn heartbeat(base: &str, key: &str, device_id: &str, addrs: Value) -> reqwest::Response {
+async fn heartbeat(base: &str, _key: &str, device_id: &str, addrs: Value) -> reqwest::Response {
+    let session = device_session(base, device_id).await;
     client()
         .post(format!("http://{base}/api/v1/devices/heartbeat"))
-        .bearer_auth(key)
-        .json(&json!({ "device_id": device_id, "addrs": addrs }))
+        .bearer_auth(session)
+        .json(&json!({ "addrs": addrs }))
         .send()
         .await
         .unwrap()
@@ -118,12 +180,15 @@ fn empty_addrs() -> Value {
 }
 
 /// WSS 控制通道连接（key 走 Authorization 头，不走 URL）
-async fn connect_ws(base: &str, key: &str, device_id: &str) -> Ws {
-    let mut req = format!("ws://{base}/api/v1/ws?device_id={device_id}")
+async fn connect_ws(base: &str, _key: &str, device_id: &str) -> Ws {
+    let session = device_session(base, device_id).await;
+    let mut req = format!("ws://{base}/api/v1/ws")
         .into_client_request()
         .unwrap();
-    req.headers_mut()
-        .insert("Authorization", format!("Bearer {key}").parse().unwrap());
+    req.headers_mut().insert(
+        "Authorization",
+        format!("Bearer {session}").parse().unwrap(),
+    );
     let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     ws
 }
@@ -139,28 +204,42 @@ async fn next_json(ws: &mut Ws) -> Value {
 
 async fn create_session(
     base: &str,
-    key: &str,
+    _key: &str,
     source: &str,
     target: &str,
 ) -> (reqwest::StatusCode, Value) {
+    let session = device_session(base, source).await;
     let resp = client()
         .post(format!("http://{base}/api/v1/sessions"))
-        .bearer_auth(key)
+        .bearer_auth(session)
         .json(&json!({
-            "source_device_id": source,
             "target_device_id": target,
         }))
         .send()
         .await
         .unwrap();
     let status = resp.status();
-    (status, resp.json().await.unwrap())
+    let body: Value = resp.json().await.unwrap();
+    if let Some(session_id) = body["data"]["session_id"].as_str() {
+        session_sources()
+            .lock()
+            .unwrap()
+            .insert(session_id.to_string(), source.to_string());
+    }
+    (status, body)
 }
 
-async fn session_state(base: &str, key: &str, session_id: &str) -> Value {
+async fn session_state(base: &str, _key: &str, session_id: &str) -> Value {
+    let source = session_sources()
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .cloned()
+        .unwrap();
+    let session = device_session(base, &source).await;
     let resp: Value = client()
         .get(format!("http://{base}/api/v1/sessions/{session_id}"))
-        .bearer_auth(key)
+        .bearer_auth(session)
         .send()
         .await
         .unwrap()
@@ -176,10 +255,12 @@ async fn register_heartbeat_and_list() {
     let (base, key) = spawn_server(dir.path()).await;
     let a = register(&base, &key, "家里台式机", true).await;
     let b = register(&base, &key, "笔记本", true).await;
+    let a_session = device_session(&base, &a).await;
+    let b_session = device_session(&base, &b).await;
 
     let resp: Value = client()
         .get(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(&key)
+        .bearer_auth(&a_session)
         .send()
         .await
         .unwrap()
@@ -200,7 +281,7 @@ async fn register_heartbeat_and_list() {
 
     let resp: Value = client()
         .get(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(&key)
+        .bearer_auth(&a_session)
         .send()
         .await
         .unwrap()
@@ -219,9 +300,8 @@ async fn register_heartbeat_and_list() {
     // 设备身份跨库共享：心跳携带 library_name，服务端设备表随之更新
     let resp = client()
         .post(format!("http://{base}/api/v1/devices/heartbeat"))
-        .bearer_auth(&key)
+        .bearer_auth(&b_session)
         .json(&json!({
-            "device_id": b,
             "library_name": "改名后的库",
             "reachability": full_addrs(),
         }))
@@ -231,7 +311,7 @@ async fn register_heartbeat_and_list() {
     assert_eq!(resp.status(), 200);
     let resp: Value = client()
         .get(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(&key)
+        .bearer_auth(&b_session)
         .send()
         .await
         .unwrap()
@@ -251,9 +331,9 @@ async fn register_heartbeat_and_list() {
     let d = register(&base, &key, "第四台", true).await;
     let resp = client()
         .post(format!("http://{base}/api/v1/devices/heartbeat"))
-        .bearer_auth(&key)
+        .bearer_auth(device_session(&base, &c).await)
         .header("x-real-ip", "1.2.3.4")
-        .json(&json!({ "device_id": c, "reachability": full_addrs() }))
+        .json(&json!({ "reachability": full_addrs() }))
         .send()
         .await
         .unwrap();
@@ -263,9 +343,9 @@ async fn register_heartbeat_and_list() {
 
     let resp = client()
         .post(format!("http://{base}/api/v1/devices/heartbeat"))
-        .bearer_auth(&key)
+        .bearer_auth(device_session(&base, &d).await)
         .header("x-forwarded-for", "5.6.7.8, 10.0.0.1")
-        .json(&json!({ "device_id": d, "reachability": full_addrs() }))
+        .json(&json!({ "reachability": full_addrs() }))
         .send()
         .await
         .unwrap();
@@ -318,6 +398,65 @@ async fn auth_required_on_all_endpoints() {
 }
 
 #[tokio::test]
+async fn device_signature_rejects_wrong_key_and_nonce_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key) = spawn_server(dir.path()).await;
+    let device = register(&base, &key, "台式机", true).await;
+    let challenge: Value = client()
+        .post(format!("http://{base}/api/v1/device/challenge"))
+        .json(&json!({ "device_id": device }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let nonce = challenge["data"]["nonce"].as_str().unwrap().to_string();
+    let expires_at_ms = challenge["data"]["expires_at_ms"].as_u64().unwrap();
+    let message = hawk_server::auth::device_signature_message(&device, &nonce, expires_at_ms);
+    let wrong = iroh::SecretKey::generate();
+    let signature =
+        base64::engine::general_purpose::STANDARD.encode(wrong.sign(&message).to_bytes());
+    let resp = client()
+        .post(format!("http://{base}/api/v1/device/session"))
+        .json(&json!({
+            "device_id": device,
+            "nonce": nonce,
+            "signature": signature,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // 即使随后使用正确私钥，同一 nonce 也因已消费而不能重放。
+    let secret = device_keys().lock().unwrap().get(&device).cloned().unwrap();
+    let signature =
+        base64::engine::general_purpose::STANDARD.encode(secret.sign(&message).to_bytes());
+    let resp = client()
+        .post(format!("http://{base}/api/v1/device/session"))
+        .json(&json!({
+            "device_id": device,
+            "nonce": nonce,
+            "signature": signature,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // 新 nonce + 正确私钥可正常建立 Device Session。
+    let session = device_session(&base, &device).await;
+    let resp = client()
+        .get(format!("http://{base}/api/v1/devices"))
+        .bearer_auth(session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
 async fn tenant_isolation() {
     let dir = tempfile::tempdir().unwrap();
     let (base, keys) = spawn_server_multi(dir.path(), 2).await;
@@ -325,11 +464,13 @@ async fn tenant_isolation() {
     let key_b = keys[1].clone();
     let device_a = register(&base, &key_a, "A 的台式机", true).await;
     let device_b = register(&base, &key_b, "B 的笔记本", true).await;
+    let session_a = device_session(&base, &device_a).await;
+    let session_b = device_session(&base, &device_b).await;
 
     // B 池列表看不到 A 的设备
     let resp: Value = client()
         .get(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(&key_b)
+        .bearer_auth(&session_b)
         .send()
         .await
         .unwrap()
@@ -343,15 +484,12 @@ async fn tenant_isolation() {
     // B 池 key 操作 A 的设备：一律 404（不泄露他池存在性）
     let resp = client()
         .patch(format!("http://{base}/api/v1/devices/{device_a}"))
-        .bearer_auth(&key_b)
+        .bearer_auth(&session_b)
         .json(&json!({ "name": "劫持" }))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
-    let resp = heartbeat(&base, &key_b, &device_a, full_addrs()).await;
-    assert_eq!(resp.status(), 404);
-
     // 跨池会话：B 向 A 的设备发起 → 404
     let (status, _) = create_session(&base, &key_b, &device_b, &device_a).await;
     assert_eq!(status, 404);
@@ -370,61 +508,19 @@ async fn tenant_isolation() {
         .unwrap();
     let resp = client()
         .get(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(&key_a)
+        .bearer_auth(&session_a)
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 401, "吊销后 service-key 应立即失效");
+    assert_eq!(resp.status(), 401, "吊销后 tenant-key 应立即失效");
     // B 池不受影响
     let resp = client()
         .get(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(&key_b)
+        .bearer_auth(&session_b)
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-}
-
-#[tokio::test]
-async fn device_keys_sync_endpoint() {
-    let dir = tempfile::tempdir().unwrap();
-    let (base, key) = spawn_server(dir.path()).await;
-    let device = register(&base, &key, "台式机", true).await;
-
-    // 同步两条 key
-    let s1 = hawk_server::keystore::sha256_hex("read-key-1");
-    let s2 = hawk_server::keystore::sha256_hex("write-key-1");
-    let resp = client()
-        .put(format!("http://{base}/api/v1/devices/{device}/keys"))
-        .bearer_auth(&key)
-        .json(&json!({ "keys": [
-            { "s": s1, "role": "viewer" },
-            { "s": s2, "role": "importer" },
-        ] }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-
-    // 非法条目整体拒绝（s 不是 sha256 十六进制）
-    let resp = client()
-        .put(format!("http://{base}/api/v1/devices/{device}/keys"))
-        .bearer_auth(&key)
-        .json(&json!({ "keys": [ { "s": "short", "role": "viewer" } ] }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
-
-    // 他设备 → 404
-    let resp = client()
-        .put(format!("http://{base}/api/v1/devices/d_x/keys"))
-        .bearer_auth(&key)
-        .json(&json!({ "keys": [] }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
 }
 
 #[tokio::test]
@@ -446,6 +542,8 @@ async fn session_direct_flow_end_to_end() {
     let (base, key) = spawn_server(dir.path()).await;
     let target = register(&base, &key, "家里台式机", true).await;
     let source = register(&base, &key, "笔记本", true).await;
+    let outsider = register(&base, &key, "第三台", true).await;
+    let key = device_session(&base, &target).await;
     assert_eq!(
         heartbeat(&base, &key, &target, full_addrs()).await.status(),
         200
@@ -483,7 +581,16 @@ async fn session_direct_flow_end_to_end() {
     let update = next_json(&mut target_ws).await;
     assert_eq!(update["type"], "session.update");
     assert_eq!(update["state"], "ready");
-    assert_eq!(update["connect"]["endpoint_id"], "ep-家里台式机");
+    assert_eq!(
+        update["connect"]["endpoint_id"],
+        device_keys()
+            .lock()
+            .unwrap()
+            .get(&target)
+            .unwrap()
+            .public()
+            .to_string()
+    );
     assert_eq!(
         update["connect"]["direct_addresses"],
         json!(["192.168.1.5:27373", "1.2.3.4:27373"])
@@ -493,7 +600,25 @@ async fn session_direct_flow_end_to_end() {
     // 轮询兜底看到同一状态
     let state = session_state(&base, &key, &session_id).await;
     assert_eq!(state["state"], "ready");
-    assert_eq!(state["connect"]["endpoint_id"], "ep-家里台式机");
+    assert_eq!(
+        state["connect"]["endpoint_id"],
+        device_keys()
+            .lock()
+            .unwrap()
+            .get(&target)
+            .unwrap()
+            .public()
+            .to_string()
+    );
+
+    // 同租户但非会话参与者也不能读取会话或连接信息。
+    let resp = client()
+        .get(format!("http://{base}/api/v1/sessions/{session_id}"))
+        .bearer_auth(device_session(&base, &outsider).await)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
 }
 
 #[tokio::test]
@@ -530,6 +655,7 @@ async fn session_reject_flow() {
     let (base, key) = spawn_server(dir.path()).await;
     let target = register(&base, &key, "台式机", true).await;
     let source = register(&base, &key, "笔记本", true).await;
+    let key = device_session(&base, &target).await;
     assert_eq!(
         heartbeat(&base, &key, &target, full_addrs()).await.status(),
         200
@@ -568,6 +694,7 @@ async fn session_unreachable_when_no_candidates() {
     let (base, key) = spawn_server(dir.path()).await;
     let target = register(&base, &key, "台式机", true).await;
     let source = register(&base, &key, "笔记本", true).await;
+    let key = device_session(&base, &target).await;
     assert_eq!(
         heartbeat(&base, &key, &target, empty_addrs())
             .await
@@ -597,6 +724,7 @@ async fn session_cancel_notifies_peer() {
     let (base, key) = spawn_server(dir.path()).await;
     let target = register(&base, &key, "台式机", true).await;
     let source = register(&base, &key, "笔记本", true).await;
+    let key = device_session(&base, &target).await;
     assert_eq!(
         heartbeat(&base, &key, &target, full_addrs()).await.status(),
         200
@@ -634,6 +762,7 @@ async fn connect_carries_relay_when_server_offers_it() {
     let (base, key) = spawn_server_with_relay(dir.path()).await;
     let target = register(&base, &key, "台式机", true).await;
     let source = register(&base, &key, "笔记本", true).await;
+    let key = device_session(&base, &target).await;
     assert_eq!(
         heartbeat(&base, &key, &target, full_addrs()).await.status(),
         200
@@ -653,7 +782,16 @@ async fn connect_carries_relay_when_server_offers_it() {
     assert_eq!(state["state"], "ready");
     assert_eq!(state["connect"]["relay"]["url"], "http://127.0.0.1:9102");
     assert_eq!(state["connect"]["relay"]["token"], "test-relay-token");
-    assert_eq!(state["connect"]["endpoint_id"], "ep-台式机");
+    assert_eq!(
+        state["connect"]["endpoint_id"],
+        device_keys()
+            .lock()
+            .unwrap()
+            .get(&target)
+            .unwrap()
+            .public()
+            .to_string()
+    );
     assert_eq!(
         state["connect"]["direct_addresses"],
         json!(["192.168.1.5:27373", "1.2.3.4:27373"])
@@ -664,6 +802,7 @@ async fn connect_carries_relay_when_server_offers_it() {
     let (base, key) = spawn_server(dir.path()).await;
     let target = register(&base, &key, "台式机", true).await;
     let source = register(&base, &key, "笔记本", true).await;
+    let key = device_session(&base, &target).await;
     assert_eq!(
         heartbeat(&base, &key, &target, full_addrs()).await.status(),
         200
@@ -679,6 +818,90 @@ async fn connect_carries_relay_when_server_offers_it() {
         .unwrap();
     let state = session_state(&base, &key, &session_id).await;
     assert!(state["connect"].get("relay").is_none());
+}
+
+#[tokio::test]
+async fn access_rendezvous_carries_no_access_key_and_requires_ticket() {
+    let dir = tempfile::tempdir().unwrap();
+    let (base, key) = spawn_server(dir.path()).await;
+    let target = register(&base, &key, "台式机", true).await;
+    let target_session = device_session(&base, &target).await;
+    assert_eq!(
+        heartbeat(&base, &key, &target, full_addrs()).await.status(),
+        200
+    );
+    let mut target_ws = connect_ws(&base, &key, &target).await;
+    next_json(&mut target_ws).await;
+    let source = iroh::SecretKey::generate();
+    let resp: Value = client()
+        .post(format!("http://{base}/api/v1/rendezvous"))
+        .json(&json!({
+            "target_device_id": target,
+            "source_endpoint_id": source.public().to_string(),
+            "source_name": "手机",
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resp["status"], "success", "{resp}");
+    let session_id = resp["data"]["session_id"].as_str().unwrap().to_string();
+    let ticket = resp["data"]["rendezvous_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(resp["data"].get("access_key").is_none());
+    let request = next_json(&mut target_ws).await;
+    assert_eq!(request["type"], "session.request");
+    assert_eq!(request["access_rendezvous"], true);
+    assert!(request.get("credential").is_none());
+
+    let resp = client()
+        .post(format!("http://{base}/api/v1/sessions/{session_id}/accept"))
+        .bearer_auth(&target_session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let _ready_update = next_json(&mut target_ws).await;
+    let resp = client()
+        .get(format!("http://{base}/api/v1/rendezvous/{session_id}"))
+        .bearer_auth(&ticket)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["data"]["state"], "ready");
+    assert_eq!(
+        body["data"]["connect"]["endpoint_id"],
+        device_keys()
+            .lock()
+            .unwrap()
+            .get(&target)
+            .unwrap()
+            .public()
+            .to_string()
+    );
+
+    let resp = client()
+        .get(format!("http://{base}/api/v1/rendezvous/{session_id}"))
+        .bearer_auth("wrong-ticket")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let resp = client()
+        .delete(format!("http://{base}/api/v1/rendezvous/{session_id}"))
+        .bearer_auth(&ticket)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let cancelled = next_json(&mut target_ws).await;
+    assert_eq!(cancelled["type"], "session.cancelled");
 }
 
 #[tokio::test]
@@ -708,12 +931,13 @@ async fn admin_endpoints_manage_tenants() {
         .unwrap();
     assert_eq!(resp["status"], "success", "创建失败: {resp}");
     let tenant_id = resp["data"]["id"].as_str().unwrap().to_string();
-    let service_key = resp["data"]["service_key"].as_str().unwrap().to_string();
-    assert!(service_key.starts_with("hs_"));
+    let tenant_key = resp["data"]["tenant_key"].as_str().unwrap().to_string();
+    assert!(tenant_key.starts_with("hs_"));
 
     // 创建的 key 立即可用于主服务（跨监听口共享注册表）
-    let device = register(&base, &service_key, "管理面创建设备", true).await;
+    let device = register(&base, &tenant_key, "管理面创建设备", true).await;
     assert!(device.starts_with("d_"));
+    let session = device_session(&base, &device).await;
 
     // 查询（不含密钥本体）
     let resp: Value = client()
@@ -727,7 +951,7 @@ async fn admin_endpoints_manage_tenants() {
     let tenants = resp["data"]["tenants"].as_array().unwrap();
     let entry = tenants.iter().find(|t| t["id"] == tenant_id).unwrap();
     assert_eq!(entry["label"], "ops");
-    assert!(entry.get("service_key").is_none(), "列表不得包含密钥本体");
+    assert!(entry.get("tenant_key").is_none(), "列表不得包含密钥本体");
 
     // 吊销 → 主服务侧立即 401
     let resp = client()
@@ -738,7 +962,7 @@ async fn admin_endpoints_manage_tenants() {
     assert_eq!(resp.status(), 200);
     let resp = client()
         .get(format!("http://{base}/api/v1/devices"))
-        .bearer_auth(&service_key)
+        .bearer_auth(&session)
         .send()
         .await
         .unwrap();
@@ -757,14 +981,14 @@ async fn admin_endpoints_manage_tenants() {
 async fn device_table_persists_across_restart() {
     let dir = tempfile::tempdir().unwrap();
     let (base, key) = spawn_server(dir.path()).await;
-    register(&base, &key, "台式机", true).await;
+    let device = register(&base, &key, "台式机", true).await;
 
     // 模拟重启：同一数据目录重新加载（原实例仍在跑，load 只读不冲突）。
-    // KeyStore 重新 open 共享同一 tenants.json，原 service-key 仍有效
+    // KeyStore 重新 open 共享同一 tenants.json，原 tenant-key 仍有效
     let (base2, _) = spawn_server(dir.path()).await;
     let resp: Value = client()
         .get(format!("http://{base2}/api/v1/devices"))
-        .bearer_auth(&key)
+        .bearer_auth(device_session(&base2, &device).await)
         .send()
         .await
         .unwrap()

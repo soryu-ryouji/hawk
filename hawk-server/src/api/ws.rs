@@ -2,12 +2,11 @@
 //! hello_ack/pong，业务动作一律走 REST（协议「控制通道」一节）。
 
 use super::ApiError;
-use crate::auth::ServiceKey;
+use crate::auth::DeviceAuth;
 use crate::state::{now_ms, AppState};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::response::Response;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,24 +16,14 @@ use tokio::sync::mpsc;
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const PONG_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[derive(Deserialize)]
-pub struct WsQuery {
-    device_id: String,
-}
-
-/// `GET /api/v1/ws?device_id=<id>`（`Authorization: Bearer <service_key>` 升级前鉴权；
-/// key 不走 URL——反代 access log 会记录完整查询串）。失败走错误信封
+/// `GET /api/v1/ws`（`Authorization: Bearer <device session>` 升级前鉴权）。
+/// Device 身份从 Session 取得，不走 URL 查询串。
 pub async fn control_channel(
     State(state): State<Arc<AppState>>,
-    key: ServiceKey,
-    Query(query): Query<WsQuery>,
+    auth: DeviceAuth,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    match state.device(&query.device_id) {
-        Some(device) if device.tenant_id == key.tenant_id => {}
-        _ => return Err(ApiError::not_found("设备不存在")),
-    }
-    Ok(ws.on_upgrade(move |socket| handle_socket(state, socket, query.device_id)))
+    Ok(ws.on_upgrade(move |socket| handle_socket(state, socket, auth.device_id)))
 }
 
 async fn handle_socket(state: Arc<AppState>, mut socket: WebSocket, device_id: String) {

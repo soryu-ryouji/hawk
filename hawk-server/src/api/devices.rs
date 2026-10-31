@@ -1,8 +1,8 @@
-//! 设备管理：注册、心跳、列表、更新、注销、key 映射同步（协议「设备管理」一节）。
-//! 全部端点按 service-key 解析出的租户隔离：设备只能操作本池内的记录。
+//! 设备管理：TenantAdmin 注册/删除，Device 心跳、列表与自身更新。
+//! Device 只能操作自身；TenantAdmin 只能管理本租户设备。
 
 use super::{ok, success, ApiError, JsonBody};
-use crate::auth::ServiceKey;
+use crate::auth::{DeviceAuth, TenantAdmin};
 use crate::state::{
     now_ms, AppState, Presence, SessionState, HEARTBEAT_MIN_INTERVAL_MS, HEARTBEAT_OFFLINE_MS,
 };
@@ -28,7 +28,6 @@ pub struct RegisterRequest {
 
 #[derive(Deserialize)]
 pub struct HeartbeatRequest {
-    device_id: String,
     /// 目标设备当前是否允许广域网写入；变化时更新设备表，供查看面筛选
     #[serde(default)]
     allow_import: Option<bool>,
@@ -55,16 +54,16 @@ fn new_id(prefix: &str) -> String {
 /// `POST /api/v1/devices`：注册设备（入调用者的租户池），返回 device_id
 pub async fn register(
     State(state): State<Arc<AppState>>,
-    key: ServiceKey,
+    key: TenantAdmin,
     JsonBody(req): JsonBody<RegisterRequest>,
 ) -> Result<Json<Value>, ApiError> {
     if req.name.trim().is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "name 不能为空"));
     }
-    if req.endpoint_id.trim().is_empty() {
+    if req.endpoint_id.parse::<iroh::EndpointId>().is_err() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
-            "fingerprint 不能为空",
+            "endpoint_id 必须是有效的 iroh 公钥",
         ));
     }
     let record = DeviceRecord {
@@ -91,23 +90,23 @@ pub async fn register(
 /// `POST /api/v1/devices/heartbeat`：在线心跳（间隔 30s，最小间隔 10s），携带可达性信息
 pub async fn heartbeat(
     State(state): State<Arc<AppState>>,
-    key: ServiceKey,
+    auth: DeviceAuth,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
     JsonBody(req): JsonBody<HeartbeatRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let device = tenant_device(&state, &key.tenant_id, &req.device_id)?;
+    let record = tenant_device(&state, &auth.tenant_id, &auth.device_id)?;
     let library_name = req
         .library_name
         .as_deref()
         .map(str::trim)
-        .filter(|name| !name.is_empty() && *name != device.library_name);
-    if req.allow_import.is_some_and(|w| w != device.allow_import) || library_name.is_some() {
+        .filter(|name| !name.is_empty() && *name != record.library_name);
+    if req.allow_import.is_some_and(|w| w != record.allow_import) || library_name.is_some() {
         state
             .store
             .lock()
             .unwrap()
-            .update(&req.device_id, |record| {
+            .update(&auth.device_id, |record| {
                 if let Some(allow_import) = req.allow_import {
                     record.allow_import = allow_import;
                 }
@@ -125,7 +124,7 @@ pub async fn heartbeat(
     let now = now_ms();
     let public_ip_seen = client_ip(&headers, peer);
     let mut presence = state.presence.write().unwrap();
-    let p = presence.entry(req.device_id.clone()).or_default();
+    let p = presence.entry(auth.device_id.clone()).or_default();
     if let Some(last) = p.last_heartbeat_ms {
         if now.saturating_sub(last) < HEARTBEAT_MIN_INTERVAL_MS {
             return Err(ApiError::new(
@@ -158,46 +157,6 @@ fn tenant_device(
     }
 }
 
-#[derive(Deserialize)]
-pub struct SyncKeysRequest {
-    /// 该设备的 hawk-app key 全集（覆盖式同步；s = sha256(key)，server 不见明文）
-    keys: Vec<crate::keystore::AppKeySync>,
-}
-
-/// `PUT /api/v1/devices/{device_id}/keys`：全量同步本设备的 hawk-app key 映射
-/// （daemon 在 key 变更与每次接入时推送）。条目不合法整体拒绝
-pub async fn sync_keys(
-    State(state): State<Arc<AppState>>,
-    key: ServiceKey,
-    Path(device_id): Path<String>,
-    JsonBody(req): JsonBody<SyncKeysRequest>,
-) -> Result<Json<Value>, ApiError> {
-    tenant_device(&state, &key.tenant_id, &device_id)?;
-    for entry in &req.keys {
-        let valid = entry.s.len() == 64
-            && entry
-                .s
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase());
-        if !valid {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "keys[].s 须为 64 位小写十六进制（sha256）",
-            ));
-        }
-    }
-    state
-        .keys
-        .sync_device_keys(&key.tenant_id, &device_id, &req.keys)
-        .map_err(|e| {
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("key 注册表写入失败: {e}"),
-            )
-        })?;
-    Ok(ok(json!({ "synced": req.keys.len() })))
-}
-
 /// 权威客户端地址：反代部署（nginx/Caddy）时 TCP 对端是反代的环回地址，直连候选依赖
 /// 真实公网 IP——优先 X-Real-IP，其次 X-Forwarded-For 首跳，回退 TCP 对端。
 /// 信任前提：明文端口只绑环回（部署文档要求），全部流量必经反代，头不被伪造
@@ -222,13 +181,13 @@ fn client_ip(headers: &axum::http::HeaderMap, peer: SocketAddr) -> String {
     peer.ip().to_string()
 }
 
-/// `GET /api/v1/devices`：本租户池设备列表（不含服务端的「网页版」全局设备）
+/// `GET /api/v1/devices`：当前 Device 所属租户的设备列表
 pub async fn list(
     State(state): State<Arc<AppState>>,
-    key: ServiceKey,
+    auth: DeviceAuth,
 ) -> Result<Json<Value>, ApiError> {
     let now = now_ms();
-    let devices = state.store.lock().unwrap().list_tenant(&key.tenant_id);
+    let devices = state.store.lock().unwrap().list_tenant(&auth.tenant_id);
     let presence = state.presence.read().unwrap();
     let views: Vec<Value> = devices
         .iter()
@@ -240,11 +199,25 @@ pub async fn list(
 /// `PATCH /api/v1/devices/{device_id}`：更新设备（fingerprint 更新即证书轮换）
 pub async fn update(
     State(state): State<Arc<AppState>>,
-    key: ServiceKey,
+    auth: DeviceAuth,
     Path(device_id): Path<String>,
     JsonBody(req): JsonBody<UpdateRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    tenant_device(&state, &key.tenant_id, &device_id)?;
+    if auth.device_id != device_id {
+        return Err(ApiError::not_found("设备不存在"));
+    }
+    let rotated = req.endpoint_id.is_some();
+    if req
+        .endpoint_id
+        .as_deref()
+        .is_some_and(|id| id.parse::<iroh::EndpointId>().is_err())
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "endpoint_id 必须是有效的 iroh 公钥",
+        ));
+    }
+    tenant_device(&state, &auth.tenant_id, &device_id)?;
     let updated = {
         let mut store = state.store.lock().unwrap();
         store
@@ -272,14 +245,17 @@ pub async fn update(
     let Some(record) = updated else {
         return Err(ApiError::not_found("设备不存在"));
     };
+    if rotated {
+        state.auth.revoke_device(&device_id);
+    }
     let presence = state.presence.read().unwrap();
     Ok(ok(device_view(&record, presence.get(&device_id), now_ms())))
 }
 
-/// `DELETE /api/v1/devices/{device_id}`：注销设备；其进行中的会话与 key 映射一并清理
+/// `DELETE /api/v1/devices/{device_id}`：注销设备；其 Device Session 与进行中会话一并清理
 pub async fn remove(
     State(state): State<Arc<AppState>>,
-    key: ServiceKey,
+    key: TenantAdmin,
     Path(device_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     tenant_device(&state, &key.tenant_id, &device_id)?;
@@ -294,12 +270,7 @@ pub async fn remove(
                 format!("设备注册表写入失败: {e}"),
             )
         })?;
-    state.keys.remove_device_keys(&device_id).map_err(|e| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("key 注册表写入失败: {e}"),
-        )
-    })?;
+    state.auth.revoke_device(&device_id);
     state.presence.write().unwrap().remove(&device_id);
     let notifications = cancel_device_sessions(&state, &device_id);
     for (peer, session_id) in notifications {
@@ -329,15 +300,6 @@ fn cancel_device_sessions(state: &Arc<AppState>, device_id: &str) -> Vec<(String
         }
     }
     notifications
-}
-
-/// 设备视图构建（控制面列表与网页版查看面共用）
-pub(crate) fn device_view_pub(
-    record: &DeviceRecord,
-    presence: Option<&Presence>,
-    now: u64,
-) -> Value {
-    device_view(record, presence, now)
 }
 
 fn device_view(record: &DeviceRecord, presence: Option<&Presence>, now: u64) -> Value {

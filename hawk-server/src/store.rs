@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DeviceRecord {
     pub device_id: String,
-    /// 所属租户（池）；空串 = 全局设备（服务端的「网页版」查看设备，不属于任何池）
+    /// 所属租户（池）
     #[serde(default)]
     pub tenant_id: String,
     pub name: String,
@@ -70,7 +70,7 @@ impl Store {
     pub fn list_tenant(&self, tenant_id: &str) -> Vec<DeviceRecord> {
         self.list()
             .into_iter()
-            .filter(|d| d.tenant_id == tenant_id)
+            .filter(|d| d.tenant_id == tenant_id && !d.device_id.starts_with("d_guest_"))
             .collect()
     }
 

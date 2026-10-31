@@ -29,7 +29,7 @@ struct CreateTenantBody {
     label: String,
 }
 
-/// `POST /api/v1/admin/tenants`：创建租户；明文 service-key 只在本次响应出现（不落盘）
+/// `POST /api/v1/admin/tenants`：创建租户；明文 tenant_key 只在本次响应出现（不落盘）
 async fn create_tenant(
     State(keys): State<Arc<KeyStore>>,
     JsonBody(body): JsonBody<CreateTenantBody>,
@@ -38,14 +38,14 @@ async fn create_tenant(
     if label.is_empty() {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "label 不能为空"));
     }
-    let (id, service_key) = keys.tenant_add(label).map_err(|e| {
+    let (id, tenant_key) = keys.tenant_add(label).map_err(|e| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("租户创建失败: {e}"),
         )
     })?;
     Ok(ok(
-        json!({ "id": id, "label": label, "service_key": service_key }),
+        json!({ "id": id, "label": label, "tenant_key": tenant_key }),
     ))
 }
 
@@ -59,7 +59,7 @@ async fn list_tenants(State(keys): State<Arc<KeyStore>>) -> Json<Value> {
     ok(json!({ "tenants": tenants }))
 }
 
-/// `DELETE /api/v1/admin/tenants/{id}`：吊销租户（service-key 与池内 key 映射立即失效）
+/// `DELETE /api/v1/admin/tenants/{id}`：吊销租户（TenantAdmin/Device Session 下一请求失效）
 async fn revoke_tenant(
     State(keys): State<Arc<KeyStore>>,
     Path(id): Path<String>,

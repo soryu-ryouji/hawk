@@ -1,5 +1,5 @@
 //! 启动参数与租户管理子命令：serve 为默认动作（无子命令即启动服务）；
-//! `tenant add/list/revoke` 管理 service-key（程序生成，明文只打印一次）。
+//! `tenant add/list/revoke` 管理 tenant_key（程序生成，明文只打印一次）。
 
 use clap::{FromArgMatches, Parser, Subcommand};
 use std::path::PathBuf;
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "hawk-server",
-    about = "hawk 远程访问服务端（多租户：service-key 准入 + hawk-app key 映射）"
+    about = "hawk 远程访问服务端（TenantAdmin/Device 控制面与密文中继）"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -35,7 +35,7 @@ pub struct Cli {
     #[arg(long, env = "HAWK_SERVER_RELAY_URL", global = true)]
     pub relay_url: Option<String>,
 
-    /// 数据目录（设备/租户/key 注册表、pepper、网页版身份与令牌）；
+    /// 数据目录（设备/租户注册表、pepper、relay token 与 server.toml）；
     /// 缺省 ~/.config/hawk-server（与 hawk-app 的 ~/.config/hawk 同族的全平台约定）
     #[arg(long, env = "HAWK_SERVER_DATA_DIR", global = true)]
     pub data_dir: Option<PathBuf>,
@@ -139,7 +139,7 @@ impl Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// 租户（service-key）管理：创建/列出/吊销
+    /// 租户（tenant_key）管理：创建/列出/吊销
     Tenant {
         #[command(subcommand)]
         action: TenantAction,
@@ -148,7 +148,7 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum TenantAction {
-    /// 创建租户并生成 service-key（明文只打印这一次，服务端只存 HMAC 哈希）
+    /// 创建租户并生成 tenant_key（明文只打印这一次，服务端只存 HMAC 哈希）
     Add {
         /// 租户标签（仅运维识别用，如 "home"）
         #[arg(long)]
@@ -156,7 +156,7 @@ pub enum TenantAction {
     },
     /// 列出租户（id/标签/创建时间；不含密钥本体）
     List,
-    /// 吊销租户：service-key 立即失效，池内 hawk-app key 一并失效（设备记录保留）
+    /// 吊销租户：TenantAdmin/Device Session 下一请求失效（设备记录保留）
     Revoke {
         /// 租户 id（tenant list 查看）
         id: String,

@@ -92,9 +92,10 @@ pub struct Session {
     pub target_device_id: String,
     /// viewer（只读查看）/ importer（受限导入）
     pub role: Role,
-    /// 查看者凭证（hawk-app key 的 sha256）：仅网页版/插件发起的会话携带，
-    /// 随 session.request 下发给目标 daemon 本地执法（server 声称的权限不可信）
-    pub credential: Option<String>,
+    /// AccessKey 原生客户端的匿名编排会话；不包含任何 AccessKey 或验证子。
+    pub access_rendezvous: bool,
+    /// rendezvous 状态查询/取消的短期票据，不下发给目标 daemon。
+    pub rendezvous_token: Option<String>,
     pub state: SessionState,
     pub created_at_ms: u64,
     /// ready 时组装的连接信息（endpoint_id + 直连地址 + 可选中继）
@@ -150,8 +151,10 @@ impl Session {
 }
 
 pub struct AppState {
-    /// 凭证存储（租户 service-key / hawk-app key 映射 / 门令牌；管理面监听口共享同一实例）
+    /// 租户密钥注册表（管理面监听口共享同一实例）
     pub keys: Arc<crate::keystore::KeyStore>,
+    /// TenantAdmin/Device Session 与设备签名 nonce
+    pub auth: crate::auth::AuthState,
     /// 凭证验证面风控（按 IP + 按租户）
     pub ratelimit: crate::ratelimit::RateLimiter,
     pub store: Mutex<Store>,
@@ -170,6 +173,7 @@ impl AppState {
     pub fn new(keys: Arc<crate::keystore::KeyStore>, store: Store) -> AppState {
         AppState {
             keys,
+            auth: crate::auth::AuthState::default(),
             ratelimit: crate::ratelimit::RateLimiter::new(),
             store: Mutex::new(store),
             presence: RwLock::new(HashMap::new()),

@@ -1,16 +1,14 @@
-//! hawk-server：hawk 远程访问服务端（多租户：service-key 准入 + hawk-app key 映射）。
+//! hawk-server：hawk 远程访问服务端（TenantAdmin/Device 控制面与可选密文中继）。
 //! 协议契约见 docs/backend/remote-protocol.md。
 
 pub mod admin;
 pub mod api;
 pub mod auth;
-pub mod identity;
 pub mod keystore;
 pub mod ratelimit;
 pub mod settings;
 pub mod state;
 pub mod store;
-pub mod viewer;
 
 use settings::Cli;
 use std::net::SocketAddr;
@@ -67,36 +65,6 @@ pub async fn run(settings: &Cli) -> std::io::Result<()> {
     };
     let state = Arc::new(state);
 
-    // 网页版宿主：服务端设备身份 + 「网页版」设备行 upsert + 查看会话管理；
-    // 宿主的长驻 iroh endpoint 在此创建（B 侧拨号方；中继配置随服务端部署形态）
-    let mut identity =
-        identity::Identity::load_or_create(&data_dir).map_err(std::io::Error::other)?;
-    let endpoint = {
-        let mut builder = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
-            .alpns(vec![viewer::HAWK_ALPN.to_vec()])
-            .secret_key(identity.secret_key().map_err(std::io::Error::other)?);
-        builder = match &state.relay_info {
-            Some(info) => {
-                let url: iroh::RelayUrl = info["url"]
-                    .as_str()
-                    .and_then(|u| u.parse().ok())
-                    .ok_or_else(|| std::io::Error::other("relay url 非法"))?;
-                let map = iroh::RelayMap::from(url);
-                let token = info["token"].as_str().unwrap_or_default();
-                builder.relay_mode(iroh::RelayMode::Custom(map.with_auth_token(token)))
-            }
-            None => builder.relay_mode(iroh::RelayMode::Disabled),
-        };
-        builder.bind().await.map_err(std::io::Error::other)?
-    };
-    let device_id =
-        viewer::ensure_viewer_device(&state, &identity).map_err(std::io::Error::other)?;
-    if identity.device_id.is_none() {
-        identity.device_id = Some(device_id);
-        identity.persist(&data_dir).map_err(std::io::Error::other)?;
-    }
-    let viewer = viewer::ViewerManager::new(state.clone(), identity, endpoint, &data_dir);
-
     if settings.admin_port == settings.port {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -117,12 +85,12 @@ pub async fn run(settings: &Cli) -> std::io::Result<()> {
     tracing::info!(port = settings.port, "hawk-server listening");
     axum::serve(
         listener,
-        api::router(state, viewer).into_make_service_with_connect_info::<SocketAddr>(),
+        api::router(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
 }
 
-/// 租户管理子命令：service-key 的创建/列出/吊销（同步执行，结果打印到 stdout）
+/// 租户管理子命令：tenant_key 的创建/列出/吊销（同步执行，结果打印到 stdout）
 pub fn run_tenant_command(
     action: &settings::TenantAction,
     data_dir: &std::path::Path,
@@ -130,9 +98,9 @@ pub fn run_tenant_command(
     let keys = keystore::KeyStore::open(data_dir)?;
     match action {
         settings::TenantAction::Add { label } => {
-            let (id, service_key) = keys.tenant_add(label)?;
+            let (id, tenant_key) = keys.tenant_add(label)?;
             println!("租户已创建：{id}（{label}）");
-            println!("service-key（只显示这一次，请立即保存）: {service_key}");
+            println!("tenant-key（只显示这一次，请立即保存）: {tenant_key}");
         }
         settings::TenantAction::List => {
             let tenants = keys.tenant_list();
@@ -145,7 +113,7 @@ pub fn run_tenant_command(
         }
         settings::TenantAction::Revoke { id } => {
             if keys.tenant_revoke(id)? {
-                println!("租户 {id} 已吊销（service-key 与池内 hawk-app key 立即失效）");
+                println!("租户 {id} 已吊销（TenantAdmin/Device Session 下一请求失效）");
             } else {
                 eprintln!("租户不存在: {id}");
                 std::process::exit(2);
@@ -164,7 +132,7 @@ fn load_or_create_relay_token(data_dir: &std::path::Path) -> std::io::Result<Str
             return Ok(token);
         }
     }
-    let token = identity::hex_encode(&rand::random::<[u8; 32]>());
+    let token = hex_encode(&rand::random::<[u8; 32]>());
     std::fs::write(&file, &token)?;
     #[cfg(unix)]
     {
@@ -172,6 +140,10 @@ fn load_or_create_relay_token(data_dir: &std::path::Path) -> std::io::Result<Str
         let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600));
     }
     Ok(token)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// 内嵌中继准入：共享 token（iroh-relay 的 AccessControl 实现点）
