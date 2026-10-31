@@ -43,7 +43,8 @@
 | GET  | `/api/v1/app/info` | 获取应用信息 |
 | GET  | `/api/v1/app/startup` | 启动状态与索引构建进度（就绪网关唯一放行端点） |
 | GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列 + 索引管道；SSE 的 `task.progress` 事件为同一快照的推送版） |
-| GET  | `/api/v1/app/admin-token` | 发现连接 token（免鉴权，仅限扩展类客户端） |
+| POST | `/api/v1/app/session` | LAN Web：AccessKey 换有期 Session，以 HttpOnly/Secure Cookie 下发 |
+| GET  | `/api/v1/app/admin-token` | 发现本机 LocalIntegration Session（免鉴权，仅限扩展类客户端） |
 | GET  | `/api/v1/app/connection` | 当前连接描述符（本地库 / 正在浏览的远端库），生态客户端跟随目标用（admin 限定） |
 | GET  | `/api/v1/app/lan` | 读取局域网网站与 hawk-app 直连配置、本机身份及运行状态（admin 限定） |
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
@@ -305,6 +306,12 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 | GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
 | POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
 | DELETE | `/api/v1/remote/session` | 断开当前远程会话（admin 限定，幂等） |
+| POST | `/api/v1/remote/access-connect` | AccessKey-only 原生连接：rendezvous + target_identity 钉扎 + 隧道内登录 |
+| POST | `/api/v1/remote/access-session` | AccessKey rendezvous 的隧道内登录（未认证隧道仅此端点可用） |
+| POST | `/api/v1/remote/lease` | 已认证隧道续期，保持原角色并延长目标租约 |
+| POST | `/api/v1/rendezvous` | 原生 LAN AccessKey rendezvous，仅编排 iroh，不传输素材凭证 |
+| GET | `/api/v1/rendezvous/{session_id}` | 查询 rendezvous 状态与目标连接信息 |
+| DELETE | `/api/v1/rendezvous/{session_id}` | 取消 rendezvous 并关闭对应隧道 |
 | GET | `/api/v1/remote/keys` | 列出本机签发的访问密钥（hawk-app key，admin 限定；不含明文） |
 | POST | `/api/v1/remote/keys` | 签发访问密钥（admin 限定；明文只在响应中出现一次） |
 | PATCH | `/api/v1/remote/keys/{key_id}` | 更新访问密钥标签/权限（admin 限定） |
@@ -324,7 +331,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
   "data": {
     "enabled": true,
     "url": "https://hawk.example.com",
-    "service_key": "hs_<service-key>",
+    "tenant_key": "hs_<tenant-key>",
     "allow_import": false,
     "status": {
       "state": "online",
@@ -335,7 +342,7 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 }
 ```
 
-`status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 service-key 无效，`error` 字段携带服务端返回的原因）。
+`status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 tenant-key 无效，`error` 字段携带服务端返回的原因）。
 
 `allow_import` 对应应用级远程配置的 `allow_import`：允许广域网写会话向当前库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
 
@@ -348,10 +355,10 @@ daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + �
 #### 请求
 
 ```json
-{ "enabled": true, "url": "https://hawk.example.com", "service_key": "hs_<service-key>", "allow_import": false }
+{ "enabled": true, "url": "https://hawk.example.com", "tenant_key": "hs_<tenant-key>", "allow_import": false }
 ```
 
-校验（`INVALID_PARAM`）：`enabled` 时 `url`/`service_key` 必填；`url` 须以 `http://` 或 `https://` 开头。`allow_import` 省略按 false。响应同 GET。
+校验（`INVALID_PARAM`）：`enabled` 时 `url`/`tenant_key` 必填；`url` 须以 `http://` 或 `https://` 开头。`allow_import` 省略按 false。响应同 GET。
 
 ---
 

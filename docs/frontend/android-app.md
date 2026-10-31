@@ -1,5 +1,7 @@
 # hawk Android 客户端设计
 
+> 当前实现：公网网页版和 `/viewer/*` 已删除。Android 已通过 `hawk-transport` 接入共享 Rust iroh 传输层，V2 配对载荷统一 AccessKey + target_identity + LAN/WAN endpoints；UI 经 Loopback 代理访问，LAN/WAN 素材均端到端加密。原生库构建见 `tools/build-mobile-transport.sh`。目标见 [access-control-v2.md](../backend/access-control-v2.md)。
+
 Android 手机 / 平板原生客户端。约束来源：[architecture.md](../architecture.md)（前后端解耦）、[server-rest-api-v1.md](../backend/server-rest-api-v1.md)（素材库接口）、[remote-protocol.md](../backend/remote-protocol.md)（广域网契约）、[iOS 客户端设计](ios-app.md)（同一套连接与首屏策略）。
 
 ## 目标与非目标
@@ -44,7 +46,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 | 形态 | 数据通路 | 鉴权 |
 | -- | -- | -- |
 | 局域网直连 | App → `http://<局域网IP>:<peer_port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） |
-| 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | service-key + hawk-app key 换 `bt` |
+| 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | tenant-key + hawk-app key 换 `bt` |
 
 约定：
 
@@ -56,7 +58,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 
 - 配对载荷与 iOS 相同：
   - 局域网 `{ "v": 1, "kind": "lan", "urls": ["..."], "token": "..." }`
-  - 广域网 `{ "v": 1, "kind": "remote", "url": "...", "service_key": "...", "key": "..." }`
+  - 广域网 `{ "v": 1, "kind": "remote", "url": "...", "tenant_key": "...", "key": "..." }`
 - `v` 不等于 1 时提示升级，不静默失败
 - 扫码（CameraX + ZXing）为主路径，手动输入地址 + token 兜底；局域网支持直接粘贴带 `?token=` 的查看器地址
 - 凭证存应用私有 SharedPreferences（`ConnectionStore`），`allowBackup=false` 且 `dataExtractionRules` / `fullBackupContent` 排除全部应用数据，凭证不离开设备

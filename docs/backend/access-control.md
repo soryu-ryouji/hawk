@@ -1,5 +1,7 @@
 # 权限与凭证设计
 
+> V2 改造中：TenantAdmin/Device Session 已落地，公网网页版和 server 侧 AccessKey 映射已删除；后续以 [access-control-v2.md](access-control-v2.md) 为目标。本文其余内容仍描述现行素材 Capability 模型，涉及旧 tenant-key、viewer 和凭证生命周期的段落不再作为新开发依据。
+
 > 目标模型：轻量 Capability + 固定角色预设 + 通道权限上限。统一授权判定，不统一凭证的生命周期和信任边界。本文是实现的单一依据；旧 `writable`、`RemoteWriter` 和分散的路径白名单逐步移除，不保留兼容层。
 
 ## 目标与非目标
@@ -14,7 +16,7 @@
 非目标：
 
 - 用户账号、角色继承、自定义 ACL、通用权限引擎。
-- 将 `service_key` 变成素材库访问凭证。
+- 将 `tenant_key` 变成素材库访问凭证。
 - 将文件夹/分类/标签锁并入角色体系。
 - 修改 HTTP `Authorization: Bearer <token>` 和 `?token=` 这两个通用传输术语。
 
@@ -107,7 +109,7 @@ access.require(Capability::Manage)?;
 | WAN 长期访问密钥 | `access_key` | 用于签发远程会话；daemon 只存验证哈希 |
 | 远程会话临时凭证 | `session_token` | 随会话创建和销毁；只存内存；绑定目标、通道与角色 |
 | 多形态连接凭证 | `credential` | ConnectionDescriptor 的通用字段，可能是 admin/access/session 凭证 |
-| 租户接入密钥 | `service_key` | 只允许 hawk-server 租户控制面，不直接授予素材 Read |
+| 租户接入密钥 | `tenant_key` | 只允许 hawk-server 租户控制面，不直接授予素材 Read |
 | 门令牌 | `gate_token` | 网页版登录第一阶段 |
 | 浏览器令牌 | `browser_token` | 网页版会话凭证；服务端只存哈希 |
 | 解锁票据 | `unlock_token` | 只扩大锁内容可见范围，不授予角色能力 |

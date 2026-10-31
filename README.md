@@ -30,10 +30,11 @@
   - [x] 实现 web 资源查看器：局域网内通过浏览器访问素材库
   - [x] 实现 Chrome 浏览器插件
 - 2.0 版本
-  - [x] 实现 hawk remote 协议，支持广域网素材库查看（自托管 hawk-server + QUIC 直连/中继 + 网页版）与插件远程保存（受限写）
+  - [x] 实现 hawk remote 协议，支持广域网素材库查看（自托管 hawk-server + QUIC 直连/中继）与插件远程保存（受限写）
   - [x] NAT 穿透栈：传输层为 iroh（打洞/中继/路径迁移/映射保活内建），中继为服务端可选组件（内嵌 iroh-relay，token 准入）
   - [x] hawk-app 局域网互联：同网段设备发现 + 一次审批双向配对直连，免服务器
 - 3.0 版本
+  - [x] 权限与传输 V2：统一 Tenant/Device/AccessKey 权限模型，原生客户端 LAN/WAN 全端到端加密；公网网页版取消，hawk-server 仅保留控制面与密文中继（见 [V2 架构](docs/backend/access-control-v2.md)）
   - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
   - [ ] 实现 iOS 原生客户端（iPhone / iPad 查看，局域网直连 + 广域网查看，接入 Apple 智能生态），见 [iOS 客户端设计](docs/frontend/ios-app.md)。只读浏览（M1）已可用，离线索引与 Apple 智能待补
   - [x] 实现 Android 原生客户端（手机 / 平板查看，局域网直连 + 广域网查看），见 [Android 客户端设计](docs/frontend/android-app.md)。只读浏览（M1）已可用，离线索引与端上 AI 待补
@@ -120,6 +121,7 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 - [hawk-daemon 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
 - [权限与凭证设计](docs/backend/access-control.md)：Capability、角色、通道上限与凭证职责
+- [权限与传输架构 V2](docs/backend/access-control-v2.md)：统一身份/Session、target_identity、原生 LAN/WAN 全加密与 server 数据面零信任（实施中）
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
 - [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配
 - [pHash 相似图片查找](docs/backend/similar-images.md)：64 位感知哈希、近重复检索与阈值设计
@@ -128,7 +130,7 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 **远程访问（hawk-server/）**
 
 - [hawk-server 使用指南](docs/backend/hawk-server.md)：启动配置、接口与凭据、网页版/插件接入、运维与排查
-- [远程访问设计](docs/backend/remote-access.md)：控制面/中继/网页版宿主、受限广域网写、连接模型与安全模型
+- [远程访问设计](docs/backend/remote-access.md)：Tenant/Device 控制面、密文中继、受限广域网写、连接模型与安全模型
 - [远程访问部署](docs/backend/remote-deployment.md)：编译输出、nginx 反代与 TLS
 - [远程访问协议](docs/backend/remote-protocol.md)：设备/心跳/会话/中继的接口契约
 - [局域网 hawk-app 互联](docs/backend/lan-interconnect.md)：UDP 发现、双向配对、在线状态、连接模型与安全边界

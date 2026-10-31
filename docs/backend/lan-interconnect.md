@@ -1,5 +1,7 @@
 # 局域网 hawk-app 互联设计
 
+> 当前实现：原生 LAN Peer 已迁移到 iroh 加密隧道，配对 profile 携带 target_identity 与统一 AccessKey。旧明文 Peer 仅保留配对和 rendezvous 控制面，不再提供素材 API；LAN Web 使用 HTTPS 与 Session Cookie。目标模型见 [access-control-v2.md](access-control-v2.md)。
+
 桌面版 hawk 之间在同一局域网内直接互看素材库，不经过 hawk-server，也不需要先完成远程访问接入。本文描述发现、配对、连接与安全边界；广域网链路仍是独立的 [远程访问设计](remote-access.md)。
 
 ## 目标与非目标
@@ -8,7 +10,7 @@
 
 - 同一网段的两个 hawk-app 能发现彼此，用户在目标端确认配对请求后直接连接
 - 连接后复用现有 `/api/v1/*` HTTP 契约：浏览、搜索、预览、缩略图、SSE 与已授权的写操作不新增数据通路
-- 不要求用户配置 hawk-server、service-key 或设备身份；离线局域网可用
+- 不要求用户配置 hawk-server、tenant-key 或设备身份；离线局域网可用
 - 配对凭证不进入发现广播；默认只读，目标端开启写权限时才授予写能力
 
 **非目标**
@@ -24,7 +26,7 @@
 | ---- | ---------- | -------- |
 | 发现/匹配 | UDP 组播 + 广播，无需服务器 | hawk-server 设备列表 + WSS 信令 |
 | 数据通路 | 目标 daemon 的 hawk-app 直连端口（HTTP API，默认 27375） | 本机 daemon 会话代理 → iroh QUIC → 目标 daemon |
-| 鉴权 | 目标端审批后为该设备签发的 `[web].peer_keys` 直连密钥 | service-key + hawk-app key，两级验证 |
+| 鉴权 | 目标端审批后为该设备签发的 `[web].peer_keys` 直连密钥 | tenant-key + hawk-app key，两级验证 |
 | 写能力 | 直连密钥自身的 `role`（viewer/editor）；与网站 `keys` 独立 | `remote.allow_import` + WAN 通道上限 |
 | NAT/公网 | 不支持（同网段） | iroh 打洞/中继 |
 
@@ -120,7 +122,7 @@ remoteConn（广域网会话代理）
 | 配对准入 | 目标端用户现场确认请求；请求 id 随机、90 秒过期，待确认数量有上限 |
 | 访问凭证 | 每个授权设备独立 peer key，权限可动态调整为仅读取/可读写，删除即撤销；与网站 keys 分离 |
 | 网络边界 | 仅局域网直连；不把直连 token 上传到 hawk-server；二维码可携带同一目标的多个候选地址，客户端自动择优 |
-| 传输 | 明文 HTTP（与现有局域网 web 查看一致）；只建议在可信网络使用，公网必须走 HTTPS 远程链路 |
+| 传输 | 原生素材数据使用 iroh 端到端加密；LAN Web 使用 HTTPS + 目标证书指纹。旧明文 HTTP 仅用于受限配对/rendezvous 元数据，不承载素材或 AccessKey |
 | 本地存储 | token 存在应用级 `config.toml`（Unix 下 0600）；渲染层不持久化 token |
 | 权限隔离 | 局域网写、广域网写、配对写请求三套开关独立，不互相提权 |
 

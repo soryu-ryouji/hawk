@@ -1,42 +1,30 @@
 # 远程访问部署（hawk-server）
 
-> 多租户自托管部署：一台有公网的服务器 + 一个域名（可选但推荐），即可让各设备的 hawk 互联（每台一个池或共用一个池），并通过浏览器经网页版访问素材库；持有带写权限访问密钥的插件可向目标设备导入素材。本文讲编译产物与反代部署；启动参数、租户管理、接口、网页版操作与运维排查见 [hawk-server 使用指南](hawk-server.md)，架构见 [远程访问设计](remote-access.md)，协议见 [remote-protocol](remote-protocol.md)。
+> hawk-server 当前部署内容为单二进制控制面 + 可选密文中继，不包含公网网页版或前端静态产物。
+> 配置与运维见 [hawk-server.md](hawk-server.md)，控制面接口见 [remote-protocol.md](remote-protocol.md)。
 
-## 组成
+## 1. 组成
 
 | 部件 | 说明 |
-| ---- | ---- |
-| hawk-server 二进制 | 仓库 `hawk-server/` 编译（`tools/deploy-hawk-server.sh`），单文件 |
-| 数据目录 | 设备注册表、租户与 key 注册表、pepper、网页版身份、浏览器令牌（JSON 文件，备份即迁移，见[数据目录](hawk-server.md#数据目录)） |
-| 域名 + TLS 反代 | Caddy（自动签发续期，推荐）或 nginx；控制面 WSS 与网页版都要求 HTTPS/WSS |
+| --- | --- |
+| hawk-server 二进制 | 仓库 `hawk-server/` 构建 |
+| 数据目录 | tenant/device 注册表、pepper、relay token 和 server.toml |
+| 域名 + TLS 反代 | Caddy 或 nginx，终结 HTTPS/WSS |
+| 可选 relay | 内嵌 iroh-relay，仅处理端到端加密流量 |
 
-网页版查看器的前端产物不落在服务器上：`/app`、`/assets/*` 等静态请求由服务端经隧道转发给正在浏览的那台设备的 daemon，由它托管自带的 `web/dist`（桌面端启动时传入）。因此服务端部署只有二进制 + 数据目录，前端版本永远与 daemon 一致。
+不再部署或托管 `/app`、`/assets/*`、公网登录页和 viewer token。
 
-## 编译
-
-```bash
-tools/deploy-hawk-server.sh                              # 默认输出仓库根 hawk-server.bin
-tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server   # 指定输出文件
-```
-
-- 脚本只做 `cargo build --release --locked` 并把二进制复制到输出路径，不安装、不启动
-- 仓库根已有同名目录 `hawk-server/`，默认文件名用 `hawk-server.bin`；`--path` 传目录（已存在或以 `/` 结尾）时写入该目录下的 `hawk-server`
-- 脚本按本机平台构建：给 Linux 服务器部署时在服务器上执行，或自行交叉编译
-- cargo 依赖默认走 rsproxy 国内镜像；`CARGO_MIRROR=` 回退官方 crates.io，也可换成其他 sparse 索引（地址以 `/` 结尾）
-
-## 运行
-
-启动无需任何密钥参数；启动后用 `tenant` 子命令创建租户拿到 service-key（明文只显示一次，服务端只存 HMAC 哈希）：
+## 2. 编译与运行
 
 ```bash
-./hawk-server.bin --data-dir /var/lib/hawk-server        # 启动服务
+tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server
 
-# 另开终端创建租户（运行中的服务立刻感知，无需重启）
-./hawk-server.bin tenant add --label home --data-dir /var/lib/hawk-server
-# → 输出租户 id 与 service-key（hs_...），立即保存
+sudo useradd --system --home /var/lib/hawk-server --shell /usr/sbin/nologin hawk
+sudo install -d -o hawk -g hawk /var/lib/hawk-server
+sudo -u hawk /usr/local/bin/hawk-server tenant add --label home
 ```
 
-systemd 单元示例（`/etc/systemd/system/hawk-server.service`）；日志走 stdout 落 journald，级别由 `RUST_LOG` 控制：
+保存输出的 tenant_key。systemd 示例：
 
 ```ini
 [Unit]
@@ -51,86 +39,75 @@ Group=hawk
 ExecStart=/usr/local/bin/hawk-server --data-dir /var/lib/hawk-server
 Restart=on-failure
 RestartSec=3
-
-# 日志：stdout/stderr → journald
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=hawk-server
-Environment=RUST_LOG=info
-
-# 沙箱（端口均 >1024，无需特权）
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/hawk-server
 ProtectHome=true
 PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
 ```
-
-配套准备与日常运维：
 
 ```bash
-sudo useradd --system --home /var/lib/hawk-server --shell /usr/sbin/nologin hawk
-sudo install -d -o hawk -g hawk /var/lib/hawk-server
-sudo systemctl daemon-reload && sudo systemctl enable --now hawk-server
-journalctl -u hawk-server -f    # 跟日志；--since today 按时间查
+sudo systemctl daemon-reload
+sudo systemctl enable --now hawk-server
+journalctl -u hawk-server -f
 ```
 
-`tenant` 子命令直接写数据目录文件，需以 hawk 身份执行（`sudo -u hawk hawk-server tenant add ...`），避免 root 写入后服务读不了。
+## 3. nginx 反代
 
-租户管理同样在命令行完成（`tenant list` / `tenant revoke`），数据目录见[配置](hawk-server.md#配置)。
-
-二进制的更新方式：重新运行 `tools/deploy-hawk-server.sh --path /usr/local/bin/hawk-server` 覆盖，再重启服务。
-
-## 域名与 TLS（nginx 反代）
-
-宿主机 nginx 终结 TLS（主域名证书已有），反代到环回的 9100。控制面 WSS 与中继 WS 需要显式的升级头，查看器事件流（SSE）需要关闭响应缓冲：
+主控制面监听明文 HTTP，但生产环境只应通过 HTTPS/WSS 暴露。控制面和 WSS 共用主入口：
 
 ```nginx
 server {
     listen 443 ssl;
     server_name hawk.example.com;
-    # ssl_certificate / ssl_certificate_key 沿用主域名已有配置
+    # ssl_certificate / ssl_certificate_key 按部署填写
 
     location / {
         proxy_pass http://127.0.0.1:9100;
         proxy_http_version 1.1;
 
-        # WebSocket（控制面 WSS / 中继 WS）
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-
-        # 转发头（hawk-server 据 X-Real-IP / X-Forwarded-For 还原设备公网 IP，直连候选依赖它）
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # SSE（查看器事件流）：关闭缓冲，否则事件被延迟聚合
-        proxy_buffering off;
-
-        # 素材大文件流式响应
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
-
-        # 插件经域名保存图片（base64 请求体）；nginx 默认 1MB，会 413
-        client_max_body_size 256m;
-        proxy_request_buffering off;
     }
 }
 ```
 
-启动参数均可落在数据目录 `server.toml`（CLI/env/文件优先级见 [hawk-server 使用指南](hawk-server.md)）——部署一次写入即可，不必每次启动带环境变量。
+- 防火墙仅开放 80/443；9100 不对公网开放。
+- 管理面 9110 仅环回，远程管理使用 SSH 端口转发。
+- 反代必须传递真实客户端地址；不要允许公网直接伪造 Forwarded 系列头。
+- Caddy 可使用 `reverse_proxy 127.0.0.1:9100`，WSS 自动透传。
 
-防火墙只放行 443/80；**9100 不要对公网开放**（明文 HTTP，密钥虽兜底但 TLS 是底线，且 X-Real-IP 头可信与 IP 风控生效的前提是流量必经反代）。**中继是可选组件**：配置 `--relay-url https://<域名>:<对外端口>` 即启用内嵌 iroh-relay。内嵌 relay **只监听环回**（与主端口同模型，公网入口一律反代终结）——`--relay-port`（默认 9102）是反代的上游口，与对外端口无关：反代 `listen <对外端口> → proxy_pass http://127.0.0.1:<relay_port>`，别在同一个口上既 listen 又 proxy（EADDRINUSE 即此撞车）。安全组/防火墙放行的是**对外端口**（云安全组与宿主机防火墙是两层，别只改一层）。不配 `--relay-url` 即不提供中继——纯直连部署（无打洞协调，只有直连地址可达的会话能建立）。管理面端口 9110 只绑环回（租户创建/查询/吊销），**不要经反代暴露也不要放防火墙**；远程管理用 `ssh -L 9110:127.0.0.1:9110 <服务器>` 端口转发。`X-Forwarded-Proto` 别删：查看器的 `hawk_bt` cookie 据此判断要不要加 `Secure`。用 Caddy 则只需 `reverse_proxy 127.0.0.1:9100`（WSS 透传与 `X-Forwarded-Proto` 都无需额外配置，同样建议补 `X-Real-IP` 头）。
+## 4. 可选密文中继
 
-## 部署后验证
+配置 relay 公网入口后启动内嵌 relay：
 
-1. `curl -s -H "Authorization: Bearer <service-key>" https://hawk.example.com/api/v1/devices` 返回 `{"status":"success",...}`
-2. 桌面端 hawk → 设置 → 远程填服务端地址与服务密钥（service-key），设备出现在列表中
-3. 桌面端设置 → 远程 →「访问密钥」签发一把只读 key；浏览器打开 `https://hawk.example.com`，先填 service-key 再填访问密钥，即可进入绑定素材库的查看器（查看器页面由目标设备的 daemon 经隧道提供，该设备需是带前端产物的桌面端）
-4. 插件设置选「远程」→ 填域名 + service-key + 带写权限的访问密钥 → 验证并查看素材库 → 保存。目标设备需在设置 → 远程中开启「允许广域网保存素材」
+```bash
+hawk-server --data-dir /var/lib/hawk-server \
+  --relay-url https://hawk.example.com:9102 \
+  --relay-port 9102
+```
 
-客户端接入步骤、网页版操作、数据备份与常见故障见 [hawk-server 使用指南](hawk-server.md)。
+relay 同样只监听环回，由独立反代入口转发到其上游端口。防火墙/安全组放行的是对外 relay 端口，不是环回上游端口。
+
+未配置 relay_url 时不提供 relay：只有直连地址可达的 Device 会话能够建立。relay 只承载 iroh 端到端加密数据，不能查看素材明文。
+
+## 5. 部署后验证
+
+1. `POST /api/v1/tenant/session` 能换取 TenantAdmin Session。
+2. 桌面端保存服务器地址和 tenant_key 后，daemon 自动完成设备注册和签名认证。
+3. 设备出现在同 tenant 列表，心跳和 WSS 保持在线。
+4. 两台 Device 能创建并接受会话；需要 relay 时，连接信息包含 relay url/token。
+5. 以下旧路径应返回 404：`/api/v1/viewer/*`、`/api/v1/devices/{id}/keys`、`/` 的公网登录页。
+
+## 6. 备份与升级
+
+备份整个数据目录，尤其 `tenants.json` 与 `pepper` 必须一起恢复。Session、nonce 和在线状态在内存，重启后由 daemon 自动恢复。
+
+使用部署脚本覆盖二进制并重启即可。V2 不保留旧认证兼容路径，server 与 daemon 需同步升级。

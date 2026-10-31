@@ -1,5 +1,7 @@
 # hawk iOS 客户端设计
 
+> 当前实现：公网网页版和 `/viewer/*` 已删除。iOS 已通过 `hawk-transport` 接入共享 Rust iroh 传输层，V2 配对载荷统一 AccessKey + target_identity + LAN/WAN endpoints；UI 经 Loopback 代理访问，图片/SSE 使用 Session Cookie。原生库构建见 `tools/build-mobile-transport.sh`。目标见 [access-control-v2.md](../backend/access-control-v2.md)。
+
 iPhone / iPad 原生客户端的设计与路线图。约束来源：[architecture.md](../architecture.md)（前后端解耦）、[server-rest-api-v1.md](../backend/server-rest-api-v1.md)（素材库接口）、[remote-protocol.md](../backend/remote-protocol.md)（广域网契约）。
 
 ## 目标与非目标
@@ -54,7 +56,7 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 | 形态 | 数据通路 | 鉴权 | 适用 | 代价 |
 | -- | -- | -- | -- | -- |
 | 局域网直连 | App → `http://<局域网IP>:<peer_port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） | 同网段，带宽最大、时延最低 | 需手动填地址或扫码；iOS 首次弹「本地网络」权限；扫码收到多个候选地址时自动逐个探测 |
-| 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | service-key + hawk-app key 换 `bt` | 任意网络，零后端改动 | 素材流量过自建服务器（带宽 + 服务端可见明文） |
+| 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | tenant-key + hawk-app key 换 `bt` | 任意网络，零后端改动 | 素材流量过自建服务器（带宽 + 服务端可见明文） |
 | 设备内 iroh 直连（M4 起评估） | App 内 iroh endpoint → 打洞/中继 → 目标 daemon | 手机作为池内设备注册（endpoint_id / 心跳 / WSS `session.request`） | 大量浏览、AI 高频小查询 | 需引入 iroh-ffi、实现 B 侧隧道 + HTTP/1.1 over 双向流、会话状态机 |
 
 三点约定：
@@ -65,13 +67,13 @@ iPhone / iPad 原生客户端的设计与路线图。约束来源：[architectur
 
 ## 鉴权与配对
 
-- 长期凭证存 Keychain（accessibility：`kSecAttrAccessibleAfterFirstUnlock`）：局域网直连 token、service-key、hawk-app key。`bt` 是短生命周期令牌，可只在内存持有（当前实现不落盘，重启重新登录）
+- 长期凭证存 Keychain（accessibility：`kSecAttrAccessibleAfterFirstUnlock`）：局域网直连 token、tenant-key、hawk-app key。`bt` 是短生命周期令牌，可只在内存持有（当前实现不落盘，重启重新登录）
 - 配对主路径是**桌面端出二维码**，App 扫码导入（桌面端设置面板已提供入口）：
   - 局域网：`{ "v": 1, "kind": "lan", "urls": ["http://192.168.1.5:27375", "http://10.0.0.5:27375"], "token": "..." }`
-  - 广域网：`{ "v": 1, "kind": "remote", "url": "https://hawk.example.com", "service_key": "hs_...", "key": "hk_..." }`
+  - 广域网：`{ "v": 1, "kind": "remote", "url": "https://hawk.example.com", "tenant_key": "hs_...", "key": "hk_..." }`
   - `v` 为载荷版本，解码失败给「二维码版本不支持，请升级」而不是静默失败
 - 手动输入地址 + token 作为兜底（无桌面端可用时）
-- `bt` 有效期由服务端决定。设计目标是用 Keychain 里的 service-key + key 自动重换一次；**当前实现**在 401/过期时展示错误，由用户点「重新连接」重新走 `gate`/`login`（见「实现进度」差异）
+- `bt` 有效期由服务端决定。设计目标是用 Keychain 里的 tenant-key + key 自动重换一次；**当前实现**在 401/过期时展示错误，由用户点「重新连接」重新走 `gate`/`login`（见「实现进度」差异）
 
 ## 在线首屏加载（不依赖本地索引）
 
@@ -197,7 +199,7 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 - **设备选择**：hawk-app key 在服务端只映射一台设备，`login` 返回的 `device_id` 即目标，客户端直接 `POST /viewer/session`。服务端的 `/viewer/devices` 仍服务于网页版选择器。
 - **会话重建**：每次连接都调用 `POST /viewer/session`（服务端对存活会话复用、对死会话重新撮合），不依赖 `GET /viewer/session`，避免旧隧道失效后卡死。
 - **实时性**：已订阅 SSE（`/api/v1/events`，token 走查询参数、票据走 `?unlock=`）。单条/批量更新只刷新详情缓存不动骨架，成员变化（增删/移动/锁变更/隐藏集变更）才重查骨架；消费落后被服务端断开后按 1s→15s 退避重连并全量对齐。SSE 归在 M2 的增量同步里，提前落地。
-- **bt 不落盘**：服务端换发的浏览器令牌只保存在内存，App 重启后重新走 `gate`/`login`；局域网直连 token、service-key 与 hawk-app key 存 Keychain。
+- **bt 不落盘**：服务端换发的浏览器令牌只保存在内存，App 重启后重新走 `gate`/`login`；局域网直连 token、tenant-key 与 hawk-app key 存 Keychain。
 - **bt 过期/401**：请求层捕获 401 后自动重换一次 `bt` 并重开查看会话，失败才回到错误态提示重新连接。
 - **二次启动/切换库秒开**：尚未做磁盘首屏快照缓存；当前在线首屏已先出（分页 + 占位），但每次启动/切库仍重新认证并重取首屏。
 - **导航**：未做桌面端的前进/后退栈；iPhone 由导航栈与「浏览」Tab 承担，iPad 由侧栏选中项承担。
@@ -218,7 +220,7 @@ AI 能力与离线浏览都依赖 App 侧有一份素材元数据，这一层必
 | 位置 | 改动 | 阶段 |
 | ---- | ---- | ---- |
 | `hawk-ios/` | 新增原生客户端（本文件的设计对象） | M0 |
-| `hawk-app`（桌面端） | 生成配对二维码（局域网直连 token / 广域网 service-key + hawk-app key），设置面板加入口 | M1 已完成 |
+| `hawk-app`（桌面端） | 生成配对二维码（局域网直连 token / 广域网 tenant-key + hawk-app key），设置面板加入口 | M1 已完成 |
 | `hawk-daemon` | `item/upload` 增加 `tags` / `categories` 字段（分享扩展一次请求完成入库 + 打标） | 已完成 |
 | `hawk-ios/hawk-ios-share/` | 新增 Share Extension target（相册分享 → 局域网素材库），App Group 共享连接 | M1 + M2 已完成 |
 | `README.md` / `docs/tech-stack.md` / `docs/architecture.md` | 移动端条目与仓库结构 | 已随本文件更新 |
