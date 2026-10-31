@@ -22,23 +22,6 @@
 
 ![screenshot](./.assets/screenshot_windows_01.png)
 
-## 路线图
-
-- 1.0 版本
-  - [x] 实现 hawp-daemon
-  - [x] 实现 Windows, MacOS, Linux 桌面客户端
-  - [x] 实现 web 资源查看器：局域网内通过浏览器访问素材库
-  - [x] 实现 Chrome 浏览器插件
-- 2.0 版本
-  - [x] 实现 hawk remote 协议，支持广域网素材库查看（自托管 hawk-server + QUIC 直连/中继）与插件远程保存（受限写）
-  - [x] NAT 穿透栈：传输层为 iroh（打洞/中继/路径迁移/映射保活内建），中继为服务端可选组件（内嵌 iroh-relay，token 准入）
-  - [x] hawk-app 局域网互联：同网段设备发现 + 一次审批双向配对直连，免服务器
-- 3.0 版本
-  - [x] 权限与传输 V2：统一 Tenant/Device/AccessKey 权限模型，原生客户端 LAN/WAN 全端到端加密；公网网页版取消，hawk-server 仅保留控制面与密文中继（见 [V2 架构](docs/backend/access-control-v2.md)）
-  - [ ] 拓展素材资源管理范围，增加 3D 模型， 游戏引擎资源查看功能
-  - [ ] 实现 iOS 原生客户端（iPhone / iPad 查看，局域网直连 + 广域网查看，接入 Apple 智能生态），见 [iOS 客户端设计](docs/frontend/ios-app.md)。只读浏览（M1）已可用，离线索引与 Apple 智能待补
-  - [x] 实现 Android 原生客户端（手机 / 平板查看，局域网直连 + 广域网查看），见 [Android 客户端设计](docs/frontend/android-app.md)。只读浏览（M1）已可用，离线索引与端上 AI 待补
-
 ## 核心特性
 
 ### 非侵入式资源管理
@@ -59,48 +42,6 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 
 后端是独立的 Rust 服务，前端只通过 REST API 通信。桌面版用 Electron 壳拉起后端进程；同一套后端未来可直接部署为多人使用的服务器版本。
 
-### 开放 REST API
-
-```text
-# 搜索素材
-POST http://localhost:27371/api/v1/item/list
-{ "keywords": ["logo"], "tags": ["品牌"], "star": 5 }
-
-# 获取缩略图
-GET http://localhost:27371/api/v1/item/thumbnail?id=abc123
-
-# 更新标签
-POST http://localhost:27371/api/v1/item/update
-{ "id": "abc123", "tags": ["待审核"] }
-```
-
-## 构建与安装
-
-工具链：桌面端/插件需要最新的 [Node.js](https://nodejs.org/) 与 [Rust](https://rustup.rs/)；Android 客户端需要 Android Studio（SDK Platform 37）与 JDK 21+。
-
-```bash
-git clone https://github.com/soryu-ryouji/hawk.git
-cd hawk
-
-# 本机安装：构建应用并安装到本机
-./tools/install.ps1              # Windows → out/（免安装目录，hawk.exe 就地可运行）
-./tools/install.ps1 -Path D:/Tools/hawk   # Windows → 指定目录
-./tools/install.sh               # macOS → /Applications/hawk.app；Linux → ~/.local/bin/hawk + 桌面启动器
-
-# 发包：产出分发包到 out/（统一入口 --platform 选目标，--path 指定输出目录；也可直接调 build-app / build-extension / build-android）
-./tools/build.ps1 --platform app           # Windows：桌面应用 → out/hawk-windows-x64.zip
-./tools/build.sh --platform app            # macOS → out/hawk-mac-<arch>.zip；Linux → out/hawk-linux-x64.AppImage
-./tools/build.ps1 --platform extension     # 浏览器插件 → out/hawk-extension-chrome|firefox/（加载已解压扩展即用）
-./tools/build-android.ps1                  # Android debug APK → out/hawk-android-debug.apk（可直接 adb install）
-./tools/build-android.sh --release         # Android release APK → out/hawk-android-release-unsigned.apk（未签名）
-```
-
-首次运行自动安装 npm 依赖并完成全量构建（前端 + Rust 后端 + electron-builder，约几分钟）。
-Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/hawk`，启动器写入 `~/.local/share/applications/hawk.desktop`（图标进 hicolor），GNOME 应用列表搜索 hawk 即可启动；构建产物同时留在 `out/`。
-开发调试（`cd hawk-app && npm run dev`）与更多命令见 [hawk-app/README.md](hawk-app/README.md)；发版流程见 [docs/release.md](docs/release.md)（CI 定义在 [ci.yml](.github/workflows/ci.yml)）。
-
-提交前格式门禁：首次 `npm install` / `npm ci` 会自动启用版本化 Git hook（`.githooks/pre-commit`）。暂存前端代码时执行 Prettier 检查，暂存 Rust 代码时执行 `cargo fmt --check`；失败会阻止提交。
-
 ## 文档
 
 **总体**
@@ -117,7 +58,7 @@ Linux 为当前用户级安装（无需 sudo）：AppImage 装到 `~/.local/bin/
 
 **后端（hawk-daemon/）**
 
-- [hawk-daemon（Rust 实现）](docs/backend/server-rust.md)：Rust 版实现细节、调试与压测方法
+- [hawk-daemon](docs/backend/server-rust.md)：实现细节、调试与压测方法
 - [hawk-daemon 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
 - [权限与凭证设计](docs/backend/access-control.md)：Capability、角色、通道上限与凭证职责
