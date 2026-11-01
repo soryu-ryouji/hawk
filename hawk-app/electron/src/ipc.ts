@@ -29,6 +29,7 @@ import {
   lanSpeedTest,
   lanPairRequests,
   lanClients,
+  lanGetSettings,
   lanDecidePairRequest,
 } from './remote';
 import type { LanPeer, RemoteConfig } from './ipc-contract';
@@ -223,6 +224,7 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string) => remoteConnect(targetDeviceId));
   ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
   // ---- 局域网互联：发现/配对/连接经本机 daemon + 目标 LAN 端点；token 只在主进程 ----
+  ipcMain.handle(IPC.lanGetSettings, () => lanGetSettings());
   ipcMain.handle(IPC.lanDiscover, () => lanDiscover());
   ipcMain.handle(IPC.lanPair, (_event, input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }) => lanPair(input));
   ipcMain.handle(IPC.lanConnect, (_event, peerId: unknown) => {

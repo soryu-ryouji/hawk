@@ -55,6 +55,7 @@ export const IPC = {
   lanSpeedTest: 'hawk:lan-speed-test',
   lanPairRequests: 'hawk:lan-pair-requests',
   lanClients: 'hawk:lan-clients',
+  lanGetSettings: 'hawk:lan-get-settings',
   lanDecidePairRequest: 'hawk:lan-decide-pair-request',
   // ---- 主进程 → 渲染进程（webContents.send / ipcRenderer.on） ----
   winMaximized: 'hawk:win-maximized',
@@ -191,6 +192,36 @@ export interface LanClient {
   url?: string | null;
 }
 
+export interface LanAccessKey {
+  id: string;
+  label: string;
+  access_key: string;
+  role: AccessRole;
+  created_at_ms: number;
+  peer_id?: string | null;
+  library_name?: string | null;
+  url?: string | null;
+}
+
+/** 本机 LAN 配置（主进程经 Loopback admin 读取，与当前浏览的远程库无关） */
+export interface LanSettings {
+  enabled: boolean;
+  port: number;
+  peer_port: number;
+  peer_id: string;
+  target_identity: string;
+  target_device_id?: string | null;
+  target_library_id: string;
+  tls_fingerprint?: string | null;
+  name: string;
+  library_name: string;
+  keys: LanAccessKey[];
+  peer_keys: LanAccessKey[];
+  active: boolean;
+  peer_active: boolean;
+  peer_error?: string | null;
+}
+
 /** 已配对并保存在本机的局域网设备（token 只在主进程配置中，不送往渲染层） */
 export interface LanPeerProfile {
   id: string;
@@ -309,7 +340,7 @@ export interface HawkShell {
   /** 端口冲突时重试：auto=在候选段内自动挑空闲端口，port=用户手输的端口（任意 1024–65535）。
    *  写入配置后按当前模式重启 daemon。返回错误文案或 null */
   retryServerPort(request: { mode: 'auto' } | { port: number }): Promise<string | null>;
-  /** 本机局域网 IPv4 地址列表（设置面板展示用；LAN 配置读写走 REST app/lan） */
+  /** 本机局域网 IPv4 地址列表（设置面板展示用） */
   lanAddresses(): Promise<string[]>;
   /** 在系统文件管理器中显示库内文件（相对路径） */
   showInFinder(relPath: string): Promise<void>;
@@ -392,6 +423,8 @@ export interface HawkShell {
   remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry }>;
   /** 吊销访问密钥 */
   remoteDeleteKey(id: string): Promise<void>;
+  /** 读取本机 LAN 配置；主进程始终使用 Loopback admin，不受当前 WAN/LAN 浏览连接影响 */
+  lanGetSettings(): Promise<LanSettings>;
   /** 探测同网段可配对的 hawk 设备（经本机 daemon 的 UDP 发现） */
   lanDiscover(): Promise<{ peers: LanPeer[] }>;
   /** 向目标设备发起自动配对请求，等待目标端用户确认后保存连接并切换 */

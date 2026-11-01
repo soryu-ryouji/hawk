@@ -2,6 +2,7 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
+import { shell } from '@/shared/lib/platform';
 import type { AccessRole } from '@/shared/types';
 
 export interface LanAccessKey {
@@ -77,7 +78,8 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     loading.value = true;
     error.value = null;
     try {
-      apply(await api.appLan());
+      // 本机管理面必须走 Loopback IPC；远程浏览时当前 API 属于对端，不能用来读取本机 LAN 配置。
+      apply(await shell.lanGetSettings());
       loaded.value = true;
     } catch (e) {
       error.value = `读取设置失败：${errorText(e)}`;

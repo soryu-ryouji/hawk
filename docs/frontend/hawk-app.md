@@ -114,7 +114,8 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
 | `openFolder(path)` | 在文件管理器中打开库内文件夹本身（区别 showInFinder 的「定位到父级并选中」） |
 | `copyPath(path)` | 预览右键「复制文件路径」：主进程解析库内绝对路径后 `clipboard.writeText` |
 | `getPathForFile(file)` | 拖拽导入时取文件绝对路径（Electron `webUtils`），供 `item/add` 使用 |
-| `lanAddresses()` | 本机局域网 IPv4 地址列表（设置面板展示访问地址用；LAN 配置读写走 REST `GET/PUT /api/v1/app/lan`，不经 IPC） |
+| `lanAddresses()` | 本机局域网 IPv4 地址列表（设置面板展示访问地址用） |
+| `lanGetSettings()` | 读取本机 LAN 配置：主进程始终以 Loopback admin 调 `GET /api/v1/app/lan`，远程浏览时也不会误用对端的 WAN 会话 |
 | `getCacheDir()` | 当前缓存父目录（`{ current, isDefault }`；设置面板「存储」分区） |
 | `pickCacheDir()` / `changeCacheDir(path)` | 缓存父目录迁移：选目录 → 校验（缓存不得落在库内；目标须为空或不存在）→ 停 server → 整体搬迁（先复制后删除，主进程代发 `migrate` 进度帧）→ 写 `config.toml` 的 `cacheParent` → 重启 server（daemon 经 `--cache-parent` 接收；失败清理半成品并回滚配置）；返回错误文案或 null |
 | `minimizeWindow()` / `toggleMaximizeWindow()` / `closeWindow()` | 自绘标题栏的窗口控制（仅 Windows/Linux；macOS 用系统原生红绿灯）；toggle 返回切换后的最大化状态 |
@@ -468,7 +469,7 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | `LanPairRequestPrompt.vue` | — | — | 全局局域网配对请求弹窗（App.vue 常驻）：轮询本机 daemon 待确认请求，显示源端设备名并提供拒绝/仅读取/可读写；批准后主进程保存源端回连 profile，弹窗同时刷新已配对设备列表。 |
 | `SettingsLan.vue` | `embedded?` | — | 局域网网站访问块（仅 Electron）：启用开关 + 访问地址列表 + 创建网站访问密钥表单（备注 + 允许写入）+ 密钥列表（label、打码 token、读/写徽标、复制、删除）；状态来自共享 `useLanSettingsStore`，创建/删除 key 后配对入口即时同步；首次启用且无 key 时保存会自动补一把只读网站密钥，保证监听立即启动；保存由 footer「保存」委托 `defineExpose({ save, busy })` |
 | `SettingsAdvanced.vue` | — | — | 网络 → 高级（最右标签）：本机 API 端口、局域网网站端口（27372）与 hawk-app 直连端口（27375）；统一由面板右下角 footer「保存」提交，本地 API 端口仅写配置并提示重启 hawk 后生效，两个 LAN 端口保存后立即热生效且必须不同。 |
-| `SettingsLanConnect.vue` | — | — | 局域网互联块（仅 Electron）：自动发现设备，点击「申请配对」先弹出设备密钥权限弹窗（仅读取/可读写），确认后通过独立设备密钥端点创建与目标同名的密钥并等待对方确认；配对失败自动删除该密钥。「局域网互联」标题右侧放置扫描/测速；当前连接设备和目标端活跃入站设备都用同样信息完整的高亮卡片展示（名称、库名、地址、在线状态与本机授权权限），已配对/已授权过的设备从「发现的设备」排除；若这类已授权设备未连接但仍在同一局域网，会进入「可连接的已授权设备」组并提供连接按钮。保留手动地址兜底。设备列表统一由 `SettingsLanDevices` 管理。 |
+| `SettingsLanConnect.vue` | — | — | 局域网互联块（仅 Electron）：自动发现设备，点击「申请配对」先弹出设备密钥权限弹窗（仅读取/可读写），确认后通过独立设备密钥端点创建与目标同名的密钥并等待对方确认；配对失败自动删除该密钥。「局域网互联」标题右侧放置扫描/测速；当前连接设备和目标端活跃入站设备都用同样信息完整的高亮卡片展示（名称、库名、地址、在线状态与本机授权权限），已配对/已授权过的设备从「发现的设备」排除；若这类已授权设备未连接但仍在同一局域网，会进入「可连接的已授权设备」组并提供连接按钮。保留手动地址兜底。设备列表统一由 `SettingsLanDevices` 管理；本机 LAN 配置只经 `lanGetSettings` 读取，不受当前远程连接影响。 |
 | `SettingsLanDevices.vue` | — | — | 统一「已授权设备」列表：按 `peer_id` 合并可反向连接的已配对 profile 与本机设备访问密钥，默认折叠，显示设备数/在线数；每行展示计算机名、库名、直连地址及已连接/在线/未连接状态，并提供连接、编辑（铅笔图标，弹窗切换仅读取/可读写）和删除（垃圾桶图标，同时忘记 profile 并删除本机密钥）。移动端授权二维码也在该组件内生成。设备密钥与网站访问密钥完全分离。 |
 | `SettingsRemote.vue` | `libraryless?`、`embedded?` | `save()`、`busy()` | 远程块（仅 Electron，嵌在设置面板「网络」分区内；`embedded` 时不带滚动容器。RemoteScreen 复用同组件，libraryless 形态隐藏 writable/allow_remote 与二维码入口并保留内联保存）：Apple 风格分组卡片——顶部状态行（状态点 + 启用开关）、接入组（服务器/服务密钥/写入开关）、访问密钥组（二维码主入口、「手动授权」折叠新建弹窗、权限下拉、吊销、明文一次性展示）、此设备组（改名/allow_remote/证书轮换）、设备组（中继开关、连接状态、浏览入口、移除）；设置面板内保存统一走 footer「保存」，RemoteScreen 仍用内联保存。访问密钥默认程序生成 128 位随机、可自定义（带写权限 ≥12 字符）；明文只在签发响应展示一次；签发与变更经 daemon 推送到 server 映射；配置读写经主进程 IPC 转发本地 daemon `/api/v1/remote*`，写开关随配置保存热生效；接入配置与设备身份跨素材库共享 |
 | `SettingsUpdate.vue` | — | — | 更新分区（仅 Electron，状态机见 useUpdater）：当前版本（v + 短 sha，自载 getAppVersion）、通道下拉（稳定版/滚动版/不检查更新，偏好存主进程 `~/.config/hawk/config.toml`，经 IPC 读写；off 时禁用检查按钮、启动静默检查跳过，提示文案随通道切换）、检查更新、下载并安装（进度条，total 未知不定态；sha256 校验阶段文案切换；下载中可取消，回「发现新版本」态）、重启并安装（缓存命中时检查完直接出现；应用退出后主进程替换脚本接力） |

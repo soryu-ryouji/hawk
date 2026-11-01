@@ -56,7 +56,6 @@ export const api = {
       body: { access_key: accessKey },
     }),
   /** 局域网 web 查看配置与运行状态（admin 限定，daemon 权威读写） */
-  appLan: () => request<components['schemas']['LanSettingsDto']>('GET', '/api/v1/app/lan'),
   /** 保存 [web] 配置并热重绑监听（失败 daemon 侧自动回滚并返回错误） */
   saveAppLan: (body: components['schemas']['PutLanBody']) => request<components['schemas']['LanSettingsDto']>('PUT', '/api/v1/app/lan', { body }),
   /** 目标端待确认的自动配对请求（本机 admin 设置面板轮询） */

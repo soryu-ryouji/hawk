@@ -11,10 +11,12 @@ import {
   IPC,
   type AccessRole,
   type ConnectionDescriptor,
+  type LanAccessKey,
   type LanClient,
   type LanPairRequest,
   type LanPeer,
   type LanPeerProfile,
+  type LanSettings,
   type RemoteConfig,
   type RemoteDevice,
   type RemoteDto,
@@ -234,6 +236,11 @@ function normalizeLanURL(url: string): string {
   return parsed.toString().replace(/\/+$/, '');
 }
 
+/** 本机 LAN 管理面：始终经 Loopback admin，远程浏览时也不把请求发给对端。 */
+export async function lanGetSettings(): Promise<LanSettings> {
+  return daemonCall<LanSettings>('GET', '/api/v1/app/lan');
+}
+
 /** 探测同网段可配对的 hawk 设备（本机 daemon 发 UDP 组播/广播） */
 export async function lanDiscover(): Promise<{ peers: LanPeer[] }> {
   return daemonCall<{ peers: LanPeer[] }>('GET', '/api/v1/app/lan/peers');
@@ -263,34 +270,6 @@ export async function lanSpeedTest(): Promise<{ latency_ms: number }> {
   }
   samples.sort((a, b) => a - b);
   return { latency_ms: samples[Math.floor(samples.length / 2)] };
-}
-
-interface LanKeyDto {
-  id: string;
-  label: string;
-  access_key: string;
-  role: AccessRole;
-  created_at_ms: number;
-  peer_id?: string;
-  library_name?: string;
-  url?: string;
-}
-
-interface LanSettingsDto {
-  enabled: boolean;
-  port: number;
-  peer_port: number;
-  peer_id: string;
-  target_identity: string;
-  target_device_id?: string | null;
-  target_library_id: string;
-  tls_fingerprint?: string | null;
-  name: string;
-  library_name: string;
-  keys: LanKeyDto[];
-  peer_keys: LanKeyDto[];
-  active: boolean;
-  peer_active: boolean;
 }
 
 interface ReversePeerProfile {
@@ -324,7 +303,7 @@ async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ 
   if (!info.has_library) {
     return null;
   }
-  const key = await daemonCall<LanKeyDto>('POST', '/api/v1/app/lan/device-keys', {
+  const key = await daemonCall<LanAccessKey>('POST', '/api/v1/app/lan/device-keys', {
     label: target.name,
     role: writable ? 'editor' : 'viewer',
     peer_id: target.id,
@@ -332,7 +311,7 @@ async function addReversePeerKey(target: LanPeer, writable: boolean): Promise<{ 
     url: target.url,
   });
   try {
-    const settings = await daemonCall<LanSettingsDto>('GET', '/api/v1/app/lan');
+    const settings = await daemonCall<LanSettings>('GET', '/api/v1/app/lan');
     return {
       keyId: key.id,
       profile: {

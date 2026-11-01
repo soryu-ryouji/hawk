@@ -1,4 +1,4 @@
-// 本机局域网 IPv4 地址列表（设置面板展示访问地址用；[web] 配置读写由前端直连 daemon REST app/lan）。
+// 本机局域网 IPv4 地址列表（设置面板展示访问地址用；配置读取由 remote.ts 经 Loopback admin 提供）。
 import os from 'node:os';
 
 export function lanAddresses(): string[] {
