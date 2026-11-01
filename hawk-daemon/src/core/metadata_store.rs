@@ -163,6 +163,23 @@ impl MetadataStore {
         }
     }
 
+    pub fn save_vision_vector(
+        &self,
+        hash: &str,
+        model: &str,
+        vector: &[f32],
+    ) -> Result<(), String> {
+        self.db.save_vision_vector(hash, model, vector)
+    }
+
+    pub fn vision_vector(&self, hash: &str, model: &str) -> Option<Vec<f32>> {
+        self.db.vision_vector(hash, model).ok().flatten()
+    }
+
+    pub fn vision_vectors(&self, model: &str) -> Vec<(String, Vec<f32>)> {
+        self.db.vision_vectors(model).unwrap_or_default()
+    }
+
     pub fn delete(&self, hash: &str) {
         if let Err(e) = self.db.delete(hash) {
             tracing::error!("{e}，内存副本保留");

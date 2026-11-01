@@ -374,6 +374,8 @@ pub(crate) fn apply_upsert(
     if needs_palette_work(ctx, hash) || needs_phash_work(ctx, hash) {
         ctx.worker.enqueue_derived(hash, &pending.abs_path);
     }
+    // 视觉扩展只在用户安装并启用后工作；未启用时 enqueue 是空操作
+    ctx.vision.enqueue(hash, &pending.abs_path);
 
     // 扫描窗口内新增/刷新的位置记入会话：消失对账时豁免
     // （目录可能已被 runner 枚举过，窗口内后到的文件不在 seen 集内，否则会被误判消失）

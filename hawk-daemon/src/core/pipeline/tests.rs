@@ -82,6 +82,8 @@ impl Rig {
             web_dist: None,
             remote_config: None,
         };
+        let vision =
+            crate::core::vision::VisionService::new(paths.clone(), store.clone(), index.clone());
         let pipeline = IndexPipeline::new(
             paths.clone(),
             config,
@@ -95,6 +97,7 @@ impl Rig {
             global_filter,
             locks,
             worker.clone(),
+            vision,
             startup.clone(),
             settings,
         );

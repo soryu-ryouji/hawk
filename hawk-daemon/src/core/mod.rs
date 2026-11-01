@@ -25,4 +25,5 @@ pub mod taxonomy;
 pub mod thumbnail;
 pub mod thumbnail_worker;
 pub mod view_prefs;
+pub mod vision;
 pub mod watcher;

@@ -125,6 +125,7 @@ pub(crate) struct PipelineCtx {
     pub(crate) global_filter: Arc<GlobalFilter>,
     pub(crate) locks: Arc<Locks>,
     pub(crate) worker: Arc<ThumbnailWorker>,
+    pub(crate) vision: Arc<crate::core::vision::VisionService>,
     pub(crate) startup: Arc<StartupState>,
     pub(crate) settings: Settings,
     pub(crate) sender: JobSender,

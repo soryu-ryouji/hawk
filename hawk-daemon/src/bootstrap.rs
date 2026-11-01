@@ -93,6 +93,7 @@ async fn run(settings: Settings) {
         } else {
             // ---------- 随后装配索引流水线（HTTP 已监听：startup 端点持续可答） ----------
             lib.pipeline.start();
+            lib.vision.start();
             watcher = Some(start_watcher(&state, lib));
             state.startup.mark_ready();
             tracing::info!("hawk-daemon 已就绪（内存索引已由 SQLite 注水），后台对账扫描进行中");
@@ -204,6 +205,8 @@ fn build_library_state(
     // ---- 缩略图派生 ----
     let thumbs = ThumbnailService::new(Arc::new(paths.clone()));
     let worker = ThumbnailWorker::new(thumbs.clone(), bus.clone());
+    let vision =
+        crate::core::vision::VisionService::new(paths.clone(), store.clone(), index.clone());
 
     let pipeline = IndexPipeline::new(
         paths.clone(),
@@ -218,6 +221,7 @@ fn build_library_state(
         global_filter.clone(),
         locks.clone(),
         worker.clone(),
+        vision.clone(),
         startup.clone(),
         settings.clone(),
     );
@@ -234,6 +238,7 @@ fn build_library_state(
         store,
         thumbs,
         worker,
+        vision,
         prefs,
         categories,
         tags,

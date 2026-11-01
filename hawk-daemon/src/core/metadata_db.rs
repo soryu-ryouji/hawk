@@ -74,6 +74,10 @@ impl MetadataDb {
                 [],
             )?;
             conn.execute(
+                "CREATE TABLE IF NOT EXISTS vision_vectors (hash TEXT NOT NULL, model TEXT NOT NULL, vector BLOB NOT NULL, PRIMARY KEY (hash, model))",
+                [],
+            )?;
+            conn.execute(
                 "CREATE TABLE IF NOT EXISTS tags (hash TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (hash, tag))",
                 [],
             )?;
@@ -202,10 +206,72 @@ impl MetadataDb {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM items WHERE hash=?1", [hash])?;
             delete_child_rows(&tx, hash)?;
+            tx.execute("DELETE FROM vision_vectors WHERE hash=?1", [hash])?;
             tx.commit()?;
             Ok(())
         })
         .map_err(|e| format!("元数据数据库删除失败 {hash}: {e}"))
+    }
+
+    pub fn save_vision_vector(
+        &self,
+        hash: &str,
+        model: &str,
+        vector: &[f32],
+    ) -> Result<(), String> {
+        let bytes: Vec<u8> = vector
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO vision_vectors (hash, model, vector) VALUES (?1, ?2, ?3) \
+                 ON CONFLICT(hash, model) DO UPDATE SET vector=?3",
+                rusqlite::params![hash, model, bytes],
+            )?;
+            Ok(())
+        })
+        .map_err(|e| format!("视觉向量写入失败 {hash}: {e}"))
+    }
+
+    pub fn vision_vector(&self, hash: &str, model: &str) -> Result<Option<Vec<f32>>, String> {
+        self.with_conn(|conn| {
+            let bytes: Option<Vec<u8>> = conn
+                .query_row(
+                    "SELECT vector FROM vision_vectors WHERE hash=?1 AND model=?2",
+                    rusqlite::params![hash, model],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(bytes.map(|bytes| {
+                bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|chunk| f32::from_le_bytes(*chunk))
+                    .collect()
+            }))
+        })
+        .map_err(|e| format!("视觉向量读取失败 {hash}: {e}"))
+    }
+
+    pub fn vision_vectors(&self, model: &str) -> Result<Vec<(String, Vec<f32>)>, String> {
+        self.with_conn(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT hash, vector FROM vision_vectors WHERE model=?1")?;
+            let rows = stmt.query_map([model], |row| {
+                let bytes: Vec<u8> = row.get(1)?;
+                let vector = bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|chunk| f32::from_le_bytes(*chunk))
+                    .collect::<Vec<f32>>();
+                Ok((row.get::<_, String>(0)?, vector))
+            })?;
+            Ok(rows.filter_map(|row| row.ok()).collect())
+        })
+        .map_err(|e| format!("视觉向量索引读取失败: {e}"))
     }
 
     pub fn load_folder_snapshots(&self) -> HashMap<String, (i64, i64)> {

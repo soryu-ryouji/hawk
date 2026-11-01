@@ -82,6 +82,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ),
     ("GET", "/api/v1/tag/list", None),
     ("GET", "/api/v1/view/preferences", None),
+    ("GET", "/api/v1/vision/status", None),
     ("POST", "/api/v1/item/list", Some("{}")),
     ("POST", "/api/v1/item/aggregate", Some(r#"{"ids":["x"]}"#)),
     ("POST", "/api/v1/item/skeleton", Some("{}")),
@@ -155,6 +156,11 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     ("PATCH", "/api/v1/remote/device"),
     ("POST", "/api/v1/remote/device/rotate"),
     ("DELETE", "/api/v1/remote/devices/{device_id}"),
+    // 视觉模型下载依赖外网与本地模型文件；构图查询依赖源图已完成向量分析
+    ("POST", "/api/v1/vision/install"),
+    ("POST", "/api/v1/vision/enable"),
+    ("POST", "/api/v1/vision/remove"),
+    ("POST", "/api/v1/item/vision-search"),
     // AccessKey-only 编排依赖存活 hawk-server / LAN 对端
     ("POST", "/api/v1/remote/access-connect"),
     ("POST", "/api/v1/remote/access-session"),
@@ -230,6 +236,8 @@ fn test_app_at(base: PathBuf) -> TestApp {
         web_dist: None,
         remote_config: None,
     };
+    let vision =
+        crate::core::vision::VisionService::new(paths.clone(), store.clone(), index.clone());
     let pipeline = IndexPipeline::new(
         paths.clone(),
         config.clone(),
@@ -243,6 +251,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
         global_filter.clone(),
         locks.clone(),
         worker.clone(),
+        vision.clone(),
         startup.clone(),
         settings.clone(),
     );
@@ -269,6 +278,7 @@ fn test_app_at(base: PathBuf) -> TestApp {
             store,
             thumbs,
             worker,
+            vision,
             prefs,
             categories,
             tags,

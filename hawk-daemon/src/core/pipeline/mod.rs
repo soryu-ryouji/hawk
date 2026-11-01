@@ -184,6 +184,7 @@ impl IndexPipeline {
         global_filter: Arc<crate::core::global_filter::GlobalFilter>,
         locks: Arc<crate::core::locks::Locks>,
         worker: Arc<ThumbnailWorker>,
+        vision: Arc<crate::core::vision::VisionService>,
         startup: Arc<StartupState>,
         settings: Settings,
     ) -> IndexPipeline {
@@ -204,6 +205,7 @@ impl IndexPipeline {
             global_filter,
             locks,
             worker,
+            vision,
             startup,
             settings,
             sender,
