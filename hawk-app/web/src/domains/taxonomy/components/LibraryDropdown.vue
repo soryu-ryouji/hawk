@@ -390,6 +390,8 @@ onBeforeUnmount(() => {
 
 .lib-panel {
   position: fixed;
+  /* 触发器已收缩到内容宽度，浮层仍保留足够的条目与操作空间；极窄窗口不超出视口 */
+  min-width: min(220px, calc(100vw - 16px));
   /* 设置对话框 170 / 预览浮层 200 / 右键菜单 400；本浮层须盖过侧栏与顶栏 */
   z-index: 300;
   max-height: 280px;

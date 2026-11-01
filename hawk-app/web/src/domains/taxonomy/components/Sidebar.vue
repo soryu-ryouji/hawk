@@ -419,18 +419,30 @@ function onFolderTreeDrop(e: DragEvent) {
   -webkit-app-region: no-drag;
 }
 
-/* 顶条内实例默认隐藏（macOS 红绿灯占位）；非 macOS 平台与触屏显示并与开关同排
-   （flex:1 吃掉中段空白，名称超长省略） */
+/* 正文实例收缩到内容宽度，避免整行空白也触发素材库按钮；长名称受最大宽度约束并省略 */
+.library-name.in-body {
+  align-self: flex-start;
+  max-width: calc(100% - 16px);
+}
+
+/* 顶条内实例默认隐藏（macOS 红绿灯占位）；非 macOS 平台与触屏显示并与开关同排。
+   按钮仅覆盖实际内容，剩余空白留给窗口拖拽；margin-right:auto 将侧栏开关推到右端 */
 .library-name.in-head {
   display: none;
+}
+
+/* Windows/Linux：6px 顶条内边距 + 6px 按钮内边距，与正文入口的 12px 左缘对齐；
+   macOS 保留正文布局，不走这条规则 */
+.lib-in-head .sidebar-head {
+  padding-left: 6px;
 }
 
 .lib-in-head .library-name.in-head,
 body.touch .library-name.in-head {
   display: flex;
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
-  margin: 0 4px 0 8px;
+  margin: 0 auto 0 0;
   padding: 4px 6px;
 }
 

@@ -171,7 +171,8 @@ token 经 URL hash 注入渲染进程（hash 不进 HTTP 请求、不进 History
   Windows/Linux 自绘窗口控制 fixed 于窗口右上角（不随侧栏显隐移动）
 ² 侧栏开关：可见时在侧栏顶条右端；隐藏时挪到顶栏左上角
 ³ 库名（库切换下拉）：macOS 顶条左侧让给原生红绿灯，库名藏在正文首行；Windows/Linux 与浏览器
-  顶条没有窗口控件，库名占住左上角（触屏同为顶条内变体），正文整体上移填充空位
+  顶条没有窗口控件，库名占住左上角（触屏同为顶条内变体，图标左缘与正文入口对齐），正文整体上移填充空位；
+  按钮宽度收缩到实际内容，空白区域不触发点击，下拉面板独立保留最小宽度
   文件夹/分类/标签三个分区标题可点击折叠/展开（v-show 保留树节点状态）
 ```
 
@@ -477,7 +478,7 @@ applyEvent(type, payload): void;    // SSE 分发入口（策略见「SSE 增量
 | `SettingsStorage.vue` | — | — | 存储分区（仅 Electron）：**周期兜底重扫开关**（库级 `[scan]` 设置，写 `.hawk/config.toml` 保存即热生效）+ 全局缓存父目录查看与迁移（`getCacheDir`/`pickCacheDir`/`changeCacheDir` IPC）。素材元数据固定 `.hawk/metadata.db`，不再提供双模式切换；缓存迁移前确认整体搬迁 + 服务重启，错误内联显示 |
 | `DuplicateManager.vue` | — | — | 存储分区「重复图片」管理：相似（pHash 0–5/0–10）与相同内容（同 item 多位置）双标签扫描；分页展示组、缩略图、文件大小、像素与完整路径；默认不选中，跨页按 `id + path` 选择，二次确认后逐位置移入回收站，部分失败保留选择并刷新；仅 admin 显示，扫描期间版本守卫丢弃过期响应 |
 | `SettingsConnection.vue` | — | `logout` | 连接分区（仅局域网 web 端）：当前访问级别（只读 / 仅导入 / 可读写，store.viewerMode / limitedWrite）+ 「注销 token」（emit `logout` → App 清 `hawk:token:<host>` 并切 connect 门页换身份） |
-| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（macOS 因红绿灯占位留在正文首行；Windows/Linux 与浏览器占顶条左上角 `in-head` 变体，正文整体上移填充空位；触屏同为 `in-head`（`body.touch` 命中，macOS 触屏也走此分支）；LibraryDropdown 组件：历史库下拉——最近使用在前、当前库打勾、已删除置灰、条目 ··· 菜单（打开目录/当前库重命名/移除记录）、底部「打开文件夹…」选新库）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为筛选框（按小写子串过滤文件夹树/分类/标签，不随列表滚动；设置入口在 TitleBar 齿轮）；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签）；文件夹树容器接受外部文件/文件夹拖入（空白处 drop → 结构化导入到库根，目录树重建） |
+| `Sidebar.vue` | — | — | 顶部 40px 拖拽条（macOS 红绿灯压在其左侧，右端为侧栏开关），内容区独立滚动：库名（macOS 因红绿灯占位留在正文首行；Windows/Linux 与浏览器占顶条左上角 `in-head` 变体（左缘对齐正文入口，按钮仅覆盖内容而非整段空白），正文整体上移填充空位；触屏同为 `in-head`（`body.touch` 命中，macOS 触屏也走此分支）；LibraryDropdown 组件：历史库下拉——最近使用在前、当前库打勾、已删除置灰、条目 ··· 菜单（打开目录/当前库重命名/移除记录）、底部「打开文件夹…」选新库）→ 智能条目（全部素材/根目录素材/未分类素材/未标签素材/回收站，各带计数，Eagle 式置顶）→ 文件夹/分类/标签分区（标题点击折叠/展开，v-show 保留树节点状态；标签行左缩进与树节点名称列对齐）；底部固定区为筛选框（按小写子串过滤文件夹树/分类/标签，不随列表滚动；设置入口在 TitleBar 齿轮）；选中态反映 store.view；分类/标签容器接受素材拖入（容器级委托 + 行高亮，drop → 添加分类/标签）；文件夹树容器接受外部文件/文件夹拖入（空白处 drop → 结构化导入到库根，目录树重建） |
 | `LibraryDropdown.vue` | — | — | 侧栏素材库下拉：库名触发按钮 + 历史库浮层（Teleport fixed，侧栏 overflow 不裁剪）；触发按钮在库名后带「远程」徽标（当前浏览远端库时，来源区分落在按钮上；悬停提示为设备名 + 写能力），浮层顶部为「断开远程 · 回到我的库」；定位与数据加载解耦（打开前同步写入锚点，面板挂载后按实际高度决定是否上翻；远程设备列表异步补入，服务端不可达不拖住面板，快速开关也不会错位）；当前库打勾，目录已删的置灰；条目 ··· 菜单——打开素材库文件夹/当前库重命名（daemon `PATCH /library/info`）/从列表移除（仅删记录不动目录）；远程接入在线时浮层含「远程素材库」分区（池内其他设备，带在线点与「远程」徽标，点击即连接切换——复用 remote store 的中继回退询问；当前浏览的远程库打勾，远程浏览中点本地当前库 = 断开回切）；重命名/移除经 IPC，换库就绪经 `hawk:server-started` 驱动 App 原地重启数据 |
 | `SelectBox.vue` | `modelValue: string`、`options: {value,label}[]`、`placeholder?`、`disabled?` | `update:modelValue` | 自绘下拉选择（原生 select 展开列表由 OS 绘制，暗色主题不协调）：触发框 + Teleport fixed 浮层（视觉与 ContextMenu 一致），键盘导航与外部点击关闭；设置面板/文件夹选择/库切换共用 |
 | `FolderTreeNode.vue` | `node: FolderNode`、`depth: number` | — | 内部态：expanded、editing（重命名/新建的内联 input，提交守卫：进入即捕获类型并同步摘除编辑态，await 窗口内的重复 Enter/blur 不会二次提交）、dropDepth（素材/外部文件拖入高亮计数）；点击 setView；右键菜单：新建子文件夹/重命名/在文件管理器中打开（仅 Electron）/全局列表隐藏切换/重新扫描（强制遍历该文件夹及子目录，拾取监听漏掉的新增/删除）/刷新缓存（补该文件夹及子目录缺失的宽高/缩略图/调色板）/删除（确认）；**接受素材拖入**（drop → `moveSelectedToFolder(node.path)`，悬停高亮）；**接受外部文件/文件夹拖入**（整行可放置，drop → `importer.importEntries(entries, node.path, files)` 结构化导入：拖入目录在本节点下重建目录树，阻断 document 级平铺导入；entries 不可用时退回 files 直落本节点） |
