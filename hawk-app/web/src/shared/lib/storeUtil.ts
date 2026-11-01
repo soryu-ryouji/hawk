@@ -10,6 +10,7 @@ const ERROR_TEXT: Record<string, string> = {
   TAG_NOT_FOUND: '标签不存在',
   UNSUPPORTED_FORMAT: '不支持的格式',
   INVALID_PARAM: '参数无效',
+  NOT_READY: '分析尚未完成，请稍后重试',
   NETWORK: '无法连接 hawk-daemon',
 };
 

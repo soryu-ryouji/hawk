@@ -757,6 +757,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/item/vision-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/cleanup_index": {
         parameters: {
             query?: never;
@@ -1294,6 +1310,70 @@ export interface paths {
         };
         /** 全部视图偏好（scope → 排序） */
         get: operations["preferences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/vision/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["enable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/vision/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/vision/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["remove"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/vision/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["status"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2003,6 +2083,37 @@ export interface components {
                 count: number;
                 name: string;
             }[];
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_VisionSearchResponse: {
+            data?: {
+                items: components["schemas"]["VisionSearchEntryDto"][];
+                /** Format: int32 */
+                limit: number;
+                /** Format: int32 */
+                offset: number;
+                total: number;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_VisionStatus: {
+            data?: {
+                /** Format: int64 */
+                downloaded_bytes: number;
+                downloading: boolean;
+                enabled: boolean;
+                error?: string | null;
+                indexed_items: number;
+                /** @description 正在重建索引或处理当前任务（队列尚未形成时也覆盖） */
+                indexing: boolean;
+                installed: boolean;
+                pending_items: number;
+                /** Format: int64 */
+                total_bytes: number;
+                total_items: number;
+            };
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
@@ -2767,6 +2878,49 @@ export interface components {
         ViewSortDto: {
             order: string;
             order_by: string;
+        };
+        VisionEnableRequest: {
+            enabled: boolean;
+        };
+        VisionSearchEntryDto: {
+            item: components["schemas"]["ItemDto"];
+            /** Format: float */
+            similarity_score: number;
+        };
+        VisionSearchRequest: {
+            id?: string;
+            /** Format: int32 */
+            limit?: number;
+            /**
+             * Format: float
+             * @description 最低余弦相似度（-1–1）；常用正值越高越严格
+             */
+            min_similarity?: number;
+            /** Format: int32 */
+            offset?: number;
+        };
+        VisionSearchResponse: {
+            items: components["schemas"]["VisionSearchEntryDto"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            total: number;
+        };
+        VisionStatus: {
+            /** Format: int64 */
+            downloaded_bytes: number;
+            downloading: boolean;
+            enabled: boolean;
+            error?: string | null;
+            indexed_items: number;
+            /** @description 正在重建索引或处理当前任务（队列尚未形成时也覆盖） */
+            indexing: boolean;
+            installed: boolean;
+            pending_items: number;
+            /** Format: int64 */
+            total_bytes: number;
+            total_items: number;
         };
     };
     responses: never;
@@ -3881,6 +4035,37 @@ export interface operations {
             };
         };
     };
+    search: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisionSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description 相似构图结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_VisionSearchResponse"];
+                };
+            };
+            /** @description 扩展未启用、源图未分析或参数非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     cleanup_index: {
         parameters: {
             query?: never;
@@ -4744,6 +4929,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_HashMap_String_ViewSortDto"];
+                };
+            };
+        };
+    };
+    enable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisionEnableRequest"];
+            };
+        };
+        responses: {
+            /** @description 启用或停用视觉扩展 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_VisionStatus"];
+                };
+            };
+        };
+    };
+    install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 下载并启用视觉扩展 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_VisionStatus"];
+                };
+            };
+        };
+    };
+    remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除视觉模型 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_VisionStatus"];
+                };
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 视觉扩展状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_VisionStatus"];
                 };
             };
         };

@@ -16,6 +16,8 @@ export const STORAGE_KEYS = {
   hidePreviewClose: 'hawk:hidePreviewClose',
   /** 单图查找相似度要求（纯数字字符串，合法范围 0–100）；缺失/损坏/越界回退 50 */
   similarityThreshold: 'hawk:similarityThreshold',
+  /** 构图检索最低余弦相似度（纯数字字符串，合法范围 0–100）；缺失/损坏/越界回退 70 */
+  visionSimilarityThreshold: 'hawk:visionSimilarityThreshold',
   /** 已 toast 提示过的更新标识 `${channel}@${version}`（纯字符串）；同一版本只提示一次 */
   lastUpdateNotice: 'hawk:lastUpdateNotice',
 } as const;

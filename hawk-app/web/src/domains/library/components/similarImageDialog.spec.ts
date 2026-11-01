@@ -2,10 +2,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import { nextTick } from 'vue';
 
 const apiMocks = vi.hoisted(() => ({
   itemList: vi.fn(),
   itemSkeleton: vi.fn(() => Promise.resolve({ items: [], total_size: 0 })),
+  visionStatus: vi.fn(() =>
+    Promise.resolve({
+      installed: true,
+      enabled: true,
+      downloading: false,
+      downloaded_bytes: 0,
+      total_bytes: 0,
+      indexed_items: 1,
+      total_items: 1,
+      pending_items: 0,
+      indexing: false,
+      error: null,
+    }),
+  ),
+  visionSearch: vi.fn(),
   thumbnailUrl: vi.fn((id: string) => `thumb-${id}`),
 }));
 vi.mock('@/shared/api/endpoints', () => ({ api: apiMocks }));
@@ -13,6 +29,7 @@ vi.mock('@/shared/api/endpoints', () => ({ api: apiMocks }));
 import SimilarImageDialog from './SimilarImageDialog.vue';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLibraryStore } from '@/domains/library';
+import { ApiError } from '@/shared/api/client';
 import type { Item } from '@/shared/types';
 
 function fixture(id: string): Item {
@@ -47,10 +64,13 @@ beforeEach(() => {
   setActivePinia(createPinia());
   apiMocks.itemList.mockReset();
   apiMocks.itemSkeleton.mockClear();
+  apiMocks.visionStatus.mockClear();
+  apiMocks.visionSearch.mockReset();
   apiMocks.thumbnailUrl.mockClear();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   document.body.innerHTML = '';
 });
 
@@ -106,6 +126,61 @@ describe('图片查找弹窗', () => {
     await flush();
     expect(apiMocks.itemList).toHaveBeenLastCalledWith(expect.objectContaining({ max_distance: 8 }));
     expect(document.body.querySelector<HTMLInputElement>('input[type="range"]')!.value).toBe('61');
+  });
+
+  it('缩略图缺失时显示生成中并自动重试', async () => {
+    vi.useFakeTimers();
+    const source = fixture('source');
+    const result = { ...fixture('result'), similarity_distance: 2 };
+    apiMocks.itemList.mockResolvedValue({ items: [result], total: 1, offset: 0, limit: 60, total_size: 100 });
+    const wrapper = mount(SimilarImageDialog, { props: { source }, attachTo: document.body });
+    await flush();
+
+    document.body.querySelector('.result-thumb')!.dispatchEvent(new Event('error'));
+    await nextTick();
+    expect(document.body.querySelector('.thumb-placeholder')?.textContent).toContain('缩略图生成中');
+    await vi.advanceTimersByTimeAsync(500);
+    const retry = document.body.querySelector<HTMLImageElement>('.result-thumb')!;
+    expect(retry.src).toContain('retry=1');
+    retry.dispatchEvent(new Event('load'));
+    expect(document.body.querySelector('.thumb-placeholder')).toBeNull();
+    wrapper.unmount();
+  });
+
+  it('相似构图使用独立向量查询并显示余弦相似度', async () => {
+    const source = fixture('source');
+    const result = { ...fixture('result'), similarity_distance: 2 };
+    apiMocks.visionSearch.mockResolvedValue({ items: [{ item: result, similarity_score: 0.82 }], total: 1, offset: 0, limit: 60 });
+    const wrapper = mount(SimilarImageDialog, { props: { source }, attachTo: document.body });
+    await flush();
+    const compositionTab = [...document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.trim() === '相似构图')!;
+    compositionTab.click();
+    await flush();
+
+    expect(apiMocks.visionSearch).toHaveBeenCalledWith(expect.objectContaining({ id: 'source', min_similarity: 0.7 }));
+    expect(document.body.textContent).toContain('相似度 82%');
+    wrapper.unmount();
+  });
+
+  it('构图分析未就绪时自动等待并重试', async () => {
+    vi.useFakeTimers();
+    const source = fixture('source');
+    const result = { ...fixture('result'), similarity_distance: 2 };
+    apiMocks.visionSearch
+      .mockRejectedValueOnce(new ApiError('NOT_READY', 'pending', 409))
+      .mockResolvedValue({ items: [{ item: result, similarity_score: 0.82 }], total: 1, offset: 0, limit: 60 });
+    const wrapper = mount(SimilarImageDialog, { props: { source }, attachTo: document.body });
+    await flush();
+    const compositionTab = [...document.body.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.trim() === '相似构图')!;
+    compositionTab.click();
+    await flush();
+    expect(apiMocks.visionSearch).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1200);
+    await flush();
+    expect(apiMocks.visionSearch).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).toContain('相似度 82%');
+    wrapper.unmount();
   });
 
   it('结果卡片右键可跳转到图片所在文件夹', async () => {
