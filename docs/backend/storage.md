@@ -79,6 +79,7 @@ cache/<库标识>/thumbnails/
 - `palette`：JSON 数组，最多 10 色；`NULL` 表示未提炼，空数组是非图片负缓存。
 - `phash`：16 位十六进制 dHash，供近重复粗筛；`phash_version=0` 表示未计算。
 - `rgb_grid`：384 位十六进制的 8×8 RGB 平均色网格，供候选复核。
+- `vision_vectors`：可选 DINOv2 构图向量，以 `(hash, model)` 为主键保存 BLOB；仅在用户安装并启用视觉扩展后生成，详见 [视觉扩展与相似构图](vision-search.md)。
 - 非图像的 pHash 使用 `version>0, value=NULL` 负缓存，避免周期重试；暂时解码失败保持未计算。
 
 扫描、增量入库和周期维护复用同一 worker：单次解码后按需生成缩略图、调色板、宽高、dHash 和 RGB 网格。结果经 JobSender 回到单写者流水线，按 500 条或 2 秒批量写 SQLite，并合并 `items.updated`。周期维护间隔由 `HAWK_MAINTENANCE_INTERVAL` 控制（默认 60s，0 关闭）。

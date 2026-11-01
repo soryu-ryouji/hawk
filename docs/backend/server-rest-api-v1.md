@@ -741,6 +741,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | POST | `/api/v1/item/list`              | 查询 item 列表 |
 | POST | `/api/v1/item/skeleton`          | 全量布局骨架（dim，不分页，与 list 同序） |
 | POST | `/api/v1/item/duplicates`        | 重复图片分组扫描（相似 pHash / 相同内容多位置，admin） |
+| POST | `/api/v1/item/vision-search`      | 相似构图检索（可选视觉扩展） |
 | POST | `/api/v1/item/aggregate`          | 选择集共有特性聚合：`{ ids }` → 标签/分类交集（多选面板数据源） |
 | GET  | `/api/v1/item/detail`            | 获取单个 item  |
 | GET  | `/api/v1/item/count`             | 获取 item 总数 |
@@ -855,6 +856,32 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 `total` / `total_size` 为过滤后未分页的全量计数与字节数合计（前端检查器「分区状态」用）。
 
 **排序稳定性**：主键同值（如相同 `modification_time`）时按 `id` 字典序打破平局，保证相同查询的次序逐位确定——前端「骨架 + 分页窗口」模型依赖这一点对齐。
+
+### vision-search
+
+`POST /api/v1/item/vision-search`。需先在素材库所在 daemon 安装并启用视觉扩展，且源图已完成构图分析。
+
+#### 请求
+
+| 参数 | 类型 | 必填 | 说明 |
+| ---- | ---- | ---- | ---- |
+| id | string | 是 | 源 item id |
+| min_similarity | number | 否 | 最低余弦相似度（-1–1），缺省 0.7，越高越严格 |
+| offset | number | 否 | 分页偏移，默认 0 |
+| limit | number | 否 | 分页大小，默认 60、最大 100 |
+
+#### 响应
+
+`items` 按相似度降序，每项为 `{ item, similarity_score }`；`total` 为阈值与权限过滤后的总数，分页字段与 item/list 一致。未安装/启用扩展或源图尚未分析返回 `INVALID_PARAM`。
+
+### 视觉扩展管理
+
+| 方法 | 端点 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/api/v1/vision/status` | 模型安装/启停、下载与索引进度 |
+| POST | `/api/v1/vision/install` | 用户主动下载并启用模型（admin） |
+| POST | `/api/v1/vision/enable` | `{ "enabled": true/false }` 启停扩展（admin） |
+| POST | `/api/v1/vision/remove` | 删除模型（admin，已生成向量保留供重装复用） |
 
 ### duplicates
 
