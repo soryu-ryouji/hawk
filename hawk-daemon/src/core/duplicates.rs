@@ -1,5 +1,5 @@
-//! 重复图片分组：同内容多位置与 pHash 近重复（BK-tree + 并查集）。
-//! BK-tree 在距离 0 时会覆盖/忽略重复值，因此先按 64 位 pHash 预分组，确保不同 item 不丢失。
+//! 重复图片分组：同内容多位置与 dHash + RGB 近重复（BK-tree + 并查集）。
+//! BK-tree 在距离 0 时会覆盖/忽略重复值，因此先按 64 位 dHash 预分组，确保不同 item 不丢失。
 
 use crate::core::item::ItemLocation;
 use crate::core::perceptual_hash;
@@ -9,8 +9,10 @@ use std::collections::HashMap;
 #[derive(Clone, Debug)]
 pub struct DuplicateItem {
     pub id: String,
-    /// 当前算法版本的 pHash；非图像、未计算或旧版本均为 None
+    /// 当前算法版本的 dHash；非图像、未计算或旧版本均为 None
     pub phash: Option<u64>,
+    /// 同一版本的 RGB 布局特征
+    pub rgb: Option<perceptual_hash::RgbGrid>,
     /// 当前用户可见的非回收站位置
     pub locations: Vec<ItemLocation>,
 }
@@ -52,13 +54,15 @@ pub fn exact_groups(items: &[DuplicateItem]) -> Vec<DuplicateGroup> {
 
 /// 相似内容：BK-tree 查找近邻，并查集合并为连通分组。只含不同 item；同 item 多位置仍随成员展开
 pub fn similar_groups(items: &[DuplicateItem], max_distance: u32) -> Vec<DuplicateGroup> {
-    let candidates: Vec<&DuplicateItem> =
-        items.iter().filter(|item| item.phash.is_some()).collect();
+    let candidates: Vec<&DuplicateItem> = items
+        .iter()
+        .filter(|item| item.phash.is_some() && item.rgb.is_some())
+        .collect();
     if candidates.len() < 2 {
         return Vec::new();
     }
 
-    // pHash 相同的不同 item 先聚到同一 bits 桶，规避 BK-tree 对距离 0 元素的忽略行为
+    // dHash 相同的不同 item 先聚到同一 bits 桶，规避 BK-tree 对距离 0 元素的忽略行为
     let mut by_bits: HashMap<u64, Vec<usize>> = HashMap::new();
     for (index, item) in candidates.iter().enumerate() {
         by_bits.entry(item.phash.unwrap()).or_default().push(index);
@@ -74,7 +78,17 @@ pub fn similar_groups(items: &[DuplicateItem], max_distance: u32) -> Vec<Duplica
             for other in bands.candidates(*bits, max_distance) {
                 for left in &by_bits[bits] {
                     for right in &by_bits[&other] {
-                        union.union(*left, *right);
+                        let rgb_difference = perceptual_hash::rgb_distance(
+                            &candidates[*left].rgb.unwrap(),
+                            &candidates[*right].rgb.unwrap(),
+                        );
+                        if perceptual_hash::similarity_matches(
+                            perceptual_hash::distance(*bits, other),
+                            rgb_difference,
+                            max_distance,
+                        ) {
+                            union.union(*left, *right);
+                        }
                     }
                 }
             }
@@ -90,7 +104,17 @@ pub fn similar_groups(items: &[DuplicateItem], max_distance: u32) -> Vec<Duplica
                 }
                 for left in &by_bits[bits] {
                     for right in &by_bits[other] {
-                        union.union(*left, *right);
+                        let rgb_difference = perceptual_hash::rgb_distance(
+                            &candidates[*left].rgb.unwrap(),
+                            &candidates[*right].rgb.unwrap(),
+                        );
+                        if perceptual_hash::similarity_matches(
+                            perceptual_hash::distance(*bits, *other),
+                            rgb_difference,
+                            max_distance,
+                        ) {
+                            union.union(*left, *right);
+                        }
                     }
                 }
             }
@@ -240,6 +264,7 @@ mod tests {
         DuplicateItem {
             id: id.to_string(),
             phash: hash,
+            rgb: hash.map(|_| [0; perceptual_hash::RGB_GRID_BYTES]),
             locations: paths
                 .iter()
                 .map(|path| ItemLocation {
@@ -284,6 +309,14 @@ mod tests {
             .members
             .iter()
             .any(|member| member.id == "c" && member.distance == 1));
+    }
+
+    #[test]
+    fn similar_groups_reject_hash_candidates_with_different_colors() {
+        let grey = item("grey", Some(0), &["grey.png"]);
+        let mut color = item("color", Some(0), &["color.png"]);
+        color.rgb = Some([200; perceptual_hash::RGB_GRID_BYTES]);
+        assert!(similar_groups(&[grey, color], 20).is_empty());
     }
 
     #[test]

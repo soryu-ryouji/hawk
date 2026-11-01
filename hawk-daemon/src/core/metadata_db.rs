@@ -1,7 +1,7 @@
 //! `.hawk/metadata.db`：素材元数据的唯一权威 SQLite 存储与启动注水来源。
 //!
 //! 不再承担库外 TOML 镜像角色，也没有写失败熔断/纯文本回退：读写错误直接上传调用方。
-//! schema v2 在 v1 上增量加入 phash/phash_version，保留已有 SQLite 元数据；不读取 TOML。
+//! schema v2 在 v1 上增量加入 phash/phash_version/rgb_grid，保留已有 SQLite 元数据；不读取 TOML。
 
 use crate::core::metadata::{ItemMetadata, PaletteEntry, PerceptualHash};
 use rusqlite::{Connection, OptionalExtension};
@@ -66,7 +66,7 @@ impl MetadataDb {
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS items (hash TEXT PRIMARY KEY, url TEXT, star INTEGER NOT NULL DEFAULT 0, \
                  annotation TEXT, source_mtime INTEGER NOT NULL DEFAULT 0, width INTEGER NOT NULL DEFAULT 0, \
-                 height INTEGER NOT NULL DEFAULT 0, palette TEXT, phash TEXT, phash_version INTEGER NOT NULL DEFAULT 0)",
+                 height INTEGER NOT NULL DEFAULT 0, palette TEXT, phash TEXT, phash_version INTEGER NOT NULL DEFAULT 0, rgb_grid TEXT)",
                 [],
             )?;
             conn.execute(
@@ -85,9 +85,10 @@ impl MetadataDb {
                 "CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, entries INTEGER NOT NULL)",
                 [],
             )?;
-            // v1 → v2 只做增量加列；已有标签、评分、备注、调色板和位置原样保留。
+            // 老库只做增量加列；已有标签、评分、备注、调色板和位置原样保留。
             ensure_column(conn, "phash", "TEXT")?;
             ensure_column(conn, "phash_version", "INTEGER NOT NULL DEFAULT 0")?;
+            ensure_column(conn, "rgb_grid", "TEXT")?;
             conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?1) \
                  ON CONFLICT(key) DO UPDATE SET value=?1",
@@ -103,15 +104,20 @@ impl MetadataDb {
             let mut items: HashMap<String, ItemMetadata> = HashMap::new();
             {
                 let mut stmt = conn.prepare(
-                    "SELECT hash, url, star, annotation, width, height, palette, phash, phash_version FROM items",
+                    "SELECT hash, url, star, annotation, width, height, palette, phash, phash_version, rgb_grid FROM items",
                 )?;
                 let rows = stmt.query_map([], |row| {
                     let palette_json: Option<String> = row.get(6)?;
                     let phash_version = row.get::<_, i64>(8)? as u32;
                     let phash_value = row.get::<_, Option<String>>(7)?;
+                    let rgb_grid = row.get::<_, Option<String>>(9)?;
                     let phash = (phash_version > 0).then(|| PerceptualHash {
                         version: phash_version,
                         value: phash_value.and_then(|hex| u64::from_str_radix(&hex, 16).ok()),
+                        rgb: rgb_grid
+                            .as_deref()
+                            .and_then(crate::core::perceptual_hash::rgb_grid_from_hex)
+                            .map(Box::new),
                     });
                     Ok((
                         row.get::<_, String>(0)?,
@@ -285,11 +291,16 @@ fn upsert_item(
         .phash
         .as_ref()
         .and_then(|p| p.value.map(|value| format!("{value:016x}")));
+    let rgb_grid = meta.phash.as_ref().and_then(|p| {
+        p.rgb
+            .as_deref()
+            .map(crate::core::perceptual_hash::rgb_grid_to_hex)
+    });
     tx.execute(
-        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, phash, phash_version) \
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9) \
+        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, phash, phash_version, rgb_grid) \
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9, ?10) \
          ON CONFLICT(hash) DO UPDATE SET url=?2, star=?3, annotation=?4, source_mtime=0, \
-         width=?5, height=?6, palette=?7, phash=?8, phash_version=?9",
+         width=?5, height=?6, palette=?7, phash=?8, phash_version=?9, rgb_grid=?10",
         rusqlite::params![
             hash,
             meta.url,
@@ -300,6 +311,7 @@ fn upsert_item(
             meta.palette.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()),
             phash_value,
             phash_version,
+            rgb_grid,
         ],
     )?;
     delete_child_rows(tx, hash)?;

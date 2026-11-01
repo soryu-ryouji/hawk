@@ -430,6 +430,22 @@ async fn lan_access_key_works_across_channels() {
     assert_eq!(call_auth(peer_router, "web-token").await, StatusCode::OK);
 }
 
+/// 后台派生进度可能与权限事件交错，只忽略无关事件并等待目标通知。
+async fn recv_access_changed(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::core::events::LibraryEvent>,
+) -> crate::core::events::LibraryEvent {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let event = rx.recv().await.unwrap();
+            if event.kind == crate::core::events::LanEvents::ACCESS_CHANGED {
+                return event;
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
 /// 远程设置与 LAN 设置共用 AccessKey：远程密钥面的增改删也广播同一刷新事件。
 #[tokio::test]
 async fn remote_key_mutations_publish_access_changed() {
@@ -445,10 +461,7 @@ async fn remote_key_mutations_publish_access_changed() {
     assert_eq!(status, StatusCode::OK);
     let created: Value = serde_json::from_slice(&bytes).unwrap();
     let key_id = created["data"]["id"].as_str().unwrap();
-    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let event = recv_access_changed(&mut rx).await;
     assert_eq!(event.kind, crate::core::events::LanEvents::ACCESS_CHANGED);
 
     let path = format!("/api/v1/remote/keys/{key_id}");
@@ -460,18 +473,12 @@ async fn remote_key_mutations_publish_access_changed() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let event = recv_access_changed(&mut rx).await;
     assert_eq!(event.kind, crate::core::events::LanEvents::ACCESS_CHANGED);
 
     let (status, _) = call_json(&app.router, "DELETE", &path, None).await;
     assert_eq!(status, StatusCode::OK);
-    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let event = recv_access_changed(&mut rx).await;
     assert_eq!(event.kind, crate::core::events::LanEvents::ACCESS_CHANGED);
 }
 
@@ -2230,12 +2237,15 @@ async fn similar_items_are_filtered_and_sorted_by_phash_distance() {
     let source = app.add_test_item("source.png", [1, 1, 1]).await;
     let near = app.add_test_item("near.png", [2, 2, 2]).await;
     let far = app.add_test_item("far.png", [3, 3, 3]).await;
-    app.wait_for_phash(&[&source, &near, &far]).await;
+    let different_color = app.add_test_item("different-color.png", [4, 4, 4]).await;
+    app.wait_for_phash(&[&source, &near, &far, &different_color])
+        .await;
     let set_phash = |id: &str, value: Option<u64>| {
         let mut meta = app.lib().store.try_get(id).unwrap();
         meta.phash = Some(crate::core::metadata::PerceptualHash {
             version: crate::core::perceptual_hash::PHASH_VERSION,
             value,
+            rgb: value.map(|_| Box::new([0; crate::core::perceptual_hash::RGB_GRID_BYTES])),
         });
         app.lib().store.save(id, &meta).unwrap();
         app.lib()
@@ -2245,6 +2255,16 @@ async fn similar_items_are_filtered_and_sorted_by_phash_distance() {
     set_phash(&source, Some(0));
     set_phash(&near, Some(1));
     set_phash(&far, Some(u64::MAX));
+    set_phash(&different_color, Some(0));
+    // dHash 完全相同也不能绕过 RGB 复核
+    let mut color_meta = app.lib().store.try_get(&different_color).unwrap();
+    color_meta.phash.as_mut().unwrap().rgb = Some(Box::new(
+        [200; crate::core::perceptual_hash::RGB_GRID_BYTES],
+    ));
+    app.lib().store.save(&different_color, &color_meta).unwrap();
+    app.lib()
+        .index
+        .with_item_mut(&different_color, |item| item.sync_from(&color_meta));
 
     let body = json!({
         "similar_to": source,
@@ -2381,6 +2401,7 @@ async fn duplicate_scan_groups_locations_and_similar_items() {
         meta.phash = Some(crate::core::metadata::PerceptualHash {
             version: crate::core::perceptual_hash::PHASH_VERSION,
             value: Some(value),
+            rgb: Some(Box::new([0; crate::core::perceptual_hash::RGB_GRID_BYTES])),
         });
         app.lib().store.save(id, &meta).unwrap();
         app.lib()

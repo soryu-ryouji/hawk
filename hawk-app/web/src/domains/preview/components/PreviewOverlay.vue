@@ -62,11 +62,11 @@ async function copyImage() {
 // 浏览器（无 hawkShell）隐藏系统相关项；只读查看（viewer）隐藏全部写操作，无可用项时不弹菜单。
 function onMenu(e: MouseEvent) {
   const items = [
-    // 相似查找是读操作，viewer 也可用；关闭浮层后进入原网格的相似结果视图
+    // 相同/相似查找是读操作，viewer 也可用；关闭预览后打开独立查找弹窗
     ...(Number(props.item.width) > 0 && Number(props.item.height) > 0
       ? [
           {
-            label: '查找相似图片',
+            label: '查找图片',
             action: () => {
               store.showSimilar(props.item);
               emit('close');

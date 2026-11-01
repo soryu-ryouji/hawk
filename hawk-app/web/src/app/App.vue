@@ -3,7 +3,7 @@
 // 启动状态机在 app/boot.ts，面板拖拽在 app/panelResize.ts，本组件只做接线与胶水。
 import { ref, watch } from 'vue';
 import { apiConfig, clearStoredCredential } from '@/shared/api/client';
-import { useLibraryStore, FilterBar, ItemGrid, Inspector } from '@/domains/library';
+import { useLibraryStore, FilterBar, ItemGrid, Inspector, SimilarImageDialog } from '@/domains/library';
 import { useImporterStore } from '@/domains/import';
 import { usePreviewStore } from '@/domains/preview';
 import { useShortcuts } from './shortcuts';
@@ -158,6 +158,7 @@ useDragImport();
       />
     </template>
 
+    <SimilarImageDialog v-if="store.similarSearchSource" :source="store.similarSearchSource" @close="store.closeSimilar()" />
     <PreviewOverlay v-if="preview.previewItem" :item="preview.previewItem" @close="preview.closePreview()" @navigate="preview.navigatePreview($event)" />
     <!-- 图片编辑窗口:网格/预览浮层右键「编辑图片…」打开,层级高于预览浮层 -->
     <ImageEditDialog v-if="preview.editorTarget" :item="preview.editorTarget" @close="preview.closeEditor()" />

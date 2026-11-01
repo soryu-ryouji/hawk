@@ -241,10 +241,12 @@ fn similarity_query(
         }
     }
     let phash = lib.index.phash(id);
-    let Some(hash) = phash.as_ref().and_then(|hash| {
-        (hash.version == crate::core::perceptual_hash::PHASH_VERSION)
-            .then_some(hash.value)
-            .flatten()
+    let Some((hash, rgb)) = phash.as_ref().and_then(|feature| {
+        if feature.version == crate::core::perceptual_hash::PHASH_VERSION {
+            Some((feature.value?, feature.rgb.as_deref().copied()?))
+        } else {
+            None
+        }
     }) else {
         let message = if phash.as_ref().is_some_and(|hash| hash.value.is_none()) {
             "该素材不是可分析的图片，无法查找相似图片"
@@ -255,6 +257,7 @@ fn similarity_query(
     };
     Ok(Some(crate::core::item::SimilarityQuery {
         hash,
+        rgb,
         max_distance,
     }))
 }

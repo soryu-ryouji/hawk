@@ -222,6 +222,7 @@ fn process_job(job: &ThumbJob, deps: &WorkerDeps, thumbs: &ThumbnailService, bus
                 phash: crate::core::metadata::PerceptualHash {
                     version: crate::core::perceptual_hash::PHASH_VERSION,
                     value: None,
+                    rgb: None,
                 },
             });
         }
@@ -276,6 +277,9 @@ fn process_job(job: &ThumbJob, deps: &WorkerDeps, thumbs: &ThumbnailService, bus
                 let phash = crate::core::metadata::PerceptualHash {
                     version: crate::core::perceptual_hash::PHASH_VERSION,
                     value: Some(crate::core::perceptual_hash::compute(&image)),
+                    rgb: Some(Box::new(crate::core::perceptual_hash::compute_rgb_grid(
+                        &image,
+                    ))),
                 };
                 let _ = deps.jobs.try_fire(Job::Phash {
                     hash: job.hash.clone(),

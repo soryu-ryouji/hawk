@@ -125,17 +125,19 @@ impl ItemIndex {
                 if locations.is_empty() {
                     return None;
                 }
-                let phash = item
+                let features = item
                     .phash
                     .as_ref()
-                    .filter(|hash| hash.version == crate::core::perceptual_hash::PHASH_VERSION)
-                    .and_then(|hash| hash.value);
-                if locations.len() == 1 && phash.is_none() {
+                    .filter(|hash| hash.version == crate::core::perceptual_hash::PHASH_VERSION);
+                let phash = features.and_then(|hash| hash.value);
+                let rgb = features.and_then(|hash| hash.rgb.as_deref().copied());
+                if locations.len() == 1 && (phash.is_none() || rgb.is_none()) {
                     return None;
                 }
                 Some(crate::core::duplicates::DuplicateItem {
                     id: item.id.clone(),
                     phash,
+                    rgb,
                     locations,
                 })
             })
@@ -724,8 +726,17 @@ fn filter_locations<'a>(inner: &'a IndexInner, q: &ItemQuery) -> Vec<(&'a Item, 
     }
     if let Some(similarity) = q.similarity {
         items.retain(|i| {
-            item_phash_distance(i, &similarity)
-                .is_some_and(|distance| distance <= similarity.max_distance)
+            let Some(hash_distance) = item_phash_distance(i, &similarity) else {
+                return false;
+            };
+            let Some(rgb_difference) = item_rgb_distance(i, &similarity) else {
+                return false;
+            };
+            crate::core::perceptual_hash::similarity_matches(
+                hash_distance,
+                rgb_difference,
+                similarity.max_distance,
+            )
         });
     }
 
@@ -788,6 +799,17 @@ fn item_phash_distance(
     Some(crate::core::perceptual_hash::distance(
         similarity.hash,
         value,
+    ))
+}
+
+fn item_rgb_distance(item: &Item, similarity: &crate::core::item::SimilarityQuery) -> Option<f64> {
+    let phash = item.phash.as_ref()?;
+    if phash.version != crate::core::perceptual_hash::PHASH_VERSION {
+        return None;
+    }
+    Some(crate::core::perceptual_hash::rgb_distance(
+        &similarity.rgb,
+        phash.rgb.as_deref()?,
     ))
 }
 
@@ -885,12 +907,14 @@ mod tests {
                 item.phash = Some(PerceptualHash {
                     version: crate::core::perceptual_hash::PHASH_VERSION,
                     value: Some(value),
+                    rgb: Some(Box::new([0; crate::core::perceptual_hash::RGB_GRID_BYTES])),
                 });
             });
         }
         let query = crate::core::item::ItemQuery {
             similarity: Some(crate::core::item::SimilarityQuery {
                 hash: 0,
+                rgb: [0; crate::core::perceptual_hash::RGB_GRID_BYTES],
                 max_distance: 1,
             }),
             order_by: Some("similarity".to_string()),

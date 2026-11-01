@@ -84,7 +84,6 @@ const locationTitle = computed(() => {
   if (view.kind === 'untagged') return '未标签素材';
   if (view.kind === 'trash') return '回收站';
   if (view.kind === 'tag' || view.kind === 'category') return view.name;
-  if (view.kind === 'similar') return `相似图片：${view.name}`;
   return '';
 });
 
@@ -218,7 +217,7 @@ function onDblClick(e: MouseEvent) {
         <Icon name="filter" :size="14" />
       </button>
 
-      <button v-if="!store.isSimilar" class="bar-btn sort-btn" :title="`排序：${currentSortLabel}`" @click="openSortMenu">
+      <button class="bar-btn sort-btn" :title="`排序：${currentSortLabel}`" @click="openSortMenu">
         <Icon name="arrowUpDown" :size="14" />
       </button>
 

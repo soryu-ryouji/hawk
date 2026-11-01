@@ -50,6 +50,8 @@ export type { ViewValidators } from './navigation';
 export const useLibraryStore = defineStore('library', () => {
   // ---- state ----
   const view = ref<ViewState>({ kind: 'all' });
+  /** 单图相同/相似查找弹窗的源图；结果由 SimilarImageDialog 独立查询，不进入主列表历史 */
+  const similarSearchSource = ref<Item | null>(null);
   const query = ref<QueryState>({ keywords: [], orderBy: 'modification_time', order: 'desc' });
   /** 当前视图全量骨架（id/path/width/height/star，与 item/list 同查询同排序）：布局与滚动条总高的唯一依据。
    *  同内容（同 hash）多位置各自成条，条目唯一标识为 itemKey(id, path)，selection/details 均以它为键 */
@@ -159,10 +161,8 @@ export const useLibraryStore = defineStore('library', () => {
 
   // ---- getters ----
   const isTrash = computed(() => view.value.kind === 'trash');
-  const isSimilar = computed(() => view.value.kind === 'similar');
-  const similarityThreshold = computed(() => (view.value.kind === 'similar' ? view.value.maxDistance : 5));
-  /** 查询带筛选条件或相似视图（含距离档位）时筛选工具列常驻显示 */
-  const hasActiveFilters = computed(() => isSimilar.value || query.value.star !== undefined || !!query.value.color || query.value.size !== undefined);
+  /** 查询带筛选条件时筛选工具列常驻显示 */
+  const hasActiveFilters = computed(() => query.value.star !== undefined || !!query.value.color || query.value.size !== undefined);
   const currentFolderPath = computed(() => (view.value.kind === 'folder' ? view.value.path : null));
   const selectedItems = computed(() => selection.value.map((id) => details.value.get(id)).filter((i): i is Item => !!i));
   const primarySelected = computed(() => selectedItems.value.at(-1) ?? null);
@@ -175,7 +175,6 @@ export const useLibraryStore = defineStore('library', () => {
     if (v.kind === 'untagged') return '未标签素材';
     if (v.kind === 'trash') return '回收站';
     if (v.kind === 'tag' || v.kind === 'category') return v.name;
-    if (v.kind === 'similar') return `相似图片：${v.name}`;
     return v.path.split('/').pop() ?? '';
   });
   /** 当前视图条目数（= 骨架长度；骨架未加载时为 0） */
@@ -211,10 +210,8 @@ export const useLibraryStore = defineStore('library', () => {
       max_width: query.value.size?.kind === 'wh' ? query.value.size.maxWidth : undefined,
       min_height: query.value.size?.kind === 'wh' ? query.value.size.minHeight : undefined,
       max_height: query.value.size?.kind === 'wh' ? query.value.size.maxHeight : undefined,
-      order_by: isSimilar.value ? 'similarity' : query.value.orderBy,
-      order: isSimilar.value ? 'asc' : query.value.order,
-      similar_to: view.value.kind === 'similar' ? view.value.id : undefined,
-      max_distance: view.value.kind === 'similar' ? view.value.maxDistance : undefined,
+      order_by: query.value.orderBy,
+      order: query.value.order,
       in_trash: isTrash.value || undefined,
       ...globalExcludes(),
       folders: view.value.kind === 'folder' ? [view.value.path] : view.value.kind === 'root' ? [''] : undefined,
@@ -266,19 +263,13 @@ export const useLibraryStore = defineStore('library', () => {
     toastTimer = setTimeout(() => (toast.value = null), 3000);
   }
 
-  /** 以素材为源进入全库近重复查找；source 只负责 pHash 与标题，结果沿用当前网格 */
+  /** 打开单图相同/相似查找弹窗；模式与分页结果由弹窗自管理 */
   function showSimilar(item: Item) {
-    // 近重复查找始终从全库开始，不把来源视图的关键词/评分/颜色条件误当作相似条件
-    query.value = { keywords: [], orderBy: 'modification_time', order: 'desc' };
-    searchText.value = '';
-    setView({ kind: 'similar', id: item.id, path: item.path, name: item.name, maxDistance: 5 });
+    similarSearchSource.value = item;
   }
 
-  /** 严格/宽松档位切换只替换当前历史项，不为每次切换新增一条浏览历史 */
-  function setSimilarityThreshold(maxDistance: number) {
-    if (view.value.kind === 'similar') {
-      correctView({ ...view.value, maxDistance });
-    }
+  function closeSimilar() {
+    similarSearchSource.value = null;
   }
 
   // ---- 初始与查询 ----
@@ -316,6 +307,7 @@ export const useLibraryStore = defineStore('library', () => {
     query.value = { keywords: [], orderBy: 'modification_time', order: 'desc' };
     searchText.value = '';
     clearSelection();
+    similarSearchSource.value = null;
     // 预览/编辑浮层的会话清理由组件层编排（App.vue runBoot 调 preview store）
     taskBacklog.value = null;
     indexProgress.value = null;
@@ -735,10 +727,9 @@ export const useLibraryStore = defineStore('library', () => {
     lockedView,
     setLockedView,
     isTrash,
-    isSimilar,
-    similarityThreshold,
+    similarSearchSource,
     showSimilar,
-    setSimilarityThreshold,
+    closeSimilar,
     canGoBack,
     canGoForward,
     currentFolderPath,

@@ -22,6 +22,8 @@ pub struct PaletteEntry {
 pub struct PerceptualHash {
     pub version: u32,
     pub value: Option<u64>,
+    /// 与 value 同一次解码产出的 8×8 RGB 平均色网格；非图像为 None
+    pub rgb: Option<Box<crate::core::perceptual_hash::RgbGrid>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -38,7 +40,7 @@ pub struct ItemMetadata {
     pub height: i32,
     /// 调色板（按占比降序，最多 10 色）；None = 未提炼，Some(vec![]) = 非图像负缓存
     pub palette: Option<Vec<PaletteEntry>>,
-    /// pHash；None = 尚未计算，Some(value=None) = 已探测的非图像负缓存
+    /// dHash + RGB 特征；None = 尚未计算，Some(value=None) = 已探测的非图像负缓存
     pub phash: Option<PerceptualHash>,
 }
 

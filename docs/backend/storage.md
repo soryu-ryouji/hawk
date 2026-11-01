@@ -57,14 +57,14 @@ cache/<库标识>/thumbnails/
 - 批量写入：单个事务提交全部条目，成功后统一更新内存；失败返回错误，不静默降级。
 - 启动：`load_all` 一次读取并恢复内存索引，无需先全库扫描。
 - 数据库打不开、schema 初始化失败或读取失败：进入启动错误页，**不按空库继续写入**。
-- 已有 v1 SQLite 数据只增量添加 `phash` / `phash_version` 列，原标签、评分、备注、位置与调色板保持不变；不进行 TOML 迁移。
+- 已有 v1 SQLite 数据只增量添加 `phash` / `phash_version` / `rgb_grid` 列，原标签、评分、备注、位置与调色板保持不变；不进行 TOML 迁移。
 
 主要表：
 
 | 表 | 职责 |
 | -- | ---- |
 | `meta` | schema 版本等元信息 |
-| `items` | hash、来源 URL、评分、备注、宽高、调色板、pHash 与算法版本 |
+| `items` | hash、来源 URL、评分、备注、宽高、调色板、dHash、RGB 网格与特征版本 |
 | `paths` | 同内容的一个或多个位置、大小与修改时间 |
 | `tags` / `categories` | 标签与分类赋值 |
 | `folders` | 增量扫描的目录快照 |
@@ -77,14 +77,15 @@ cache/<库标识>/thumbnails/
 
 - `width` / `height`：图片尺寸，非图片或未知为 0。
 - `palette`：JSON 数组，最多 10 色；`NULL` 表示未提炼，空数组是非图片负缓存。
-- `phash`：16 位十六进制，供近重复查找；`phash_version=0` 表示未计算。
+- `phash`：16 位十六进制 dHash，供近重复粗筛；`phash_version=0` 表示未计算。
+- `rgb_grid`：384 位十六进制的 8×8 RGB 平均色网格，供候选复核。
 - 非图像的 pHash 使用 `version>0, value=NULL` 负缓存，避免周期重试；暂时解码失败保持未计算。
 
-扫描、增量入库和周期维护复用同一 worker：单次解码后按需生成缩略图、调色板、宽高和 pHash。结果经 JobSender 回到单写者流水线，按 500 条或 2 秒批量写 SQLite，并合并 `items.updated`。周期维护间隔由 `HAWK_MAINTENANCE_INTERVAL` 控制（默认 60s，0 关闭）。
+扫描、增量入库和周期维护复用同一 worker：单次解码后按需生成缩略图、调色板、宽高、dHash 和 RGB 网格。结果经 JobSender 回到单写者流水线，按 500 条或 2 秒批量写 SQLite，并合并 `items.updated`。周期维护间隔由 `HAWK_MAINTENANCE_INTERVAL` 控制（默认 60s，0 关闭）。
 
 ## 重复图片管理
 
-「设置 → 存储 → 重复图片」分为相似图片和相同内容：前者按 pHash 对不同 item 分组，后者检查同 item 的多个库内位置。扫描只读，默认不选中，展示文件大小、像素与完整路径；用户明确选择并二次确认后，才按 `id + path` 移入回收站。部分失败保留选择，不执行永久删除或自动保留决策。接口与索引见 [pHash 相似图片查找](similar-images.md)。
+「设置 → 存储 → 重复图片」分为相似图片和相同内容：前者按感知哈希对不同 item 分组，提供相似度滑块（0–100 映射最大距离 20–0，松开后重扫），后者检查同 item 的多个库内位置。扫描只读，默认不选中，展示文件大小、像素与完整路径；用户明确选择并经 ConfirmDialog 二次确认后，才按 `id + path` 移入回收站。部分失败保留选择，不执行永久删除或自动保留决策。接口与索引见 [pHash 相似图片查找](similar-images.md)。
 
 ## 锁（文件夹/分类/标签）
 
@@ -112,7 +113,7 @@ cache/<库标识>/thumbnails/
 
 item id 是文件内容的 BLAKE3 哈希；同内容多位置共享一个 item 和派生数据。缩略图按 `<尺寸>/<hash>.webp` 寻址。
 
-pHash 使用 `image_hasher` 的 DCT + Mean 算法生成 64 位值，SQLite 中保存为 16 位 hex，内存中保存为整数。算法版本从 1 开始，变化时由维护任务重算。详见 [pHash 相似图片查找](similar-images.md)。
+感知哈希使用 `image_hasher` 的 Gradient（dHash）算法生成 64 位值，SQLite 中保存为 16 位 hex，内存中保存为整数；另有 8×8 RGB 网格用于颜色与布局复核。当前特征版本为 3，变化时由维护任务重算。详见 [感知哈希相似图片查找](similar-images.md)。
 
 缓存文件直接平铺在尺寸目录下，不按哈希分桶；访问按内容哈希直接寻址，不枚举目录。
 

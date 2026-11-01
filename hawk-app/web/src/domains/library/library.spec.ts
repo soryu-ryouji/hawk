@@ -54,26 +54,21 @@ describe('视图历史', () => {
     expect(store.view).toEqual({ kind: 'tag', name: 'T' });
   });
 
-  it('相似视图按距离查询，阈值切换不新增历史', async () => {
+  it('相同/相似查找只打开独立弹窗，不改变主列表视图和筛选', () => {
     const store = useLibraryStore();
     store.setView({ kind: 'category', name: 'C' });
-    store.query.keywords = ['old-filter'];
-    store.searchText = 'old-filter';
-    store.showSimilar({ id: 'source', path: 'source.png', name: 'source' } as Item);
-    await Promise.resolve();
+    store.query.keywords = ['keep-filter'];
+    store.searchText = 'keep-filter';
+    const source = { id: 'source', path: 'source.png', name: 'source' } as Item;
 
-    expect(store.view).toEqual({ kind: 'similar', id: 'source', path: 'source.png', name: 'source', maxDistance: 5 });
-    expect(store.viewTitle).toBe('相似图片：source');
-    expect(store.query.keywords).toEqual([]);
-    expect(store.searchText).toBe('');
-    expect(mocks.itemSkeleton).toHaveBeenCalledWith(expect.objectContaining({ similar_to: 'source', max_distance: 5, order_by: 'similarity', order: 'asc' }));
+    store.showSimilar(source);
 
-    store.setSimilarityThreshold(10);
-    await Promise.resolve();
-    expect(mocks.itemSkeleton).toHaveBeenLastCalledWith(expect.objectContaining({ similar_to: 'source', max_distance: 10 }));
-    expect(store.canGoBack).toBe(true);
-    store.goBack();
+    expect(store.similarSearchSource).toEqual(source);
     expect(store.view).toEqual({ kind: 'category', name: 'C' });
+    expect(store.query.keywords).toEqual(['keep-filter']);
+    expect(store.searchText).toBe('keep-filter');
+    store.closeSimilar();
+    expect(store.similarSearchSource).toBeNull();
   });
 
   it('correctView 就地修正当前条目，不新增历史', () => {

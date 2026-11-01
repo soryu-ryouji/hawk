@@ -23,7 +23,7 @@ const STABILITY_WINDOW_MS: i64 = 1000;
 
 /// 入库准备结果
 pub(crate) enum PrepareOutcome {
-    Apply(PendingUpsert),
+    Apply(Box<PendingUpsert>),
     /// 路径应从索引移除（被 ignore / 不是文件）
     Remove(String),
     /// 跳过（.hawk 内部 / 已安排延迟重试）
@@ -59,7 +59,7 @@ pub(crate) fn do_upsert(
     // 携带已知哈希(item/add)或等待结果的提交不做防抖:文件由 API 写入,内容已完整
     let allow_defer = known_hash.is_none() && !has_reply;
     let pending = match prepare_upsert(ctx, abs, force_hash, allow_defer, attempt) {
-        PrepareOutcome::Apply(p) => p,
+        PrepareOutcome::Apply(p) => *p,
         PrepareOutcome::Remove(rel) => {
             fs_ops::do_delete(ctx, &rel);
             return Ok(None);
@@ -155,7 +155,7 @@ pub(crate) fn prepare_upsert(
         });
 
     if reuse {
-        return PrepareOutcome::Apply(PendingUpsert {
+        return PrepareOutcome::Apply(Box::new(PendingUpsert {
             abs_path: abs.to_string(),
             rel,
             lib_path,
@@ -167,7 +167,7 @@ pub(crate) fn prepare_upsert(
             dim: None,
             palette: None,
             phash: None,
-        });
+        }));
     }
 
     // 文件可能仍在写入(如大文件拷贝中):不立即哈希,延迟重试直至写入稳定,
@@ -177,7 +177,7 @@ pub(crate) fn prepare_upsert(
         return PrepareOutcome::Skip;
     }
 
-    PrepareOutcome::Apply(PendingUpsert {
+    PrepareOutcome::Apply(Box::new(PendingUpsert {
         abs_path: abs.to_string(),
         rel,
         lib_path,
@@ -189,7 +189,7 @@ pub(crate) fn prepare_upsert(
         dim: None,
         palette: None,
         phash: None,
-    })
+    }))
 }
 
 /// 文件最近一秒内仍在写入,视为不稳定

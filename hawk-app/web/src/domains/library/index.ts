@@ -26,4 +26,5 @@ export { default as ItemGrid } from './components/ItemGrid.vue';
 export { default as Inspector } from './components/inspector/Inspector.vue';
 export { default as FilterBar } from './components/FilterBar.vue';
 export { default as SearchBox } from './components/SearchBox.vue';
+export { default as SimilarImageDialog } from './components/SimilarImageDialog.vue';
 export { default as TrashToolbarAction } from './components/TrashToolbarAction.vue';

@@ -251,6 +251,11 @@ mod tests {
         let hash = "a".repeat(64);
         let meta = ItemMetadata {
             tags: vec!["SQLite".to_string()],
+            phash: Some(crate::core::metadata::PerceptualHash {
+                version: crate::core::perceptual_hash::PHASH_VERSION,
+                value: Some(42),
+                rgb: Some(Box::new([7; crate::core::perceptual_hash::RGB_GRID_BYTES])),
+            }),
             paths: vec![crate::core::metadata::PathEntry {
                 path: "a.png".to_string(),
                 size: 1,

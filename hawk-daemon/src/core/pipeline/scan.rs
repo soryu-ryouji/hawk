@@ -244,7 +244,8 @@ fn run_phases(ctx: &Arc<PipelineCtx>, session: &Arc<ScanSession>) -> Result<Walk
             walk.files += 1;
         }
         match prepare_upsert(ctx, &abs, session.full, true, 0) {
-            PrepareOutcome::Apply(mut p) => {
+            PrepareOutcome::Apply(p) => {
+                let mut p = *p;
                 if let Some(hash) = p.reused_hash.clone() {
                     // 复用项免哈希,直接回流应用
                     p.hash = Some(hash);
@@ -355,6 +356,7 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
         p.phash = Some(crate::core::metadata::PerceptualHash {
             version: crate::core::perceptual_hash::PHASH_VERSION,
             value: None,
+            rgb: None,
         });
         return;
     }
@@ -371,6 +373,9 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
                 p.phash = Some(crate::core::metadata::PerceptualHash {
                     version: crate::core::perceptual_hash::PHASH_VERSION,
                     value: Some(crate::core::perceptual_hash::compute(&image)),
+                    rgb: Some(Box::new(crate::core::perceptual_hash::compute_rgb_grid(
+                        &image,
+                    ))),
                 });
             }
             if need_thumb {

@@ -119,7 +119,7 @@ describe('广域网预览流量', () => {
     const showSimilar = vi.spyOn(store, 'showSimilar').mockImplementation(() => {});
 
     document.body.querySelector('.overlay')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const entry = useContextMenu().state.items.find((item) => item.label === '查找相似图片');
+    const entry = useContextMenu().state.items.find((item) => item.label === '查找图片');
     expect(entry).toBeDefined();
     entry?.action?.();
 

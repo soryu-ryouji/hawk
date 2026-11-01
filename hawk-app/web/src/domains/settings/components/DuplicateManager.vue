@@ -5,6 +5,7 @@ import { computed, ref } from 'vue';
 import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
 import { formatSize } from '@/shared/lib/format';
+import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue';
 import { itemKey, splitKey } from '@/domains/library';
 import { useLibraryStore } from '@/domains/library';
 import type { DuplicateGroup } from '@/shared/types';
@@ -14,7 +15,9 @@ type Kind = 'similar' | 'exact';
 const PAGE_SIZE = 50;
 const store = useLibraryStore();
 const kind = ref<Kind>('similar');
-const maxDistance = ref(5);
+// Eagle 式相似度：0 最宽松（距离 20），100 最严格（距离 0）；默认 75 对应原严格档 5
+const similarity = ref(75);
+const maxDistance = computed(() => Math.round((100 - similarity.value) / 5));
 const groups = ref<DuplicateGroup[]>([]);
 const total = ref(0);
 const offset = ref(0);
@@ -47,8 +50,8 @@ function switchKind(next: Kind) {
   result.value = '';
 }
 
-function toggleThreshold() {
-  maxDistance.value = maxDistance.value === 5 ? 10 : 5;
+function onThresholdChange() {
+  // range 的 input 只更新数值，change（拖动松开/键盘提交）才重扫，避免连续发起全库计算
   if (scanned.value) {
     void startScan();
   }
@@ -155,16 +158,31 @@ async function deleteSelected() {
           <button type="button" :class="{ active: kind === 'similar' }" :disabled="loading" @click="switchKind('similar')">相似图片</button>
           <button type="button" :class="{ active: kind === 'exact' }" :disabled="loading" @click="switchKind('exact')">相同内容</button>
         </div>
-        <button v-if="kind === 'similar'" type="button" class="threshold" :disabled="loading" @click="toggleThreshold">
-          {{ maxDistance === 5 ? '严格 0–5' : '宽松 0–10' }}
-        </button>
+        <div v-if="kind === 'similar'" class="threshold">
+          <div class="threshold-label">
+            <span>相似度</span>
+            <span>{{ similarity }}</span>
+          </div>
+          <input
+            v-model.number="similarity"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            aria-label="相似度"
+            :title="`向右提高相似度要求（当前差异 0–${maxDistance}）`"
+            :disabled="loading || deleting"
+            @change="onThresholdChange"
+          />
+          <div class="threshold-scale"><span>宽松</span><span>严格</span></div>
+        </div>
         <button type="button" class="scan-button" :disabled="loading || deleting" @click="startScan">{{ actionText }}</button>
       </div>
 
       <p class="settings-message">
         {{
           kind === 'similar'
-            ? '按 pHash 分组。相似不等于重复，请逐张确认；不会自动删除任何文件。'
+            ? '按感知哈希分组。相似不等于重复，请逐张确认；不会自动删除任何文件。'
             : '检查同一 hash 下的多个文件位置，只列出库内位置数大于 1 的组。'
         }}
       </p>
@@ -218,16 +236,15 @@ async function deleteSelected() {
       </div>
     </div>
 
-    <div v-if="confirmOpen" class="duplicate-confirm" role="dialog" aria-modal="true" aria-label="确认移入回收站" @click.self="confirmOpen = false">
-      <div class="confirm-card">
-        <h4>确认移入回收站？</h4>
-        <p>将移动 {{ selectedCount }} 个文件位置。其他位置不会被删除；同一 item 的最后一个库内位置被移动后，该 item 也会进入回收站，之后仍可恢复。</p>
-        <div class="confirm-actions">
-          <button type="button" :disabled="deleting" @click="confirmOpen = false">取消</button>
-          <button type="button" class="danger" :disabled="deleting" @click="deleteSelected">确认移入回收站</button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      v-if="confirmOpen"
+      title="移入回收站？"
+      :description="`将移动 ${selectedCount} 个文件位置。其他位置不会被删除；同一 item 的最后一个库内位置被移动后，该 item 也会进入回收站，之后仍可恢复。`"
+      confirm-text="确认移入回收站"
+      danger
+      @confirm="deleteSelected"
+      @cancel="confirmOpen = false"
+    />
   </section>
 </template>
 
@@ -236,8 +253,7 @@ async function deleteSelected() {
 .duplicate-tabs,
 .duplicate-footer,
 .pagination,
-.duplicate-actions,
-.confirm-actions {
+.duplicate-actions {
   display: flex;
   align-items: center;
 }
@@ -256,11 +272,9 @@ async function deleteSelected() {
 }
 
 .duplicate-tabs button,
-.threshold,
 .scan-button,
 .pagination button,
-.duplicate-actions button,
-.confirm-actions button {
+.duplicate-actions button {
   padding: 5px 10px;
   border-radius: 6px;
   color: var(--fg-1);
@@ -273,7 +287,33 @@ async function deleteSelected() {
 }
 
 .threshold {
-  border: 1px solid var(--border);
+  width: min(210px, 100%);
+  color: var(--fg-1);
+  font-size: 11px;
+}
+
+.threshold-label,
+.threshold-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.threshold-label {
+  color: var(--fg-0);
+  font-size: 12px;
+}
+
+.threshold input {
+  width: 100%;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.threshold-scale {
+  color: var(--fg-1);
+  font-size: 10px;
 }
 
 .scan-button {
@@ -377,44 +417,8 @@ async function deleteSelected() {
   font-size: 12px;
 }
 
-.duplicate-actions button.danger,
-.confirm-actions button.danger {
+.duplicate-actions button.danger {
   border: 1px solid var(--danger);
   color: var(--danger);
-}
-
-.duplicate-confirm {
-  position: fixed;
-  inset: 0;
-  z-index: 400;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: rgba(0, 0, 0, 0.6);
-}
-
-.confirm-card {
-  width: min(440px, 100%);
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-1);
-}
-
-.confirm-card h4 {
-  margin: 0 0 10px;
-  color: var(--fg-0);
-}
-
-.confirm-card p {
-  color: var(--fg-1);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.confirm-actions {
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 16px;
 }
 </style>

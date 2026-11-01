@@ -217,10 +217,11 @@ pub struct ItemSkeletonDto {
     pub similarity_distance: Option<u32>,
 }
 
-/// 相似度查询：源图 64 位 pHash 与最大汉明距离
+/// 相似度查询：源图 dHash、RGB 布局特征与最大汉明距离
 #[derive(Clone, Copy)]
 pub struct SimilarityQuery {
     pub hash: u64,
+    pub rgb: crate::core::perceptual_hash::RgbGrid,
     pub max_distance: u32,
 }
 

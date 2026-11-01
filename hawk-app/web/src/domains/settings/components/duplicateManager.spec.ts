@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // 重复图片管理：默认无选择、元数据展示、位置级删除、部分失败与跨页选择。
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { mount, type VueWrapper } from '@vue/test-utils';
 
@@ -64,6 +64,13 @@ async function clickButton(wrapper: VueWrapper, text: string) {
   await flush();
 }
 
+async function clickDialogButton(text: string) {
+  const found = [...document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((candidate) => candidate.textContent === text);
+  expect(found, `对话框按钮 ${text}`).toBeDefined();
+  found!.click();
+  await flush();
+}
+
 beforeEach(() => {
   setActivePinia(createPinia());
   apiMocks.itemDuplicates.mockReset();
@@ -72,7 +79,30 @@ beforeEach(() => {
   apiMocks.thumbnailUrl.mockClear();
 });
 
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
 describe('DuplicateManager', () => {
+  it('相似度滑块拖动时不重扫，松开后按新阈值查询', async () => {
+    apiMocks.itemDuplicates.mockResolvedValue(response([]));
+    const wrapper = mount(DuplicateManager);
+    const slider = wrapper.find('input[type="range"]');
+    expect((slider.element as HTMLInputElement).value).toBe('75');
+
+    await clickButton(wrapper, '开始扫描');
+    expect(apiMocks.itemDuplicates).toHaveBeenLastCalledWith(expect.objectContaining({ max_distance: 5 }));
+
+    (slider.element as HTMLInputElement).value = '90';
+    await slider.trigger('input');
+    expect(apiMocks.itemDuplicates).toHaveBeenCalledTimes(1);
+
+    await slider.trigger('change');
+    await flush();
+    expect(apiMocks.itemDuplicates).toHaveBeenCalledTimes(2);
+    expect(apiMocks.itemDuplicates).toHaveBeenLastCalledWith(expect.objectContaining({ max_distance: 2 }));
+  });
+
   it('默认不选中，展示元数据并仅删除选中位置', async () => {
     const groups = [group('g', [entry('a', 'folder/a.png'), entry('b', 'folder/b.png')])];
     apiMocks.itemDuplicates.mockResolvedValue(response(groups));
@@ -90,8 +120,8 @@ describe('DuplicateManager', () => {
     await checkboxes[0].setValue(true);
     expect(wrapper.text()).toContain('已选择 1 个文件位置');
     await clickButton(wrapper, '移入回收站');
-    expect(wrapper.find('.duplicate-confirm').exists()).toBe(true);
-    await clickButton(wrapper, '确认移入回收站');
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+    await clickDialogButton('确认移入回收站');
 
     expect(apiMocks.itemDelete).toHaveBeenCalledTimes(1);
     expect(apiMocks.itemDelete).toHaveBeenCalledWith('a', 'folder/a.png');
@@ -105,7 +135,7 @@ describe('DuplicateManager', () => {
     await clickButton(wrapper, '开始扫描');
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await clickButton(wrapper, '移入回收站');
-    await clickButton(wrapper, '确认移入回收站');
+    await clickDialogButton('确认移入回收站');
 
     expect(wrapper.text()).toContain('1 个失败');
     expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true);
@@ -123,7 +153,7 @@ describe('DuplicateManager', () => {
     expect(wrapper.text()).toContain('已选择 2 个文件位置');
 
     await clickButton(wrapper, '移入回收站');
-    await clickButton(wrapper, '确认移入回收站');
+    await clickDialogButton('确认移入回收站');
     expect(apiMocks.itemDelete).toHaveBeenCalledWith('a', 'a.png');
     expect(apiMocks.itemDelete).toHaveBeenCalledWith('b', 'b.png');
   });
