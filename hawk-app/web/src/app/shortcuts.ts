@@ -51,7 +51,10 @@ export function useShortcuts() {
       if (store.editLocked) {
         return;
       }
-      if (store.selection.length > 0) {
+      if (preview.previewId) {
+        e.preventDefault();
+        void preview.removePreview();
+      } else if (store.selection.length > 0) {
         void (store.isTrash ? restoreSelected() : trashSelected());
       }
       return;

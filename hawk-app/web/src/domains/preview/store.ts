@@ -1,14 +1,13 @@
 // 预览/图片编辑域子 store：预览浮层的打开/关闭/滑动导航（sticky item 与相邻预取所需索引）
 // 与图片编辑窗口（全局单例目标 + 客户端重编码保存）。
-// 引用规则：可读主 store 的 skeleton/details（只读）、调 ensureWindow/showToast；主 store 不反向依赖本 store。
+// 引用规则：可读主 store 的 skeleton/details、同步选择并调用写操作服务；主 store 不反向依赖本 store。
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/shared/api/endpoints';
 import { ApiError } from '@/shared/api/client';
 import { blobToBase64, rotateImage, type RotateAngle } from '@/shared/lib/imageEdit';
 import { loadText, saveText, STORAGE_KEYS } from '@/shared/lib/persist';
-import { useLibraryStore } from '@/domains/library';
-import { itemKey } from '@/domains/library';
+import { itemKey, restoreSelected, trashSelected, useLibraryStore } from '@/domains/library';
 import { errorText } from '@/shared/lib/storeUtil';
 import type { Item } from '@/shared/types';
 
@@ -48,6 +47,8 @@ export const usePreviewStore = defineStore('preview', () => {
     // 详情可能未加载（如键盘导航跳到视口外项）：按骨架索引补拉，到位后浮层即出现
     const idx = library.skeleton.findIndex((s) => itemKey(s.id, s.path) === key);
     if (idx >= 0) {
+      // 预览项就是网格当前选择项；ItemGrid 监听选择变化并把视口外项滚入可见区域
+      library.select(key);
       void library.ensureWindow(idx, idx + 1);
     }
   }
@@ -60,6 +61,22 @@ export const usePreviewStore = defineStore('preview', () => {
     const next = previewNavId(step);
     if (next) {
       openPreview(next);
+    }
+  }
+
+  /** 删除/恢复当前预览项，并显示下一张；无下一张时回退上一张，都没有则关闭预览 */
+  async function removePreview() {
+    const key = previewId.value;
+    if (!key) {
+      return;
+    }
+    const fallback = previewNavId(1) ?? previewNavId(-1);
+    library.select(key);
+    await (library.isTrash ? restoreSelected() : trashSelected());
+    if (fallback && fallback !== key) {
+      openPreview(fallback);
+    } else {
+      closePreview();
     }
   }
 
@@ -118,6 +135,7 @@ export const usePreviewStore = defineStore('preview', () => {
     openPreview,
     closePreview,
     navigatePreview,
+    removePreview,
     hidePreviewClose,
     setHidePreviewClose,
     editorTarget,

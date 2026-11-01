@@ -4,7 +4,6 @@ import { useWindowSize } from '@vueuse/core';
 import { api } from '@/shared/api/endpoints';
 import { canCopyImageToClipboard, copyImageToClipboard } from '@/shared/lib/clipboard';
 import { useLibraryStore } from '@/domains/library';
-import { trashSelected } from '@/domains/library';
 import { usePreviewStore } from '@/domains/preview';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLayout } from '@/shared/composables/useLayout';
@@ -103,25 +102,12 @@ function onMenu(e: MouseEvent) {
     // 编辑仅支持 canvas 可重编码的格式(见 imageEdit.ts 白名单),其余不出现该入口;viewer 下禁用
     ...(isRotatableImage(props.item.ext) && !store.viewerMode ? [{ label: '编辑图片…', action: () => preview.openEditor(props.item) }] : []),
     ...(!store.viewerMode ? [{ separator: true, label: '' }] : []),
-    ...(!store.viewerMode ? [{ label: '删除图片', danger: true, action: () => void trashCurrent() }] : []),
+    ...(!store.viewerMode ? [{ label: store.isTrash ? '恢复图片' : '删除图片', danger: !store.isTrash, action: () => void preview.removePreview() }] : []),
   ];
   if (items.length === 0) {
     return;
   }
   menu.open(items, e);
-}
-
-// 删除当前预览项：跳到下一张（无下一张则上一张，都没有则关闭预览）
-async function trashCurrent() {
-  const key = itemKey(props.item.id, props.item.path);
-  const fallback = preview.previewNavId(1) ?? preview.previewNavId(-1);
-  store.select(key);
-  await trashSelected();
-  if (fallback && fallback !== key) {
-    preview.openPreview(fallback);
-  } else {
-    emit('close');
-  }
 }
 
 // ---------- 缩放与平移 + 滑动切换 ----------

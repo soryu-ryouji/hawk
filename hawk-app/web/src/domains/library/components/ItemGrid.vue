@@ -180,12 +180,13 @@ watchEffect(() => {
   });
 });
 
-// 键盘移动选中框时滚动到可见区域（仅消费键盘导航标记，全选/鼠标选择不滚动视图）；
+// 键盘移动选中框或预览切图时滚动到可见区域（全选/鼠标选择不滚动视图）；
 // 目标行未渲染时先把容器滚过去（触发渲染）再细调
 watch(
   () => (store.primarySelected ? itemKey(store.primarySelected.id, store.primarySelected.path) : null),
   async (key) => {
-    if (!consumeKeyboardNavScroll() || !key || !gridRef.value) {
+    const shouldScroll = consumeKeyboardNavScroll() || preview.previewId === key;
+    if (!shouldScroll || !key || !gridRef.value) {
       return;
     }
     const idx = store.skeleton.findIndex((s) => itemKey(s.id, s.path) === key);
