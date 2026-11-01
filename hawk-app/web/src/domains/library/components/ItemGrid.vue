@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch, watchEffect } from 'vue';
 import { useResizeObserver } from '@vueuse/core';
 import { useLibraryStore } from '../store';
-import { addCategoryToSelected, addTagToSelected, clearTrash, moveSelectedToFolder, restoreSelected, trashSelected } from '../actions';
+import { addCategoryToSelected, addTagToSelected, moveSelectedToFolder, restoreSelected, trashSelected } from '../actions';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import { usePreviewStore } from '@/domains/preview';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
@@ -240,12 +240,6 @@ function onSelect(item: Item, e: MouseEvent) {
   store.select(key, mod);
 }
 
-function confirmClearTrash() {
-  if (window.confirm('彻底删除回收站中的全部素材？此操作不可恢复。')) {
-    void clearTrash();
-  }
-}
-
 function onMenu(item: Item, e: MouseEvent) {
   // 右键未选中项时先选中它
   const key = itemKey(item.id, item.path);
@@ -271,15 +265,7 @@ function onMenu(item: Item, e: MouseEvent) {
     ...(!hasShell ? [{ label: '保存图片', action: saveItem }] : []),
   ];
   const items = store.isTrash
-    ? [
-        ...readItems,
-        ...(!store.editLocked
-          ? [
-              { label: '恢复', action: () => void restoreSelected() },
-              { label: '清空回收站', danger: true, action: confirmClearTrash },
-            ]
-          : []),
-      ]
+    ? [...readItems, ...(!store.editLocked ? [{ label: '恢复', action: () => void restoreSelected() }] : [])]
     : [
         ...readItems,
         ...(!store.editLocked
@@ -371,11 +357,6 @@ function onMenu(item: Item, e: MouseEvent) {
       "
       @cancel="showFolderDialog = false"
     />
-
-    <!-- 回收站工具条 -->
-    <div v-if="store.isTrash && store.total > 0" class="trash-bar">
-      <button class="danger" @click="confirmClearTrash">清空回收站</button>
-    </div>
   </div>
 </template>
 
@@ -433,13 +414,5 @@ function onMenu(item: Item, e: MouseEvent) {
   padding: 16px;
   text-align: center;
   color: var(--fg-1);
-}
-
-.trash-bar {
-  position: sticky;
-  bottom: 12px;
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 12px;
 }
 </style>

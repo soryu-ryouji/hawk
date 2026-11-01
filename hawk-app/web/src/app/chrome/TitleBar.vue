@@ -4,8 +4,7 @@
 // 窄屏（竖屏宽度不足）：排序/筛选收进「排序与筛选」溢出菜单，搜索框退化为搜索按钮（点开浮层），
 // 面包屑只显示当前层级（完整路径经侧栏抽屉导航）。横屏/宽屏布局不受影响。
 import { computed, nextTick, ref, watch } from 'vue';
-import { useLibraryStore } from '@/domains/library';
-import { rescanFiles, SearchBox } from '@/domains/library';
+import { rescanFiles, SearchBox, TrashToolbarAction, useLibraryStore } from '@/domains/library';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLayout } from '@/shared/composables/useLayout';
 import Icon from '@/shared/ui/Icon.vue';
@@ -183,6 +182,7 @@ function onDblClick(e: MouseEvent) {
         </template>
       </nav>
       <span v-else class="location title">{{ locationTitle }}</span>
+      <TrashToolbarAction v-if="store.isTrash" />
 
       <span v-if="store.selection.length" class="selected-count">已选 {{ store.selection.length }} 项</span>
 
