@@ -274,12 +274,25 @@ async fn no_library_mode_serves_remote_plane_only() {
         ("GET", "/api/v1/view/preferences", None),
         ("POST", "/api/v1/trash/clear", None),
         ("GET", "/api/v1/app/status", None),
-        ("GET", "/api/v1/app/lan", None),
     ] {
         let (status, resp) = call(&router, method, uri, body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri} 应 400");
         assert_eq!(resp["error"]["code"], json!("NO_LIBRARY"), "{method} {uri}");
     }
+
+    // 无库仍只读提供本机 LAN 身份/端口，供远程查看页发现与配对；网站共享保持禁用。
+    let (status, body) = call(&router, "GET", "/api/v1/app/lan", None).await;
+    assert_eq!(status, StatusCode::OK, "GET app/lan: {body}");
+    assert_eq!(body["data"]["enabled"], json!(false));
+    assert_eq!(body["data"]["target_library_id"], json!(""));
+    assert_eq!(body["data"]["library_name"], json!(""));
+    assert!(body["data"]["target_identity"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert!(body["data"]["peer_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert_eq!(body["data"]["keys"], json!([]));
 
     // 远程管理面（admin）可用：配置读写 + 密钥列表 + 会话读取
     let (status, _) = call(&router, "GET", "/api/v1/remote", None).await;

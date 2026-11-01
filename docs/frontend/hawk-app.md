@@ -612,7 +612,7 @@ hawk-app/
 │   │   ├── cache.ts        # 缓存父目录迁移编排（停 server → 逐库复制 → 删旧 → 写配置 → 重启；任一环节失败不改配置）
 │   │   ├── cache-path.ts   # 缓存路径规则与搬迁原语（纯函数/纯 fs，与 daemon core/paths.rs 对齐；Vitest 覆盖）
 │   │   ├── updater.ts      # 应用更新（GitHub Releases 检查/下载 sha256 校验/三平台重启替换接力）
-│   │   ├── lan.ts          # 本机局域网 IPv4 地址列表（设置面板展示用；[web] 配置读写走 daemon REST app/lan）
+│   │   ├── lan.ts          # 本机局域网 IPv4 地址列表；LAN 配置读取由 remote.ts 经 Loopback admin 提供
 │   │   ├── ipc.ts          # 白名单 IPC 注册（换库/文件管理器/剪贴板/窗口控制/局域网地址/退出应用）
 │   │   ├── paths.ts        # 共用路径（产物位于 out/，hawk-app 根上溯两级；应用图标单一来源）
 │   │   ├── preload.ts      # contextBridge 白名单通道（形状为 ipc-contract.HawkShell）+ webUtils

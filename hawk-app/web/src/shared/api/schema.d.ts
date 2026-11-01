@@ -69,7 +69,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权） */
+        /** 读取局域网配置与运行状态（admin 限定）；无库时返回禁用的网站配置及本机身份，供查看方配对。 */
         get: operations["get_lan"];
         /** 写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误 */
         put: operations["put_lan"];

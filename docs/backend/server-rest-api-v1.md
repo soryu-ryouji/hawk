@@ -46,7 +46,7 @@
 | POST | `/api/v1/app/session` | LAN Web：AccessKey 换有期 Session，以 HttpOnly/Secure Cookie 下发 |
 | GET  | `/api/v1/app/admin-token` | 发现本机 LocalIntegration Session（免鉴权，仅限扩展类客户端） |
 | GET  | `/api/v1/app/connection` | 当前连接描述符（本地库 / 正在浏览的远端库），生态客户端跟随目标用（admin 限定） |
-| GET  | `/api/v1/app/lan` | 读取局域网网站与 hawk-app 直连配置、本机身份及运行状态（admin 限定） |
+| GET  | `/api/v1/app/lan` | 读取局域网网站与 hawk-app 直连配置、本机身份及运行状态（admin 限定；无库返回禁用配置与身份） |
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
 | GET  | `/api/v1/app/lan/peers` | 探测同网段可配对的 hawk-app（admin 限定） |
 | GET  | `/api/v1/app/lan/clients` | 目标端查看当前活跃的 hawk-app 直连设备（admin 限定） |
@@ -223,7 +223,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `GET /api/v1/app/lan`
 
-读取局域网网站访问配置（`.hawk/config.toml` 的 `[web]` 段）与监听运行状态。**仅 admin 可用**：viewer 返回 403 `READ_ONLY`——响应含每把访问密钥的完整 token，只读 viewer 拿到可写密钥即提权。
+读取局域网网站访问配置（`.hawk/config.toml` 的 `[web]` 段）与监听运行状态。**仅 admin 可用**：viewer 返回 403 `READ_ONLY`——响应含每把访问密钥的完整 token，只读 viewer 拿到可写密钥即提权。无本地库时返回 `enabled=false`、空密钥列表和空库标识，但仍提供本机 `target_identity`、`peer_id` 与直连端口，供远程查看页发现及配对。
 
 #### 响应
 

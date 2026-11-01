@@ -1656,39 +1656,58 @@ struct LanSettingsDto {
     peer_error: Option<String>,
 }
 
-fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> Result<LanSettingsDto, String> {
-    let web = lib.config.current().web;
+fn lan_dto(
+    state: &SharedState,
+    lib: Option<&super::LibraryState>,
+) -> Result<LanSettingsDto, String> {
+    let web = lib.map(|lib| lib.config.current().web).unwrap_or_default();
     let status = state.lan.snapshot();
     let identity = crate::remote::identity::Identity::load_or_create(
         state.remote.remote_config().identity_dir(),
     )?;
+    // 无库查看模式只读展示本机身份/端口；peer_id 直接取稳定 endpoint 前缀，不虚构库 id。
+    let peer_id = lib
+        .map(local_peer_id)
+        .unwrap_or_else(|| identity.endpoint_id.chars().take(16).collect::<String>());
+    let target_library_id = lib
+        .map(|lib| crate::core::paths::library_key(&lib.paths.root))
+        .unwrap_or_default();
+    let library_name = lib.map(local_library_name).unwrap_or_default();
     Ok(LanSettingsDto {
         enabled: web.enabled,
         port: web.port,
         peer_port: web.peer_port,
-        peer_id: local_peer_id(lib),
-        target_identity: identity.endpoint_id,
+        peer_id,
+        target_identity: identity.endpoint_id.clone(),
         tls_fingerprint: crate::api::tls::fingerprint_if_exists(
             state.remote.remote_config().identity_dir(),
         ),
         target_device_id: identity.device_id,
-        target_library_id: crate::core::paths::library_key(&lib.paths.root),
+        target_library_id,
         name: gethostname::gethostname().to_string_lossy().to_string(),
-        library_name: local_library_name(lib),
-        keys: state
-            .remote
-            .keys
-            .list_for_library(Some(&crate::core::paths::library_key(&lib.paths.root)))
-            .into_iter()
-            .map(|entry| unified_access_key_dto(entry, None))
-            .collect(),
-        peer_keys: state
-            .remote
-            .keys
-            .list_for_library(Some(&crate::core::paths::library_key(&lib.paths.root)))
-            .into_iter()
-            .map(|entry| unified_access_key_dto(entry, None))
-            .collect(),
+        library_name,
+        keys: lib
+            .map(|lib| {
+                state
+                    .remote
+                    .keys
+                    .list_for_library(Some(&crate::core::paths::library_key(&lib.paths.root)))
+                    .into_iter()
+                    .map(|entry| unified_access_key_dto(entry, None))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        peer_keys: lib
+            .map(|lib| {
+                state
+                    .remote
+                    .keys
+                    .list_for_library(Some(&crate::core::paths::library_key(&lib.paths.root)))
+                    .into_iter()
+                    .map(|entry| unified_access_key_dto(entry, None))
+                    .collect()
+            })
+            .unwrap_or_default(),
         active: status.web.active,
         error: status.web.error,
         peer_active: status.peer.active,
@@ -1696,7 +1715,7 @@ fn lan_dto(state: &SharedState, lib: &super::LibraryState) -> Result<LanSettings
     })
 }
 
-/// 读取局域网 web 查看配置与运行状态（admin 限定；viewer 403，防止只读 token 经此提权）
+/// 读取局域网配置与运行状态（admin 限定）；无库时返回禁用的网站配置及本机身份，供查看方配对。
 #[utoipa::path(
     get,
     path = "/api/v1/app/lan",
@@ -1708,8 +1727,7 @@ async fn get_lan(
     Extension(access): Extension<AccessContext>,
 ) -> Result<Json<Envelope<LanSettingsDto>>, ApiError> {
     require_manage(&access)?;
-    let lib = state.require_library()?;
-    let dto = lan_dto(&state, lib).map_err(|error| {
+    let dto = lan_dto(&state, state.library.as_deref()).map_err(|error| {
         ApiError::new(
             codes::INTERNAL,
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -2020,7 +2038,7 @@ async fn put_lan(
         crate::core::events::LanEvents::ACCESS_CHANGED,
         serde_json::json!({ "changed": true }),
     );
-    let dto = lan_dto(&state, lib).map_err(|error| {
+    let dto = lan_dto(&state, Some(lib)).map_err(|error| {
         ApiError::new(
             codes::INTERNAL,
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
