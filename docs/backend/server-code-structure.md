@@ -136,22 +136,20 @@ bootstrap（组合根）──► AppState
 | ---- | ---- |
 | `src/core/paths.rs` | 路径规则的唯一权威：`.hawk/` 布局与 `ensure_layout`（含给 `.hawk/.gitignore` 补 `trash/` 排除项）、库内相对路径 ↔ 绝对路径互转（`..`/越界/绝对路径一律拒绝）、`is_internal`（`.hawk` 内部，回收站除外）、`is_hidden`（任一组件以 `.` 开头，回收站除外——.DS_Store/.stfolder 等隐藏项不入索引不解析，已入库残留由扫描 Remove/消失对账清理）、回收站前缀换算、`is_valid_library_path`（API 入参守卫）、库外缓存目录命名（`<库文件夹名>_<根路径 SHA-256 前16位>`，同名库靠哈希区分）、纯路径工具（`full_path` 文本归约、`dir_of`/`name_of`/`ext_of`、`unix_ms`/`file_mtime_ms`） |
 | `src/core/config.rs` | `.hawk/config.toml` 快照（RwLock）与热更 `reload`（返回 `ConfigChange` 差异：ignore/extensions/web 是否变化）；库首次打开生成带注释的默认配置；ignore 匹配器：无 `/` 的模式展开为 `**/p` + `**/p/**`（任意深度同名），分段 glob（`**` 跨目录、段内 `*`/`?`），大小写不敏感；扩展名白名单 `ExtensionFilter`（空 = 不过滤；归一化去点/小写），`is_file_included` = ignore 未命中且扩展名在白名单内（文件入库的唯一判据；目录只用 is_ignored）；**解析容错**：读取/解析失败保留上次有效配置（返回空差异），错误经 `config_error()` 暴露到 app/status，修好后自动清除 |
-| `src/core/metadata_db.rs` | `.hawk/metadata.db` 唯一权威 SQLite：schema v2（`items`/`paths`/`tags`/`categories`/`folders` + `meta`），v1 仅增量加入 `phash`/`phash_version`/`rgb_grid`，已有数据不丢；`journal_mode=DELETE`、`busy_timeout` 5s；`load_all` 启动注水、`save`/`save_batch` 单事务/`delete`/文件夹快照。没有缓存熔断或 TOML 回退，读写失败直接上传 |
-| `src/core/metadata.rs` | 元数据模型（`ItemMetadata`：paths + url/tags/star/annotation + 宽高 + `palette` + `phash`）；仅负责内存与 SQLite 之间的数据结构，不再有 TOML 解析/序列化路径。`PerceptualHash` 保存算法版本与可选 64 位值，非图像用 value=None 负缓存 |
-| `src/core/metadata_store.rs` | 元数据存取：内存查询副本 + path→hash 反查表 + `.hawk/metadata.db` 唯一权威。构造直接 `MetadataDb.load_all` 注水，读取失败写 StartupState 进入错误页，不按空库降级；单条/批量写先提交 SQLite 再更新内存，`persist_batch` 同步持久化与内存并返回实际成功项供索引/事件使用；`hashes_with_missing_palette` / `hashes_with_missing_phash` / `hashes_with_zero_dim` 供派生维护。旧 TOML 不读取、不迁移，库外 index.db 与 StorageMode 已删除 |
+| `src/core/metadata_db.rs` | `.hawk/metadata.db` 唯一权威 SQLite：schema v3（`items`/`paths`/`tags`/`categories`/`folders` + `meta`）；`journal_mode=DELETE`、`busy_timeout` 5s；`load_all` 启动注水、`save`/`save_batch` 单事务/`delete`/文件夹快照。没有缓存熔断或 TOML 回退，读写失败直接上传 |
+| `src/core/metadata.rs` | 元数据模型（`ItemMetadata`：paths + url/tags/star/annotation + 宽高 + `palette`）；仅负责内存与 SQLite 之间的数据结构，不再有 TOML 解析/序列化路径 |
+| `src/core/metadata_store.rs` | 元数据存取：内存查询副本 + path→hash 反查表 + `.hawk/metadata.db` 唯一权威。构造直接 `MetadataDb.load_all` 注水，读取失败写 StartupState 进入错误页，不按空库降级；单条/批量写先提交 SQLite 再更新内存，`persist_batch` 同步持久化与内存并返回实际成功项供索引/事件使用；`hashes_with_missing_palette` / `hashes_with_zero_dim` 供派生维护。旧 TOML 不读取、不迁移，库外 index.db 与 StorageMode 已删除 |
 | `src/core/item.rs` | 索引中的 item：`ItemLocation`（一个文件位置，回收站位置以 `.hawk/trash/` 开头）+ `Item`（位置列表 + 元数据查询副本 + 宽高 + 调色板，每项同时保存 RGB 与**预算 Lab** 检索坐标）；`sync_from` 为元数据 → 索引的单向同步（只允许流水线调用，palette 为 None 时保持索引现状）；`to_dto(trash_view)` 锁内投影——回收站视图的 paths 展示原库内路径（恢复目标）、folders 派生去重；`ItemQuery`/`ItemDto`/`ItemSkeletonDto` |
 | `src/core/index.rs` | 内存索引：hash→item 与位置路径→hash 双字典，一把 `RwLock`。读取纪律见总览规则 3。`query` 实现 item/list 全部过滤（AND 语义）+ 排序 + 分页：锁内只做过滤与轻量排序键投影，**排序在锁外基于轻量键进行**（name 预计算小写键，避免比较器内反复分配）、主键同值按 (id, path) 字典序打破平局、desc 反转整个比较结果、`total_size` 为过滤后全量字节合计，**DTO 只投影分页窗口**（大库下不为全部命中项克隆完整 DTO）；`query_skeleton` 同过滤同排序投影 id/path/width/height/star/size（两次独立查询次序逐位一致，前端按 offset 取窗口依赖这一点）；颜色检索：查询色一次转 Lab，逐 item 检查预算 Lab 的 ΔE² ≤ 25²（免开方）；`folder_counts`（含祖先目录，同 item 同目录只计一次）/`category_counts`/`tags_with_counts` 供侧栏与 folder/list |
 | `src/core/pipeline/` | **核心**：索引流水线模块（单写者 actor），按职责拆分，详见下节：`mod.rs`（Job 枚举/提交表面/消费循环/超时）、`ctx.rs`（上下文 + JobSender 外部回流通道 + 进度快照）、`upsert.rs`（入库生命周期）、`fs_ops.rs`（删除/移动/回收站）、`scan.rs`（扫描 runner + 会话簿记 + 定向扫描）、`reconcile.rs`（元数据对账）、`derived.rs`（调色板/宽高回写） |
 | `src/core/content_hash.rs` | BLAKE3 流式哈希（1MB 缓冲），即 item id，元数据/缩略图命名依据 |
-| `src/core/perceptual_hash.rs` | 64 位 dHash + 8×8 RGB 网格：`image_hasher` Gradient、稳定 Lanczos3；`PHASH_VERSION=3`；XOR 汉明距离 + 归一化 RGB RMS 复核。单元测试覆盖重复计算、缩放、JPEG 重压缩、不同画面、灰度误报与 hex 持久化 |
-| `src/core/duplicates.rs` | 重复分组：exact 检查同 item 多位置；similar 先按 bits 预分组，4×16bit 分带索引（≤10 保证不漏候选）+ 完整距离复核 + 并查集，>10 回退 BK-tree。分页稳定排序；与暴力分组对照测试及 100k 性能基准 |
-| `src/core/vision.rs` | 可选视觉扩展：模型显式下载与 SHA-256 校验、启停配置、DINOv2 预处理/CLS 推理、后台增量向量计算、SQLite 持久化、HNSW 索引与精确余弦复核；进程共享单一 ONNX Environment |
+| `src/core/duplicates.rs` | 重复位置分组：同一内容 hash（item id）的多个可见库内位置，按组大小降序、组 id 升序稳定排序 |
 | `src/core/events.rs` | SSE 事件总线：tokio broadcast（容量 1024），订阅者消费跟不上（lagged）即由端点断开其订阅；`TaskProgress` 快照结构（task.progress 事件与 app/status 共用）；`folder.changed` 负载构造 |
 | `src/core/fs_util.rs` | 文件操作辅助：建父目录、回收站冲突追加 ` (n)` 后缀（恢复按实际名称放回）、名称合法性校验（禁分隔符/`.`/`..`/`.hawk`） |
 | `src/core/thumbnail.rs` | 图像服务：`identify`（只解码头取尺寸）、`detect_extension_bytes`（guess_format → 扩展名映射，item/add 类型推断用）、`is_probably_image`（只读头部 64B 内容喷探，非图像文件在解码派生前拦下；打不开时保守视为图像）、`generate`（固定 512/1024 两档，Max 等比缩小**不放大**、Lanczos3、有损 WebP q80、单次解码生成全部缺失档/force 强制重建、仅缺 512 时复用已有 1024 缓存解码、按内容寻址存库外缓存目录、非图像跳过）、`delete`（清理全部尺寸）。解码失败记 warn 并返回 false（读取端重试自愈） |
 | `src/core/color.rs` | 调色板提炼：降采样 64px（Triangle 滤波）→ **median-cut** 量化 ≤10 色 → 像素占比（alpha<128 不参与，0–100 保留 1 位小数）；按占比降序、并列按 RGB 升序保证确定性 |
 | `src/core/color_math.rs` | 颜色纯函数：hex 解析/格式化、sRGB→CIELAB（D65）、CIE76 ΔE 的**平方**（与阈值平方比较免开方） |
-| `src/core/thumbnail_worker.rs` | 缩略图/派生后台 worker：**无界** mpsc 队列（in-flight 去重）+ `CPU/2`（封顶 12）个专用 OS 线程。`enqueue_derived`（入库/维护：单次解码补调色板 + pHash + 宽高）、`enqueue_thumbs`（读取端未命中/范围刷新：再补缩略图）、`enqueue_force_rebuild`（强制重建）。非图像写调色板/pHash 负缓存终止重试；暂时解码失败不写负缓存。结果经 JobSender 回流消费循环，派生批量落 SQLite；生成/修复缩略图后补发 `item.updated`，单任务 `catch_unwind` 隔离，积压经 task.progress 500ms 节流可见 |
+| `src/core/thumbnail_worker.rs` | 缩略图/派生后台 worker：**无界** mpsc 队列（in-flight 去重）+ `CPU/2`（封顶 12）个专用 OS 线程。`enqueue_derived`（入库/维护：单次解码补调色板 + 宽高）、`enqueue_thumbs`（读取端未命中/范围刷新：再补缩略图）、`enqueue_force_rebuild`（强制重建）。非图像写空调色板负缓存终止重试；暂时解码失败不写负缓存。结果经 JobSender 回流消费循环，派生批量落 SQLite；生成/修复缩略图后补发 `item.updated`，单任务 `catch_unwind` 隔离，积压经 task.progress 500ms 节流可见 |
 | `src/core/taxonomy.rs` | 分类/标签维度：`normalize_category_name`（扁平，无层级）；注册表骨架（固定 schema `key = [字符串数组]`，读写公共件在 `registry_file.rs`，重命名合并语义）→ `CategoryRegistry`/`TagRegistry`；`ItemEvents`：SSE 事件名常量与发布辅助（`publish_changed`/`publish_location_loss`/`publish_transition`，位置归零 → removed、只剩回收站 → trashed、首个库内位置回归 → restored）；`TaxonomyMigrator`：元数据写应用与全库级联迁移，**只被消费循环调用**；批量/级联统一走 `finish_metadata_batch`（空操作跳过、分片并行落盘、`ChangeBatcher` 合并 `items.updated` 事件） |
 | `src/core/view_prefs.rs` | 视图偏好注册表（`.hawk/view.toml`，参与同步）：扁平 map（scope 键 `folder:<路径>`/`category:<名>`/`tag:<名>`），不理解继承语义（前端沿父链解析）；scope/排序值白名单校验；`rename_prefix`/`delete_prefix` 跟随目录移动/删除；外部修改（含网盘同步落地）经 watcher 触发 `reload` |
 | `src/core/global_filter.rs` | 全局列表隐藏项注册表（`.hawk/global_filter.toml`，参与同步）：folders/categories/tags 三个列表；端点直接读写（同 view_prefs，不过流水线），级联跟随（文件夹移动/删除、分类/标签改名删除）由流水线对应 Job 调用；变更广播 `global_filter.changed` |
@@ -167,17 +165,17 @@ bootstrap（组合根）──► AppState
 - **Job 类型**：`Upsert` / `Delete` / `Move` / `DirMove` / `ScanStart`+`ScanFile`+`ScanEnd`（扫描三段，见下；`ScanStart` 带 `scope` 时只遍历该子树，在途定向请求排队补扫）/ `ClearTrash` / `Metadata` / `BatchMetadata` / `MetadataSync` / `Palette` + `PaletteFlush`（调色板批量回写）/ `FixDim`（宽高补全）/ `FolderHint` / `CategoryCreate|Update|Delete` / `TagCreate|Update|Delete` / `RegistryReload`
 - **两类入口**：watcher/worker 走 fire-and-forget（经 `JobSender`），channel 满置 overflow 标记（消费者检查后入队**去重的扫描**兜底，不内联扫描，避免事件风暴期反复全库遍历）；API 与启动走携带 `oneshot` 回复通道的提交，统一 60s 超时等待（`run_scan` 例外——等整轮扫描完成，不设超时），消费循环停止/任务 panic 时调用方立即收到错误而非挂起。消费循环对每个 Job 做 `catch_unwind`，panic 的任务被跳过
 - **入库（do_upsert）拆两步**：`prepare_upsert`（纯判定、无副作用——路径过滤 `.hawk`/ignore/扩展名白名单外、stat、**哈希复用判定**（路径与 size/mtime 同元数据一致即复用不读内容）、写入中文件防抖（mtime 距今不足 1s 延迟重试，同路径去重上限 120 次）；需要删除路径时返回 Remove 由调用方执行，消费循环内联、扫描 runner 经队列回流）→ 哈希（`known_hash` 直接采用 / 复用 / 计算）→ **复验 size/mtime**（哈希期间仍在写入则延迟重试，不以半截内容入库，慢速拷贝的哈希漂移由此根治）→ `apply_upsert`（串行应用；创建 item 与登记位置在同一锁内完成，零位置 item 不对并发查询可见）
-- **`apply_upsert`**：哈希漂移时先取旧元数据用于继承，再按路径迁移（新 item 继承 tags 等素材参数，旧元数据无引用则删除元数据与缩略图）并发布位置丢失事件；元数据登记路径并回写最新 size/mtime；扫描路径单次解码产出的调色板与 pHash 随首版 SQLite 记录一并持久化；**宽高在入库时即持久化入 SQLite**；索引同步后发事件——扫描路径合并进 `items.added` 批量事件（300ms 窗口/2000 条上限/扫描结束兜底冲刷），单条路径发即时 `item.added`/`item.updated`；`needs_palette_work` / `needs_phash_work` 任一成立即派发派生任务兜底增量与解码失败自愈——扫描导入的缩略图已在并行阶段生成，读取端惰性兜底仍在
+- **`apply_upsert`**：哈希漂移时先取旧元数据用于继承，再按路径迁移（新 item 继承 tags 等素材参数，旧元数据无引用则删除元数据与缩略图）并发布位置丢失事件；元数据登记路径并回写最新 size/mtime；扫描路径单次解码产出的调色板随首版 SQLite 记录一并持久化；**宽高在入库时即持久化入 SQLite**；索引同步后发事件——扫描路径合并进 `items.added` 批量事件（300ms 窗口/2000 条上限/扫描结束兜底冲刷），单条路径发即时 `item.added`/`item.updated`；`needs_palette_work` 成立即派发派生任务兜底增量与解码失败自愈——扫描导入的缩略图已在并行阶段生成，读取端惰性兜底仍在
 - **全库扫描（三段任务 + 目录快照，消费线程不被长扫描独占）**：`ScanStart` 只建会话并 spawn **runner 线程**（`hawk-scan`）——阶段一 `walk_directory_stats` 与上轮 `folders` 快照（mtime + 直接子项数）对比，**只有 dirty 目录才深入文件级访问**（clean 目录不碰文件系统）；阶段二 dirty 目录枚举**直接文件**（目录项跳过；同名「文件→目录」替换由消失对账收敛）做复用判定，复用项直接回流；阶段三需哈希文件进**并行导入通道**（物理核估计（逻辑核/2，封顶 16）：解码/编码 SIMD 密集，SMT 无增益，SMT 兄弟线程留给消费循环与 API）：哈希（后复验，仍在写入的延迟重试）→ 单次解码同出 调色板/缩略图/宽高（派生齐备则不解码）。结果以 `ScanFile` 回流队列（**阻塞入队形成背压，满队不丢弃**——丢弃会让丢失项随快照替换永久漏扫），**消费循环与其他任务穿插应用**——交互写延迟有界（不再等整轮扫描）；`ScanEnd` 阻塞入队保证收尾必然到达：**消失对账**（所在目录已不存在、或 dirty 目录深入后未见的位置判为消失；clean 目录快照一致则位置必然还在）、快照整体替换、`items.added` 尾批冲刷、广播 `folder.changed`。**扫描窗口会话簿记**：窗口内消费侧 upsert/移动新增的位置记 `touched`（消失对账豁免——目录可能已被枚举过，后到的文件不在 seen 集）；删除/移走的位置记 `invalidated`（迟到的 ScanFile 丢弃，不复活已删位置）；ScanFile 应用前 stat 复验（哈希后文件被改写则以穿插到达的实时事件为准）。扫描中再请求扫描 → 合并参数自动补扫；遍历不完整时跳过消失对账与快照替换（防误删），最终一致由下轮对账保证
-- **派生维护（maintenance）**：SQLite 是唯一元数据来源，不再有 TOML mtime 对账。启动与周期任务仅做纯内存缺失集扫描：`hashes_with_missing_palette` / `hashes_with_missing_phash` / `hashes_with_zero_dim`，经 worker 补齐调色板、pHash 与宽高；非图像负缓存跳过，源文件已消失的项由扫描收敛
-- **派生批量回写（derived）**：worker 的调色板/pHash 结果分别暂存（同 hash 以最新为准），≥500 条立即冲刷、滞留 2s 由 DerivedFlush 唤醒；每类分别经 SQLite 单事务 + 内存/索引同步后**合并发 items.updated**——老库补算时无 N 次单条事务与事件洪峰
+### 派生维护
+- **派生批量回写（derived）**：worker 的调色板结果暂存（同 hash 以最新为准），≥500 条立即冲刷、滞留 2s 由 DerivedFlush 唤醒；经 SQLite 单事务 + 内存/索引同步后合并发 `items.updated`——老库补算时无 N 次单条事务与事件洪峰
 - **移动（fs_ops，do_move / do_dir_move）**：目标路径不可用（`.hawk` 内部/被 ignore）时整体转删除；`move_one` 只做索引 rekey 与元数据路径跟随（lib↔trash 去前缀后库内路径不变，元数据保持原路径 = 恢复目标），**不重算哈希**；目录移动批量 rekey 后 `prefs.rename_prefix` 让排序偏好跟随、`publish_transition` 广播事件、补扫新位置吸收监听遗漏的子文件事件
 - **清空回收站（do_clear_trash）**：摘除全部回收站位置并清理元数据 paths；内容在库内无其他引用时删除元数据与缩略图；物理删除由 API 层在其后完成
 - **进度上报**：`ScanReporter` 150ms 节流（阶段切换/总数变化强制发帧）写 StartupState（→ `/app/startup`）；`task.progress(index)` 500ms 节流 + 空闲转变化时补发清零帧
 
 ### api/item/ 详解
 
-- **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影。`similar_to` + `max_distance` 启用 dHash 粗筛 + RGB 复核，`order_by=similarity` 按 dHash 距离排序并投影 `similarity_distance`；源图锁与分析状态在 API 层校验。`item/duplicates`（admin）复用同一两阶段候选做分组扫描，分页返回各位置的 Item 与差异值；`vision/*` 管理可选模型，`item/vision-search` 使用 DINOv2 + HNSW 做相似构图检索
+- **list / skeleton / detail / count**：纯查询。list/skeleton 共用 `build_query`（同一转换路径保证两次查询次序逐位一致），走 `ItemIndex::query` / `query_skeleton`；detail 走 `get_dto` 锁内投影。`item/duplicates`（admin）按内容 hash 分组同一 item 的多个可见位置，分页返回各位置的 Item
 - **add**：`path`/`img_base64` 二选一取内容（入库策略前置校验：ignore 规则/扩展名白名单外的目标直接 4xx，不落盘）（base64 必须能被 image 识别否则 `UNSUPPORTED_FORMAT`；图片的网络下载由浏览器插件完成后以 base64 提交，服务端不再自行下载——无代理无会话、TLS 指纹常被拒，能力是浏览器网络栈的子集）→ 目标已存在报 `FILE_EXISTS` → **写入前先算哈希**确定 `already_existed`（避免 watcher 竞态改变语义）→ 文件落库（`spawn_blocking`，不阻塞运行时线程；path 导入保留原文件 mtime/atime）→ `submit_upsert` 携带已知哈希（流水线跳过重算，大文件免二次读盘）→ 附带的 tags/categories/annotation/website 经 `submit_metadata` 写入 → 响应取 `get_dto` 最新投影
 - **upload**：multipart/form-data 内容入库（web 端用，浏览器无文件路径可引用）：`file`（文件名只取末段防跨目录，扩展名决定类型，与 path 导入同语义不校验内容）/`folder_path`/`name` → 与 add 相同的同名检查→哈希→落盘→upsert 闭环，响应同 add；写权限 viewer 需对应访问密钥 `write=true`（auth 中间件统一拦截）
 - **update**：经 `find_location` 取位置快照 → 回收站中的文件禁止改名/移动 → `name` 分支做真实 rename 并 `submit_move`；`folder_path` 分支**按移动后的最新位置再移动**（改名+移动同请求时基于新文件名计算目标）→ tags/star(0–5 校验)/categories/annotation/url 走 `submit_metadata` → 响应 `get_dto` 投影
@@ -221,7 +219,7 @@ LibraryWatcher（notify 事件折叠 + rename 配对）→ FileUpsert/Deleted/Mo
 ### 3. 派生数据补全（老库 / 算法升级 / 增量素材）
 
 ```text
-启动与周期维护（默认 60s）→ 纯内存扫描 palette/phash/宽高缺失集
+启动与周期维护（默认 60s）→ 纯内存扫描 palette/宽高缺失集
   → worker 单次解码按需补齐 → JobSender 回流
   → 每 500 条或 2s 批量写 metadata.db → 合并 items.updated
   → 相似查询与颜色查询立即可用；缩略图仍按读取端惰性生成
@@ -250,7 +248,7 @@ trash/clear:   submit_clear_trash 清位置、清元数据 paths；库内无引�
 
 | 层 | 位置 | 说明 |
 | ---- | ---- | ---- |
-| 单元测试 | `cargo test`（各文件内联 `#[cfg(test)]`） | 纯函数与纯数据结构：颜色数学（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色 ~100%、双色各半、全透明→空、占比合计）、pHash 缩放/重压缩/汉明距离、SQLite v1 加列保留、ignore 匹配、路径换算与回收站前缀、BLAKE3 标准向量、视图偏好校验 |
+| 单元测试 | `cargo test`（各文件内联 `#[cfg(test)]`） | 纯函数与纯数据结构：颜色数学（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色 ~100%、双色各半、全透明→空、占比合计）、SQLite v1 加列保留、ignore 匹配、路径换算与回收站前缀、BLAKE3 标准向量、视图偏好校验 |
 | 行为测试 | `src/core/pipeline/tests.rs`（`cargo test`） | 索引流水线全链路：upsert 幂等、扫描消失对账、移动的同一性继承（真实临时素材库，文件系统/元数据/索引全链路） |
 | OpenAPI 契约校验 | `src/api/contract_tests.rs`（`cargo test`） | 固化 openapi.json 与代码生成同步、端点全量归类、读/写端点成功路径响应体 JSON Schema 校验、SSE 事件名与载荷双向比对；CI rust job 随 `cargo test` 执行 |
 | 端到端冒烟 | `tools/smoke.sh` | 临时素材库 + curl 覆盖 HTTP API 全流程（鉴权、索引、过滤、颜色检索、缩略图、去重、文件夹、监听防抖、SSE、batch_update、回收站、重启哈希复用）。语言无关的行为契约测试，需先 `cargo build --release` |

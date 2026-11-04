@@ -190,7 +190,6 @@ const GET_READ_PATHS: &[&str] = &[
     "/api/v1/lock/list",
     "/api/v1/tag/list",
     "/api/v1/view/preferences",
-    "/api/v1/vision/status",
 ];
 
 const POST_READ_PATHS: &[&str] = &[
@@ -201,7 +200,6 @@ const POST_READ_PATHS: &[&str] = &[
     "/api/v1/item/list",
     "/api/v1/item/skeleton",
     "/api/v1/lock/unlock",
-    "/api/v1/item/vision-search",
 ];
 
 const IMPORT_PATHS: &[&str] = &[
@@ -253,9 +251,6 @@ const MANAGE_PATHS: &[&str] = &[
     "/api/v1/remote/devices",
     "/api/v1/remote/keys",
     "/api/v1/remote/session",
-    "/api/v1/vision/install",
-    "/api/v1/vision/enable",
-    "/api/v1/vision/remove",
 ];
 
 #[cfg(test)]

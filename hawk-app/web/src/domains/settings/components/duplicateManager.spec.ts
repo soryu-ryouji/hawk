@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-// 重复图片管理：默认无选择、元数据展示、位置级删除、部分失败与跨页选择。
+// 重复图片管理：按内容 hash 分组、默认无选择、位置级删除、部分失败与跨页选择。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
-import { mount, type VueWrapper } from '@vue/test-utils';
+import { mount } from '@vue/test-utils';
 
 const apiMocks = vi.hoisted(() => ({
   itemDuplicates: vi.fn(),
@@ -15,9 +15,8 @@ import DuplicateManager from './DuplicateManager.vue';
 import { useLibraryStore } from '@/domains/library';
 import type { DuplicateEntry, DuplicateGroup, DuplicateScanResponse } from '@/shared/types';
 
-function entry(id: string, path: string, distance = 1): DuplicateEntry {
+function entry(id: string, path: string): DuplicateEntry {
   return {
-    similarity_distance: distance,
     item: {
       annotation: null,
       categories: [],
@@ -39,8 +38,8 @@ function entry(id: string, path: string, distance = 1): DuplicateEntry {
   };
 }
 
-function group(id: string, entries: DuplicateEntry[], kind: 'similar' | 'exact' = 'similar'): DuplicateGroup {
-  return { id, kind, entries };
+function group(id: string, entries: DuplicateEntry[]): DuplicateGroup {
+  return { id, entries };
 }
 
 function response(groups: DuplicateGroup[], total = groups.length): DuplicateScanResponse {
@@ -53,24 +52,36 @@ async function flush(ticks = 20) {
   }
 }
 
-function button(wrapper: VueWrapper, text: string) {
-  const found = wrapper.findAll('button').find((candidate) => candidate.text() === text);
+function button(text: string): HTMLButtonElement {
+  const found = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => candidate.textContent?.trim() === text);
   expect(found, `按钮 ${text}`).toBeDefined();
   return found!;
 }
 
-async function clickButton(wrapper: VueWrapper, text: string) {
-  await button(wrapper, text).trigger('click');
+async function clickButton(text: string) {
+  button(text).click();
   await flush();
+}
+
+function checkboxes(): HTMLInputElement[] {
+  return [...document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+}
+
+async function toggleCheckbox(index: number) {
+  const box = checkboxes()[index];
+  expect(box).toBeDefined();
+  box.checked = true;
+  box.dispatchEvent(new Event('change', { bubbles: true }));
+  await flush();
+}
+
+function bodyText(): string {
+  return document.body.textContent ?? '';
 }
 
 async function clickDialogButton(text: string) {
-  const found = [...document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((candidate) => candidate.textContent === text);
-  expect(found, `对话框按钮 ${text}`).toBeDefined();
-  found!.click();
-  await flush();
+  await clickButton(text);
 }
-
 beforeEach(() => {
   setActivePinia(createPinia());
   apiMocks.itemDuplicates.mockReset();
@@ -84,61 +95,72 @@ afterEach(() => {
 });
 
 describe('DuplicateManager', () => {
-  it('相似度滑块拖动时不重扫，松开后按新阈值查询', async () => {
+  it('扫描只按内容 hash 分组，不传相似度参数', async () => {
     apiMocks.itemDuplicates.mockResolvedValue(response([]));
     const wrapper = mount(DuplicateManager);
-    const slider = wrapper.find('input[type="range"]');
-    expect((slider.element as HTMLInputElement).value).toBe('75');
-
-    await clickButton(wrapper, '开始扫描');
-    expect(apiMocks.itemDuplicates).toHaveBeenLastCalledWith(expect.objectContaining({ max_distance: 5 }));
-
-    (slider.element as HTMLInputElement).value = '90';
-    await slider.trigger('input');
-    expect(apiMocks.itemDuplicates).toHaveBeenCalledTimes(1);
-
-    await slider.trigger('change');
-    await flush();
-    expect(apiMocks.itemDuplicates).toHaveBeenCalledTimes(2);
-    expect(apiMocks.itemDuplicates).toHaveBeenLastCalledWith(expect.objectContaining({ max_distance: 2 }));
+    await clickButton('开始扫描');
+    expect(apiMocks.itemDuplicates).toHaveBeenLastCalledWith({ offset: 0, limit: 50 });
+    expect(document.body.querySelector('input[type="range"]')).toBeNull();
+    wrapper.unmount();
   });
 
-  it('默认不选中，展示元数据并仅删除选中位置', async () => {
+  it('删除按钮固定在弹窗顶部，默认不选中并展示元数据', async () => {
     const groups = [group('g', [entry('a', 'folder/a.png'), entry('b', 'folder/b.png')])];
     apiMocks.itemDuplicates.mockResolvedValue(response(groups));
     const wrapper = mount(DuplicateManager);
 
-    await clickButton(wrapper, '开始扫描');
-    expect(wrapper.text()).toContain('1.0 KB');
-    expect(wrapper.text()).toContain('1920 × 1080');
-    expect(wrapper.text()).toContain('文件夹：folder');
-    const checkboxes = wrapper.findAll('input[type="checkbox"]');
-    expect(checkboxes).toHaveLength(2);
-    expect(checkboxes.every((box) => !(box.element as HTMLInputElement).checked)).toBe(true);
-    expect(wrapper.text()).toContain('已选择 0 个文件位置');
+    await clickButton('开始扫描');
+    expect(bodyText()).toContain('1.0 KB');
+    expect(bodyText()).toContain('1920 × 1080');
+    expect(bodyText()).toContain('文件夹：folder');
+    const boxes = checkboxes();
+    expect(boxes).toHaveLength(2);
+    expect(boxes.every((box) => !box.checked)).toBe(true);
+    expect(bodyText()).toContain('已选择 0 个文件位置');
+    expect(bodyText()).toContain('删除选中');
 
-    await checkboxes[0].setValue(true);
-    expect(wrapper.text()).toContain('已选择 1 个文件位置');
-    await clickButton(wrapper, '移入回收站');
+    await toggleCheckbox(0);
+    expect(bodyText()).toContain('已选择 1 个文件位置');
+    await clickButton('删除选中');
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
     await clickDialogButton('确认移入回收站');
 
     expect(apiMocks.itemDelete).toHaveBeenCalledTimes(1);
     expect(apiMocks.itemDelete).toHaveBeenCalledWith('a', 'folder/a.png');
     expect(useLibraryStore().toast).toBe('已将 1 个文件位置移入回收站');
+    wrapper.unmount();
+  });
+
+  it('缩略图加载失败时显示占位并自动重试', async () => {
+    vi.useFakeTimers();
+    apiMocks.itemDuplicates.mockResolvedValue(response([group('g', [entry('a', 'a.png')])]));
+    const wrapper = mount(DuplicateManager);
+    await clickButton('开始扫描');
+    const image = document.body.querySelector<HTMLImageElement>('img.duplicate-thumb');
+    expect(image).not.toBeNull();
+
+    image!.dispatchEvent(new Event('error'));
+    await flush();
+    expect(document.body.querySelector('.thumb-placeholder')?.textContent).toContain('缩略图生成中');
+
+    await vi.advanceTimersByTimeAsync(500);
+    await flush();
+    expect(document.body.querySelector<HTMLImageElement>('img.duplicate-thumb')?.src).toContain('&retry=1');
+    wrapper.unmount();
   });
 
   it('部分删除失败保留失败项选中并提示', async () => {
     apiMocks.itemDuplicates.mockResolvedValue(response([group('g', [entry('a', 'a.png')])]));
     apiMocks.itemDelete.mockRejectedValue(new Error('占用中'));
     const wrapper = mount(DuplicateManager);
-    await clickButton(wrapper, '开始扫描');
-    await wrapper.find('input[type="checkbox"]').setValue(true);
-    await clickButton(wrapper, '移入回收站');
+    await clickButton('开始扫描');
+    await toggleCheckbox(0);
+    await clickButton('删除选中');
     await clickDialogButton('确认移入回收站');
 
-    expect(wrapper.text()).toContain('1 个失败');
-    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true);
+    expect(bodyText()).toContain('1 个失败');
+    expect(checkboxes()[0].checked).toBe(true);
+    wrapper.unmount();
   });
 
   it('跨页保留选择并逐位置提交', async () => {
@@ -146,15 +168,16 @@ describe('DuplicateManager', () => {
       return Promise.resolve(offset === 0 ? response([group('g1', [entry('a', 'a.png')])], 51) : response([group('g2', [entry('b', 'b.png')])], 51));
     });
     const wrapper = mount(DuplicateManager);
-    await clickButton(wrapper, '开始扫描');
-    await wrapper.find('input[type="checkbox"]').setValue(true);
-    await clickButton(wrapper, '下一页');
-    await wrapper.find('input[type="checkbox"]').setValue(true);
-    expect(wrapper.text()).toContain('已选择 2 个文件位置');
+    await clickButton('开始扫描');
+    await toggleCheckbox(0);
+    await clickButton('下一页');
+    await toggleCheckbox(0);
+    expect(bodyText()).toContain('已选择 2 个文件位置');
 
-    await clickButton(wrapper, '移入回收站');
+    await clickButton('删除选中');
     await clickDialogButton('确认移入回收站');
     expect(apiMocks.itemDelete).toHaveBeenCalledWith('a', 'a.png');
     expect(apiMocks.itemDelete).toHaveBeenCalledWith('b', 'b.png');
+    wrapper.unmount();
   });
 });

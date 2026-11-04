@@ -1,8 +1,8 @@
-//! 派生数据回写：调色板/pHash 按批落 SQLite，宽高单条补全。
+//! 派生数据回写：调色板按批落 SQLite，宽高单条补全。
 //! 所有应用都发生在消费循环（单写者）；worker 只计算并经 JobSender 回流。
 
 use crate::core::item::PaletteColor;
-use crate::core::metadata::{ItemMetadata, PerceptualHash};
+use crate::core::metadata::ItemMetadata;
 use crate::core::taxonomy::ItemEvents;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,19 +20,6 @@ pub(crate) fn stage_palette(ctx: &Arc<PipelineCtx>, hash: String, palette: Vec<P
             entry.1 = palette;
         } else {
             pending.push((hash, palette));
-        }
-        pending.len() >= DERIVED_BATCH
-    };
-    arm_flush(ctx, full);
-}
-
-pub(crate) fn stage_phash(ctx: &Arc<PipelineCtx>, hash: String, phash: PerceptualHash) {
-    let full = {
-        let mut pending = ctx.phash_pending.lock().unwrap();
-        if let Some(entry) = pending.iter_mut().find(|(h, _)| *h == hash) {
-            entry.1 = phash;
-        } else {
-            pending.push((hash, phash));
         }
         pending.len() >= DERIVED_BATCH
     };
@@ -72,7 +59,6 @@ pub(crate) fn maybe_flush_derived(ctx: &PipelineCtx) {
 
 pub(crate) fn flush_derived_batches(ctx: &PipelineCtx) {
     let palette = std::mem::take(&mut *ctx.palette_pending.lock().unwrap());
-    let phash = std::mem::take(&mut *ctx.phash_pending.lock().unwrap());
     *ctx.derived_oldest.lock().unwrap() = None;
 
     let palette_entries: Vec<(String, ItemMetadata)> = palette
@@ -84,16 +70,6 @@ pub(crate) fn flush_derived_batches(ctx: &PipelineCtx) {
         })
         .collect();
     persist_and_publish(ctx, palette_entries, "调色板");
-
-    let phash_entries: Vec<(String, ItemMetadata)> = phash
-        .into_iter()
-        .filter_map(|(hash, phash)| {
-            let mut meta = ctx.store.try_get(&hash)?;
-            meta.phash = Some(phash);
-            Some((hash, meta))
-        })
-        .collect();
-    persist_and_publish(ctx, phash_entries, "pHash");
 }
 
 /// 单事务落盘 + 内存/索引同步 + 合并事件。meta 已随漂移/删除消失的项在组装阶段丢弃

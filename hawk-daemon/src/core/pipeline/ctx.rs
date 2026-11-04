@@ -9,7 +9,6 @@ use crate::core::global_filter::GlobalFilter;
 use crate::core::index::ItemIndex;
 use crate::core::item::PaletteColor;
 use crate::core::locks::Locks;
-use crate::core::metadata::PerceptualHash;
 use crate::core::metadata_store::MetadataStore;
 use crate::core::paths::LibraryPaths;
 use crate::core::scanner::LibraryScanner;
@@ -125,7 +124,6 @@ pub(crate) struct PipelineCtx {
     pub(crate) global_filter: Arc<GlobalFilter>,
     pub(crate) locks: Arc<Locks>,
     pub(crate) worker: Arc<ThumbnailWorker>,
-    pub(crate) vision: Arc<crate::core::vision::VisionService>,
     pub(crate) startup: Arc<StartupState>,
     pub(crate) settings: Settings,
     pub(crate) sender: JobSender,
@@ -146,9 +144,8 @@ pub(crate) struct PipelineCtx {
     pub(crate) last_full_scan_unix_ms: std::sync::atomic::AtomicI64,
     pub(crate) progress_last_at: AtomicI64,
     pub(crate) progress_idle: AtomicBool,
-    /// 暂存的调色板/pHash 回写（hash → 最新结果）；同 hash 去重，按批冲刷
+    /// 暂存的调色板回写（hash → 最新结果）；同 hash 去重，按批冲刷
     pub(crate) palette_pending: Mutex<Vec<(String, Vec<PaletteColor>)>>,
-    pub(crate) phash_pending: Mutex<Vec<(String, PerceptualHash)>>,
     pub(crate) derived_oldest: Mutex<Option<std::time::Instant>>,
     /// 冲刷定时任务是否已排队（避免重复 spawn）
     pub(crate) derived_timer: AtomicBool,

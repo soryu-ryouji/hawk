@@ -122,10 +122,6 @@ pub(crate) enum Job {
         hash: String,
         palette: Vec<PaletteColor>,
     },
-    Phash {
-        hash: String,
-        phash: crate::core::metadata::PerceptualHash,
-    },
     FixDim {
         hash: String,
         w: i32,
@@ -184,7 +180,6 @@ impl IndexPipeline {
         global_filter: Arc<crate::core::global_filter::GlobalFilter>,
         locks: Arc<crate::core::locks::Locks>,
         worker: Arc<ThumbnailWorker>,
-        vision: Arc<crate::core::vision::VisionService>,
         startup: Arc<StartupState>,
         settings: Settings,
     ) -> IndexPipeline {
@@ -205,7 +200,6 @@ impl IndexPipeline {
             global_filter,
             locks,
             worker,
-            vision,
             startup,
             settings,
             sender,
@@ -221,7 +215,6 @@ impl IndexPipeline {
             progress_last_at: std::sync::atomic::AtomicI64::new(0),
             progress_idle: std::sync::atomic::AtomicBool::new(true),
             palette_pending: Mutex::new(Vec::new()),
-            phash_pending: Mutex::new(Vec::new()),
             derived_oldest: Mutex::new(None),
             derived_timer: std::sync::atomic::AtomicBool::new(false),
             runtime: tokio::runtime::Handle::current(),
@@ -794,9 +787,6 @@ fn process_job(ctx: &Arc<PipelineCtx>, job: Job) {
             // 冲刷定时任务到期：队列安静期（无新 job）也能把暂存回写落盘，不依赖任务到达
             ctx.derived_timer.store(false, Ordering::SeqCst);
             derived::flush_derived_batches(ctx);
-        }
-        Job::Phash { hash, phash } => {
-            derived::stage_phash(ctx, hash, phash);
         }
         Job::FixDim { hash, w, h } => {
             derived::do_fix_dim(ctx, &hash, w, h);

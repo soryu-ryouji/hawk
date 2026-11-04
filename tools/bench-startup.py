@@ -10,7 +10,7 @@
   - rss_ready_mb    就绪时内存
 首次建库额外:
   - t_ready_cold_s  首次创建 metadata.db 并注水
-  - t_scan_cold_s   首次全库扫描 + 缩略图/调色板/pHash 生成
+  - t_scan_cold_s   首次全库扫描 + 缩略图/调色板生成
 """
 import argparse
 import os

@@ -258,12 +258,8 @@ function onMenu(item: Item, e: MouseEvent) {
       .catch(() => store.showToast('保存图片失败'));
   }
 
-  // 相似查找与保存都是读操作，viewer/importer 同样可用；编辑类入口仍由 editLocked 隐藏
-  const canFindSimilar = Number(item.width) > 0 && Number(item.height) > 0;
-  const readItems = [
-    ...(canFindSimilar ? [{ label: '查找图片', action: () => store.showSimilar(item) }] : []),
-    ...(!hasShell ? [{ label: '保存图片', action: saveItem }] : []),
-  ];
+  // 保存是读操作，viewer/importer 同样可用；编辑类入口仍由 editLocked 隐藏
+  const readItems = [...(!hasShell ? [{ label: '保存图片', action: saveItem }] : [])];
   const items = store.isTrash
     ? [...readItems, ...(!store.editLocked ? [{ label: '恢复', action: () => void restoreSelected() }] : [])]
     : [

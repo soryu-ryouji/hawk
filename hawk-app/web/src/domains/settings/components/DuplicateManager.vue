@@ -1,23 +1,20 @@
 <script setup lang="ts">
 // 重复图片管理：扫描（只读）→ 用户逐位置选择 → 二次确认 → 按位置移入回收站。
 // 默认不选中、不自动保留“最佳版本”，不做永久删除。
-import { computed, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useEventListener } from '@vueuse/core';
 import { api } from '@/shared/api/endpoints';
 import { errorText } from '@/shared/lib/storeUtil';
 import { formatSize } from '@/shared/lib/format';
 import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue';
+import Icon from '@/shared/ui/Icon.vue';
 import { itemKey, splitKey } from '@/domains/library';
 import { useLibraryStore } from '@/domains/library';
-import type { DuplicateGroup } from '@/shared/types';
+import type { DuplicateGroup, Item } from '@/shared/types';
 
-type Kind = 'similar' | 'exact';
-
+const emit = defineEmits<{ close: [] }>();
 const PAGE_SIZE = 50;
 const store = useLibraryStore();
-const kind = ref<Kind>('similar');
-// Eagle 式相似度：0 最宽松（距离 20），100 最严格（距离 0）；默认 75 对应原严格档 5
-const similarity = ref(75);
-const maxDistance = computed(() => Math.round((100 - similarity.value) / 5));
 const groups = ref<DuplicateGroup[]>([]);
 const total = ref(0);
 const offset = ref(0);
@@ -28,34 +25,87 @@ const result = ref('');
 const selected = ref(new Set<string>());
 const confirmOpen = ref(false);
 const deleting = ref(false);
+const closeButton = ref<HTMLButtonElement | null>(null);
 let scanVersion = 0;
+
+// 缩略图是惰性缓存：首次读取可能 404 并在后台生成。这里显示占位并自动带 cache-bust 重试。
+const MAX_THUMB_ATTEMPTS = 6;
+const thumbFailed = ref(new Set<string>());
+const thumbAttempts = ref(new Map<string, number>());
+const thumbTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+onMounted(() => {
+  document.body.classList.add('duplicate-dialog-open');
+  closeButton.value?.focus();
+});
+onUnmounted(() => {
+  document.body.classList.remove('duplicate-dialog-open');
+  for (const timer of thumbTimers.values()) {
+    clearTimeout(timer);
+  }
+});
+
+useEventListener(
+  window,
+  'keydown',
+  (e) => {
+    if (e.key !== 'Escape') {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirmOpen.value) {
+      confirmOpen.value = false;
+    } else {
+      emit('close');
+    }
+  },
+  { capture: true },
+);
+
+function thumbSrc(item: Item): string {
+  const base = api.thumbnailUrl(item.id, 512);
+  const attempt = thumbAttempts.value.get(item.id) ?? 0;
+  return attempt > 0 ? `${base}&retry=${attempt}` : base;
+}
+
+function onThumbError(item: Item) {
+  // 同一内容的多个位置共享缩略图：已有重试计时器时只保留一个，避免重复位置连续消耗次数。
+  if (thumbTimers.has(item.id)) {
+    return;
+  }
+  const attempt = (thumbAttempts.value.get(item.id) ?? 0) + 1;
+  thumbAttempts.value.set(item.id, attempt);
+  thumbFailed.value.add(item.id);
+  if (attempt > MAX_THUMB_ATTEMPTS) {
+    return;
+  }
+  thumbTimers.set(
+    item.id,
+    setTimeout(
+      () => {
+        thumbTimers.delete(item.id);
+        thumbFailed.value.delete(item.id);
+      },
+      Math.min(500 * 2 ** (attempt - 1), 5000),
+    ),
+  );
+}
+
+function onThumbLoad(item: Item) {
+  thumbFailed.value.delete(item.id);
+  thumbAttempts.value.delete(item.id);
+  const timer = thumbTimers.get(item.id);
+  if (timer) {
+    clearTimeout(timer);
+    thumbTimers.delete(item.id);
+  }
+}
 
 const selectedCount = computed(() => selected.value.size);
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
 const currentPage = computed(() => Math.min(totalPages.value, Math.floor(offset.value / PAGE_SIZE) + 1));
 const actionText = computed(() => (loading.value ? '扫描中…' : scanned.value ? '重新扫描' : '开始扫描'));
-
-function switchKind(next: Kind) {
-  if (kind.value === next) {
-    return;
-  }
-  scanVersion++;
-  kind.value = next;
-  groups.value = [];
-  total.value = 0;
-  offset.value = 0;
-  selected.value = new Set();
-  scanned.value = false;
-  error.value = '';
-  result.value = '';
-}
-
-function onThresholdChange() {
-  // range 的 input 只更新数值，change（拖动松开/键盘提交）才重扫，避免连续发起全库计算
-  if (scanned.value) {
-    void startScan();
-  }
-}
 
 async function startScan() {
   scanVersion++;
@@ -73,8 +123,6 @@ async function scan() {
   error.value = '';
   try {
     const response = await api.itemDuplicates({
-      kind: kind.value,
-      max_distance: kind.value === 'similar' ? maxDistance.value : undefined,
       offset: offset.value,
       limit: PAGE_SIZE,
     });
@@ -150,182 +198,212 @@ async function deleteSelected() {
 </script>
 
 <template>
-  <section class="settings-section duplicate-manager">
-    <h3 class="settings-section-title">重复图片</h3>
-    <div class="settings-group">
-      <div class="duplicate-head">
-        <div class="duplicate-tabs" role="tablist">
-          <button type="button" :class="{ active: kind === 'similar' }" :disabled="loading" @click="switchKind('similar')">相似图片</button>
-          <button type="button" :class="{ active: kind === 'exact' }" :disabled="loading" @click="switchKind('exact')">相同内容</button>
-        </div>
-        <div v-if="kind === 'similar'" class="threshold">
-          <div class="threshold-label">
-            <span>相似度</span>
-            <span>{{ similarity }}</span>
+  <Teleport to="body">
+    <div class="mask" @click.self="emit('close')">
+      <section class="dialog" role="dialog" aria-modal="true" aria-label="重复图片" @keydown.stop>
+        <header class="dialog-head">
+          <div class="dialog-title">
+            <h2>重复图片</h2>
+            <p>按内容 hash 汇总同一素材的多个文件位置；扫描只读，不会自动删除任何文件。</p>
           </div>
-          <input
-            v-model.number="similarity"
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            aria-label="相似度"
-            :title="`向右提高相似度要求（当前差异 0–${maxDistance}）`"
-            :disabled="loading || deleting"
-            @change="onThresholdChange"
-          />
-          <div class="threshold-scale"><span>宽松</span><span>严格</span></div>
+          <button ref="closeButton" type="button" class="icon-btn" title="关闭 (Esc)" @click="emit('close')">
+            <Icon name="close" :size="16" />
+          </button>
+        </header>
+
+        <div class="toolbar">
+          <button type="button" class="scan-button" :disabled="loading || deleting" @click="startScan">{{ actionText }}</button>
+          <span class="selection-count">已选择 {{ selectedCount }} 个文件位置</span>
+          <button type="button" class="delete-button" :disabled="selectedCount === 0 || deleting" @click="confirmOpen = true">
+            <Icon name="trash" :size="14" />
+            {{ deleting ? '正在移入回收站…' : '删除选中' }}
+          </button>
         </div>
-        <button type="button" class="scan-button" :disabled="loading || deleting" @click="startScan">{{ actionText }}</button>
-      </div>
 
-      <p class="settings-message">
-        {{
-          kind === 'similar'
-            ? '按感知哈希分组。相似不等于重复，请逐张确认；不会自动删除任何文件。'
-            : '检查同一 hash 下的多个文件位置，只列出库内位置数大于 1 的组。'
-        }}
-      </p>
-      <p v-if="error" class="settings-message error">{{ error }}</p>
-      <p v-if="result" class="settings-message" :class="{ error: result.includes('失败') }">{{ result }}</p>
-      <p v-if="loading && groups.length === 0" class="settings-message">正在扫描重复图片…</p>
-      <p v-else-if="!scanned" class="settings-message">选择类型后开始扫描，所有图片默认不选中。</p>
-      <p v-else-if="total === 0" class="settings-message">当前条件下未发现重复图片。</p>
+        <div class="dialog-body">
+          <p class="settings-message">检查同一内容 hash 下的多个文件位置，只列出库内位置数大于 1 的组；不会自动删除任何文件。</p>
+          <p v-if="error" class="settings-message error">{{ error }}</p>
+          <p v-if="result" class="settings-message" :class="{ error: result.includes('失败') }">{{ result }}</p>
+          <p v-if="loading && groups.length === 0" class="settings-message">正在扫描重复图片…</p>
+          <p v-else-if="!scanned" class="settings-message">开始扫描后，所有文件位置默认不选中。</p>
+          <p v-else-if="total === 0" class="settings-message">当前条件下未发现重复图片。</p>
 
-      <div v-if="groups.length > 0" class="duplicate-results">
-        <section v-for="group in groups" :key="group.id" class="duplicate-group">
-          <header class="group-head">
-            <span>{{ group.kind === 'exact' ? '相同内容' : '相似图片' }} · {{ group.entries.length }} 个位置</span>
-            <span class="group-id">#{{ group.id.slice(0, 8) }}</span>
-          </header>
-          <label v-for="entry in group.entries" :key="itemKey(entry.item.id, entry.item.path)" class="duplicate-entry">
-            <input
-              type="checkbox"
-              :checked="selected.has(itemKey(entry.item.id, entry.item.path))"
-              :disabled="deleting"
-              @change="toggleEntry(entry.item.id, entry.item.path)"
-            />
-            <img class="duplicate-thumb" :src="api.thumbnailUrl(entry.item.id, 512)" :alt="entry.item.name" loading="lazy" />
-            <span class="entry-copy">
-              <span class="entry-name">{{ entry.item.name }}.{{ entry.item.ext }}</span>
-              <span class="entry-meta">
-                {{ formatSize(Number(entry.item.size)) }} · {{ entry.item.width }} × {{ entry.item.height }}
-                <template v-if="entry.similarity_distance !== undefined && entry.similarity_distance !== null">
-                  · 差异 {{ entry.similarity_distance }}
-                </template>
-              </span>
-              <span class="entry-folder">文件夹：{{ folderOf(entry.item.path) }}</span>
-              <span class="entry-path" :title="entry.item.path">{{ entry.item.path }}</span>
-            </span>
-          </label>
-        </section>
-      </div>
+          <div v-if="groups.length > 0" class="duplicate-results">
+            <section v-for="group in groups" :key="group.id" class="duplicate-group">
+              <header class="group-head">
+                <span>相同内容 · {{ group.entries.length }} 个位置</span>
+                <span class="group-id">#{{ group.id.slice(0, 8) }}</span>
+              </header>
+              <label v-for="entry in group.entries" :key="itemKey(entry.item.id, entry.item.path)" class="duplicate-entry">
+                <input
+                  type="checkbox"
+                  :checked="selected.has(itemKey(entry.item.id, entry.item.path))"
+                  :disabled="deleting"
+                  @change="toggleEntry(entry.item.id, entry.item.path)"
+                />
+                <div v-if="thumbFailed.has(entry.item.id)" class="duplicate-thumb thumb-placeholder">
+                  {{ (thumbAttempts.get(entry.item.id) ?? 0) > MAX_THUMB_ATTEMPTS ? '无预览' : '缩略图生成中…' }}
+                </div>
+                <img
+                  v-else
+                  class="duplicate-thumb"
+                  :src="thumbSrc(entry.item)"
+                  :alt="entry.item.name"
+                  loading="lazy"
+                  @error="onThumbError(entry.item)"
+                  @load="onThumbLoad(entry.item)"
+                />
+                <span class="entry-copy">
+                  <span class="entry-name">{{ entry.item.name }}.{{ entry.item.ext }}</span>
+                  <span class="entry-meta"> {{ formatSize(Number(entry.item.size)) }} · {{ entry.item.width }} × {{ entry.item.height }} </span>
+                  <span class="entry-folder">文件夹：{{ folderOf(entry.item.path) }}</span>
+                  <span class="entry-path" :title="entry.item.path">{{ entry.item.path }}</span>
+                </span>
+              </label>
+            </section>
+          </div>
+        </div>
 
-      <div v-if="total > 0" class="duplicate-footer">
-        <div class="pagination">
+        <footer v-if="total > 0" class="footer">
           <button type="button" :disabled="offset === 0 || loading" @click="pageBy(-1)">上一页</button>
           <span>第 {{ currentPage }} / {{ totalPages }} 页，共 {{ total }} 组</span>
           <button type="button" :disabled="currentPage >= totalPages || loading" @click="pageBy(1)">下一页</button>
-        </div>
-        <div class="duplicate-actions">
-          <span>已选择 {{ selectedCount }} 个文件位置</span>
-          <button type="button" class="danger" :disabled="selectedCount === 0 || deleting" @click="confirmOpen = true">
-            {{ deleting ? '正在移入回收站…' : '移入回收站' }}
-          </button>
-        </div>
-      </div>
+        </footer>
+      </section>
     </div>
+  </Teleport>
 
-    <ConfirmDialog
-      v-if="confirmOpen"
-      title="移入回收站？"
-      :description="`将移动 ${selectedCount} 个文件位置。其他位置不会被删除；同一 item 的最后一个库内位置被移动后，该 item 也会进入回收站，之后仍可恢复。`"
-      confirm-text="确认移入回收站"
-      danger
-      @confirm="deleteSelected"
-      @cancel="confirmOpen = false"
-    />
-  </section>
+  <ConfirmDialog
+    v-if="confirmOpen"
+    title="移入回收站？"
+    :description="`将移动 ${selectedCount} 个文件位置。其他位置不会被删除；同一 item 的最后一个库内位置被移动后，该 item 也会进入回收站，之后仍可恢复。`"
+    confirm-text="确认移入回收站"
+    danger
+    @confirm="deleteSelected"
+    @cancel="confirmOpen = false"
+  />
 </template>
 
 <style scoped>
-.duplicate-head,
-.duplicate-tabs,
-.duplicate-footer,
-.pagination,
-.duplicate-actions {
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(5px);
+}
+
+.dialog {
+  display: flex;
+  width: min(1000px, 100%);
+  height: min(780px, 100%);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-1);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-title h2 {
+  color: var(--fg-0);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-title p {
+  margin-top: 5px;
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
+.icon-btn {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-1);
+}
+
+.toolbar {
   display: flex;
   align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
 }
 
-.duplicate-head {
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-}
-
-.duplicate-tabs {
-  gap: 2px;
-  padding: 2px;
-  border-radius: 7px;
-  background: var(--bg-1);
-}
-
-.duplicate-tabs button,
-.scan-button,
-.pagination button,
-.duplicate-actions button {
-  padding: 5px 10px;
-  border-radius: 6px;
-  color: var(--fg-1);
-  font-size: 12px;
-}
-
-.duplicate-tabs button.active {
-  background: var(--bg-3);
-  color: var(--fg-0);
-}
-
-.threshold {
-  width: min(210px, 100%);
-  color: var(--fg-1);
-  font-size: 11px;
-}
-
-.threshold-label,
-.threshold-scale {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.threshold-label {
-  color: var(--fg-0);
-  font-size: 12px;
-}
-
-.threshold input {
-  width: 100%;
-  height: 16px;
-  padding: 0;
-  accent-color: var(--accent);
-}
-
-.threshold-scale {
-  color: var(--fg-1);
-  font-size: 10px;
+.toolbar button,
+.footer button {
+  font: inherit;
+  line-height: 1.2;
 }
 
 .scan-button {
-  margin-left: auto;
-  border: 1px solid var(--accent);
+  padding: 6px 12px;
+  border-color: var(--accent);
   background: var(--accent);
   color: #fff;
 }
 
-.duplicate-results {
-  max-height: 560px;
+.selection-count {
+  margin-left: auto;
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
+.delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
+.delete-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dialog-body {
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
+  background: var(--bg-0);
+}
+
+.settings-message {
+  padding: 14px 18px 0;
+  color: var(--fg-1);
+  font-size: 12px;
+}
+
+.settings-message.error {
+  color: var(--danger);
+}
+
+.duplicate-results {
+  margin-top: 12px;
   border-top: 1px solid var(--border);
 }
 
@@ -339,7 +417,7 @@ async function deleteSelected() {
   z-index: 1;
   display: flex;
   justify-content: space-between;
-  padding: 7px 12px;
+  padding: 7px 18px;
   background: var(--bg-2);
   color: var(--fg-1);
   font-size: 11px;
@@ -354,7 +432,7 @@ async function deleteSelected() {
   grid-template-columns: 18px 64px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
+  padding: 8px 18px;
   cursor: pointer;
 }
 
@@ -366,8 +444,17 @@ async function deleteSelected() {
   width: 64px;
   height: 64px;
   object-fit: contain;
-  background: var(--bg-0);
   border-radius: 5px;
+  background: var(--bg-2);
+}
+
+.thumb-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  color: var(--fg-1);
+  font-size: 10px;
+  text-align: center;
 }
 
 .entry-copy {
@@ -398,27 +485,20 @@ async function deleteSelected() {
   white-space: nowrap;
 }
 
-.duplicate-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 18px;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
-}
-
-.pagination,
-.duplicate-actions {
-  gap: 8px;
   color: var(--fg-1);
   font-size: 12px;
 }
 
-.duplicate-actions button.danger {
-  border: 1px solid var(--danger);
-  color: var(--danger);
+.footer button {
+  padding: 5px 10px;
+  border-radius: 6px;
 }
 </style>

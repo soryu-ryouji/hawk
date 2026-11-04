@@ -32,11 +32,11 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 - 原有的文件夹组织习惯完全保留
 - 与网盘（Dropbox、iCloud、Syncthing、OneDrive）天然兼容
 
-### SQLite 元数据与相似图片查找
+### SQLite 元数据与内容重复扫描
 
 素材参数（标签、评分、备注等）统一存放在 `.hawk/metadata.db`，单文件 SQLite 提供事务写入与快速启动，不再有 TOML/数据库双模式。SQLite 仅本机使用，不参与网盘同步。
 
-支持 pHash 视觉近重复查找：缩放、格式转换、重新压缩后的图片可按汉明距离检索和排序，结果复用虚拟网格；计算在 daemon 后台完成，广域网仍只传缩略图。设置中的「存储 → 重复图片」还可按相似组或相同内容多位置扫描，展示文件大小、像素和路径，用户逐位置确认后移入回收站。
+支持按内容 hash 识别重复文件：设置中的「存储 → 重复图片」会打开独立管理弹窗，扫描同一内容对应的多个文件位置，展示文件大小、像素和路径；删除入口固定在弹窗顶部，用户逐位置确认后移入回收站。
 
 ### 前后端解耦
 
@@ -65,7 +65,7 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 - [权限与传输架构 V2](docs/backend/access-control-v2.md)：统一身份/Session、target_identity、原生 LAN/WAN 全加密与 server 数据面零信任（实施中）
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
 - [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配
-- [pHash 相似图片查找](docs/backend/similar-images.md)：64 位感知哈希、近重复检索与阈值设计
+- [内容重复扫描](docs/backend/duplicates.md)：按内容 hash 聚合同一文件的多个位置
 - [存储设计](docs/backend/storage.md)：`.hawk/` 目录结构、SQLite、同步边界、索引与缓存
 
 **远程访问（hawk-server/）**

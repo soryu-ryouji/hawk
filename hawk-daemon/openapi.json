@@ -398,15 +398,6 @@
         "properties": {
           "item": {
             "$ref": "#/components/schemas/ItemDto"
-          },
-          "similarity_distance": {
-            "description": "与组内代表图的 pHash 汉明距离；exact 组不返回",
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
           }
         },
         "required": [
@@ -423,38 +414,21 @@
             "type": "array"
           },
           "id": {
-            "description": "稳定组标识：exact 为 item id，similar 为组内代表 item id",
-            "type": "string"
-          },
-          "kind": {
+            "description": "稳定组标识：内容 hash（item id）",
             "type": "string"
           }
         },
         "required": [
           "id",
-          "kind",
           "entries"
         ],
         "type": "object"
       },
       "DuplicateScanRequest": {
         "properties": {
-          "kind": {
-            "description": "similar（pHash 近重复）/ exact（同内容多位置）",
-            "type": "string"
-          },
           "limit": {
             "format": "int32",
             "type": "integer"
-          },
-          "max_distance": {
-            "description": "仅 similar：最大汉明距离（0–64，缺省 5）",
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
           },
           "offset": {
             "format": "int32",
@@ -1127,15 +1101,6 @@
                   "type": "string"
                 },
                 "type": "array"
-              },
-              "similarity_distance": {
-                "description": "仅相似度查询：与源图的 pHash 汉明距离（越小越相似）",
-                "format": "int32",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
               },
               "size": {
                 "format": "int64",
@@ -2249,116 +2214,6 @@
         ],
         "type": "object"
       },
-      "Envelope_VisionSearchResponse": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "items": {
-                "items": {
-                  "$ref": "#/components/schemas/VisionSearchEntryDto"
-                },
-                "type": "array"
-              },
-              "limit": {
-                "format": "int32",
-                "type": "integer"
-              },
-              "offset": {
-                "format": "int32",
-                "type": "integer"
-              },
-              "total": {
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "items",
-              "total",
-              "offset",
-              "limit"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_VisionStatus": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "downloaded_bytes": {
-                "format": "int64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "downloading": {
-                "type": "boolean"
-              },
-              "enabled": {
-                "type": "boolean"
-              },
-              "error": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "indexed_items": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "indexing": {
-                "description": "正在重建索引或处理当前任务（队列尚未形成时也覆盖）",
-                "type": "boolean"
-              },
-              "installed": {
-                "type": "boolean"
-              },
-              "pending_items": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "total_bytes": {
-                "format": "int64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "total_items": {
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "installed",
-              "enabled",
-              "downloading",
-              "downloaded_bytes",
-              "total_bytes",
-              "indexed_items",
-              "total_items",
-              "pending_items",
-              "indexing"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
       "Envelope_usize": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -2836,15 +2691,6 @@
             },
             "type": "array"
           },
-          "similarity_distance": {
-            "description": "仅相似度查询：与源图的 pHash 汉明距离（越小越相似）",
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "size": {
             "format": "int64",
             "type": "integer"
@@ -3015,15 +2861,6 @@
             "format": "int32",
             "type": "integer"
           },
-          "max_distance": {
-            "description": "与源图的最大汉明距离（0–64，缺省 5；越小越严格）",
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "max_height": {
             "description": "高度筛选（像素）：≤ 阈值，可与 min_height 组成区间",
             "format": "int32",
@@ -3083,13 +2920,6 @@
             ]
           },
           "order_by": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "similar_to": {
-            "description": "以指定 item 的 pHash 查找相似图片；结果可用 order_by=similarity 按距离排序",
             "type": [
               "string",
               "null"
@@ -3205,15 +3035,6 @@
           "path": {
             "description": "同 id（内容）多位置时按 path 区分条目",
             "type": "string"
-          },
-          "similarity_distance": {
-            "description": "仅相似度查询：与源图的 pHash 汉明距离（越小越相似）",
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
           },
           "size": {
             "description": "该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）",
@@ -5055,140 +4876,6 @@
           "order"
         ],
         "type": "object"
-      },
-      "VisionEnableRequest": {
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "enabled"
-        ],
-        "type": "object"
-      },
-      "VisionSearchEntryDto": {
-        "properties": {
-          "item": {
-            "$ref": "#/components/schemas/ItemDto"
-          },
-          "similarity_score": {
-            "format": "float",
-            "type": "number"
-          }
-        },
-        "required": [
-          "item",
-          "similarity_score"
-        ],
-        "type": "object"
-      },
-      "VisionSearchRequest": {
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "limit": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "min_similarity": {
-            "description": "最低余弦相似度（-1–1）；常用正值越高越严格",
-            "format": "float",
-            "type": "number"
-          },
-          "offset": {
-            "format": "int32",
-            "type": "integer"
-          }
-        },
-        "type": "object"
-      },
-      "VisionSearchResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/VisionSearchEntryDto"
-            },
-            "type": "array"
-          },
-          "limit": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "offset": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "total": {
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "offset",
-          "limit"
-        ],
-        "type": "object"
-      },
-      "VisionStatus": {
-        "properties": {
-          "downloaded_bytes": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "downloading": {
-            "type": "boolean"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "indexed_items": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "indexing": {
-            "description": "正在重建索引或处理当前任务（队列尚未形成时也覆盖）",
-            "type": "boolean"
-          },
-          "installed": {
-            "type": "boolean"
-          },
-          "pending_items": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "total_bytes": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "total_items": {
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "installed",
-          "enabled",
-          "downloading",
-          "downloaded_bytes",
-          "total_bytes",
-          "indexed_items",
-          "total_items",
-          "pending_items",
-          "indexing"
-        ],
-        "type": "object"
       }
     }
   },
@@ -6221,14 +5908,11 @@
             },
             "description": "OK"
           },
-          "400": {
-            "description": "kind 或 max_distance 非法"
-          },
           "403": {
             "description": "仅 admin 可执行重复扫描"
           }
         },
-        "summary": "重复图片分组扫描：分页按组切片，相同内容与相似图片共用响应结构",
+        "summary": "重复图片分组扫描：同一内容 hash 的多个库内位置，分页按组切片",
         "tags": [
           "item"
         ]
@@ -6560,40 +6244,6 @@
         "summary": "multipart/form-data 上传：浏览器/iOS 分享扩展无文件路径可引用（拿到的是内容），\n经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/\nskip_existing（可选，内容已在库内时跳过）/ tags、categories（可选，可重复出现多次）。\n写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）",
         "tags": [
           "item"
-        ]
-      }
-    },
-    "/api/v1/item/vision-search": {
-      "post": {
-        "operationId": "search",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VisionSearchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_VisionSearchResponse"
-                }
-              }
-            },
-            "description": "相似构图结果"
-          },
-          "400": {
-            "description": "扩展未启用、源图未分析或参数非法"
-          }
-        },
-        "tags": [
-          "item",
-          "vision"
         ]
       }
     },
@@ -7616,96 +7266,6 @@
         "summary": "全部视图偏好（scope → 排序）",
         "tags": [
           "view"
-        ]
-      }
-    },
-    "/api/v1/vision/enable": {
-      "post": {
-        "operationId": "enable",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VisionEnableRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_VisionStatus"
-                }
-              }
-            },
-            "description": "启用或停用视觉扩展"
-          }
-        },
-        "tags": [
-          "vision"
-        ]
-      }
-    },
-    "/api/v1/vision/install": {
-      "post": {
-        "operationId": "install",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_VisionStatus"
-                }
-              }
-            },
-            "description": "下载并启用视觉扩展"
-          }
-        },
-        "tags": [
-          "vision"
-        ]
-      }
-    },
-    "/api/v1/vision/remove": {
-      "post": {
-        "operationId": "remove",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_VisionStatus"
-                }
-              }
-            },
-            "description": "删除视觉模型"
-          }
-        },
-        "tags": [
-          "vision"
-        ]
-      }
-    },
-    "/api/v1/vision/status": {
-      "get": {
-        "operationId": "status",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_VisionStatus"
-                }
-              }
-            },
-            "description": "视觉扩展状态"
-          }
-        },
-        "tags": [
-          "vision"
         ]
       }
     },

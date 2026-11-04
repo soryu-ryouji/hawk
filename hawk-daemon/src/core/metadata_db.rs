@@ -1,14 +1,14 @@
 //! `.hawk/metadata.db`：素材元数据的唯一权威 SQLite 存储与启动注水来源。
 //!
 //! 不再承担库外 TOML 镜像角色，也没有写失败熔断/纯文本回退：读写错误直接上传调用方。
-//! schema v2 在 v1 上增量加入 phash/phash_version/rgb_grid，保留已有 SQLite 元数据；不读取 TOML。
+//! schema v3 只保留内容元数据与调色板缓存；不读取 TOML。
 
-use crate::core::metadata::{ItemMetadata, PaletteEntry, PerceptualHash};
+use crate::core::metadata::{ItemMetadata, PaletteEntry};
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-const SCHEMA_VERSION: &str = "2";
+const SCHEMA_VERSION: &str = "3";
 
 pub struct MetadataDb {
     /// 打开或 schema 初始化失败时保持 None，后续读写返回错误；启动状态据此进入错误页
@@ -66,15 +66,11 @@ impl MetadataDb {
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS items (hash TEXT PRIMARY KEY, url TEXT, star INTEGER NOT NULL DEFAULT 0, \
                  annotation TEXT, source_mtime INTEGER NOT NULL DEFAULT 0, width INTEGER NOT NULL DEFAULT 0, \
-                 height INTEGER NOT NULL DEFAULT 0, palette TEXT, phash TEXT, phash_version INTEGER NOT NULL DEFAULT 0, rgb_grid TEXT)",
+                 height INTEGER NOT NULL DEFAULT 0, palette TEXT)",
                 [],
             )?;
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS paths (hash TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL, PRIMARY KEY (hash, path))",
-                [],
-            )?;
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS vision_vectors (hash TEXT NOT NULL, model TEXT NOT NULL, vector BLOB NOT NULL, PRIMARY KEY (hash, model))",
                 [],
             )?;
             conn.execute(
@@ -89,10 +85,6 @@ impl MetadataDb {
                 "CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, entries INTEGER NOT NULL)",
                 [],
             )?;
-            // 老库只做增量加列；已有标签、评分、备注、调色板和位置原样保留。
-            ensure_column(conn, "phash", "TEXT")?;
-            ensure_column(conn, "phash_version", "INTEGER NOT NULL DEFAULT 0")?;
-            ensure_column(conn, "rgb_grid", "TEXT")?;
             conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema_version', ?1) \
                  ON CONFLICT(key) DO UPDATE SET value=?1",
@@ -108,21 +100,10 @@ impl MetadataDb {
             let mut items: HashMap<String, ItemMetadata> = HashMap::new();
             {
                 let mut stmt = conn.prepare(
-                    "SELECT hash, url, star, annotation, width, height, palette, phash, phash_version, rgb_grid FROM items",
+                    "SELECT hash, url, star, annotation, width, height, palette FROM items",
                 )?;
                 let rows = stmt.query_map([], |row| {
                     let palette_json: Option<String> = row.get(6)?;
-                    let phash_version = row.get::<_, i64>(8)? as u32;
-                    let phash_value = row.get::<_, Option<String>>(7)?;
-                    let rgb_grid = row.get::<_, Option<String>>(9)?;
-                    let phash = (phash_version > 0).then(|| PerceptualHash {
-                        version: phash_version,
-                        value: phash_value.and_then(|hex| u64::from_str_radix(&hex, 16).ok()),
-                        rgb: rgb_grid
-                            .as_deref()
-                            .and_then(crate::core::perceptual_hash::rgb_grid_from_hex)
-                            .map(Box::new),
-                    });
                     Ok((
                         row.get::<_, String>(0)?,
                         ItemMetadata {
@@ -132,7 +113,6 @@ impl MetadataDb {
                             width: row.get::<_, i64>(4)? as i32,
                             height: row.get::<_, i64>(5)? as i32,
                             palette: palette_json.as_deref().and_then(parse_palette_json),
-                            phash,
                             ..ItemMetadata::default()
                         },
                     ))
@@ -163,9 +143,12 @@ impl MetadataDb {
                     }
                 }
             }
-            load_child_rows(conn, "SELECT hash, tag FROM tags", &mut items, |meta, value| {
-                meta.tags.push(value)
-            })?;
+            load_child_rows(
+                conn,
+                "SELECT hash, tag FROM tags",
+                &mut items,
+                |meta, value| meta.tags.push(value),
+            )?;
             load_child_rows(
                 conn,
                 "SELECT hash, category FROM categories",
@@ -206,72 +189,10 @@ impl MetadataDb {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM items WHERE hash=?1", [hash])?;
             delete_child_rows(&tx, hash)?;
-            tx.execute("DELETE FROM vision_vectors WHERE hash=?1", [hash])?;
             tx.commit()?;
             Ok(())
         })
         .map_err(|e| format!("元数据数据库删除失败 {hash}: {e}"))
-    }
-
-    pub fn save_vision_vector(
-        &self,
-        hash: &str,
-        model: &str,
-        vector: &[f32],
-    ) -> Result<(), String> {
-        let bytes: Vec<u8> = vector
-            .iter()
-            .flat_map(|value| value.to_le_bytes())
-            .collect();
-        self.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO vision_vectors (hash, model, vector) VALUES (?1, ?2, ?3) \
-                 ON CONFLICT(hash, model) DO UPDATE SET vector=?3",
-                rusqlite::params![hash, model, bytes],
-            )?;
-            Ok(())
-        })
-        .map_err(|e| format!("视觉向量写入失败 {hash}: {e}"))
-    }
-
-    pub fn vision_vector(&self, hash: &str, model: &str) -> Result<Option<Vec<f32>>, String> {
-        self.with_conn(|conn| {
-            let bytes: Option<Vec<u8>> = conn
-                .query_row(
-                    "SELECT vector FROM vision_vectors WHERE hash=?1 AND model=?2",
-                    rusqlite::params![hash, model],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            Ok(bytes.map(|bytes| {
-                bytes
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|chunk| f32::from_le_bytes(*chunk))
-                    .collect()
-            }))
-        })
-        .map_err(|e| format!("视觉向量读取失败 {hash}: {e}"))
-    }
-
-    pub fn vision_vectors(&self, model: &str) -> Result<Vec<(String, Vec<f32>)>, String> {
-        self.with_conn(|conn| {
-            let mut stmt =
-                conn.prepare("SELECT hash, vector FROM vision_vectors WHERE model=?1")?;
-            let rows = stmt.query_map([model], |row| {
-                let bytes: Vec<u8> = row.get(1)?;
-                let vector = bytes
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|chunk| f32::from_le_bytes(*chunk))
-                    .collect::<Vec<f32>>();
-                Ok((row.get::<_, String>(0)?, vector))
-            })?;
-            Ok(rows.filter_map(|row| row.ok()).collect())
-        })
-        .map_err(|e| format!("视觉向量索引读取失败: {e}"))
     }
 
     pub fn load_folder_snapshots(&self) -> HashMap<String, (i64, i64)> {
@@ -329,20 +250,6 @@ impl MetadataDb {
     }
 }
 
-fn ensure_column(conn: &Connection, name: &str, definition: &str) -> rusqlite::Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(items)")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let exists = rows.into_iter().flatten().any(|column| column == name);
-    drop(stmt);
-    if !exists {
-        conn.execute(
-            &format!("ALTER TABLE items ADD COLUMN {name} {definition}"),
-            [],
-        )?;
-    }
-    Ok(())
-}
-
 fn parse_palette_json(json: &str) -> Option<Vec<PaletteEntry>> {
     serde_json::from_str(json).ok()
 }
@@ -352,21 +259,11 @@ fn upsert_item(
     hash: &str,
     meta: &ItemMetadata,
 ) -> rusqlite::Result<()> {
-    let phash_version = meta.phash.as_ref().map_or(0, |p| p.version as i64);
-    let phash_value = meta
-        .phash
-        .as_ref()
-        .and_then(|p| p.value.map(|value| format!("{value:016x}")));
-    let rgb_grid = meta.phash.as_ref().and_then(|p| {
-        p.rgb
-            .as_deref()
-            .map(crate::core::perceptual_hash::rgb_grid_to_hex)
-    });
     tx.execute(
-        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette, phash, phash_version, rgb_grid) \
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9, ?10) \
+        "INSERT INTO items (hash, url, star, annotation, source_mtime, width, height, palette) \
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7) \
          ON CONFLICT(hash) DO UPDATE SET url=?2, star=?3, annotation=?4, source_mtime=0, \
-         width=?5, height=?6, palette=?7, phash=?8, phash_version=?9, rgb_grid=?10",
+         width=?5, height=?6, palette=?7",
         rusqlite::params![
             hash,
             meta.url,
@@ -374,10 +271,9 @@ fn upsert_item(
             meta.annotation,
             meta.width,
             meta.height,
-            meta.palette.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default()),
-            phash_value,
-            phash_version,
-            rgb_grid,
+            meta.palette
+                .as_ref()
+                .map(|p| serde_json::to_string(p).unwrap_or_default()),
         ],
     )?;
     delete_child_rows(tx, hash)?;

@@ -20,6 +20,8 @@ const pending = ref<string | null>(null);
 const busy = ref(false);
 /** 迁移完成提示（从启动屏恢复回主界面后仍可见） */
 const done = ref(false);
+/** 重复图片管理弹窗（独立于设置面板内容的模态框） */
+const showDuplicates = ref(false);
 
 onMounted(() => {
   void shell.getCacheDir().then((d) => {
@@ -90,7 +92,12 @@ async function runCleanup() {
       <span class="cache-path">{{ current || '…' }}</span>
     </div>
 
-    <DuplicateManager v-if="isAdmin" />
+    <div v-if="isAdmin" class="field column">
+      <span class="field-label">重复图片</span>
+      <div class="actions-left">
+        <button class="btn" @click="showDuplicates = true">打开重复图片管理…</button>
+      </div>
+    </div>
 
     <div v-if="isAdmin" class="field column">
       <span class="field-label">索引体检</span>
@@ -104,6 +111,8 @@ async function runCleanup() {
     </div>
     <p v-if="error" class="field-error">{{ error }}</p>
     <p v-if="done" class="hint">迁移完成，缓存已搬迁到新目录。</p>
+
+    <DuplicateManager v-if="isAdmin && showDuplicates" @close="showDuplicates = false" />
 
     <!-- 迁移确认：整体搬迁 + 服务重启的事前说明 -->
     <div v-if="pending" class="migrate-confirm">

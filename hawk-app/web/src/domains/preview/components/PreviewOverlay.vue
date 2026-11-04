@@ -62,18 +62,6 @@ async function copyImage() {
 // 浏览器（无 hawkShell）隐藏系统相关项；只读查看（viewer）隐藏全部写操作，无可用项时不弹菜单。
 function onMenu(e: MouseEvent) {
   const items = [
-    // 相同/相似查找是读操作，viewer 也可用；关闭预览后打开独立查找弹窗
-    ...(Number(props.item.width) > 0 && Number(props.item.height) > 0
-      ? [
-          {
-            label: '查找图片',
-            action: () => {
-              store.showSimilar(props.item);
-              emit('close');
-            },
-          },
-        ]
-      : []),
     // 保存图片：仅浏览器端出现（桌面端文件本就在本机，走「在文件管理器中显示」）；
     // 读操作，viewer 只读也可用——移动端预览层是保存原图的主入口
     ...(!hasShell

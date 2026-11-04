@@ -6,7 +6,7 @@
 use crate::core::color_math;
 use crate::core::content_hash;
 use crate::core::item::PaletteColor;
-use crate::core::metadata::{ItemMetadata, PaletteEntry, PathEntry, PerceptualHash};
+use crate::core::metadata::{ItemMetadata, PaletteEntry, PathEntry};
 use crate::core::paths::{unix_ms, LibraryPaths};
 use crate::core::taxonomy::ItemEvents;
 use crate::core::thumbnail::ThumbnailService;
@@ -43,8 +43,6 @@ pub(crate) struct PendingUpsert {
     pub(crate) dim: Option<(i32, i32)>,
     /// 扫描并行阶段单次解码提炼的调色板（含空数组负缓存）；增量路径为 None
     pub(crate) palette: Option<Vec<PaletteColor>>,
-    /// 同一解码过程计算的 pHash；增量路径由 worker 补齐
-    pub(crate) phash: Option<PerceptualHash>,
 }
 
 /// 单文件入库（消费循环内联调用：watcher 事件 / API 提交 / 移动回退路径）
@@ -166,7 +164,6 @@ pub(crate) fn prepare_upsert(
             hash: None,
             dim: None,
             palette: None,
-            phash: None,
         }));
     }
 
@@ -188,7 +185,6 @@ pub(crate) fn prepare_upsert(
         hash: None,
         dim: None,
         palette: None,
-        phash: None,
     }))
 }
 
@@ -241,17 +237,6 @@ pub(crate) fn needs_palette_work(ctx: &PipelineCtx, hash: &str) -> bool {
     }
 }
 
-/// pHash 缺失或算法版本过旧时需要后台重算
-pub(crate) fn needs_phash_work(ctx: &PipelineCtx, hash: &str) -> bool {
-    match ctx.store.try_get(hash) {
-        Some(meta) => meta
-            .phash
-            .as_ref()
-            .is_none_or(|hash| hash.version != crate::core::perceptual_hash::PHASH_VERSION),
-        None => true,
-    }
-}
-
 /// 应用入库结果:元数据迁移与回写、索引更新、事件、派生补全派发。只允许串行调用。
 /// added_batch 为 Some 时（扫描路径）created 事件合并进 items.added；
 /// 增量路径传 None，维持即时单条 item.added
@@ -295,10 +280,6 @@ pub(crate) fn apply_upsert(
                 })
                 .collect(),
         );
-        meta_changed = true;
-    }
-    if let Some(phash) = pending.phash.as_ref() {
-        meta.phash = Some(phash.clone());
         meta_changed = true;
     }
     match meta.find_path_mut(&pending.lib_path) {
@@ -371,11 +352,9 @@ pub(crate) fn apply_upsert(
 
     // 缩略图是惰性缓存（读取端未命中时派发），入库/对账只保证调色板（颜色搜索依赖全量 palette）；
     // 派生齐备的文件(如对账扫描重放)不再派发:no-op 任务会把队列与积压计数灌满失真
-    if needs_palette_work(ctx, hash) || needs_phash_work(ctx, hash) {
+    if needs_palette_work(ctx, hash) {
         ctx.worker.enqueue_derived(hash, &pending.abs_path);
     }
-    // 视觉扩展只在用户安装并启用后工作；未启用时 enqueue 是空操作
-    ctx.vision.enqueue(hash, &pending.abs_path);
 
     // 扫描窗口内新增/刷新的位置记入会话：消失对账时豁免
     // （目录可能已被 runner 枚举过，窗口内后到的文件不在 seen 集内，否则会被误判消失）

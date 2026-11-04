@@ -740,8 +740,7 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | ---- | -------------------------------- | -------------- |
 | POST | `/api/v1/item/list`              | 查询 item 列表 |
 | POST | `/api/v1/item/skeleton`          | 全量布局骨架（dim，不分页，与 list 同序） |
-| POST | `/api/v1/item/duplicates`        | 重复图片分组扫描（相似 pHash / 相同内容多位置，admin） |
-| POST | `/api/v1/item/vision-search`      | 相似构图检索（可选视觉扩展） |
+| POST | `/api/v1/item/duplicates`        | 内容重复分组扫描（同一内容 hash 的多个位置，admin） |
 | POST | `/api/v1/item/aggregate`          | 选择集共有特性聚合：`{ ids }` → 标签/分类交集（多选面板数据源） |
 | GET  | `/api/v1/item/detail`            | 获取单个 item  |
 | GET  | `/api/v1/item/count`             | 获取 item 总数 |
@@ -774,7 +773,6 @@ folder 即素材库中的真实目录。对 folder 的操作会直接操作文�
 | annotation        | string   | 备注                                       |
 | modification_time | number   | 修改时间（Unix 毫秒）                      |
 | palette           | object[] | 调色板（按占比降序，最多 10 项；未提炼或不可解码时为空数组） |
-| similarity_distance | number? | 仅相似查询：与源图的 pHash 汉明距离（0–64，越小越相似） |
 
 palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前缀小写 hex，percentage 为像素覆盖占比（0–100，1 位小数）。调色板由后台异步提炼（见 [颜色提炼与颜色检索](color-search.md)），新入库素材稍后才就绪；就绪后通过 `item.updated` 事件推送。
 
@@ -812,15 +810,11 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 | min_width / max_width | number | 宽度独立区间（像素）：≥ / ≤ 阈值，两者可组合；与高度条件独立，宽未解析（0）时不命中 |
 | min_height / max_height | number | 高度独立区间（像素）：≥ / ≤ 阈值，两者可组合；与宽度条件独立，高未解析（0）时不命中 |
 | color      | string   | 按颜色检索（`#344441`，`#` 可省略，大小写不敏感）；命中条件为调色板任一颜色 CIE76 ΔE ≤ 25，格式非法返回 `INVALID_PARAM` |
-| similar_to | string | 以指定 item 为源做 pHash 相似查找；源必须可见且已完成分析 |
-| max_distance | number | 相似查询最大汉明距离（0–64），缺省 5；越小越严格 |
 | in_trash   | boolean  | 是否只查回收站中的 item，默认 false                             |
-| order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` / `similarity`（需同时指定 `similar_to`） |
+| order_by   | string   | 排序字段：`modification_time`（默认）/ `name` / `size` / `star` |
 | order      | string   | 排序方向：`desc`（默认）/ `asc`                                 |
 | offset     | number   | 分页偏移，默认 0                                                |
 | limit      | number   | 分页大小，默认 50                                               |
-
-相似图片查找的算法、阈值和边界见 [pHash 相似图片查找](similar-images.md)。
 
 #### 响应
 
@@ -857,44 +851,16 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 
 **排序稳定性**：主键同值（如相同 `modification_time`）时按 `id` 字典序打破平局，保证相同查询的次序逐位确定——前端「骨架 + 分页窗口」模型依赖这一点对齐。
 
-### vision-search
-
-`POST /api/v1/item/vision-search`。需先在素材库所在 daemon 安装并启用视觉扩展，且源图已完成构图分析。
-
-#### 请求
-
-| 参数 | 类型 | 必填 | 说明 |
-| ---- | ---- | ---- | ---- |
-| id | string | 是 | 源 item id |
-| min_similarity | number | 否 | 最低余弦相似度（-1–1），缺省 0.7，越高越严格 |
-| offset | number | 否 | 分页偏移，默认 0 |
-| limit | number | 否 | 分页大小，默认 60、最大 100 |
-
-#### 响应
-
-`items` 按相似度降序，每项为 `{ item, similarity_score }`；`total` 为阈值与权限过滤后的总数，分页字段与 item/list 一致。未安装/启用扩展或源图尚未分析返回 `INVALID_PARAM`。
-
-### 视觉扩展管理
-
-| 方法 | 端点 | 说明 |
-| ---- | ---- | ---- |
-| GET | `/api/v1/vision/status` | 模型安装/启停、下载与索引进度 |
-| POST | `/api/v1/vision/install` | 用户主动下载并启用模型（admin） |
-| POST | `/api/v1/vision/enable` | `{ "enabled": true/false }` 启停扩展（admin） |
-| POST | `/api/v1/vision/remove` | 删除模型（admin，已生成向量保留供重装复用） |
-
 ### duplicates
 
 `POST /api/v1/item/duplicates`（admin 限定）
 
-扫描并分组重复图片，供「设置 → 存储 → 重复图片」使用。只返回分组与位置信息，不执行删除。
+按内容 hash 分组同一 item 的多个可见库内位置，供「设置 → 存储 → 重复图片」使用。只返回分组与位置信息，不执行删除。
 
 #### 请求
 
 | 参数 | 类型 | 必填 | 说明 |
 | ---- | ---- | ---- | ---- |
-| kind | string | 否 | `similar`（pHash 近重复，默认）/ `exact`（同 item 多库内位置） |
-| max_distance | number | 否 | 仅 similar：最大汉明距离 0–64，缺省 5 |
 | offset | number | 否 | 组偏移，默认 0 |
 | limit | number | 否 | 每组页大小，默认 50、最大 100 |
 
@@ -907,10 +873,9 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
     "groups": [
       {
         "id": "9b1f2c...",
-        "kind": "similar",
         "entries": [
-          { "item": { "id": "9b1f2c...", "path": "posters/a.png", "width": 1920, "height": 1080, "size": 245760 }, "similarity_distance": 1 },
-          { "item": { "id": "71ab90...", "path": "posters/a-export.png", "width": 1920, "height": 1080, "size": 180120 }, "similarity_distance": 1 }
+          { "item": { "id": "9b1f2c...", "path": "posters/a.png", "width": 1920, "height": 1080, "size": 245760 } },
+          { "item": { "id": "9b1f2c...", "path": "posters/a-export.png", "width": 1920, "height": 1080, "size": 180120 } }
         ]
       }
     ],
@@ -922,7 +887,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 ```
 
 - `total` 为分页前总组数，分页顺序稳定（组大小降序、组 id 升序）。
-- exact 组只包含当前用户可见、非回收站位置数大于 1 的 item；similar 组只包含不同 item 的近重复集合，组内各位置完整展开。
+- 只包含当前用户可见、非回收站位置数大于 1 的 item，组内各位置完整展开。
 - 锁过滤与其他查询一致；被锁定内容不会进入响应。
 - 前端逐项显示文件大小、像素和路径，按 `id + path` 选择并调用 `item/delete` 移入回收站，不进行整 item 删除。
 

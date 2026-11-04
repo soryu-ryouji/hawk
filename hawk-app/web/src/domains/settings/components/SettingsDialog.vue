@@ -26,12 +26,11 @@ import SettingsRemote from './SettingsRemote.vue';
 import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
 import SettingsConnection from './SettingsConnection.vue';
-import SettingsExtensions from './SettingsExtensions.vue';
 
 const emit = defineEmits<{ close: []; logout: [] }>();
 
-/** 当前分区：外观 / 隐藏项 / 网络 / 存储 / 扩展 / 更新 / 连接（局域网 web 端，含 token 注销） */
-const section = ref<'appearance' | 'hiding' | 'network' | 'storage' | 'extensions' | 'update' | 'connection'>('appearance');
+/** 当前分区：外观 / 隐藏项 / 网络 / 存储 / 更新 / 连接（局域网 web 端，含 token 注销） */
+const section = ref<'appearance' | 'hiding' | 'network' | 'storage' | 'update' | 'connection'>('appearance');
 
 /** 网络分区内的二级标签：局域网访问 / 远程访问 / 高级（端口等低频配置放最右侧） */
 type NetworkTab = 'lan-access' | 'remote' | 'advanced';
@@ -107,8 +106,8 @@ useEventListener(
   window,
   'keydown',
   (e) => {
-    // 配对二维码弹层在上层自己处理 Esc；不能同时关掉底层设置面板
-    if (document.body.classList.contains('pairing-open')) {
+    // 配对二维码 / 重复图片弹窗在上层自己处理 Esc；不能同时关掉底层设置面板
+    if (document.body.classList.contains('pairing-open') || document.body.classList.contains('duplicate-dialog-open')) {
       return;
     }
     if (e.key === 'Escape') {
@@ -161,7 +160,6 @@ async function saveAdvanced(): Promise<void> {
             <button class="nav-item" :class="{ active: section === 'hiding' }" @click="section = 'hiding'">隐藏项</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'network' }" @click="section = 'network'">网络</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'storage' }" @click="section = 'storage'">存储</button>
-            <button v-if="isAdmin" class="nav-item" :class="{ active: section === 'extensions' }" @click="section = 'extensions'">扩展</button>
             <button v-if="hasShell" class="nav-item" :class="{ active: section === 'update' }" @click="section = 'update'">更新</button>
             <button v-else class="nav-item" :class="{ active: section === 'connection' }" @click="section = 'connection'">连接</button>
           </nav>
@@ -201,7 +199,6 @@ async function saveAdvanced(): Promise<void> {
             </div>
           </div>
           <SettingsStorage v-if="hasShell" v-show="section === 'storage'" />
-          <SettingsExtensions v-if="isAdmin" v-show="section === 'extensions'" />
           <SettingsUpdate v-if="hasShell" v-show="section === 'update'" />
           <SettingsConnection v-if="!hasShell" v-show="section === 'connection'" @logout="emit('logout')" />
         </div>

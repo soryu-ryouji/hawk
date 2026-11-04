@@ -50,8 +50,6 @@ export type { ViewValidators } from './navigation';
 export const useLibraryStore = defineStore('library', () => {
   // ---- state ----
   const view = ref<ViewState>({ kind: 'all' });
-  /** 单图相同/相似查找弹窗的源图；结果由 SimilarImageDialog 独立查询，不进入主列表历史 */
-  const similarSearchSource = ref<Item | null>(null);
   const query = ref<QueryState>({ keywords: [], orderBy: 'modification_time', order: 'desc' });
   /** 当前视图全量骨架（id/path/width/height/star，与 item/list 同查询同排序）：布局与滚动条总高的唯一依据。
    *  同内容（同 hash）多位置各自成条，条目唯一标识为 itemKey(id, path)，selection/details 均以它为键 */
@@ -263,15 +261,6 @@ export const useLibraryStore = defineStore('library', () => {
     toastTimer = setTimeout(() => (toast.value = null), 3000);
   }
 
-  /** 打开单图相同/相似查找弹窗；模式与分页结果由弹窗自管理 */
-  function showSimilar(item: Item) {
-    similarSearchSource.value = item;
-  }
-
-  function closeSimilar() {
-    similarSearchSource.value = null;
-  }
-
   // ---- 初始与查询 ----
   /** viewer 只读；importer 仅允许导入与新建文件夹；editor/admin 由具体端点能力决定。 */
   const viewerMode = ref(false);
@@ -307,7 +296,6 @@ export const useLibraryStore = defineStore('library', () => {
     query.value = { keywords: [], orderBy: 'modification_time', order: 'desc' };
     searchText.value = '';
     clearSelection();
-    similarSearchSource.value = null;
     // 预览/编辑浮层的会话清理由组件层编排（App.vue runBoot 调 preview store）
     taskBacklog.value = null;
     indexProgress.value = null;
@@ -727,9 +715,6 @@ export const useLibraryStore = defineStore('library', () => {
     lockedView,
     setLockedView,
     isTrash,
-    similarSearchSource,
-    showSimilar,
-    closeSimilar,
     canGoBack,
     canGoForward,
     currentFolderPath,

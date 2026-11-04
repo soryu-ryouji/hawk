@@ -582,7 +582,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 重复图片分组扫描：分页按组切片，相同内容与相似图片共用响应结构 */
+        /** 重复图片分组扫描：同一内容 hash 的多个库内位置，分页按组切片 */
         post: operations["item_duplicates"];
         delete?: never;
         options?: never;
@@ -751,22 +751,6 @@ export interface paths {
          *     写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）
          */
         post: operations["item_upload"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/item/vision-search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["search"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1318,70 +1302,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/vision/enable": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["enable"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/vision/install": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["install"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/vision/remove": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["remove"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/vision/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/health": {
         parameters: {
             query?: never;
@@ -1528,28 +1448,15 @@ export interface components {
         };
         DuplicateEntryDto: {
             item: components["schemas"]["ItemDto"];
-            /**
-             * Format: int32
-             * @description 与组内代表图的 pHash 汉明距离；exact 组不返回
-             */
-            similarity_distance?: number | null;
         };
         DuplicateGroupDto: {
             entries: components["schemas"]["DuplicateEntryDto"][];
-            /** @description 稳定组标识：exact 为 item id，similar 为组内代表 item id */
+            /** @description 稳定组标识：内容 hash（item id） */
             id: string;
-            kind: string;
         };
         DuplicateScanRequest: {
-            /** @description similar（pHash 近重复）/ exact（同内容多位置） */
-            kind?: string;
             /** Format: int32 */
             limit?: number;
-            /**
-             * Format: int32
-             * @description 仅 similar：最大汉明距离（0–64，缺省 5）
-             */
-            max_distance?: number | null;
             /** Format: int32 */
             offset?: number;
         };
@@ -1760,11 +1667,6 @@ export interface components {
                 /** @description 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径） */
                 path: string;
                 paths: string[];
-                /**
-                 * Format: int32
-                 * @description 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
-                 */
-                similarity_distance?: number | null;
                 /** Format: int64 */
                 size: number;
                 /** Format: int32 */
@@ -2086,37 +1988,6 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_VisionSearchResponse: {
-            data?: {
-                items: components["schemas"]["VisionSearchEntryDto"][];
-                /** Format: int32 */
-                limit: number;
-                /** Format: int32 */
-                offset: number;
-                total: number;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_VisionStatus: {
-            data?: {
-                /** Format: int64 */
-                downloaded_bytes: number;
-                downloading: boolean;
-                enabled: boolean;
-                error?: string | null;
-                indexed_items: number;
-                /** @description 正在重建索引或处理当前任务（队列尚未形成时也覆盖） */
-                indexing: boolean;
-                installed: boolean;
-                pending_items: number;
-                /** Format: int64 */
-                total_bytes: number;
-                total_items: number;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_usize: {
             data?: number;
             status: string;
@@ -2235,11 +2106,6 @@ export interface components {
             /** @description 本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径） */
             path: string;
             paths: string[];
-            /**
-             * Format: int32
-             * @description 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
-             */
-            similarity_distance?: number | null;
             /** Format: int64 */
             size: number;
             /** Format: int32 */
@@ -2274,11 +2140,6 @@ export interface components {
             limit?: number;
             /**
              * Format: int32
-             * @description 与源图的最大汉明距离（0–64，缺省 5；越小越严格）
-             */
-            max_distance?: number | null;
-            /**
-             * Format: int32
              * @description 高度筛选（像素）：≤ 阈值，可与 min_height 组成区间
              */
             max_height?: number | null;
@@ -2311,8 +2172,6 @@ export interface components {
             offset?: number;
             order?: string | null;
             order_by?: string | null;
-            /** @description 以指定 item 的 pHash 查找相似图片；结果可用 order_by=similarity 按距离排序 */
-            similar_to?: string | null;
             /** Format: int32 */
             star?: number | null;
             tags?: string[] | null;
@@ -2345,11 +2204,6 @@ export interface components {
             id: string;
             /** @description 同 id（内容）多位置时按 path 区分条目 */
             path: string;
-            /**
-             * Format: int32
-             * @description 仅相似度查询：与源图的 pHash 汉明距离（越小越相似）
-             */
-            similarity_distance?: number | null;
             /**
              * Format: int64
              * @description 该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）
@@ -2878,49 +2732,6 @@ export interface components {
         ViewSortDto: {
             order: string;
             order_by: string;
-        };
-        VisionEnableRequest: {
-            enabled: boolean;
-        };
-        VisionSearchEntryDto: {
-            item: components["schemas"]["ItemDto"];
-            /** Format: float */
-            similarity_score: number;
-        };
-        VisionSearchRequest: {
-            id?: string;
-            /** Format: int32 */
-            limit?: number;
-            /**
-             * Format: float
-             * @description 最低余弦相似度（-1–1）；常用正值越高越严格
-             */
-            min_similarity?: number;
-            /** Format: int32 */
-            offset?: number;
-        };
-        VisionSearchResponse: {
-            items: components["schemas"]["VisionSearchEntryDto"][];
-            /** Format: int32 */
-            limit: number;
-            /** Format: int32 */
-            offset: number;
-            total: number;
-        };
-        VisionStatus: {
-            /** Format: int64 */
-            downloaded_bytes: number;
-            downloading: boolean;
-            enabled: boolean;
-            error?: string | null;
-            indexed_items: number;
-            /** @description 正在重建索引或处理当前任务（队列尚未形成时也覆盖） */
-            indexing: boolean;
-            installed: boolean;
-            pending_items: number;
-            /** Format: int64 */
-            total_bytes: number;
-            total_items: number;
         };
     };
     responses: never;
@@ -3759,13 +3570,6 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_DuplicateScanResponse"];
                 };
             };
-            /** @description kind 或 max_distance 非法 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description 仅 admin 可执行重复扫描 */
             403: {
                 headers: {
@@ -4032,37 +3836,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Envelope_ItemAddResponse"];
                 };
-            };
-        };
-    };
-    search: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VisionSearchRequest"];
-            };
-        };
-        responses: {
-            /** @description 相似构图结果 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_VisionSearchResponse"];
-                };
-            };
-            /** @description 扩展未启用、源图未分析或参数非法 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
@@ -4929,90 +4702,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_HashMap_String_ViewSortDto"];
-                };
-            };
-        };
-    };
-    enable: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["VisionEnableRequest"];
-            };
-        };
-        responses: {
-            /** @description 启用或停用视觉扩展 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_VisionStatus"];
-                };
-            };
-        };
-    };
-    install: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 下载并启用视觉扩展 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_VisionStatus"];
-                };
-            };
-        };
-    };
-    remove: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 删除视觉模型 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_VisionStatus"];
-                };
-            };
-        };
-    };
-    status: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 视觉扩展状态 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_VisionStatus"];
                 };
             };
         };

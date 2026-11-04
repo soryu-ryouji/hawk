@@ -82,8 +82,6 @@ impl Rig {
             web_dist: None,
             remote_config: None,
         };
-        let vision =
-            crate::core::vision::VisionService::new(paths.clone(), store.clone(), index.clone());
         let pipeline = IndexPipeline::new(
             paths.clone(),
             config,
@@ -97,7 +95,6 @@ impl Rig {
             global_filter,
             locks,
             worker.clone(),
-            vision,
             startup.clone(),
             settings,
         );
@@ -716,51 +713,6 @@ async fn scan_skips_hidden_entries_and_reconciles_leftovers() {
 
 /// 非图像文件（内容喷探判定）入库但不再解码：调色板写空数组负缓存终止
 /// 周期对账重试、不生成缩略图、宽高保持 0×0 终态
-/// pHash 由后台 worker 补齐并持久化到 SQLite（独立重开可读取同一 64 位值）
-#[tokio::test]
-async fn phash_is_computed_and_persisted() {
-    let rig = Rig::new("phash-persist");
-    rig.write_png("phash.png", [12, 34, 56]);
-    let id = rig
-        .pipeline
-        .submit_upsert(rig.abs("phash.png"), None)
-        .await
-        .unwrap()
-        .unwrap()
-        .item
-        .id;
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let value = loop {
-        let ready = rig
-            .store
-            .try_get(&id)
-            .and_then(|meta| meta.phash)
-            .filter(|hash| hash.version == crate::core::perceptual_hash::PHASH_VERSION)
-            .and_then(|hash| hash.value);
-        if let Some(value) = ready {
-            break value;
-        }
-        assert!(std::time::Instant::now() < deadline, "pHash 补算超时");
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    };
-
-    let persisted = MetadataStore::new(
-        LibraryPaths::new(
-            &rig.root.to_string_lossy(),
-            Some(rig.cache.to_string_lossy().to_string()),
-        ),
-        &StartupState::default(),
-    );
-    assert_eq!(
-        persisted
-            .try_get(&id)
-            .and_then(|meta| meta.phash)
-            .and_then(|hash| hash.value),
-        Some(value)
-    );
-}
-
 #[tokio::test]
 async fn non_image_file_gets_empty_palette_cache() {
     let rig = Rig::new("non-image");
@@ -781,9 +733,6 @@ async fn non_image_file_gets_empty_palette_cache() {
         let hash = rig.index.hash_by_location(rel).unwrap();
         let meta = rig.store.try_get(&hash).expect("元数据应存在");
         assert_eq!(meta.palette, Some(vec![]), "{rel} 应有空调色板负缓存");
-        let phash = meta.phash.expect("非图像也应有 pHash 负缓存");
-        assert_eq!(phash.version, crate::core::perceptual_hash::PHASH_VERSION);
-        assert_eq!(phash.value, None);
         assert_eq!(meta.width, 0, "{rel} 宽高保持终态 0");
         assert!(!rig.thumbs_path(&hash).exists(), "{rel} 不应生成缩略图");
     }
@@ -792,8 +741,4 @@ async fn non_image_file_gets_empty_palette_cache() {
     let hash = rig.index.hash_by_location("a.png").unwrap();
     let meta = rig.store.try_get(&hash).expect("元数据应存在");
     assert_ne!(meta.palette, Some(vec![]), "图像不应被误写空负缓存");
-    assert!(
-        meta.phash.and_then(|hash| hash.value).is_some(),
-        "正常图像应计算 pHash"
-    );
 }

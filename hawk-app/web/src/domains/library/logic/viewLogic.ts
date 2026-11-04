@@ -158,8 +158,7 @@ export function taxonomyChanged(prev: Pick<Item, 'tags' | 'categories'>, updated
  * （位置级字段 name/ext/size/mtime 仅该条目随全量替换生效），其余位置保留自己的位置级字段 */
 export function mergeDetailOnUpdate(prev: Item, updated: Item, isEventLocation: boolean): Item {
   if (isEventLocation) {
-    const distance = updated.similarity_distance ?? prev.similarity_distance;
-    return distance === updated.similarity_distance ? updated : { ...updated, similarity_distance: distance };
+    return updated;
   }
   return {
     ...prev,
@@ -171,7 +170,6 @@ export function mergeDetailOnUpdate(prev: Item, updated: Item, isEventLocation: 
     width: updated.width,
     height: updated.height,
     palette: updated.palette,
-    similarity_distance: updated.similarity_distance ?? prev.similarity_distance,
     paths: updated.paths,
     folders: updated.folders,
   };

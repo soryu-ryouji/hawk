@@ -35,8 +35,8 @@ use super::ctx::{
 };
 use super::fs_ops;
 use super::upsert::{
-    apply_upsert, defer_upsert, file_changed_since_prepare, needs_palette_work, needs_phash_work,
-    prepare_upsert, try_compute_hash, PendingUpsert, PrepareOutcome,
+    apply_upsert, defer_upsert, file_changed_since_prepare, needs_palette_work, prepare_upsert,
+    try_compute_hash, PendingUpsert, PrepareOutcome,
 };
 use super::Job;
 
@@ -344,8 +344,7 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
 
     let need_thumb = !ctx.thumbs.has_all(&hash);
     let need_palette = needs_palette_work(ctx, &hash);
-    let need_phash = needs_phash_work(ctx, &hash);
-    if !need_thumb && !need_palette && !need_phash {
+    if !need_thumb && !need_palette {
         return;
     }
 
@@ -353,11 +352,6 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
     // 持久化，终止 palette/宽高的周期对账重试；宽高 0×0 即终态
     if !ThumbnailService::is_probably_image(&p.abs_path) {
         p.palette = Some(Vec::new());
-        p.phash = Some(crate::core::metadata::PerceptualHash {
-            version: crate::core::perceptual_hash::PHASH_VERSION,
-            value: None,
-            rgb: None,
-        });
         return;
     }
 
@@ -368,15 +362,6 @@ fn process_scan_hash(ctx: &Arc<PipelineCtx>, p: &mut PendingUpsert) {
                 if let Some(rgba) = image.as_rgba8() {
                     p.palette = Some(color::extract_from_rgba(rgba));
                 }
-            }
-            if need_phash {
-                p.phash = Some(crate::core::metadata::PerceptualHash {
-                    version: crate::core::perceptual_hash::PHASH_VERSION,
-                    value: Some(crate::core::perceptual_hash::compute(&image)),
-                    rgb: Some(Box::new(crate::core::perceptual_hash::compute_rgb_grid(
-                        &image,
-                    ))),
-                });
             }
             if need_thumb {
                 ctx.thumbs.generate_from_image(&hash, &image);

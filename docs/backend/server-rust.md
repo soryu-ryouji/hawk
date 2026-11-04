@@ -11,14 +11,14 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 - **app 唯一后端**：`hawk-app` 的开发态（`resolveServerCommand`）、打包（`scripts/build-server.mjs`）、
   CI（`ci.yml`）全部使用本实现
 - **已实现**：全部 REST API、SSE、文件监听、索引流水线（防抖/扫描 runner 线程：并行哈希+单次解码产出派生+结果回流消费循环穿插应用/对账扫描）、缩略图（libwebp q80，导入即生成+读取端兜底）、
-  调色板（median-cut）、感知哈希近重复查找与重复分组（Gradient/dHash 粗筛 + 8×8 RGB 网格复核；分带索引 + BK-tree 回退）、可选 DINOv2 构图索引（ONNX + HNSW）、SQLite 元数据（schema v2，单一路线）
+  调色板（median-cut）、按内容 hash 的重复位置分组、SQLite 元数据（schema v3，单一路线）
 - **设计与实现要点**：
-  - 宽高、调色板与 pHash 在入库/后台补算后持久化入 `.hawk/metadata.db`，重启直接注水，无需 TOML 回退
+  - 宽高与调色板在入库/后台补算后持久化入 `.hawk/metadata.db`，重启直接注水，无需 TOML 回退
   - 调色板算法为 median-cut，同 hash 结果确定性一致（按占比降序、并列按 RGB 升序）
   - 并发度：哈希并行取物理核估计（逻辑核/2，封顶 16；解码/编码 SIMD 密集，SMT 无增益，兄弟线程留给消费循环/API），缩略图 worker `CPU/2` 封顶 12——桌面端大批量导入/重建索引时吞吐优先
   - 查询路径不克隆完整 DTO：排序在轻量键上进行，`item/list` 只投影分页窗口、`item/skeleton` 只投影轻量骨架（大库下 skeleton 持锁时间降低一个量级，UI 重连重同步不再卡死读路径）
-  - 调色板/pHash 回写按批冲刷（≥500 条或滞留 2s）：SQLite 单事务、事件按批平滑补发——老库补算时无逐条事务或 `item.updated` 洪峰
-  - 缩略图 worker 无界队列 + 周期派生维护：队列无界（任务 ~100B、in-flight 去重后内存有界），周期扫描 palette/phash 缺失项与宽高为 0 的项并派发补齐任务（缩略图仍由读取端惰性生成；宽高另有读取端自愈）
+  - 调色板回写按批冲刷（≥500 条或滞留 2s）：SQLite 单事务、事件按批平滑补发——老库补算时无逐条事务或 `item.updated` 洪峰
+  - 缩略图 worker 无界队列 + 周期派生维护：队列无界（任务 ~100B、in-flight 去重后内存有界），周期扫描 palette 缺失项与宽高为 0 的项并派发补齐任务（缩略图仍由读取端惰性生成；宽高另有读取端自愈）
   - **缩略图固定 512/1024 两档**：网格用 512，检查器与广域网预览用 1024；扫描导入单次解码生成全部缺失档，旧库仅缺 512 时从已有 1024 缓存补出。增量入库/启动对账只生成调色板，缩略图由读取端触发——`/item/thumbnail` 未命中返回 404 并后台入队，完成经 `item.updated` 重试；不回源原图，避免低带宽下把整份源文件当缩略图传输
   - **HTTP 响应压缩**：通过 tower-http 按 `Accept-Encoding` 协商 gzip，降低 skeleton/list 等 JSON 的广域网传输量；图片与 SSE 默认排除，远程代理透传编码响应
   - `.hawk/metadata.db` 是唯一元数据权威和启动注水来源；数据库读取失败进入启动错误页，不按空库降级。旧 TOML 素材元数据不读取、不迁移，库外 `index.db` 已移除
@@ -33,10 +33,7 @@ hawk 素材管理后端，Rust 实现（`hawk-daemon/`）。
 | 哈希 | blake3 | item id = BLAKE3 hex（存储契约） |
 | 图像解码/缩放 | image 0.25 + fast_image_resize | Lanczos3 |
 | WebP 编码 | webp（libwebp） | 有损 q80；纯 Rust 的 image-webp 仅支持无损 |
-| 元数据存储 | rusqlite（bundled） | `.hawk/metadata.db` 唯一权威；schema v2 增量加入 pHash |
-| 感知哈希 | image_hasher + 自有 RGB 网格 | Gradient（dHash）粗筛 + 8×8 RGB RMS 复核；稳定 Lanczos3 resize |
-| 视觉扩展 | ort + hnsw_rs | 可选 DINOv2-small ONNX；384 维向量；HNSW 近似候选 + 精确余弦复核 |
-| 重复分组 | 4×16bit 分带 + bktree | 默认阈值分带索引保证不漏候选；大阈值回退 BK-tree；并查集成组 |
+| 元数据存储 | rusqlite（bundled） | `.hawk/metadata.db` 唯一权威；schema v3 |
 | TOML | toml / toml_edit | 仅配置与小型注册表，不存素材元数据 |
 
 ## 构建与运行

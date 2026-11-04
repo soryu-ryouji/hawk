@@ -69,11 +69,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
         Some(r#"{"label":"契约密钥","role":"viewer"}"#),
     ),
     ("GET", "/api/v1/item/count", None),
-    (
-        "POST",
-        "/api/v1/item/duplicates",
-        Some(r#"{"kind":"similar"}"#),
-    ),
+    ("POST", "/api/v1/item/duplicates", Some(r#"{}"#)),
     ("GET", "/api/v1/library/info", None),
     (
         "PATCH",
@@ -82,7 +78,6 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ),
     ("GET", "/api/v1/tag/list", None),
     ("GET", "/api/v1/view/preferences", None),
-    ("GET", "/api/v1/vision/status", None),
     ("POST", "/api/v1/item/list", Some("{}")),
     ("POST", "/api/v1/item/aggregate", Some(r#"{"ids":["x"]}"#)),
     ("POST", "/api/v1/item/skeleton", Some("{}")),
@@ -156,11 +151,6 @@ const ROUTE_ONLY: &[(&str, &str)] = &[
     ("PATCH", "/api/v1/remote/device"),
     ("POST", "/api/v1/remote/device/rotate"),
     ("DELETE", "/api/v1/remote/devices/{device_id}"),
-    // 视觉模型下载依赖外网与本地模型文件；构图查询依赖源图已完成向量分析
-    ("POST", "/api/v1/vision/install"),
-    ("POST", "/api/v1/vision/enable"),
-    ("POST", "/api/v1/vision/remove"),
-    ("POST", "/api/v1/item/vision-search"),
     // AccessKey-only 编排依赖存活 hawk-server / LAN 对端
     ("POST", "/api/v1/remote/access-connect"),
     ("POST", "/api/v1/remote/access-session"),
@@ -236,8 +226,6 @@ fn test_app_at(base: PathBuf) -> TestApp {
         web_dist: None,
         remote_config: None,
     };
-    let vision =
-        crate::core::vision::VisionService::new(paths.clone(), store.clone(), index.clone());
     let pipeline = IndexPipeline::new(
         paths.clone(),
         config.clone(),
@@ -251,7 +239,6 @@ fn test_app_at(base: PathBuf) -> TestApp {
         global_filter.clone(),
         locks.clone(),
         worker.clone(),
-        vision.clone(),
         startup.clone(),
         settings.clone(),
     );
@@ -278,7 +265,6 @@ fn test_app_at(base: PathBuf) -> TestApp {
             store,
             thumbs,
             worker,
-            vision,
             prefs,
             categories,
             tags,
@@ -346,30 +332,6 @@ impl TestApp {
             .expect("upsert 失败")
             .expect("upsert 被防抖延迟（mtime 已拨回，不应发生）");
         result.item.id
-    }
-
-    /// 等后台 worker 的真实 pHash 完成回写，再允许测试覆盖成分组/排序用的固定值。
-    /// submit_upsert 只等待索引应用；pHash 暂存后按批延迟冲刷，缺少此同步会让旧计算结果
-    /// 在后续断言之间覆盖测试值（高负载 runner 上表现为相似组或相似排序随机消失）。
-    async fn wait_for_phash(&self, ids: &[&str]) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            let ready = ids.iter().all(|id| {
-                self.lib()
-                    .store
-                    .try_get(id)
-                    .and_then(|meta| meta.phash)
-                    .is_some_and(|hash| {
-                        hash.version == crate::core::perceptual_hash::PHASH_VERSION
-                            && hash.value.is_some()
-                    })
-            });
-            if ready {
-                return;
-            }
-            assert!(std::time::Instant::now() < deadline, "pHash 补算超时");
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
     }
 }
 
@@ -2240,195 +2202,49 @@ async fn sqlite_metadata_survives_restart_and_toml_is_ignored() {
     let _ = std::fs::remove_dir_all(base);
 }
 
-/// pHash 相似查询：距离升序、阈值过滤、骨架同序，未分析与非法排序有明确错误。
+/// 重复扫描：按内容 hash 分组多个库内位置、锁过滤与分页稳定性。
 #[tokio::test]
-async fn similar_items_are_filtered_and_sorted_by_phash_distance() {
-    let app = test_app("similar-items");
-    let source = app.add_test_item("source.png", [1, 1, 1]).await;
-    let near = app.add_test_item("near.png", [2, 2, 2]).await;
-    let far = app.add_test_item("far.png", [3, 3, 3]).await;
-    let different_color = app.add_test_item("different-color.png", [4, 4, 4]).await;
-    app.wait_for_phash(&[&source, &near, &far, &different_color])
-        .await;
-    let set_phash = |id: &str, value: Option<u64>| {
-        let mut meta = app.lib().store.try_get(id).unwrap();
-        meta.phash = Some(crate::core::metadata::PerceptualHash {
-            version: crate::core::perceptual_hash::PHASH_VERSION,
-            value,
-            rgb: value.map(|_| Box::new([0; crate::core::perceptual_hash::RGB_GRID_BYTES])),
-        });
-        app.lib().store.save(id, &meta).unwrap();
-        app.lib()
-            .index
-            .with_item_mut(id, |item| item.sync_from(&meta));
-    };
-    set_phash(&source, Some(0));
-    set_phash(&near, Some(1));
-    set_phash(&far, Some(u64::MAX));
-    set_phash(&different_color, Some(0));
-    // dHash 完全相同也不能绕过 RGB 复核
-    let mut color_meta = app.lib().store.try_get(&different_color).unwrap();
-    color_meta.phash.as_mut().unwrap().rgb = Some(Box::new(
-        [200; crate::core::perceptual_hash::RGB_GRID_BYTES],
-    ));
-    app.lib().store.save(&different_color, &color_meta).unwrap();
-    app.lib()
-        .index
-        .with_item_mut(&different_color, |item| item.sync_from(&color_meta));
-
-    let body = json!({
-        "similar_to": source,
-        "max_distance": 1,
-        "order_by": "similarity",
-        "order": "asc"
-    });
-    let (status, bytes) =
-        call_json(&app.router, "POST", "/api/v1/item/list", Some(body.clone())).await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "{}",
-        String::from_utf8_lossy(&bytes)
-    );
-    let list: Value = serde_json::from_slice(&bytes).unwrap();
-    let items = list["data"]["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0]["id"], json!(source));
-    assert_eq!(items[0]["similarity_distance"], json!(0));
-    assert_eq!(items[1]["id"], json!(near));
-    assert_eq!(items[1]["similarity_distance"], json!(1));
-
-    let (status, bytes) = call_json(&app.router, "POST", "/api/v1/item/skeleton", Some(body)).await;
-    assert_eq!(status, StatusCode::OK);
-    let skeleton: Value = serde_json::from_slice(&bytes).unwrap();
-    let items = skeleton["data"]["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0]["id"], json!(source));
-    assert_eq!(items[1]["id"], json!(near));
-    assert_eq!(items[1]["similarity_distance"], json!(1));
-
-    let (status, bytes) = call_json(
-        &app.router,
-        "POST",
-        "/api/v1/item/list",
-        Some(json!({"similar_to": source, "max_distance": 0, "order_by": "similarity", "order": "asc"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let exact: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(exact["data"]["items"].as_array().unwrap().len(), 1);
-
-    // 源图锁与 item/file 同一 item 级公式：未解锁时不能借相似查询绕过
-    call_json(
-        &app.router,
-        "POST",
-        "/api/v1/item/update",
-        Some(json!({"id": source, "categories": ["私密"]})),
-    )
-    .await;
-    call_json(
-        &app.router,
-        "POST",
-        "/api/v1/lock/set",
-        Some(json!({"dimension": "category", "name": "私密", "password": "pw"})),
-    )
-    .await;
-    let (status, _) = call_json(
-        &app.router,
-        "POST",
-        "/api/v1/item/list",
-        Some(json!({"similar_to": source})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    call_json(
-        &app.router,
-        "POST",
-        "/api/v1/lock/remove",
-        Some(json!({"dimension": "category", "name": "私密", "password": "pw"})),
-    )
-    .await;
-
-    let (status, _) = call_json(
-        &app.router,
-        "POST",
-        "/api/v1/item/list",
-        Some(json!({"order_by": "similarity"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    let mut meta = app.lib().store.try_get(&source).unwrap();
-    meta.phash = None;
-    app.lib().store.save(&source, &meta).unwrap();
-    app.lib()
-        .index
-        .with_item_mut(&source, |item| item.sync_from(&meta));
-    let (status, bytes) = call_json(
-        &app.router,
-        "POST",
-        "/api/v1/item/list",
-        Some(json!({"similar_to": source})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let error: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(error["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("尚未完成"));
-}
-
-/// 重复扫描：同内容多位置、相似分组、锁过滤与分页稳定性。
-#[tokio::test]
-async fn duplicate_scan_groups_locations_and_similar_items() {
+async fn duplicate_scan_groups_locations_by_content_hash() {
     let app = test_app("duplicate-scan");
     let source = app.add_test_item("source.png", [1, 1, 1]).await;
+    for name in ["source-copy.png", "source-copy-2.png"] {
+        std::fs::copy(
+            app.library_root().join("source.png"),
+            app.library_root().join(name),
+        )
+        .unwrap();
+        app.lib()
+            .pipeline
+            .submit_upsert(
+                app.library_root().join(name).to_string_lossy().to_string(),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    let other = app.add_test_item("other.png", [2, 2, 2]).await;
     std::fs::copy(
-        app.library_root().join("source.png"),
-        app.library_root().join("source-copy.png"),
+        app.library_root().join("other.png"),
+        app.library_root().join("other-copy.png"),
     )
     .unwrap();
     app.lib()
         .pipeline
         .submit_upsert(
             app.library_root()
-                .join("source-copy.png")
+                .join("other-copy.png")
                 .to_string_lossy()
                 .to_string(),
             None,
         )
         .await
         .unwrap();
-    let near = app.add_test_item("near.png", [2, 2, 2]).await;
-    let other = app.add_test_item("other.png", [3, 3, 3]).await;
-    let other_near = app.add_test_item("other-near.png", [4, 4, 4]).await;
-    let far = app.add_test_item("far.png", [5, 5, 5]).await;
-    app.wait_for_phash(&[&source, &near, &other, &other_near, &far])
-        .await;
-    let set_phash = |id: &str, value: u64| {
-        let mut meta = app.lib().store.try_get(id).unwrap();
-        meta.phash = Some(crate::core::metadata::PerceptualHash {
-            version: crate::core::perceptual_hash::PHASH_VERSION,
-            value: Some(value),
-            rgb: Some(Box::new([0; crate::core::perceptual_hash::RGB_GRID_BYTES])),
-        });
-        app.lib().store.save(id, &meta).unwrap();
-        app.lib()
-            .index
-            .with_item_mut(id, |item| item.sync_from(&meta));
-    };
-    set_phash(&source, 0);
-    set_phash(&near, 1);
-    set_phash(&other, 100);
-    set_phash(&other_near, 101);
-    set_phash(&far, u64::MAX);
 
     let (status, bytes) = call_json(
         &app.router,
         "POST",
         "/api/v1/item/duplicates",
-        Some(json!({"kind": "exact"})),
+        Some(json!({})),
     )
     .await;
     assert_eq!(
@@ -2437,12 +2253,15 @@ async fn duplicate_scan_groups_locations_and_similar_items() {
         "{}",
         String::from_utf8_lossy(&bytes)
     );
-    let exact: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(exact["data"]["total"], json!(1));
-    let group = &exact["data"]["groups"][0];
-    assert_eq!(group["id"], json!(source));
-    assert_eq!(group["kind"], json!("exact"));
-    assert_eq!(group["entries"].as_array().unwrap().len(), 2);
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["total"], json!(2));
+    let groups = body["data"]["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["id"], json!(source));
+    assert_eq!(groups[0]["entries"].as_array().unwrap().len(), 3);
+    assert_eq!(groups[1]["id"], json!(other));
+    assert_eq!(groups[1]["entries"].as_array().unwrap().len(), 2);
+    assert!(groups.iter().all(|group| group.get("kind").is_none()));
 
     let mut group_ids = Vec::new();
     for offset in [0, 1] {
@@ -2450,7 +2269,7 @@ async fn duplicate_scan_groups_locations_and_similar_items() {
             &app.router,
             "POST",
             "/api/v1/item/duplicates",
-            Some(json!({"kind": "similar", "max_distance": 1, "offset": offset, "limit": 1})),
+            Some(json!({"offset": offset, "limit": 1})),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -2462,7 +2281,7 @@ async fn duplicate_scan_groups_locations_and_similar_items() {
     }
     assert_ne!(group_ids[0], group_ids[1], "分页组顺序必须稳定且不重复");
 
-    // 源组被锁后：exact 组消失，另一相似组仍保留；锁定内容不进入响应
+    // 锁定内容不进入响应：源组被锁后只剩另一组
     call_json(
         &app.router,
         "POST",
@@ -2481,37 +2300,13 @@ async fn duplicate_scan_groups_locations_and_similar_items() {
         &app.router,
         "POST",
         "/api/v1/item/duplicates",
-        Some(json!({"kind": "exact"})),
+        Some(json!({})),
     )
     .await;
-    let exact_locked: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(exact_locked["data"]["total"], json!(0));
-    let (_, bytes) = call_json(
-        &app.router,
-        "POST",
-        "/api/v1/item/duplicates",
-        Some(json!({"kind": "similar", "max_distance": 1})),
-    )
-    .await;
-    let similar_locked: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(similar_locked["data"]["total"], json!(1));
-    assert_eq!(
-        similar_locked["data"]["groups"][0]["entries"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    let locked_ids: Vec<&str> = similar_locked["data"]["groups"][0]["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["item"]["id"].as_str().unwrap())
-        .collect();
-    assert!(locked_ids.contains(&other.as_str()));
-    assert!(locked_ids.contains(&other_near.as_str()));
+    let locked: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(locked["data"]["total"], json!(1));
+    assert_eq!(locked["data"]["groups"][0]["id"], json!(other));
 }
-
 /// 选择集聚合：common_taxonomy 交集语义 + batch_update 的 remove_tags/remove_categories 摘除
 #[tokio::test]
 async fn aggregate_and_batch_remove() {

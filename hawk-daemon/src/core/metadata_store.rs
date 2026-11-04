@@ -93,21 +93,6 @@ impl MetadataStore {
             .collect()
     }
 
-    pub fn hashes_with_missing_phash(&self) -> Vec<String> {
-        self.inner
-            .lock()
-            .unwrap()
-            .by_hash
-            .iter()
-            .filter(|(_, meta)| {
-                meta.phash
-                    .as_ref()
-                    .is_none_or(|hash| hash.version != crate::core::perceptual_hash::PHASH_VERSION)
-            })
-            .map(|(hash, _)| hash.clone())
-            .collect()
-    }
-
     pub fn hashes_with_zero_dim(&self) -> Vec<String> {
         self.inner
             .lock()
@@ -163,23 +148,6 @@ impl MetadataStore {
         }
     }
 
-    pub fn save_vision_vector(
-        &self,
-        hash: &str,
-        model: &str,
-        vector: &[f32],
-    ) -> Result<(), String> {
-        self.db.save_vision_vector(hash, model, vector)
-    }
-
-    pub fn vision_vector(&self, hash: &str, model: &str) -> Option<Vec<f32>> {
-        self.db.vision_vector(hash, model).ok().flatten()
-    }
-
-    pub fn vision_vectors(&self, model: &str) -> Vec<(String, Vec<f32>)> {
-        self.db.vision_vectors(model).unwrap_or_default()
-    }
-
     pub fn delete(&self, hash: &str) {
         if let Err(e) = self.db.delete(hash) {
             tracing::error!("{e}，内存副本保留");
@@ -214,7 +182,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn existing_v1_sqlite_is_preserved_when_adding_phash_columns() {
+    fn existing_v1_sqlite_is_preserved_after_schema_upgrade() {
         let base = std::env::temp_dir().join(format!("hawk-sqlite-v1-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("library");
@@ -247,7 +215,6 @@ mod tests {
         assert_eq!(meta.tags, vec!["保留"]);
         assert_eq!(meta.star, 4);
         assert_eq!(meta.paths.len(), 1);
-        assert!(meta.phash.is_none());
         assert!(startup.snapshot().1.is_none());
         let _ = std::fs::remove_dir_all(base);
     }
@@ -268,11 +235,6 @@ mod tests {
         let hash = "a".repeat(64);
         let meta = ItemMetadata {
             tags: vec!["SQLite".to_string()],
-            phash: Some(crate::core::metadata::PerceptualHash {
-                version: crate::core::perceptual_hash::PHASH_VERSION,
-                value: Some(42),
-                rgb: Some(Box::new([7; crate::core::perceptual_hash::RGB_GRID_BYTES])),
-            }),
             paths: vec![crate::core::metadata::PathEntry {
                 path: "a.png".to_string(),
                 size: 1,

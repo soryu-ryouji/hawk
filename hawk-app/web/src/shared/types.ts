@@ -61,9 +61,6 @@ export type DuplicateScanRequest = components['schemas']['DuplicateScanRequest']
 export type DuplicateEntry = components['schemas']['DuplicateEntryDto'];
 export type DuplicateGroup = components['schemas']['DuplicateGroupDto'];
 export type DuplicateScanResponse = components['schemas']['DuplicateScanResponse'];
-export type VisionStatus = components['schemas']['VisionStatus'];
-export type VisionSearchRequest = components['schemas']['VisionSearchRequest'];
-export type VisionSearchResponse = components['schemas']['VisionSearchResponse'];
 /** 全局列表隐藏项（.hawk/global_filter.toml，随库同步）：folders 为库内相对路径（子树整体隐藏） */
 export type GlobalFilter = components['schemas']['GlobalFilterSnapshot'];
 export type Locks = components['schemas']['LocksSnapshot'];

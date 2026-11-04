@@ -35,7 +35,6 @@ pub mod taxonomy;
 pub mod tls;
 pub mod trash;
 pub mod view;
-pub mod vision;
 pub mod web_dist;
 
 #[cfg(test)]
@@ -107,8 +106,6 @@ pub struct LibraryState {
     // ---- 缩略图派生：服务 + 后台 worker（结果经队列回流流水线） ----
     pub thumbs: ThumbnailService,
     pub worker: Arc<ThumbnailWorker>,
-    /// 可选视觉扩展（模型未安装时仅持有空状态）
-    pub vision: Arc<crate::core::vision::VisionService>,
     // ---- 分类与视图偏好 ----
     pub prefs: Arc<ViewPreferences>,
     pub categories: Arc<CategoryRegistry>,
@@ -170,7 +167,6 @@ pub fn api_router() -> (axum::Router<SharedState>, utoipa::openapi::OpenApi) {
         .merge(global_filter::routes())
         .merge(locks::routes())
         .merge(view::routes())
-        .merge(vision::routes())
         .merge(trash::routes())
         .merge(events::routes())
         .merge(remote::routes())

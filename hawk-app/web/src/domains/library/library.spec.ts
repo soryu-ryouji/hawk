@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/shared/api/endpoints', () => ({ api: mocks }));
 
 import { useLibraryStore } from './store';
-import type { Item } from '@/shared/types';
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -52,23 +51,6 @@ describe('视图历史', () => {
 
     store.goForward(); // 无前进项：原地不动
     expect(store.view).toEqual({ kind: 'tag', name: 'T' });
-  });
-
-  it('相同/相似查找只打开独立弹窗，不改变主列表视图和筛选', () => {
-    const store = useLibraryStore();
-    store.setView({ kind: 'category', name: 'C' });
-    store.query.keywords = ['keep-filter'];
-    store.searchText = 'keep-filter';
-    const source = { id: 'source', path: 'source.png', name: 'source' } as Item;
-
-    store.showSimilar(source);
-
-    expect(store.similarSearchSource).toEqual(source);
-    expect(store.view).toEqual({ kind: 'category', name: 'C' });
-    expect(store.query.keywords).toEqual(['keep-filter']);
-    expect(store.searchText).toBe('keep-filter');
-    store.closeSimilar();
-    expect(store.similarSearchSource).toBeNull();
   });
 
   it('correctView 就地修正当前条目，不新增历史', () => {

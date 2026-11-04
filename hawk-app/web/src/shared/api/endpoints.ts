@@ -15,9 +15,6 @@ import type {
   Locks,
   TagInfo,
   ViewPrefs,
-  VisionSearchRequest,
-  VisionSearchResponse,
-  VisionStatus,
 } from '@/shared/types';
 
 /** server 启动状态（GET /app/startup，浏览器无 IPC 时由前端轮询） */
@@ -106,13 +103,8 @@ export const api = {
   /** 单条详情：同内容多位置时传 path 定位具体条目（缺省主位置） */
   itemDetail: (id: string, path?: string) => request<Item>('GET', '/api/v1/item/detail', { query: path ? { id, path } : { id } }),
   itemCount: () => request<number>('GET', '/api/v1/item/count'),
-  /** 重复图片分组扫描（admin）：相似 pHash / 相同内容多位置，分页按组返回 */
+  /** 重复图片分组扫描（admin）：按内容 hash 汇总同一 item 的多个位置，分页按组返回 */
   itemDuplicates: (params: DuplicateScanRequest) => request<DuplicateScanResponse>('POST', '/api/v1/item/duplicates', { body: params }),
-  visionStatus: () => request<VisionStatus>('GET', '/api/v1/vision/status'),
-  visionInstall: () => request<VisionStatus>('POST', '/api/v1/vision/install'),
-  visionEnable: (enabled: boolean) => request<VisionStatus>('POST', '/api/v1/vision/enable', { body: { enabled } }),
-  visionRemove: () => request<VisionStatus>('POST', '/api/v1/vision/remove'),
-  visionSearch: (params: VisionSearchRequest) => request<VisionSearchResponse>('POST', '/api/v1/item/vision-search', { body: params }),
   itemAddByPath: (path: string, opts?: { name?: string; folder_path?: string; tags?: string[]; skip_existing?: boolean }) =>
     request<{ item: Item; already_existed: boolean; skipped: boolean }>('POST', '/api/v1/item/add', {
       body: { path, name: opts?.name, folder_path: opts?.folder_path, tags: opts?.tags, skip_existing: opts?.skip_existing },
