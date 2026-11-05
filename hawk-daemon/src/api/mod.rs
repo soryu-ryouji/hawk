@@ -272,6 +272,9 @@ async fn auth(
     }
     // 局域网自动配对免 Bearer：源端创建请求、随后用随机 request_id 轮询目标端决策。
     // 这些 handler 内部都限定只在 hawk-app 直连端口（Peer）生效。
+    let is_lan_connection_info = mode == ListenerMode::Peer
+        && path == "/api/v1/app/lan/connection-info"
+        && req.method() == axum::http::Method::GET;
     let is_pair_request_create =
         path == "/api/v1/app/lan/pair-requests" && req.method() == axum::http::Method::POST;
     let is_pair_request_status = req.method() == axum::http::Method::GET
@@ -286,7 +289,8 @@ async fn auth(
     ) && path
         .strip_prefix("/api/v1/rendezvous/")
         .is_some_and(|id| !id.is_empty() && !id.contains('/'));
-    if is_pair_request_create
+    if is_lan_connection_info
+        || is_pair_request_create
         || is_pair_request_status
         || is_rendezvous_create
         || is_rendezvous_status
@@ -383,6 +387,7 @@ fn peer_control_allowed(path: &str) -> bool {
         || path == "/api/v1/app/info"
         || path == "/api/v1/rendezvous"
         || path.starts_with("/api/v1/rendezvous/")
+        || path == "/api/v1/app/lan/connection-info"
         || path == "/api/v1/app/lan/pair-requests"
         || path.starts_with("/api/v1/app/lan/pair-requests/")
 }

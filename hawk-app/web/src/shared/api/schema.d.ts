@@ -100,6 +100,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/app/lan/connection-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_lan_connection_info"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/app/lan/device-keys": {
         parameters: {
             query?: never;
@@ -1725,6 +1741,24 @@ export interface components {
             status: string;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
+        Envelope_LanConnectionInfoDto: {
+            /** @description 目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。 */
+            data?: {
+                library_name: string;
+                name: string;
+                peer_id: string;
+                /** Format: int32 */
+                peer_port: number;
+                /** Format: int32 */
+                protocol: number;
+                target_device_id?: string | null;
+                target_identity: string;
+                target_library_id: string;
+                tls_fingerprint?: string | null;
+            };
+            status: string;
+        };
+        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanDeviceKeyDeletedDto: {
             data?: {
                 deleted: boolean;
@@ -2283,6 +2317,20 @@ export interface components {
         };
         LanClientsDto: {
             clients: components["schemas"]["LanClientDto"][];
+        };
+        /** @description 目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。 */
+        LanConnectionInfoDto: {
+            library_name: string;
+            name: string;
+            peer_id: string;
+            /** Format: int32 */
+            peer_port: number;
+            /** Format: int32 */
+            protocol: number;
+            target_device_id?: string | null;
+            target_identity: string;
+            target_library_id: string;
+            tls_fingerprint?: string | null;
         };
         LanDeviceKeyCreateBody: {
             label: string;
@@ -2862,6 +2910,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_LanClientsDto"];
+                };
+            };
+        };
+    };
+    get_lan_connection_info: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 目标端连接信息 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_LanConnectionInfoDto"];
                 };
             };
         };

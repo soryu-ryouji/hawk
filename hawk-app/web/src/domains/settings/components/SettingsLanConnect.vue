@@ -20,7 +20,7 @@ const savedMessage = ref<string | null>(null);
 /** 手动配对兜底：广播/组播被访客网络隔离时，直接输入目标 hawk-app 直连地址。 */
 const manualOpen = ref(false);
 const manualUrl = ref('');
-const manualIdentity = ref('');
+const manualAccessKey = ref('');
 /** 局域网测速（当前实现为 app/info 往返延迟中位数） */
 const testingSpeed = ref(false);
 const speedMs = ref<number | null>(null);
@@ -107,7 +107,7 @@ async function confirmPairPermission(): Promise<void> {
   if (ok && manual) {
     manualOpen.value = false;
     manualUrl.value = '';
-    manualIdentity.value = '';
+    manualAccessKey.value = '';
   }
 }
 async function submitManualPair(): Promise<void> {
@@ -122,12 +122,29 @@ async function submitManualPair(): Promise<void> {
     url,
     writable: true,
     requires_pairing: true,
-    target_identity: manualIdentity.value.trim(),
+    target_identity: '',
     target_device_id: null,
     target_library_id: '',
     tls_fingerprint: null,
   };
   openPairPermission(peer);
+}
+
+async function connectWithKey(): Promise<void> {
+  const url = manualUrl.value.trim();
+  const accessKey = manualAccessKey.value.trim();
+  if (!url || !accessKey) {
+    return;
+  }
+  store.error = null;
+  const ok = await store.connectWithKey(url, accessKey);
+  if (ok) {
+    savedMessage.value = '已使用访问密钥连接';
+    manualOpen.value = false;
+    manualUrl.value = '';
+    manualAccessKey.value = '';
+    window.setTimeout(() => (savedMessage.value = null), 3000);
+  }
 }
 
 async function connectSaved(peer: LanPeerProfile): Promise<void> {
@@ -229,16 +246,19 @@ async function testSpeed(): Promise<void> {
     <div class="manual-row">
       <button class="link-btn" @click="manualOpen = !manualOpen">
         <Icon name="chevronDown" :size="12" :class="{ open: manualOpen }" />
-        手动输入地址配对
+        手动输入地址连接
       </button>
     </div>
     <div v-if="manualOpen" class="pair-box">
-      <div class="pair-title">手动配对</div>
-      <input v-model="manualUrl" placeholder="http://192.168.1.5:27375" autocomplete="off" spellcheck="false" />
-      <input v-model="manualIdentity" placeholder="target_identity（目标 iroh 公钥）" autocomplete="off" spellcheck="false" />
+      <div class="pair-title">目标设备地址与访问密钥</div>
+      <input v-model="manualUrl" placeholder="100.64.0.1:27375 或 http://hawk-pc:27375" autocomplete="off" spellcheck="false" />
+      <input v-model="manualAccessKey" placeholder="访问密钥（在目标端设备列表中创建并复制）" autocomplete="off" spellcheck="false" />
       <div class="pair-actions">
-        <button class="primary" :disabled="!manualUrl.trim() || !manualIdentity.trim() || store.connectingId !== null" @click="submitManualPair">
-          {{ store.connectingId ? '等待对方确认…' : '申请配对' }}
+        <button class="secondary" :disabled="!manualUrl.trim() || store.connectingId !== null" @click="submitManualPair">
+          {{ store.connectingId ? '处理中…' : '申请对方授权' }}
+        </button>
+        <button class="primary" :disabled="!manualUrl.trim() || !manualAccessKey.trim() || store.connectingId !== null" @click="connectWithKey">
+          {{ store.connectingId === 'manual' ? '连接中…' : '使用密钥连接' }}
         </button>
       </div>
     </div>

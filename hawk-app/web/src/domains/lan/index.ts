@@ -90,6 +90,25 @@ export const useLanStore = defineStore('lan', () => {
     }
   }
 
+  /** 目标端预创建密钥：用户输入地址 + 访问密钥，直接建立 LAN 连接，无需目标端现场确认。 */
+  async function connectWithKey(url: string, accessKey: string): Promise<boolean> {
+    if (connectingId.value) {
+      return false;
+    }
+    connectingId.value = 'manual';
+    error.value = null;
+    try {
+      await shell.lanConnectWithKey({ url, accessKey });
+      await refreshSaved();
+      return true;
+    } catch (e) {
+      error.value = ipcMessage(e);
+      return false;
+    } finally {
+      connectingId.value = null;
+    }
+  }
+
   async function forget(peerId: string): Promise<void> {
     try {
       await shell.lanForget(peerId);
@@ -99,5 +118,5 @@ export const useLanStore = defineStore('lan', () => {
     }
   }
 
-  return { discovered, saved, scanning, connectingId, error, refreshSaved, scan, pair, connect, forget };
+  return { discovered, saved, scanning, connectingId, error, refreshSaved, scan, pair, connect, connectWithKey, forget };
 });

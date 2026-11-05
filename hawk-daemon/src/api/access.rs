@@ -177,6 +177,7 @@ pub(crate) fn required_capability(method: &Method, path: &str) -> Option<Capabil
 
 const GET_READ_PATHS: &[&str] = &[
     "/api/v1/app/info",
+    "/api/v1/app/lan/connection-info",
     "/api/v1/app/startup",
     "/api/v1/app/status",
     "/api/v1/category/list",

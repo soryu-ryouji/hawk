@@ -1317,6 +1317,70 @@
         ],
         "type": "object"
       },
+      "Envelope_LanConnectionInfoDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。",
+            "properties": {
+              "library_name": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "peer_id": {
+                "type": "string"
+              },
+              "peer_port": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "protocol": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "target_device_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "target_identity": {
+                "type": "string"
+              },
+              "target_library_id": {
+                "type": "string"
+              },
+              "tls_fingerprint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "protocol",
+              "peer_id",
+              "name",
+              "library_name",
+              "peer_port",
+              "target_identity",
+              "target_library_id"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Envelope_LanDeviceKeyDeletedDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
@@ -3348,6 +3412,58 @@
         ],
         "type": "object"
       },
+      "LanConnectionInfoDto": {
+        "description": "目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。",
+        "properties": {
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "peer_id": {
+            "type": "string"
+          },
+          "peer_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "protocol": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target_device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_identity": {
+            "type": "string"
+          },
+          "target_library_id": {
+            "type": "string"
+          },
+          "tls_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "protocol",
+          "peer_id",
+          "name",
+          "library_name",
+          "peer_port",
+          "target_identity",
+          "target_library_id"
+        ],
+        "type": "object"
+      },
       "LanDeviceKeyCreateBody": {
         "properties": {
           "label": {
@@ -5023,6 +5139,26 @@
           }
         },
         "summary": "目标端查看当前通过 hawk-app 直连端口活跃的设备（admin 限定）。\n只返回授权列表内 key 的最近活跃时间，不返回 token。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/connection-info": {
+      "get": {
+        "operationId": "get_lan_connection_info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanConnectionInfoDto"
+                }
+              }
+            },
+            "description": "目标端连接信息"
+          }
+        },
         "tags": [
           "app"
         ]

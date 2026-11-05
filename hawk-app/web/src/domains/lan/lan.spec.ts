@@ -9,6 +9,9 @@ const shellMock = vi.hoisted(() => ({
     Promise.resolve({ api_base: 'http://192.168.1.2:27375', credential: 't', label: '目标', remote: true, kind: 'lan', peer_id: 'peer' }),
   ),
   lanPeers: vi.fn(() => Promise.resolve({ peers: [] })),
+  lanConnectWithKey: vi.fn(() =>
+    Promise.resolve({ api_base: 'http://127.0.0.1:3000', credential: 't', label: '目标', remote: true, kind: 'lan', peer_id: 'peer' }),
+  ),
 }));
 
 vi.mock('@/shared/lib/platform', () => ({ shell: shellMock }));
@@ -22,6 +25,13 @@ describe('useLanStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+  });
+
+  it('connectWithKey 仅向 IPC 传地址与访问密钥', async () => {
+    const store = useLanStore();
+    const ok = await store.connectWithKey('100.64.0.12:27375', 'secret-key');
+    expect(ok).toBe(true);
+    expect(shellMock.lanConnectWithKey).toHaveBeenCalledWith({ url: '100.64.0.12:27375', accessKey: 'secret-key' });
   });
 
   it('pair 向 IPC 传纯对象，避免 Vue Proxy 触发 DataCloneError', async () => {

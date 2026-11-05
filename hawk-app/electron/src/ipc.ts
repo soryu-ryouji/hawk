@@ -24,6 +24,7 @@ import {
   lanDiscover,
   lanPair,
   lanConnect,
+  lanConnectWithKey,
   lanPeers,
   lanForget,
   lanSpeedTest,
@@ -232,6 +233,16 @@ export function registerIpc(): void {
       throw new Error('无效的局域网设备');
     }
     return lanConnect(peerId);
+  });
+  ipcMain.handle(IPC.lanConnectWithKey, (_event, input: unknown) => {
+    if (typeof input !== 'object' || input === null) {
+      throw new Error('无效的连接信息');
+    }
+    const { url, accessKey } = input as { url?: unknown; accessKey?: unknown };
+    if (typeof url !== 'string' || !url.trim() || typeof accessKey !== 'string' || !accessKey.trim()) {
+      throw new Error('地址和访问密钥不能为空');
+    }
+    return lanConnectWithKey({ url: url.trim(), accessKey: accessKey.trim() });
   });
   ipcMain.handle(IPC.lanPeers, () => lanPeers());
   ipcMain.handle(IPC.lanSpeedTest, () => lanSpeedTest());

@@ -50,6 +50,7 @@ export const IPC = {
   lanDiscover: 'hawk:lan-discover',
   lanPair: 'hawk:lan-pair',
   lanConnect: 'hawk:lan-connect',
+  lanConnectWithKey: 'hawk:lan-connect-with-key',
   lanPeers: 'hawk:lan-peers',
   lanForget: 'hawk:lan-forget',
   lanSpeedTest: 'hawk:lan-speed-test',
@@ -431,6 +432,8 @@ export interface HawkShell {
   lanPair(input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }): Promise<ConnectionDescriptor>;
   /** 连接已保存的局域网设备（刷新目标 app/info 后切换连接） */
   lanConnect(peerId: string): Promise<ConnectionDescriptor>;
+  /** 用目标地址 + 目标端预创建的设备访问密钥直接连接；若已有同设备记录会覆盖密钥后重连 */
+  lanConnectWithKey(input: { url: string; accessKey: string }): Promise<ConnectionDescriptor>;
   /** 已保存的局域网设备列表（不含 token） */
   lanPeers(): Promise<{ peers: LanPeerProfile[] }>;
   /** 忘记已保存的局域网设备 */

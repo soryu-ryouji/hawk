@@ -952,12 +952,57 @@ async fn cancel_access_rendezvous(
     Ok(Json(json!({"status":"success"})))
 }
 
+/// 目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。
+#[derive(Serialize, utoipa::ToSchema)]
+struct LanConnectionInfoDto {
+    protocol: u32,
+    peer_id: String,
+    name: String,
+    library_name: String,
+    peer_port: u16,
+    target_identity: String,
+    target_device_id: Option<String>,
+    target_library_id: String,
+    tls_fingerprint: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/app/lan/connection-info",
+    tags = ["app"],
+    responses((status = 200, description = "目标端连接信息", body = Envelope<LanConnectionInfoDto>))
+)]
+async fn get_lan_connection_info(
+    State(state): State<SharedState>,
+) -> Result<Json<Envelope<LanConnectionInfoDto>>, ApiError> {
+    let lib = state.require_library()?;
+    let identity = crate::remote::identity::Identity::load_or_create(
+        state.remote.remote_config().identity_dir(),
+    )
+    .map_err(ApiError::internal)?;
+    let web = lib.config.current().web;
+    Ok(Json(Envelope::ok(LanConnectionInfoDto {
+        protocol: PAIR_PROTOCOL_VERSION,
+        peer_id: local_peer_id(lib),
+        name: gethostname::gethostname().to_string_lossy().to_string(),
+        library_name: local_library_name(lib),
+        peer_port: web.peer_port,
+        target_identity: identity.endpoint_id.clone(),
+        target_device_id: identity.device_id,
+        target_library_id: crate::core::paths::library_key(&lib.paths.root),
+        tls_fingerprint: crate::api::tls::fingerprint_if_exists(
+            state.remote.remote_config().identity_dir(),
+        ),
+    })))
+}
+
 // ---------- app/lan 端点：LAN 查看配置的读写（admin 限定） ----------
 // 配置由 daemon 权威读写（toml_edit 保留注释），保存即热重绑：写配置 → reload → wake →
 // 等待本轮收敛（epoch），绑定失败回滚旧配置。不再经 Electron 主进程手写 TOML + 轮询 app/info。
 
 pub fn routes() -> OpenApiRouter<SharedState> {
     OpenApiRouter::new()
+        .routes(routes!(get_lan_connection_info))
         .routes(routes!(get_lan, put_lan))
         .routes(routes!(discover_lan_peers))
         .routes(routes!(list_lan_clients))

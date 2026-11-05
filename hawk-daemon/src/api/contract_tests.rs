@@ -42,6 +42,7 @@ const SUCCESS_CASES: &[(&str, &str, Option<&str>)] = &[
     ("GET", "/health", None),
     ("GET", "/api/v1/app/connection", None),
     ("GET", "/api/v1/app/info", None),
+    ("GET", "/api/v1/app/lan/connection-info", None),
     ("GET", "/api/v1/app/lan", None),
     ("GET", "/api/v1/app/startup", None),
     ("GET", "/api/v1/app/status", None),
@@ -2307,6 +2308,34 @@ async fn duplicate_scan_groups_locations_by_content_hash() {
     assert_eq!(locked["data"]["total"], json!(1));
     assert_eq!(locked["data"]["groups"][0]["id"], json!(other));
 }
+/// 目标连接信息在 Peer 直连端口公开，但不暴露 AccessKey。
+#[tokio::test]
+async fn lan_connection_info_is_public_on_peer_listener() {
+    let app = test_app("lan-connection-info");
+    let peer_router = build_router_for(app.state.clone(), ListenerMode::Peer);
+    let response = peer_router
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/app/lan/connection-info")
+                .header("host", "127.0.0.1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["data"]["protocol"], json!(3));
+    assert!(body["data"]["target_identity"]
+        .as_str()
+        .is_some_and(|v| !v.is_empty()));
+    assert!(body["data"].get("access_key").is_none());
+}
+
 /// 选择集聚合：common_taxonomy 交集语义 + batch_update 的 remove_tags/remove_categories 摘除
 #[tokio::test]
 async fn aggregate_and_batch_remove() {

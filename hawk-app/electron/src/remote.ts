@@ -201,7 +201,7 @@ async function directCall<T>(base: string, path: string, token: string, method =
     res = await fetch(`${base}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -229,7 +229,8 @@ interface TargetAppInfo {
 }
 
 function normalizeLanURL(url: string): string {
-  const parsed = new URL(url);
+  const candidate = /^https?:\/\//i.test(url.trim()) ? url.trim() : `http://${url.trim()}`;
+  const parsed = new URL(candidate);
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('局域网设备地址必须使用 http/https');
   }
@@ -456,6 +457,55 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
 /** 读取已配对设备并切换当前连接描述符 */
 export async function lanConnect(peerId: string): Promise<ConnectionDescriptor> {
   return connectLanPeer(peerId);
+}
+
+interface TargetLanConnectionInfo {
+  protocol: number;
+  peer_id: string;
+  name: string;
+  library_name: string;
+  peer_port: number;
+  target_identity: string;
+  target_device_id?: string | null;
+  target_library_id: string;
+  tls_fingerprint?: string | null;
+}
+
+/** 目标端已预创建 AccessKey 时直接连接：地址由用户输入，目标身份从目标公开连接信息取得。 */
+export async function lanConnectWithKey(input: { url: string; accessKey: string }): Promise<ConnectionDescriptor> {
+  const base = normalizeLanURL(input.url);
+  const accessKey = input.accessKey.trim();
+  if (!accessKey) {
+    throw new Error('访问密钥不能为空');
+  }
+  const info = await directCall<TargetLanConnectionInfo>(base, '/api/v1/app/lan/connection-info', '');
+  if (info.protocol !== 3) {
+    throw new Error('目标端配对协议版本不兼容，请将两端 hawk 升级到同一版本');
+  }
+  const appInfo = await directCall<TargetAppInfo>(base, '/api/v1/app/info', accessKey);
+  if (!appInfo.has_library) {
+    throw new Error('目标设备未打开素材库');
+  }
+  const peerId = info.peer_id;
+  upsertLanPeer({
+    id: peerId,
+    name: info.name,
+    library_name: info.library_name,
+    url: base,
+    writable: appInfo.role === 'editor',
+    peer_key: accessKey,
+    target_identity: info.target_identity,
+    target_device_id: info.target_device_id ?? null,
+    target_library_id: info.target_library_id,
+    tls_fingerprint: info.tls_fingerprint ?? null,
+    last_connected_at_ms: Date.now(),
+  });
+  try {
+    return await connectLanPeer(peerId);
+  } catch (e) {
+    removeStoredLanPeer(peerId);
+    throw e;
+  }
 }
 
 async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {

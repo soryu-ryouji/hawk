@@ -100,6 +100,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   lanDiscover: async () => ({ peers: [] }),
   lanPair: async () => ({ api_base: '', credential: '', label: '', remote: false, kind: 'local' }),
   lanConnect: async () => ({ api_base: '', credential: '', label: '', remote: false, kind: 'local' }),
+  lanConnectWithKey: async () => ({ api_base: '', credential: '', label: '', remote: false, kind: 'local' }),
   lanPeers: async () => ({ peers: [] }),
   lanForget: async () => {},
   lanSpeedTest: async () => ({ latency_ms: 0 }),

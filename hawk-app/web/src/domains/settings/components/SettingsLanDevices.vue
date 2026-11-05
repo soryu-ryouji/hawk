@@ -33,10 +33,10 @@ const addresses = ref<string[]>([]);
 const clients = ref<Record<string, LanClient>>({});
 const editTarget = ref<DeviceRow | null>(null);
 const editWrite = ref(false);
-const qrPermissionOpen = ref(false);
-const qrWrite = ref(false);
-const generatingQr = ref(false);
-const pairing = ref<{ payload: string; details: { label: string; value: string }[]; warning: string } | null>(null);
+const permissionMode = ref<'qr' | 'key' | null>(null);
+const permissionWrite = ref(false);
+const creatingKey = ref(false);
+const pairing = ref<{ title: string; payload: string; details: { label: string; value: string }[]; note: string; warning: string } | null>(null);
 let clientTimer: ReturnType<typeof setInterval> | null = null;
 
 const devices = computed<DeviceRow[]>(() => {
@@ -169,36 +169,55 @@ async function connectDevice(device: DeviceRow): Promise<void> {
   }
 }
 
-function requestQr(): void {
-  if (generatingQr.value) {
+function requestPermission(mode: 'qr' | 'key'): void {
+  if (creatingKey.value) {
     return;
   }
   error.value = '';
-  qrWrite.value = false;
-  qrPermissionOpen.value = true;
+  permissionWrite.value = false;
+  permissionMode.value = mode;
 }
 
-async function confirmQr(): Promise<void> {
-  generatingQr.value = true;
+function requestQr(): void {
+  requestPermission('qr');
+}
+
+function requestKey(): void {
+  requestPermission('key');
+}
+
+async function confirmPermission(): Promise<void> {
+  const mode = permissionMode.value;
+  if (!mode) {
+    return;
+  }
+  creatingKey.value = true;
   error.value = '';
   try {
-    const key = await lan.addDeviceKey('移动端扫码 ' + (lan.peerKeys.length + 1), qrWrite.value ? 'editor' : 'viewer');
+    const label = (mode === 'qr' ? '移动端扫码 ' : '设备连接密钥 ') + (lan.peerKeys.length + 1);
+    const key = await lan.addDeviceKey(label, permissionWrite.value ? 'editor' : 'viewer');
     if (!key) {
       error.value = lan.error ?? '创建设备密钥失败';
       return;
     }
-    qrPermissionOpen.value = false;
+    permissionMode.value = null;
     const urls = addresses.value.map((addr) => 'http://' + addr + ':' + lan.peerPort);
     pairing.value = {
+      title: mode === 'qr' ? '移动端局域网授权' : '局域网连接密钥',
       payload: encodePairingPayload(lanPairingPayload(urls, key.access_key, lan.targetIdentity, lan.targetLibraryId, lan.targetDeviceId, lan.tlsFingerprint)),
       details: [
-        { label: '地址（客户端自动择优）', value: urls.join('\n') },
+        { label: '目标地址（任选其一）', value: urls.join('\n') },
         { label: '访问密钥', value: key.access_key },
+        { label: '目标身份', value: lan.targetIdentity },
       ],
-      warning: key.role === 'editor' ? '当前二维码包含写权限；请只在信任的设备上扫码。' : '',
+      note:
+        mode === 'qr'
+          ? '用 hawk iOS / Android 客户端扫码连接此素材库。'
+          : '在另一台 hawk-app 的「手动输入地址连接」中填写目标地址与访问密钥；无需目标端再次确认。',
+      warning: key.role === 'editor' ? '当前密钥包含写权限；请只在信任的设备上使用。' : '',
     };
   } finally {
-    generatingQr.value = false;
+    creatingKey.value = false;
   }
 }
 </script>
@@ -244,7 +263,10 @@ async function confirmQr(): Promise<void> {
 
       <p v-if="notice" class="ok">{{ notice }}</p>
       <p v-if="error" class="error">{{ error }}</p>
-      <button class="qr-button" :disabled="generatingQr" @click="requestQr">生成授权二维码</button>
+      <div class="key-actions">
+        <button class="qr-button" :disabled="creatingKey" @click="requestQr">生成授权二维码</button>
+        <button class="qr-button" :disabled="creatingKey" @click="requestKey">创建连接密钥</button>
+      </div>
     </div>
 
     <Teleport to="body">
@@ -270,22 +292,22 @@ async function confirmQr(): Promise<void> {
         </div>
       </div>
 
-      <div v-if="qrPermissionOpen" class="modal-mask" @click.self="qrPermissionOpen = false">
+      <div v-if="permissionMode" class="modal-mask" @click.self="permissionMode = null">
         <div class="modal">
-          <div class="modal-title">生成移动端授权二维码</div>
+          <div class="modal-title">{{ permissionMode === 'qr' ? '生成移动端授权二维码' : '创建连接密钥' }}</div>
           <div class="perm-options">
-            <label class="perm-option" :class="{ active: !qrWrite }">
-              <input v-model="qrWrite" type="radio" :value="false" />
+            <label class="perm-option" :class="{ active: !permissionWrite }">
+              <input v-model="permissionWrite" type="radio" :value="false" />
               <span><strong>仅读取</strong></span>
             </label>
-            <label class="perm-option" :class="{ active: qrWrite }">
-              <input v-model="qrWrite" type="radio" :value="true" />
+            <label class="perm-option" :class="{ active: permissionWrite }">
+              <input v-model="permissionWrite" type="radio" :value="true" />
               <span><strong>可读写</strong></span>
             </label>
           </div>
           <div class="modal-actions">
-            <button @click="qrPermissionOpen = false">取消</button>
-            <button class="primary" :disabled="generatingQr" @click="confirmQr">{{ generatingQr ? '生成中…' : '生成二维码' }}</button>
+            <button @click="permissionMode = null">取消</button>
+            <button class="primary" :disabled="creatingKey" @click="confirmPermission">{{ creatingKey ? '创建中…' : '创建' }}</button>
           </div>
         </div>
       </div>
@@ -293,10 +315,10 @@ async function confirmQr(): Promise<void> {
 
     <PairingQrDialog
       v-if="pairing"
-      title="移动端局域网授权"
+      :title="pairing.title"
       :payload="pairing.payload"
       :details="pairing.details"
-      note="用 hawk iOS / Android 客户端扫码连接此素材库。"
+      :note="pairing.note"
       :warning="pairing.warning"
       @close="pairing = null"
     />
@@ -394,9 +416,14 @@ async function confirmQr(): Promise<void> {
   padding: 4px 9px;
   font-size: 12px;
 }
-.qr-button {
-  align-self: flex-start;
+.key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 4px;
+}
+.qr-button {
+  margin-top: 0;
 }
 .empty-state {
   padding: 8px 0;
