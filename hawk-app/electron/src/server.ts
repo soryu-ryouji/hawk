@@ -286,16 +286,51 @@ function startServer(libPath: string | null, address: string, admin_token: strin
   return { child, address, admin_token, markStopped: () => (intentionalExit = true) };
 }
 
-export function stopServer(): void {
+function beginServerStop(): ServerHandle | null {
   startedConn = null;
   onServerStopped();
-  if (server) {
-    server.markStopped();
-    if (!server.child.killed) {
-      server.child.kill();
-    }
-  }
+  const current = server;
   server = null;
+  return current;
+}
+
+export function stopServer(): void {
+  const current = beginServerStop();
+  if (!current) {
+    return;
+  }
+  current.markStopped();
+  if (current.child.exitCode === null && current.child.signalCode === null) {
+    current.child.kill();
+  }
+}
+
+/** 等旧 daemon 释放端口后再拉起新进程：换库/缓存迁移连续重启时，kill 后端口不会同步释放。 */
+export async function stopServerAndWait(timeoutMs = 8_000): Promise<void> {
+  const current = beginServerStop();
+  if (!current) {
+    return;
+  }
+  current.markStopped();
+  const exited = new Promise<void>((resolve) => {
+    if (current.child.exitCode !== null || current.child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    current.child.once('exit', () => resolve());
+  });
+  if (current.child.exitCode === null && current.child.signalCode === null) {
+    current.child.kill();
+  }
+  await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
+  const port = Number(new URL(current.address).port);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await tryListen(port)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 // ---------- 素材库选择 ----------
@@ -317,7 +352,7 @@ async function switchLibrary(libPath: string, address: string, admin_token: stri
   // 主界面所有 API 已失效（假死），不能在 ready 后才切（hawk:server-restarting）
   getMainWindow()?.webContents.send(IPC.serverRestarting);
   startedConn = null;
-  stopServer();
+  await stopServerAndWait();
   // 记住当前库并维护历史（最近使用在前、去重、上限 10）：换库下拉经 hawk:list-libraries 直达
   const history = [libPath, ...(readConfig().libraryHistory ?? []).filter((p) => p !== libPath)].slice(0, 10);
   writeConfig({ libraryPath: libPath, libraryHistory: history, remoteViewer: false });
@@ -338,7 +373,7 @@ export async function startRemoteViewer(): Promise<ServerHandle> {
   const admin_token = crypto.randomBytes(32).toString('hex');
   getMainWindow()?.webContents.send(IPC.serverRestarting);
   startedConn = null;
-  stopServer();
+  await stopServerAndWait();
   writeConfig({ remoteViewer: true });
   setLibraryRoot(null);
   server = startServer(null, apiAddress(), admin_token);
