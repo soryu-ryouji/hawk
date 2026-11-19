@@ -6,6 +6,7 @@
 //   2. 「＋ 新建文件夹」投放区：把图片拖到上面 → 命名 → 创建文件夹并把图片存入；平时点击也可只建文件夹。
 // 投到左侧面板存入根目录；Esc 取消。
 // 原生拖拽残影是大图的不透明拷贝，会盖住面板文字 → dragstart 时用 setDragImage 换成小尺寸、半透明轻虚化的缩略图。
+// 缩略图从原图同步绘制到 canvas：新建 <img> 再去加载同一 URL 在 dragstart 时往往还没解码，元素只有边框大小（残影只剩几个像素）。
 // content script 只负责交互与转发，实际保存/查询/新建经消息交给 background（content script 直连 hawk-daemon 会受 CORS 限制）。
 import { browser } from 'wxt/browser';
 
@@ -22,7 +23,7 @@ const ANCHOR_PAD = 14;
 const ZONE_WIDTH = 220;
 const ANCHOR_INSET_X = 40; // 指针距区块左内缘
 const ANCHOR_INSET_Y = 12; // 指针距区块顶内缘
-/** 拖拽残影缩略图的最大宽高（px）；与 .hawk-drag-thumb img 的 max-width/max-height 保持一致 */
+/** 拖拽残影缩略图的最大宽高（px） */
 const DRAG_THUMB_MAX = 120;
 
 /** 文件夹树节点（get-folders 消息返回，已按最近使用排序） */
@@ -60,12 +61,12 @@ export default defineContentScript({
 function onDragStart(e: DragEvent) {
   const img = (e.target as HTMLElement | null)?.closest?.('img');
   const src = img?.currentSrc || img?.src;
-  if (!src) {
+  if (!img || !src) {
     return; // 非图片拖拽（文本、链接等）不介入
   }
   cleanup();
   draggedSrc = src;
-  setDragThumbnail(e, src);
+  setDragThumbnail(e, img);
   startX = e.clientX;
   startY = e.clientY;
   dragging = true;
@@ -76,23 +77,55 @@ function onDragStart(e: DragEvent) {
 }
 
 /** 用离屏小缩略图替换原生拖拽残影：元素须真实渲染（不能 display:none/opacity:0），
- *  固定在视口外即可；setDragImage 必须在 dragstart 处理器内同步调用，元素保留到 cleanup 再移除 */
-function setDragThumbnail(e: DragEvent, src: string) {
+ *  固定在视口外即可；setDragImage 必须在 dragstart 处理器内同步调用，元素保留到 cleanup 再移除。
+ *  直接拿原图同步绘制 canvas：原图此刻必然已解码，而新建 <img> 再加载同一 URL 在 dragstart
+ *  时通常还没拿到尺寸，缩略图会退化成只剩边框的几个像素。 */
+function setDragThumbnail(e: DragEvent, source: HTMLImageElement) {
   if (!e.dataTransfer) {
     return;
   }
   removeDragThumbnail();
+  const { width, height } = thumbnailSize(source);
   const thumb = document.createElement('div');
   thumb.className = 'hawk-drag-thumb';
-  const img = document.createElement('img');
-  img.src = src;
-  thumb.appendChild(img);
+
+  const canvas = document.createElement('canvas');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(width * dpr));
+  canvas.height = Math.max(1, Math.round(height * dpr));
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const ctx = canvas.getContext('2d');
+  let drawn = false;
+  try {
+    if (ctx && source.complete && source.naturalWidth > 0) {
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      drawn = true;
+    }
+  } catch {
+    // 原图尚未解码等极端情况：退化为带固定尺寸的 <img>，至少残影尺寸正确
+  }
+  if (drawn) {
+    thumb.appendChild(canvas);
+  } else {
+    const fallback = document.createElement('img');
+    fallback.src = source.currentSrc || source.src;
+    fallback.width = width;
+    fallback.height = height;
+    thumb.appendChild(fallback);
+  }
   document.documentElement.appendChild(thumb);
-  // 读 offsetWidth 强制同步布局，拿到缩略后的实际尺寸；图片未就绪时兜底为中心偏移
-  const w = img.offsetWidth || DRAG_THUMB_MAX;
-  const h = img.offsetHeight || DRAG_THUMB_MAX;
-  e.dataTransfer.setDragImage(thumb, Math.round(w / 2), Math.round(h / 2)); // 指针落在缩略图中心
+  e.dataTransfer.setDragImage(thumb, Math.round(width / 2), Math.round(height / 2)); // 指针落在缩略图中心
   dragThumb = thumb;
+}
+
+/** 缩略图尺寸：按原图固有尺寸等比缩到 DRAG_THUMB_MAX 以内，小图不放大 */
+function thumbnailSize(source: HTMLImageElement): { width: number; height: number } {
+  const rect = source.getBoundingClientRect();
+  const w = source.naturalWidth || rect.width || DRAG_THUMB_MAX;
+  const h = source.naturalHeight || rect.height || DRAG_THUMB_MAX;
+  const scale = Math.min(1, DRAG_THUMB_MAX / Math.max(w, h));
+  return { width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) };
 }
 
 function removeDragThumbnail() {
@@ -361,6 +394,7 @@ function injectStyles() {
   border: 1px solid rgba(255, 255, 255, 0.75);
   background: rgba(22, 24, 29, 0.9);
 }
+.hawk-drag-thumb canvas,
 .hawk-drag-thumb img {
   display: block;
   max-width: 120px;
