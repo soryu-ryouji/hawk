@@ -11,7 +11,7 @@
 
 use super::lan::LanSupervisor;
 use super::{build_router, build_router_for, AppState, ListenerMode, SharedState};
-use crate::core::access::Role;
+use crate::core::access::{Channel, Role};
 use crate::core::config::{LibraryConfig, WebAccessKey, WebSettings};
 use crate::core::events::{EventBus, LibraryEvents};
 use crate::core::index::ItemIndex;
@@ -1355,6 +1355,7 @@ async fn app_info_marks_tunneled_transport() {
         session_id: "s_test".to_string(),
         source_device_id: Some("d_test".to_string()),
         role: Role::Viewer,
+        channel: Channel::Wan,
         access: None,
     });
     let resp = app.router.clone().oneshot(req).await.unwrap();
@@ -2451,6 +2452,7 @@ async fn wan_importer_is_limited_to_import_and_folder_create() {
             } else {
                 Role::Viewer
             },
+            channel: Channel::Wan,
             access: None,
         });
         req
@@ -2625,6 +2627,7 @@ async fn access_key_revoke_and_demote_apply_to_existing_tunnel() {
         session_id: "s_access".to_string(),
         source_device_id: None,
         role: Role::Importer,
+        channel: Channel::Wan,
         access: Some(crate::remote::data::TunnelAccess {
             credential: Some(entry.hash.clone()),
             authenticated: true,
@@ -2644,4 +2647,102 @@ async fn access_key_revoke_and_demote_apply_to_existing_tunnel() {
 
     app.state.remote.keys.remove(&entry.id).unwrap();
     assert!(super::tunnel_access(&app.state, &tunnel).is_err());
+}
+
+/// LAN rendezvous 会话按 LanPeer 通道执法：editor 密钥可编辑，且不受 WAN allow_import 开关影响。
+#[tokio::test]
+async fn lan_access_session_keeps_editor_capabilities() {
+    let app = test_app("lan-access-editor");
+    // 广域网导入开关关闭只应影响 Wan 通道。
+    let mut remote = app.state.remote.remote_config().current();
+    remote.allow_import = false;
+    app.state.remote.remote_config().update(&remote).unwrap();
+    let (entry, _) = app
+        .state
+        .remote
+        .keys
+        .create(
+            &crate::core::paths::library_key(&app.state.library.as_ref().unwrap().paths.root),
+            "办公室电脑",
+            Role::Editor,
+            None,
+        )
+        .unwrap();
+    let lan = TunneledPeer {
+        session_id: "s_lan".to_string(),
+        source_device_id: None,
+        role: Role::Editor,
+        channel: Channel::LanPeer,
+        access: Some(crate::remote::data::TunnelAccess {
+            credential: Some(entry.hash.clone()),
+            authenticated: true,
+        }),
+    };
+    let access = super::tunnel_access(&app.state, &lan).unwrap();
+    assert_eq!(access.channel, Channel::LanPeer);
+    assert!(access.require(super::Capability::Edit).is_ok());
+    assert!(access.require(super::Capability::Manage).is_err());
+
+    // 同一把密钥经 WAN：allow_import 打开后至多 importer，Edit 仍被通道上限拒绝。
+    let mut remote = app.state.remote.remote_config().current();
+    remote.allow_import = true;
+    app.state.remote.remote_config().update(&remote).unwrap();
+    let wan = TunneledPeer {
+        session_id: "s_wan".to_string(),
+        channel: Channel::Wan,
+        ..lan
+    };
+    let access = super::tunnel_access(&app.state, &wan).unwrap();
+    assert_eq!(access.channel, Channel::Wan);
+    assert!(access.require(super::Capability::Import).is_ok());
+    assert!(access.require(super::Capability::Edit).is_err());
+}
+
+/// 局域网编辑器会话过完整路由：编辑/删除放行，Manage 仍被 LanPeer 通道上限拒绝。
+#[tokio::test]
+async fn lan_peer_editor_can_edit_and_delete_but_not_manage() {
+    let app = test_app("lan-peer-editor");
+    fn request(method: &str, uri: &str, body: Value) -> Request<Body> {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("host", "hawk-lan.tunnel")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        req.extensions_mut().insert(TunneledPeer {
+            session_id: "s_lan".to_string(),
+            source_device_id: None,
+            role: Role::Editor,
+            channel: Channel::LanPeer,
+            access: None,
+        });
+        req
+    }
+
+    for (method, uri, body) in [
+        ("POST", "/api/v1/item/delete", json!({ "id": "missing" })),
+        ("POST", "/api/v1/item/update", json!({ "id": "missing" })),
+        ("POST", "/api/v1/trash/clear", json!({})),
+    ] {
+        let resp = app
+            .router
+            .clone()
+            .oneshot(request(method, uri, body))
+            .await
+            .unwrap();
+        assert_ne!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "{method} {uri} 应放行 LanPeer editor"
+        );
+    }
+
+    let resp = app
+        .router
+        .clone()
+        .oneshot(request("POST", "/api/v1/library/rescan", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

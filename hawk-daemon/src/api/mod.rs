@@ -472,13 +472,17 @@ fn tunnel_access(
             tunnel.role,
         )
     };
-    let role =
-        if matches!(role, Role::Viewer) || state.remote.remote_config().current().allow_import {
-            role
-        } else {
-            Role::Viewer
-        };
-    Ok(AccessContext::new(principal, role, Channel::Wan))
+    // allow_import 只约束 WAN 导入；LAN 按通道上限（LanPeer=editor）收窄，不受该开关影响。
+    let channel = tunnel.channel;
+    let role = if channel == Channel::Wan
+        && !matches!(role, Role::Viewer)
+        && !state.remote.remote_config().current().allow_import
+    {
+        Role::Viewer
+    } else {
+        role
+    };
+    Ok(AccessContext::new(principal, role, channel))
 }
 
 fn narrower_role(requested: Role, current: Role) -> Role {

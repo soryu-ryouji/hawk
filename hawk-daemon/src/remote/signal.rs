@@ -3,7 +3,7 @@
 //! 致命错误（401 key 无效、url 非法）返回给 supervisor 置错误状态，等配置变更重启。
 //! 协议契约见 docs/backend/remote-protocol.md。
 
-use crate::core::access::Role;
+use crate::core::access::{Channel, Role};
 use crate::remote::config::{RemoteConfigStore, RemoteSettings};
 use crate::remote::data::DataPlane;
 use crate::remote::identity::Identity;
@@ -460,7 +460,11 @@ async fn handle_message(
                 match endpoint_id {
                     Some(endpoint_id) => {
                         if access_rendezvous {
-                            ctx.data_plane.allow_access_session(session_id, endpoint_id);
+                            ctx.data_plane.allow_access_session(
+                                session_id,
+                                endpoint_id,
+                                Channel::Wan,
+                            );
                         } else {
                             ctx.data_plane.allow_session(
                                 session_id,

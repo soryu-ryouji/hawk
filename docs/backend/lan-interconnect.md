@@ -27,7 +27,7 @@
 | 发现/匹配 | UDP 组播 + 广播，无需服务器 | hawk-server 设备列表 + WSS 信令 |
 | 数据通路 | 目标 daemon 的 hawk-app 直连端口（HTTP API，默认 27375） | 本机 daemon 会话代理 → iroh QUIC → 目标 daemon |
 | 鉴权 | 目标端审批后为该设备签发的 `[web].peer_keys` 直连密钥 | tenant-key + hawk-app key，两级验证 |
-| 写能力 | 直连密钥自身的 `role`（viewer/editor）；与网站 `keys` 独立 | `remote.allow_import` + WAN 通道上限 |
+| 写能力 | LAN 直连按 `LanPeer` 通道执行 peer key 的 `role`（viewer/editor，editor 可编辑/删除）；与网站 `keys` 独立 | `remote.allow_import` + WAN 通道上限（importer） |
 | NAT/公网 | 不支持（同网段） | iroh 打洞/中继 |
 
 两条链路互不放开权限：开启局域网写不会放开广域网写，反之亦然。
@@ -92,6 +92,8 @@
 
 ## 连接与状态管理
 
+局域网直连的隧道会话在目标端按 `LanPeer` 通道执法：配对审批授予 `editor` 时，对端可浏览、导入、编辑和删除素材（通道上限 editor，仍不含 Manage）；授予 `viewer` 时只读。权限调整或删除设备后，对端下一次请求立即按新角色执行。经 hawk-server 建立的同名隧道会话仍按 `Wan` 通道限为 importer，并受 `allow_import` 约束。
+
 主进程的连接优先级：
 
 ```text
@@ -127,7 +129,7 @@ remoteConn（广域网会话代理）
 | 网络边界 | 仅局域网直连；不把直连 token 上传到 hawk-server；二维码可携带同一目标的多个候选地址，客户端自动择优 |
 | 传输 | 原生素材数据使用 iroh 端到端加密；LAN Web 使用 HTTPS + 目标证书指纹。旧明文 HTTP 仅用于受限配对/rendezvous 元数据，不承载素材或 AccessKey |
 | 本地存储 | token 存在应用级 `config.toml`（Unix 下 0600）；渲染层不持久化 token |
-| 权限隔离 | 局域网写、广域网写、配对写请求三套开关独立，不互相提权 |
+| 权限隔离 | 局域网编辑由 peer key 角色决定，广域网写另受 `remote.allow_import` 约束，配对写请求独立审批；不互相提权 |
 
 后续可增强：mDNS/Bonjour SRV+TXT 替代 UDP 广播、配对阶段加设备公钥绑定、可选 HTTPS（自签证书指纹钉扎）。当前不引入这些复杂度的原因是：真实需求是同一可信 LAN 内快速互通，HTTP + 现有 token 语义已经与浏览器查看器同等级。
 

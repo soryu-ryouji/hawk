@@ -11,7 +11,7 @@
 
 use super::envelope::{codes, ApiError, Envelope};
 use super::{require_manage, AccessContext, SharedState};
-use crate::core::access::Role;
+use crate::core::access::{Channel, Role};
 use crate::core::config::WebSettings;
 use axum::extract::{Extension, Path, State};
 use axum::Json;
@@ -234,7 +234,8 @@ impl LanSupervisor {
             },
         );
         drop(sessions);
-        plane.allow_access_session(&session_id, peer);
+        // LAN 直连 rendezvous：会话通道固定为 LanPeer，编辑器密钥可获得 Edit（上限 editor）。
+        plane.allow_access_session(&session_id, peer, Channel::LanPeer);
         Some((session_id, token))
     }
 

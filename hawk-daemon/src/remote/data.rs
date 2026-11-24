@@ -5,7 +5,7 @@
 //! 每个请求开一条流转发。HTTP 解析两端的流式语义（SSE/缩略图）由 hyper 原生承载。
 //! 打洞/中继/路径迁移/映射保活全部是 iroh 内部事务，本模块不感知路径。
 
-use crate::core::access::Role;
+use crate::core::access::{Channel, Role};
 use crate::remote::identity::Identity;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode};
@@ -35,6 +35,8 @@ pub struct TunneledPeer {
     pub session_id: String,
     pub source_device_id: Option<String>,
     pub role: Role,
+    /// 会话建立时由可信适配器写入：LAN rendezvous 为 LanPeer，WAN 信令会话为 Wan。
+    pub channel: Channel,
     /// Some = AccessKey rendezvous；None = 已注册 Device 会话。
     pub access: Option<TunnelAccess>,
 }
@@ -49,6 +51,7 @@ struct AcceptedSession {
     peer: EndpointId,
     source_device_id: Option<String>,
     role: Role,
+    channel: Channel,
     access: Option<TunnelAccess>,
     lease_expires_at: std::time::Instant,
 }
@@ -74,6 +77,7 @@ impl SessionRegistry {
         source_device_id: Option<String>,
         peer: EndpointId,
         role: Role,
+        channel: Channel,
         access_rendezvous: bool,
     ) {
         let access = access_rendezvous.then_some(TunnelAccess {
@@ -86,6 +90,7 @@ impl SessionRegistry {
                 peer,
                 source_device_id,
                 role,
+                channel,
                 access,
                 lease_expires_at: std::time::Instant::now() + Duration::from_secs(15 * 60),
             },
@@ -203,6 +208,7 @@ impl SessionRegistry {
             session_id: session_id.to_string(),
             source_device_id: session.source_device_id,
             role: session.role,
+            channel: session.channel,
             access: session.access,
         })
     }
@@ -332,7 +338,7 @@ impl DataPlane {
             .unwrap_or_default()
     }
 
-    /// 放行 Device 会话对端身份并登记权限。
+    /// 放行 Device 会话对端身份并登记权限（hawk-server 信令通道，WAN）。
     pub fn allow_session(
         &self,
         session_id: &str,
@@ -345,14 +351,16 @@ impl DataPlane {
             Some(source_device_id.to_string()),
             peer,
             role,
+            Channel::Wan,
             false,
         );
     }
 
     /// 放行 AccessKey rendezvous；完成隧道内登录前不授予素材能力。
-    pub fn allow_access_session(&self, session_id: &str, peer: EndpointId) {
+    /// channel 由发起 rendezvous 的入口决定：LAN 直连为 LanPeer，WAN 信令为 Wan。
+    pub fn allow_access_session(&self, session_id: &str, peer: EndpointId, channel: Channel) {
         self.registry
-            .allow(session_id, None, peer, Role::Viewer, true);
+            .allow(session_id, None, peer, Role::Viewer, channel, true);
     }
 
     pub fn authenticate_access_session(

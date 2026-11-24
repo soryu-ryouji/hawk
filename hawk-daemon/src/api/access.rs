@@ -39,7 +39,7 @@ impl CapabilitySet {
     }
 }
 
-pub use crate::core::access::Role;
+pub use crate::core::access::{Channel, Role};
 
 impl Role {
     const fn capabilities(self) -> CapabilitySet {
@@ -54,24 +54,7 @@ impl Role {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Channel {
-    Loopback,
-    LanWeb,
-    LanPeer,
-    Wan,
-}
-
 impl Channel {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Channel::Loopback => "loopback",
-            Channel::LanWeb => "lan_web",
-            Channel::LanPeer => "lan_peer",
-            Channel::Wan => "wan",
-        }
-    }
-
     const fn capability_ceiling(self) -> CapabilitySet {
         match self {
             Channel::Loopback => CapabilitySet::ALL,

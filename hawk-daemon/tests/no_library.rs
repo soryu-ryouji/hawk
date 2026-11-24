@@ -151,7 +151,7 @@ async fn access_key_login_and_revocation_work_over_iroh() {
     let identity_b =
         Identity::load_or_create(dir_b.path().join("identity-b").to_str().unwrap()).unwrap();
     let id_b: iroh::EndpointId = identity_b.endpoint_id.parse().unwrap();
-    plane_a.allow_access_session("s_access", id_b);
+    plane_a.allow_access_session("s_access", id_b, hawk_daemon::core::access::Channel::Wan);
     let plane_b = DataPlane::bind(&identity_b, 0, None, axum::Router::new())
         .await
         .unwrap();

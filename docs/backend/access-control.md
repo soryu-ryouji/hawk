@@ -80,10 +80,12 @@ HTTP 方法不决定能力：`POST item/list` 等复杂查询仍是 `Read`。
 | -- | -- | -- |
 | Loopback | admin | 进程 admin token 只在这里有效；本机也兼容对应 LAN key |
 | LanWeb | editor | 网站密钥；禁止 Manage |
-| LanPeer | editor | 已配对设备的 peer key；禁止 Manage |
-| Wan | importer | iroh 隧道、会话代理和 hawk-server 网页版；禁止 Edit/Manage |
+| LanPeer | editor | 局域网直连的 peer key / AccessKey rendezvous；禁止 Manage |
+| Wan | importer | hawk-server 信令会话、AccessKey WAN rendezvous 与会话代理；禁止 Edit/Manage |
 
-`admin` 不是可远程授予的角色。即使 access key 是 editor，经 WAN 也只剩 Read；导入还需要目标设备显式开启 `allow_import`。
+`admin` 不是可远程授予的角色。即使 access key 是 editor，经 WAN 也最多到 importer（Read + Import），不能 Edit/Manage；导入还需要目标设备显式开启 `allow_import`。同一把 editor 密钥经 LAN（LanWeb/LanPeer）授予完整的 Read + Import + Edit。
+
+隧道会话的通道在建立时由入口绑定：经局域网 hawk-app 直连端口发起 AccessKey rendezvous 的会话记为 `LanPeer`，经 hawk-server 信令建立的设备/rendezvous 会话记为 `Wan`。通道随受托会话保存，隧道转发时写入请求，客户端不能经 HTTP 头改写；`allow_import` 只收窄 `Wan`，不影响 `LanPeer` 的 Import/Edit。
 
 ## 端点授权
 

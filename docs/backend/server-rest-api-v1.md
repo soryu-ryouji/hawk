@@ -168,7 +168,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 当前连接描述符：本地 hawk 现在在看哪个素材库。浏览器插件用它把「跟随本地 hawk」落到具体目标——本地库时返回 `local`（调用方继续用自己的环回地址 + admin token），正在浏览远端库时返回会话代理地址与会话令牌，插件直接打该代理即可把素材写进远端库；无本地库且无远端会话时返回 `none`。远程查看模式（无库 daemon）下同样可用。
 
-连接角色由 `role` 表示：本地库为 admin；远端库为 viewer 或 importer，取决于目标设备的 allow_import 与会话授权（目标 daemon 每请求二次执法）。
+连接角色由 `role` 表示：本地库为 admin；远端库取决于目标端授予的 AccessKey 角色与通道上限（LAN 直连最高 editor，WAN 最高 importer，目标 daemon 每请求二次执法）。
 
 #### 响应
 
@@ -181,7 +181,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "credential": "会话临时凭证",
     "device_id": "d_aaba43017fff4888",
     "label": "台式机 · 我的素材库",
-    "writable": true
+    "role": "editor"
   }
 }
 ```

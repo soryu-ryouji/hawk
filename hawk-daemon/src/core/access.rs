@@ -1,4 +1,4 @@
-//! 访问角色：长期密钥、会话和进程管理员共用的固定能力预设。
+//! 访问角色与请求通道：长期密钥、会话和进程管理员共用的固定预设。
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,26 @@ impl Role {
             Role::Importer => "importer",
             Role::Editor => "editor",
             Role::Admin => "admin",
+        }
+    }
+}
+
+/// 请求穿过哪条信任边界。由监听器或可信隧道会话写入，客户端不能经 HTTP 头伪造。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Channel {
+    Loopback,
+    LanWeb,
+    LanPeer,
+    Wan,
+}
+
+impl Channel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Channel::Loopback => "loopback",
+            Channel::LanWeb => "lan_web",
+            Channel::LanPeer => "lan_peer",
+            Channel::Wan => "wan",
         }
     }
 }

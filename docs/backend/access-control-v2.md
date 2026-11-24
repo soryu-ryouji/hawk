@@ -468,6 +468,7 @@ source_endpoint_id
 target_device_id
 requested_role
 grant_version
+channel                 # 入口绑定：LAN rendezvous=LanPeer，hawk-server 信令=Wan
 lease_expires_at
 state
 ```
@@ -480,8 +481,8 @@ AccessKey 客户端在完成隧道内登录前只能是 Unauthenticated 状态�
 
 - AccessKey 会话：key 必须仍存在；当前 key role 覆盖原请求角色时才保留该角色，否则收窄。
 - Device 会话：Device Grant 和会话租约必须有效。
-- Import：除有效角色外，还必须满足当前 allow_import=true。
-- Edit/Manage：始终被 WAN Channel 拒绝。
+- Import：除有效角色外，WAN 会话还须满足当前 allow_import=true；LAN 会话不受该开关影响。
+- Edit：仅 LanWeb/LanPeer 通道可执行；Wan 通道始终拒绝。
 
 AccessKey 删除使下一请求失败并关闭会话；角色收窄立即影响下一请求。已有会话不能只使用建立时缓存的 role。
 
