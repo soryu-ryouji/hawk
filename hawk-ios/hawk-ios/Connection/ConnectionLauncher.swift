@@ -1,6 +1,6 @@
 import Foundation
 
-/// 连接启动：V2 统一使用 hawk-transport 的本机 Loopback 代理；旧手动 LAN 仍可直接验证 token。
+/// V2 原生 LAN/WAN 统一经 hawk-transport 的 Loopback 代理；手工 LAN 直连 LAN Web。
 nonisolated enum ConnectionLauncher {
     struct Outcome: Sendable {
         let api: APIClient
@@ -8,6 +8,7 @@ nonisolated enum ConnectionLauncher {
         let label: String
         let targetDeviceName: String?
         let targetLibraryName: String?
+        let nativeSession: NativeTransportSession?
     }
 
     typealias Progress = @Sendable (String) -> Void
@@ -50,13 +51,18 @@ nonisolated enum ConnectionLauncher {
     ) async throws -> Outcome {
         progress?("正在建立端到端加密会话…")
         let configDir = try transportDirectory()
-        let connection = try RustTransport.connect(
+        let connection = try await RustTransport.connect(
             configDir: configDir,
             serverUrl: baseURL.absoluteString,
             targetDeviceId: profile.targetDeviceId,
             targetIdentity: profile.targetIdentity,
-            accessKey: profile.token
+            accessKey: profile.accessKey
         )
+        let nativeSession = NativeTransportSession(connection: connection)
+        var transferred = false
+        defer {
+            if !transferred { nativeSession.close() }
+        }
         guard let proxyURL = URL(string: connection.apiBase) else {
             throw ConnectionError.message("原生代理地址无效")
         }
@@ -70,13 +76,17 @@ nonisolated enum ConnectionLauncher {
         }
         progress?("正在等待素材库就绪…")
         try await waitUntilReady(api)
-        return Outcome(
+        try Task.checkCancellation()
+        let outcome = Outcome(
             api: api,
             info: info,
             label: profile.displayName,
             targetDeviceName: nil,
-            targetLibraryName: profile.targetLibraryId.isEmpty ? nil : profile.targetLibraryId
+            targetLibraryName: profile.targetLibraryId.isEmpty ? nil : profile.targetLibraryId,
+            nativeSession: nativeSession
         )
+        transferred = true
+        return outcome
     }
 
     private static func transportDirectory() throws -> String {
@@ -91,8 +101,9 @@ nonisolated enum ConnectionLauncher {
     private static func launchLAN(_ profile: ConnectionProfile, progress: Progress?) async throws
         -> Outcome
     {
-        guard !profile.token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ConnectionError.message("请填写局域网访问 token")
+        let accessKey = profile.accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !accessKey.isEmpty else {
+            throw ConnectionError.message("请填写局域网 AccessKey")
         }
         progress?("正在验证局域网连接…")
         var lastError: (any Error)?
@@ -100,8 +111,7 @@ nonisolated enum ConnectionLauncher {
             do {
                 let api = APIClient(
                     baseURL: baseURL,
-                    credentials: SessionCredentials(
-                        token: profile.token.trimmingCharacters(in: .whitespacesAndNewlines)))
+                    credentials: SessionCredentials(token: accessKey))
                 let info: AppInfo = try await api.get("/api/v1/app/info")
                 guard info.hasLibrary else {
                     throw ConnectionError.message("该服务没有打开的素材库，请在桌面端切换素材库后重试")
@@ -110,7 +120,7 @@ nonisolated enum ConnectionLauncher {
                 try await waitUntilReady(api)
                 return Outcome(
                     api: api, info: info, label: profile.displayName,
-                    targetDeviceName: nil, targetLibraryName: nil)
+                    targetDeviceName: nil, targetLibraryName: nil, nativeSession: nil)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {

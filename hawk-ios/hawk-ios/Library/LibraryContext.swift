@@ -17,10 +17,11 @@ final class LibraryContext {
 
     let api: APIClient
     let profile: ConnectionProfile
-    let info: AppInfo
+    private(set) var info: AppInfo
     let targetDeviceName: String?
     let targetLibraryName: String?
     let tickets: UnlockTicketStore
+    let nativeSession: NativeTransportSession?
 
     private(set) var library: LibraryInfo?
     private(set) var folders: FolderNode?
@@ -38,6 +39,8 @@ final class LibraryContext {
     private(set) var structureRevision = 0
     /// SSE 增量更新的条目详情（按 key），网格优先使用
     private(set) var updatedItems: [String: Item] = [:]
+    /// 条目内容/派生图更新版本，驱动已失败的缩略图重新加载。
+    private(set) var mediaRevisions: [String: Int] = [:]
     /// 最近一次刷新时间，回前台节流用
     private(set) var lastRefreshedAt: Date?
 
@@ -50,18 +53,22 @@ final class LibraryContext {
 
     init(
         api: APIClient, profile: ConnectionProfile, info: AppInfo,
-        targetDeviceName: String?, targetLibraryName: String?
+        targetDeviceName: String?, targetLibraryName: String?,
+        nativeSession: NativeTransportSession?
     ) {
         self.api = api
         self.profile = profile
         self.info = info
         self.targetDeviceName = targetDeviceName
         self.targetLibraryName = targetLibraryName
+        self.nativeSession = nativeSession
         self.tickets = api.tickets
     }
 
-    var isRemote: Bool { profile.kind == .remote }
-    var canWrite: Bool { info.role != "viewer" }
+    var isRemote: Bool { info.channel == "wan" }
+    var canWrite: Bool {
+        (info.role == "editor" || info.role == "admin") && info.channel != "wan"
+    }
 
     var accessLabel: String {
         switch info.role {
@@ -119,11 +126,7 @@ final class LibraryContext {
     }
 
     func refreshAll() async {
-        async let taxonomy: Void = refreshTaxonomy()
-        async let counters: Void = refreshCounts()
-        _ = await (taxonomy, counters)
-        structureRevision += 1
-        lastRefreshedAt = Date()
+        await realignAfterReconnect()
         restartEventsIfNeeded()
     }
 
@@ -180,6 +183,10 @@ final class LibraryContext {
     }
 
     // MARK: - 锁
+
+    func mediaRevision(for item: SkeletonItem) -> Int {
+        mediaRevisions[item.key] ?? 0
+    }
 
     func lockTarget(for view: LibraryView) -> LockTarget? {
         LockCoverage.target(for: view, in: locks)
@@ -375,7 +382,14 @@ final class LibraryContext {
         async let taxonomy: Void = refreshTaxonomy()
         async let counters: Void = refreshCounts()
         async let prefs: Void = reloadSortPreferences()
-        _ = await (taxonomy, counters, prefs)
+        async let access: Void = reloadAccessInfo()
+        _ = await (taxonomy, counters, prefs, access)
+        if let filter: GlobalFilterSnapshot = try? await api.get("/api/v1/global_filter/list") {
+            globalFilter = filter
+        }
+        if let snapshot: LockSnapshot = try? await api.get("/api/v1/lock/list") {
+            locks = snapshot
+        }
         structureRevision += 1
         lastRefreshedAt = Date()
     }
@@ -388,12 +402,27 @@ final class LibraryContext {
         }
     }
 
+    private func reloadAccessInfo() async {
+        if let current: AppInfo = try? await api.get("/api/v1/app/info") {
+            info = current
+        }
+    }
+
     private func handle(_ event: ServerEvent) {
         switch event.name {
-        case "item.updated", "items.updated":
+        case "item.updated":
             applyItemUpdates(event.data)
+            // 改名/移动/标签等都可能改变当前视图的成员与排序，单条操作重查骨架。
+            structureRevision += 1
+            scheduleTaxonomyRefresh()
+        case "items.updated":
+            // 标签/分类删除等批量元数据变更也只发批量事件；GridStore 统一防抖重查。
+            applyItemUpdates(event.data)
+            structureRevision += 1
+            scheduleTaxonomyRefresh()
         case "item.added", "items.added", "item.removed", "item.trashed", "item.restored":
             structureRevision += 1
+            scheduleTaxonomyRefresh()
         case "folder.changed":
             structureRevision += 1
             scheduleTaxonomyRefresh()
@@ -416,6 +445,8 @@ final class LibraryContext {
             if let progress = decode(TaskProgress.self, from: event.data) {
                 scanning = progress.isBusy ? progress : nil
             }
+        case "lan.access.changed":
+            Task { [weak self] in await self?.reloadAccessInfo() }
         default:
             break
         }
@@ -434,9 +465,13 @@ final class LibraryContext {
             structureRevision += 1
             return
         }
-        if updatedItems.count > 2000 { updatedItems.removeAll(keepingCapacity: true) }
+        if updatedItems.count > 2000 {
+            updatedItems.removeAll(keepingCapacity: true)
+            mediaRevisions.removeAll(keepingCapacity: true)
+        }
         for item in updated {
             updatedItems[item.key] = item
+            mediaRevisions[item.key, default: 0] += 1
         }
     }
 

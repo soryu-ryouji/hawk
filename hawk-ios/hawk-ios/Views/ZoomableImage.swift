@@ -9,6 +9,7 @@ import UIKit
 struct ZoomableImage: UIViewRepresentable {
     let url: URL?
     let sessionToken: String
+    let mediaRevision: Int
     let aspectRatio: Double
     /// 只有当前页需要：收场前由预览侧无动画归零，避免缩放与 hero 两层变换叠加
     var zoomController: ZoomController?
@@ -19,7 +20,9 @@ struct ZoomableImage: UIViewRepresentable {
         let view = ZoomableScrollView()
         view.onZoomChanged = onZoomChanged
         view.onSingleTap = onSingleTap
-        view.configure(url: url, aspectRatio: aspectRatio, sessionToken: sessionToken)
+        view.configure(
+            url: url, aspectRatio: aspectRatio, sessionToken: sessionToken,
+            mediaRevision: mediaRevision)
         zoomController?.attach(view)
         return view
     }
@@ -27,7 +30,9 @@ struct ZoomableImage: UIViewRepresentable {
     func updateUIView(_ view: ZoomableScrollView, context: Context) {
         view.onZoomChanged = onZoomChanged
         view.onSingleTap = onSingleTap
-        view.configure(url: url, aspectRatio: aspectRatio, sessionToken: sessionToken)
+        view.configure(
+            url: url, aspectRatio: aspectRatio, sessionToken: sessionToken,
+            mediaRevision: mediaRevision)
         zoomController?.attach(view)
     }
 
@@ -76,6 +81,8 @@ final class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
     private var aspectRatio: CGFloat = 1
     private var fittedSize: CGSize = .zero
     private var loadedURL: URL?
+    private var sessionToken = ""
+    private var loadedRevision = 0
     private var didStartLoad = false
     private var loadTask: Task<Void, Never>?
     private var reportedZoomed = false
@@ -125,15 +132,17 @@ final class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(url: URL?, aspectRatio: Double, sessionToken: String) {
+    func configure(url: URL?, aspectRatio: Double, sessionToken: String, mediaRevision: Int) {
+        self.sessionToken = sessionToken
         let ratio = aspectRatio > 0 ? CGFloat(aspectRatio) : 1
         if ratio != self.aspectRatio {
             self.aspectRatio = ratio
             setNeedsLayout()
         }
-        if !didStartLoad || url != loadedURL {
+        if !didStartLoad || url != loadedURL || mediaRevision != loadedRevision {
             didStartLoad = true
             loadedURL = url
+            loadedRevision = mediaRevision
             load(url)
         }
     }
@@ -205,8 +214,12 @@ final class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
             return
         }
         spinner.startAnimating()
+        let credential = sessionToken
+        let revision = loadedRevision
         loadTask = Task { [weak self] in
-            let image = await ImageStore.shared.loadWithRetry(for: url, maxPixelSize: 4096, sessionToken: sessionToken)
+            let image = await ImageStore.shared.loadWithRetry(
+                for: url, maxPixelSize: 4096, sessionToken: credential,
+                mediaRevision: revision)
             guard !Task.isCancelled, let self else { return }
             self.spinner.stopAnimating()
             if let image {

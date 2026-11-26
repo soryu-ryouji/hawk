@@ -8,8 +8,8 @@ nonisolated struct ShareAPIError: LocalizedError, Sendable {
     var errorDescription: String? { message }
     var isUnauthorized: Bool { status == 401 || code == "UNAUTHORIZED" }
     var isReadOnly: Bool { status == 403 || code == "READ_ONLY" }
-    /// 目标路径已有同名文件（内容不同）
-    var isDuplicate: Bool { code == "FILE_EXISTS" }
+    /// 目标路径已有同名文件；只有响应 skipped=true 才表示同内容重复。
+    var isNameConflict: Bool { code == "FILE_EXISTS" }
 }
 
 /// 分享扩展的最小 API 客户端：探活、读分类/标签、multipart 上传。

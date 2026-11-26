@@ -13,9 +13,9 @@ nonisolated struct PairingPayload: Decodable, Sendable {
     let v: Int
     let targetLibraryId: String?
     let targetDeviceId: String?
-    let targetIdentity: String = ""
+    let targetIdentity: String
     let tlsFingerprint: String?
-    let accessKey: String = ""
+    let accessKey: String
     let lanEndpoints: [String]
     let wan: Wan?
 
@@ -46,10 +46,13 @@ nonisolated struct PairingPayload: Decodable, Sendable {
     }
 
     func profile() throws -> ConnectionProfile {
-        guard !targetIdentity.isEmpty, !accessKey.isEmpty else {
+        let identity = targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !identity.isEmpty, !key.isEmpty else {
             throw ConnectionError.message("配对二维码缺少目标身份或 AccessKey")
         }
-        let candidates = lanEndpoints
+        let candidates =
+            lanEndpoints
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         var seen = Set<String>()
@@ -60,15 +63,18 @@ nonisolated struct PairingPayload: Decodable, Sendable {
         guard !url.isEmpty else {
             throw ConnectionError.message("配对二维码缺少访问地址")
         }
+        let deviceID = targetDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if kind == .remote && deviceID.isEmpty {
+            throw ConnectionError.message("广域网配对二维码缺少 target_device_id")
+        }
         return ConnectionProfile(
             kind: kind,
             url: url,
             urls: unique,
-            token: accessKey,
-            appKey: accessKey,
-            targetIdentity: targetIdentity,
+            accessKey: key,
+            targetIdentity: identity,
             targetLibraryId: targetLibraryId ?? "",
-            targetDeviceId: targetDeviceId ?? "",
+            targetDeviceId: deviceID,
             tlsFingerprint: tlsFingerprint ?? ""
         )
     }

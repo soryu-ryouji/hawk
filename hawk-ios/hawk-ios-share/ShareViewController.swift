@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 @objc(ShareViewController)
 final class ShareViewController: UIViewController {
     private let model = ShareModel()
+    private var isFinishing = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -33,8 +34,12 @@ final class ShareViewController: UIViewController {
     }
 
     private func finish() {
-        model.cleanup()
-        extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+        guard !isFinishing else { return }
+        isFinishing = true
+        Task { @MainActor in
+            await model.cleanup()
+            extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+        }
     }
 
     private static func imageProviders(from context: NSExtensionContext?) -> [NSItemProvider] {

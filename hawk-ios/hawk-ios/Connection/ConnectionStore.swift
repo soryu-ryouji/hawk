@@ -28,10 +28,16 @@ final class ConnectionStore {
             persist()
             return profile
         }
-        // 新连接与已有连接同类型同地址：更新凭证并沿用原 id。
+        // 原生连接按目标身份去重：同一 hawk-server 下可以有多个设备/素材库。
         let normalized = profile.url.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let index = profiles.firstIndex(where: {
-            $0.kind == profile.kind && $0.url.caseInsensitiveCompare(normalized) == .orderedSame
+        if let index = profiles.firstIndex(where: { existing in
+            guard existing.kind == profile.kind else { return false }
+            if !profile.targetIdentity.isEmpty {
+                return existing.targetIdentity == profile.targetIdentity
+                    && existing.targetLibraryId == profile.targetLibraryId
+            }
+            return existing.targetIdentity.isEmpty
+                && existing.url.caseInsensitiveCompare(normalized) == .orderedSame
         }) {
             var updated = profile
             updated.id = profiles[index].id

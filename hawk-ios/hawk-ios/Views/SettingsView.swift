@@ -87,7 +87,7 @@ struct SettingsView: View {
                         LabeledContent(
                             "周期扫描",
                             value: scan.periodic
-                                ? "开启\(scan.interval.map { "（\($0) 分钟）" } ?? "")" : "关闭")
+                                ? "开启\(scan.interval.map { "（\($0) 秒）" } ?? "")" : "关闭")
                     }
                 }
             }

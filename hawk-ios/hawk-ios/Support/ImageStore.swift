@@ -24,18 +24,27 @@ final class ImageStore {
         originals.totalCostLimit = 320 * 1024 * 1024
     }
 
-    func thumbnail(for url: URL, sessionToken: String = "") async -> UIImage? {
-        await image(for: url, maxPixelSize: 1024, cache: thumbnails, sessionToken: sessionToken)
-    }
-
-    func original(for url: URL, maxPixelSize: Int = 4096, sessionToken: String = "") async -> UIImage? {
-        await image(for: url, maxPixelSize: maxPixelSize, cache: originals, sessionToken: sessionToken)
-    }
-
-    private func image(for url: URL, maxPixelSize: Int, cache: NSCache<NSString, UIImage>, sessionToken: String) async
+    func thumbnail(for url: URL, sessionToken: String = "", mediaRevision: Int = 0) async
         -> UIImage?
     {
-        let cacheKey = "\(url.absoluteString)#\(maxPixelSize)" as NSString
+        await image(
+            for: url, maxPixelSize: 1024, cache: thumbnails, sessionToken: sessionToken,
+            mediaRevision: mediaRevision)
+    }
+
+    func original(
+        for url: URL, maxPixelSize: Int = 4096, sessionToken: String = "", mediaRevision: Int = 0
+    ) async -> UIImage? {
+        await image(
+            for: url, maxPixelSize: maxPixelSize, cache: originals, sessionToken: sessionToken,
+            mediaRevision: mediaRevision)
+    }
+
+    private func image(
+        for url: URL, maxPixelSize: Int, cache: NSCache<NSString, UIImage>, sessionToken: String,
+        mediaRevision: Int
+    ) async -> UIImage? {
+        let cacheKey = "\(url.absoluteString)#\(maxPixelSize)#\(mediaRevision)" as NSString
         if let cached = cache.object(forKey: cacheKey) {
             return cached
         }
@@ -48,9 +57,11 @@ final class ImageStore {
         let task = Task<UIImage?, Never> {
             do {
                 var request = URLRequest(url: url)
-                if !sessionToken.isEmpty {
-                    request.setValue("hawk_session=\(sessionToken)", forHTTPHeaderField: "Cookie")
+                if mediaRevision > 0 {
+                    // 强制重建后的同 URL 内容必须绕过此前成功的磁盘缓存。
+                    request.cachePolicy = .reloadIgnoringLocalCacheData
                 }
+                APIClient.authorize(&request, credential: sessionToken)
                 let (data, response) = try await downloads.data(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
                 else {
@@ -72,13 +83,18 @@ final class ImageStore {
 
     /// 带重试的加载：新入库素材的缩略图/原图可能短暂 404，失败后稍等再试，
     /// 避免网格与预览留下永久占位
-    func loadWithRetry(for url: URL, maxPixelSize: Int, sessionToken: String = "") async -> UIImage? {
+    func loadWithRetry(
+        for url: URL, maxPixelSize: Int, sessionToken: String = "", mediaRevision: Int = 0
+    ) async -> UIImage? {
         for attempt in 0..<3 {
             let image =
                 if maxPixelSize <= 1024 {
-                    await thumbnail(for: url, sessionToken: sessionToken)
+                    await thumbnail(
+                        for: url, sessionToken: sessionToken, mediaRevision: mediaRevision)
                 } else {
-                    await original(for: url, maxPixelSize: maxPixelSize, sessionToken: sessionToken)
+                    await original(
+                        for: url, maxPixelSize: maxPixelSize, sessionToken: sessionToken,
+                        mediaRevision: mediaRevision)
                 }
             if Task.isCancelled { return nil }
             if let image { return image }
@@ -100,7 +116,7 @@ final class ImageStore {
 
     func storeThumbnail(_ image: UIImage, for url: URL) {
         thumbnails.setObject(
-            image, forKey: "\(url.absoluteString)#1024" as NSString, cost: Self.cost(of: image))
+            image, forKey: "\(url.absoluteString)#1024#0" as NSString, cost: Self.cost(of: image))
     }
 
     private nonisolated static func cost(of image: UIImage) -> Int {

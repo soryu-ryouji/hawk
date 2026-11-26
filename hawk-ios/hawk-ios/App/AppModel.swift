@@ -36,7 +36,7 @@ final class AppModel {
     func connect(_ profile: ConnectionProfile) {
         connectTask?.cancel()
         context?.stopEvents()
-        teardownRemoteSession()
+        teardownNativeSession()
         context = nil
         lastError = nil
         connectStatus = "正在连接 \(profile.displayName)…"
@@ -60,14 +60,15 @@ final class AppModel {
                     profile: saved,
                     info: outcome.info,
                     targetDeviceName: outcome.targetDeviceName,
-                    targetLibraryName: outcome.targetLibraryName
+                    targetLibraryName: outcome.targetLibraryName,
+                    nativeSession: outcome.nativeSession
                 )
                 try await context.bootstrap()
                 try Task.checkCancellation()
                 self.context = context
                 self.connectStatus = nil
                 phase = .ready
-                // 分享扩展读 App Group：局域网连接成功即写；远端连接保留上一次的局域网目标
+                // 分享扩展读 App Group，独立建立到当前库的原生加密会话。
                 ShareTarget.save(profile: saved, libraryName: context.library?.name ?? "")
             } catch is CancellationError {
                 return
@@ -94,7 +95,7 @@ final class AppModel {
     func disconnect() {
         connectTask?.cancel()
         context?.stopEvents()
-        teardownRemoteSession()
+        teardownNativeSession()
         context = nil
         connectStatus = nil
         phase = .connect
@@ -104,20 +105,16 @@ final class AppModel {
     func showConnectScreen() {
         connectTask?.cancel()
         context?.stopEvents()
-        teardownRemoteSession()
+        teardownNativeSession()
         context = nil
         connectStatus = nil
         phase = .connect
         ShareTarget.clear()
     }
 
-    /// 显式断开/切换时通知服务端注销查看会话（best-effort；失败不阻塞 UI）。
-    private func teardownRemoteSession() {
-        guard let context, context.isRemote else { return }
-        let api = context.api
-        Task {
-            try? await api.delete("/api/v1/viewer/session")
-        }
+    /// 显式断开/切换时关闭原生代理与 rendezvous；手工 LAN 没有原生会话。
+    private func teardownNativeSession() {
+        context?.nativeSession?.close()
     }
 
     func deleteProfile(_ profile: ConnectionProfile) {

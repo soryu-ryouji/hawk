@@ -7,8 +7,7 @@ nonisolated struct ShareSetupError: LocalizedError, Sendable {
     var errorDescription: String? { message }
 }
 
-/// 分享扩展开关：目标探测 → 读分类/标签 → 逐张上传。
-/// 只走局域网直连（远端库保存是后续里程碑：需要写会话与远端写白名单配合）。
+/// 分享扩展开关：目标连接 → 读分类/标签 → 逐张上传。
 @MainActor
 @Observable
 final class ShareModel {
@@ -36,27 +35,25 @@ final class ShareModel {
     var selectedTags: Set<String> = []
 
     private var client: ShareAPIClient?
+    private var nativeSession: NativeTransportSession?
 
-    /// 单次分享最多处理张数（扩展内存与前台时间都有限）
     private static let maxImages = 20
 
     func prepare(providers: [NSItemProvider]) async {
         do {
             guard let target = ShareTargetStore.load() else {
-                throw ShareSetupError(
-                    message: "还没有可用的局域网素材库：请先在 hawk App 里连接素材库（分享扩展目前只支持局域网保存）")
+                throw ShareSetupError(message: "还没有可用的素材库：请先在 hawk App 里连接素材库")
             }
             targetLabel = target.label
-            let client = try await connect(target)
-            self.client = client
+            let connected = try await Self.connect(target)
+            client = connected.client
+            nativeSession = connected.session
 
-            // 分类/标签拉取失败不阻断保存：只是少选两项
-            async let categoriesTask = client.categories()
-            async let tagsTask = client.tags()
+            async let categoriesTask = connected.client.categories()
+            async let tagsTask = connected.client.tags()
             categories = ((try? await categoriesTask) ?? []).sorted()
             tags = ((try? await tagsTask) ?? []).sorted()
 
-            // 逐张读取，控制内存峰值（分享 20 张大图时不要一次性全解码）
             var loaded: [ShareImageLoader.Loaded] = []
             for provider in providers.prefix(Self.maxImages) {
                 if let image = try? await ShareImageLoader.load(from: provider) {
@@ -73,7 +70,7 @@ final class ShareModel {
         }
     }
 
-    /// 串行上传；任一张失败即停并给出原因（已成功的仍保留在库内）
+    /// 串行上传；任一张失败即停并给出原因（已成功的仍保留在库内）。
     func upload() async -> Bool {
         guard let client, !images.isEmpty else { return false }
         let total = images.count
@@ -93,10 +90,6 @@ final class ShareModel {
                     saved += 1
                 }
                 phase = .uploading(done: index + 1, total: total)
-            } catch let error as ShareAPIError where error.isDuplicate {
-                // 同名文件已存在且内容不同：按「已收藏过」处理，不打断整批
-                skipped += 1
-                phase = .uploading(done: index + 1, total: total)
             } catch {
                 phase = .failed(Self.message(for: error))
                 return false
@@ -106,29 +99,75 @@ final class ShareModel {
         return true
     }
 
-    func cleanup() {
+    func cleanup() async {
         for image in images {
             image.cleanup()
         }
         images = []
+        client = nil
+        await nativeSession?.waitForClose()
+        nativeSession = nil
     }
 
-    private func connect(_ target: ShareTargetStore.Target) async throws -> ShareAPIClient {
+    private struct Connected: Sendable {
+        let client: ShareAPIClient
+        let session: NativeTransportSession?
+    }
+
+    nonisolated private static func connect(_ target: ShareTargetStore.Target) async throws
+        -> Connected
+    {
         var lastError: Error = ShareSetupError(message: "素材库地址不可用")
         for raw in target.urls {
-            let candidate =
-                raw.hasPrefix("http://") || raw.hasPrefix("https://")
-                ? raw : "http://\(raw)"
-            guard let base = URL(string: candidate) else { continue }
-            let client = ShareAPIClient(baseURL: base, token: target.token)
+            guard let base = normalizedURL(raw, native: !target.targetIdentity.isEmpty) else {
+                continue
+            }
+            var session: NativeTransportSession?
             do {
+                let client: ShareAPIClient
+                if target.targetIdentity.isEmpty {
+                    client = ShareAPIClient(baseURL: base, token: target.accessKey)
+                } else {
+                    let connection = try await RustTransport.connect(
+                        configDir: transportDirectory(),
+                        serverUrl: base.absoluteString,
+                        targetDeviceId: target.targetDeviceId,
+                        targetIdentity: target.targetIdentity,
+                        accessKey: target.accessKey
+                    )
+                    guard let proxyURL = URL(string: connection.apiBase) else {
+                        throw ShareSetupError(message: "原生代理地址无效")
+                    }
+                    let nativeSession = NativeTransportSession(connection: connection)
+                    session = nativeSession
+                    client = ShareAPIClient(
+                        baseURL: proxyURL, token: connection.credential)
+                }
                 _ = try await client.libraryName()
-                return client
+                return Connected(client: client, session: session)
             } catch {
+                session?.close()
                 lastError = error
             }
         }
         throw lastError
+    }
+
+    nonisolated private static func transportDirectory() throws -> String {
+        let root = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let directory = root.appendingPathComponent("hawk/share-transport", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.path
+    }
+
+    nonisolated private static func normalizedURL(_ raw: String, native: Bool) -> URL? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if !value.contains("://") {
+            value = "\(native ? "https" : "http")://\(value)"
+        }
+        return URL(string: value)
     }
 
     private static func message(for error: Error) -> String {
@@ -137,7 +176,10 @@ final class ShareModel {
                 return "连接凭证已失效：回到 hawk App 重新连接素材库后再试"
             }
             if api.isReadOnly {
-                return "当前连接没有写权限：在桌面端重新生成配对二维码时勾选「写权限」，手机重新扫码"
+                return "当前连接没有导入权限：请使用具备导入或读写权限的 AccessKey 重新配对"
+            }
+            if api.isNameConflict {
+                return "素材库根目录已有同名但内容不同的文件，请先重命名图片后再保存"
             }
             return api.message
         }
@@ -148,7 +190,7 @@ final class ShareModel {
             return image.message
         }
         if let urlError = error as? URLError {
-            return "无法连接素材库（\(urlError.localizedDescription)）：确认手机与电脑在同一局域网、桌面端 hawk 正在运行"
+            return "无法连接素材库（\(urlError.localizedDescription)）：确认目标设备在线且网络可用"
         }
         return error.localizedDescription
     }

@@ -14,50 +14,15 @@ nonisolated struct APIError: LocalizedError, Sendable, Equatable {
     var isOffline: Bool { status == 0 }
 }
 
-/// 会话凭证：token 在 401 时可由 refresher 重换（广域网 bt 短时效；
-/// 局域网凭证长期有效，refresher 为空即直接抛错）。
-nonisolated final class SessionCredentials: @unchecked Sendable {
-    private let lock = NSLock()
-    private var token: String
-    private var refreshTask: Task<Void, any Error>?
-    private let refresh: (@Sendable () async throws -> String)?
+/// 当前请求的 Bearer 凭证：LAN 为 AccessKey，原生代理为短期 session_token。
+nonisolated struct SessionCredentials: Sendable {
+    private let token: String
 
-    init(token: String, refresh: (@Sendable () async throws -> String)? = nil) {
+    init(token: String) {
         self.token = token
-        self.refresh = refresh
     }
 
-    func current() -> String {
-        lock.withLock { token }
-    }
-
-    /// 并发安全的一次性重换：多个请求同时 401 只触发一次登录。
-    func renew() async throws {
-        guard let refresh else {
-            throw APIError(code: "UNAUTHORIZED", message: "访问凭证已失效，请重新连接", status: 401)
-        }
-        let task: Task<Void, any Error> = lock.withLock {
-            if let existing = refreshTask {
-                return existing
-            }
-            let created = Task { [weak self] in
-                defer { self?.clearRefreshTask() }
-                let value = try await refresh()
-                self?.set(value)
-            }
-            refreshTask = created
-            return created
-        }
-        try await task.value
-    }
-
-    private func set(_ value: String) {
-        lock.withLock { token = value }
-    }
-
-    private func clearRefreshTask() {
-        lock.withLock { refreshTask = nil }
-    }
+    func current() -> String { token }
 }
 
 nonisolated final class APIClient: @unchecked Sendable {
@@ -87,6 +52,12 @@ nonisolated final class APIClient: @unchecked Sendable {
         streaming.timeoutIntervalForResource = .infinity
         streaming.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.streamSession = URLSession(configuration: streaming)
+    }
+
+    /// 原生 Loopback 代理只接受 Bearer；手工 LAN 的 AccessKey 也使用同一请求头。
+    nonisolated static func authorize(_ request: inout URLRequest, credential: String) {
+        guard !credential.isEmpty else { return }
+        request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
     }
 
     // MARK: - Typed requests
@@ -133,7 +104,7 @@ nonisolated final class APIClient: @unchecked Sendable {
 
     // MARK: - Media
 
-    /// 缩略图 / 原图地址：使用 Session Cookie，解锁票据只表达锁可见范围。
+    /// 缩略图 / 原图地址：加载时附 Bearer，解锁票据只表达锁可见范围。
     func mediaURL(path: String, id: String) -> URL? {
         var query = [URLQueryItem(name: "id", value: id)]
         if let unlock = tickets.headerValue() {
@@ -156,7 +127,7 @@ nonisolated final class APIClient: @unchecked Sendable {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 120
-        request.setValue("hawk_session=\(credentials.current())", forHTTPHeaderField: "Cookie")
+        Self.authorize(&request, credential: credentials.current())
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw APIError(code: "NETWORK", message: "网络响应无效", status: 0)
@@ -171,18 +142,18 @@ nonisolated final class APIClient: @unchecked Sendable {
 
     // MARK: - Event stream
 
-    /// SSE 订阅请求：Bearer Session + Cookie，不在 URL 中携带长期凭证。
+    /// SSE 订阅请求：Bearer 鉴权，不在 URL 中携带 AccessKey 或 session_token。
     func eventRequest() -> URLRequest? {
         guard
             let url = makeURL(
                 path: "/api/v1/events",
                 query: [
-                    URLQueryItem(name: "unlock", value: tickets.headerValue() ?? ""),
+                    URLQueryItem(name: "unlock", value: tickets.headerValue() ?? "")
                 ]
             )
         else { return nil }
         var request = URLRequest(url: url)
-        request.setValue("hawk_session=\(credentials.current())", forHTTPHeaderField: "Cookie")
+        Self.authorize(&request, credential: credentials.current())
         request.timeoutInterval = 3600
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
@@ -212,8 +183,7 @@ nonisolated final class APIClient: @unchecked Sendable {
         _ path: String,
         query: [URLQueryItem] = [],
         body: Data?,
-        timeout: TimeInterval,
-        allowsRenewal: Bool = true
+        timeout: TimeInterval
     ) async throws -> Data {
         guard let url = makeURL(path: path, query: query) else {
             throw APIError(code: "INVALID_URL", message: "服务地址无效", status: 0)
@@ -222,10 +192,7 @@ nonisolated final class APIClient: @unchecked Sendable {
         request.httpMethod = method
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let token = credentials.current()
-        if !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        Self.authorize(&request, credential: credentials.current())
         if let unlock = tickets.headerValue() {
             request.setValue(unlock, forHTTPHeaderField: "X-Hawk-Unlock")
         }
@@ -249,12 +216,7 @@ nonisolated final class APIClient: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError(code: "NETWORK", message: "网络响应无效", status: 0)
         }
-        if http.statusCode == 401, allowsRenewal {
-            // bt 过期：重换一次凭证后重放（局域网凭据不会 401，renew 会直接抛错）
-            try await credentials.renew()
-            return try await perform(
-                method, path, query: query, body: body, timeout: timeout, allowsRenewal: false)
-        }
+        // 401 保留服务端语义：既可能是凭证失效，也可能是解锁密码错误。
         guard (200..<300).contains(http.statusCode) else {
             let envelope = try? decode(ErrorEnvelope.self, from: data)
             let payload = envelope?.error

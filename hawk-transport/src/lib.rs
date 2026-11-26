@@ -125,7 +125,10 @@ pub extern "C" fn hawk_transport_disconnect(session_id: *const c_char) -> *mut c
             .unwrap()
             .remove(&session_id)
             .ok_or_else(|| "会话不存在".to_string())?;
-        let http = reqwest::Client::new();
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("HTTP 客户端初始化失败: {e}"))?;
         runtime().block_on(handle.manager.disconnect(&http, &handle.base, ""));
         Ok(response(json!({ "status": "success" })))
     })();

@@ -33,6 +33,7 @@ nonisolated struct StartupInfo: Decodable, Sendable {
 /// 周期兜底扫描设置（`.hawk/config.toml` 的 `[scan]`）
 nonisolated struct ScanInfo: Decodable, Sendable {
     let periodic: Bool
+    /// 重扫间隔（秒）
     let interval: Int?
 }
 
@@ -172,25 +173,6 @@ nonisolated struct ItemSkeletonResponse: Decodable, Sendable {
     let totalSize: Int64
 }
 
-nonisolated struct GateResponse: Decodable, Sendable {
-    let gateToken: String
-    let expiresIn: Int
-}
-
-nonisolated struct LoginResponse: Decodable, Sendable {
-    let browserToken: String
-    let role: String
-    let deviceId: String
-}
-
-nonisolated struct ViewerSession: Decodable, Sendable {
-    let sessionToken: String
-    let role: String
-    let targetDeviceId: String
-    let targetName: String
-    let targetLibraryName: String
-}
-
 // MARK: - Requests
 
 nonisolated struct ItemListRequest: Encodable, Sendable {
@@ -227,20 +209,6 @@ nonisolated struct ItemListRequest: Encodable, Sendable {
         self.orderBy = orderBy
         self.order = order
     }
-}
-
-nonisolated struct GateRequest: Encodable, Sendable {
-    let tenantKey: String
-}
-
-nonisolated struct LoginRequest: Encodable, Sendable {
-    let gateToken: String
-    let key: String
-}
-
-nonisolated struct OpenSessionRequest: Encodable, Sendable {
-    let targetDeviceId: String
-    let role: String
 }
 
 nonisolated struct UnlockRequest: Encodable, Sendable {

@@ -240,6 +240,7 @@ struct PreviewView: View {
         return ZoomableImage(
             url: context.api.fileURL(id: item.id),
             sessionToken: context.api.sessionToken,
+            mediaRevision: context.mediaRevision(for: item),
             aspectRatio: item.aspectRatio,
             zoomController: isCurrent ? zoom : nil,
             onZoomChanged: { value in

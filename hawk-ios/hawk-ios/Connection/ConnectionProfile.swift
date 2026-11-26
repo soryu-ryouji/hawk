@@ -19,17 +19,16 @@ nonisolated enum ConnectionKind: String, Codable, Sendable {
     }
 }
 
-/// 一条连接配置。局域网用 url + token；广域网用 url + tenantKey + appKey。
+/// 一条连接配置。V2 配对由 targetIdentity + accessKey 定位并认证目标；
+/// 没有 targetIdentity 的手工 LAN 配置直接访问 LAN Web API。
 nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable {
     var id: UUID
     var kind: ConnectionKind
     var name: String
     var url: String
-    /// 同一目标的候选地址（二维码可一次下发多个局域网地址）；旧配置为空时只使用 url。
+    /// 同一目标的候选地址（WAN 服务地址与 LAN rendezvous 地址可同时存在）。
     var urls: [String]?
-    var token: String
-    var tenantKey: String
-    var appKey: String
+    var accessKey: String
     /// V2 统一配对：目标 iroh 公钥与库身份。
     var targetIdentity: String
     var targetLibraryId: String
@@ -42,9 +41,7 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         name: String = "",
         url: String,
         urls: [String]? = nil,
-        token: String = "",
-        tenantKey: String = "",
-        appKey: String = "",
+        accessKey: String = "",
         targetIdentity: String = "",
         targetLibraryId: String = "",
         targetDeviceId: String = "",
@@ -55,9 +52,7 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         self.name = name
         self.url = url
         self.urls = urls
-        self.token = token
-        self.tenantKey = tenantKey
-        self.appKey = appKey
+        self.accessKey = accessKey
         self.targetIdentity = targetIdentity
         self.targetLibraryId = targetLibraryId
         self.targetDeviceId = targetDeviceId
@@ -72,7 +67,7 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         return (try? baseURL())?.host ?? url
     }
 
-    /// 所有候选地址：二维码下发的 urls 优先，缺省回退到主地址。
+    /// WAN 优先，失败后尝试配对载荷中的 LAN 候选地址。
     func candidateBaseURLs() throws -> [URL] {
         let candidates = ([url] + (urls ?? []))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

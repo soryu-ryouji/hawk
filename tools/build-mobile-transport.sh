@@ -26,13 +26,55 @@ if [[ "$PLATFORM" == "android" ]]; then
       cp "$ROOT/hawk-transport/target/$target/release/libhawk_transport.so" "$out/libhawk_transport.so"
   done
 elif [[ "$PLATFORM" == "ios" ]]; then
-  targets=("${TARGET:-aarch64-apple-ios aarch64-apple-ios-sim}")
+  # 与 Xcode target 对齐，避免 C/汇编依赖按当前 SDK 的 27.x 最低版本生成。
+  export IPHONEOS_DEPLOYMENT_TARGET=26.0
+  targets=("${TARGET:-aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios}")
+  device_libraries=()
+  simulator_libraries=()
   for target in $targets; do
+    case "$target" in
+      aarch64-apple-ios|aarch64-apple-ios-sim|x86_64-apple-ios) ;;
+      *) echo "未知 iOS target: $target" >&2; exit 2 ;;
+    esac
+    # blake3 的 build.rs 未监听部署版本环境变化，旧对象必须主动清理。
+    for artifacts in \
+      "$ROOT/hawk-transport/target/$target/release/build/blake3-"* \
+      "$ROOT/hawk-transport/target/$target/release/.fingerprint/blake3-"*; do
+      [[ -e "$artifacts" ]] || continue
+      case "$artifacts" in
+        "$ROOT/hawk-transport/target/$target/release/"*) rm -rf -- "$artifacts" ;;
+        *) echo "blake3 清理路径异常: $artifacts" >&2; exit 2 ;;
+      esac
+    done
     cargo build --manifest-path "$ROOT/hawk-transport/Cargo.toml" --release --target "$target"
-    out="$ROOT/hawk-ios/Frameworks"
-    mkdir -p "$out"
-    cp "$ROOT/hawk-transport/target/$target/release/libhawk_transport.dylib" "$out/libhawk_transport_$target.dylib"
+    library="$ROOT/hawk-transport/target/$target/release/libhawk_transport.a"
+    if [[ "$target" == "aarch64-apple-ios" ]]; then
+      device_libraries+=("$library")
+    else
+      simulator_libraries+=("$library")
+    fi
   done
+  out="$ROOT/hawk-ios/Frameworks"
+  framework="$out/HawkTransport.xcframework"
+  mkdir -p "$out"
+  libraries=()
+  if ((${#device_libraries[@]})); then
+    libraries+=(-library "${device_libraries[0]}")
+  fi
+  if ((${#simulator_libraries[@]} == 1)); then
+    libraries+=(-library "${simulator_libraries[0]}")
+  elif ((${#simulator_libraries[@]} > 1)); then
+    simulator="$out/libhawk_transport-simulator.a"
+    lipo -create "${simulator_libraries[@]}" -output "$simulator"
+    libraries+=(-library "$simulator")
+  fi
+  if [[ "$framework" != "$ROOT/hawk-ios/Frameworks/HawkTransport.xcframework" ]]; then
+    echo "XCFramework 输出路径异常" >&2
+    exit 2
+  fi
+  rm -rf "$framework"
+  # 静态 XCFramework 同时供主 App 与 Share Extension 链接，无需嵌入动态库。
+  xcodebuild -create-xcframework "${libraries[@]}" -output "$framework"
 else
   echo "用法: tools/build-mobile-transport.sh android|ios [target]" >&2
   exit 2

@@ -8,9 +8,9 @@ struct ProfileFormView: View {
 
     @State private var name: String
     @State private var url: String
-    @State private var token: String
+    @State private var accessKey: String
     @State private var targetIdentity: String
-    @State private var appKey: String
+    @State private var targetDeviceId: String
     @State private var error: String?
 
     init(
@@ -22,9 +22,9 @@ struct ProfileFormView: View {
         self.onSave = onSave
         _name = State(initialValue: existing?.name ?? "")
         _url = State(initialValue: existing?.url ?? "")
-        _token = State(initialValue: existing?.token ?? "")
+        _accessKey = State(initialValue: existing?.accessKey ?? "")
         _targetIdentity = State(initialValue: existing?.targetIdentity ?? "")
-        _appKey = State(initialValue: existing?.appKey ?? "")
+        _targetDeviceId = State(initialValue: existing?.targetDeviceId ?? "")
     }
 
     var body: some View {
@@ -42,24 +42,21 @@ struct ProfileFormView: View {
                     Text("服务地址")
                 } footer: {
                     if kind == .lan {
-                        Text("桌面端：设置 → 局域网 → 开启网页访问，复制监听地址与访问 token。")
+                        Text("填写桌面端 LAN Web 地址与 AccessKey；原生加密配对请直接扫码。")
                     } else {
-                        Text("hawk-server 的部署地址；target_identity 与 AccessKey 来自配对信息。")
+                        Text("hawk-server 地址、目标身份与 AccessKey 均来自桌面端配对信息。")
                     }
                 }
 
-                if kind == .lan {
-                    Section("访问凭证") {
-                        SecureField("访问 token", text: $token)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
-                } else {
-                    Section("访问凭证") {
+                Section("访问凭证") {
+                    SecureField("AccessKey（hk_…）", text: $accessKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if kind == .remote {
                         SecureField("target_identity（目标 iroh 公钥）", text: $targetIdentity)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                        SecureField("AccessKey（hk_…）", text: $appKey)
+                        SecureField("target_device_id（目标设备 ID）", text: $targetDeviceId)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                     }
@@ -90,14 +87,14 @@ struct ProfileFormView: View {
     }
 
     private var canSave: Bool {
-        guard !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        switch kind {
-        case .lan:
-            return !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .remote:
+        guard !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        if kind == .remote {
             return !targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+        return true
     }
 
     private func save() {
@@ -105,21 +102,14 @@ struct ProfileFormView: View {
         profile.kind = kind
         profile.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         profile.url = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        profile.token = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 兼容直接粘贴局域网查看器地址（http://ip:port/?token=...）：token 缺省时从查询参数补。
-        if kind == .lan, profile.token.isEmpty,
-            let components = URLComponents(string: profile.url),
-            let value = components.queryItems?.first(where: { $0.name == "token" })?.value
-        {
-            profile.token = value
-        }
+        profile.accessKey = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        profile.targetIdentity = targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
+        profile.targetDeviceId = targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
         if var components = URLComponents(string: profile.url) {
             components.query = nil
             components.fragment = nil
             profile.url = components.string ?? profile.url
         }
-        profile.targetIdentity = targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
-        profile.appKey = appKey.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             _ = try profile.baseURL()
         } catch {
