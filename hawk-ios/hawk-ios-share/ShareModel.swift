@@ -117,32 +117,27 @@ final class ShareModel {
     nonisolated private static func connect(_ target: ShareTargetStore.Target) async throws
         -> Connected
     {
+        guard !target.targetIdentity.isEmpty else {
+            throw ShareSetupError(message: "连接缺少目标身份，请先在 hawk App 里重新连接素材库")
+        }
         var lastError: Error = ShareSetupError(message: "素材库地址不可用")
         for raw in target.urls {
-            guard let base = normalizedURL(raw, native: !target.targetIdentity.isEmpty) else {
-                continue
-            }
+            guard let base = normalizedURL(raw) else { continue }
             var session: NativeTransportSession?
             do {
-                let client: ShareAPIClient
-                if target.targetIdentity.isEmpty {
-                    client = ShareAPIClient(baseURL: base, token: target.accessKey)
-                } else {
-                    let connection = try await RustTransport.connect(
-                        configDir: transportDirectory(),
-                        serverUrl: base.absoluteString,
-                        targetDeviceId: target.targetDeviceId,
-                        targetIdentity: target.targetIdentity,
-                        accessKey: target.accessKey
-                    )
-                    guard let proxyURL = URL(string: connection.apiBase) else {
-                        throw ShareSetupError(message: "原生代理地址无效")
-                    }
-                    let nativeSession = NativeTransportSession(connection: connection)
-                    session = nativeSession
-                    client = ShareAPIClient(
-                        baseURL: proxyURL, token: connection.credential)
+                let connection = try await RustTransport.connect(
+                    configDir: transportDirectory(),
+                    serverUrl: base.absoluteString,
+                    targetDeviceId: target.targetDeviceId,
+                    targetIdentity: target.targetIdentity,
+                    accessKey: target.accessKey
+                )
+                guard let proxyURL = URL(string: connection.apiBase) else {
+                    throw ShareSetupError(message: "原生代理地址无效")
                 }
+                let nativeSession = NativeTransportSession(connection: connection)
+                session = nativeSession
+                let client = ShareAPIClient(baseURL: proxyURL, token: connection.credential)
                 _ = try await client.libraryName()
                 return Connected(client: client, session: session)
             } catch {
@@ -161,11 +156,11 @@ final class ShareModel {
         return directory.path
     }
 
-    nonisolated private static func normalizedURL(_ raw: String, native: Bool) -> URL? {
+    nonisolated private static func normalizedURL(_ raw: String) -> URL? {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
         if !value.contains("://") {
-            value = "\(native ? "https" : "http")://\(value)"
+            value = "http://\(value)"
         }
         return URL(string: value)
     }

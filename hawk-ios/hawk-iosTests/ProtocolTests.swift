@@ -115,6 +115,28 @@ nonisolated final class APIContractTests: XCTestCase {
     }
 }
 
+nonisolated final class LanConnectionInfoTests: XCTestCase {
+    func testPublicPeerInfoResolvesManualProfileForNativeTransport() throws {
+        let data = Data(
+            #"{"protocol":3,"peer_id":"peer-1","name":"desktop","library_name":"照片库","peer_port":27375,"target_identity":"endpoint-lan","target_device_id":"device-lan","target_library_id":"library-lan","tls_fingerprint":"abc123"}"#
+                .utf8)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let info = try decoder.decode(LanConnectionInfo.self, from: data)
+        XCTAssertEqual(info.protocol, LanConnectionInfo.currentProtocol)
+
+        let baseURL = try XCTUnwrap(URL(string: "http://192.168.1.8:27375"))
+        let profile = ConnectionProfile(kind: .lan, url: baseURL.absoluteString, accessKey: "hk_lan")
+            .resolving(with: info, at: baseURL)
+        XCTAssertEqual(profile.name, "照片库")
+        XCTAssertEqual(profile.targetIdentity, "endpoint-lan")
+        XCTAssertEqual(profile.targetDeviceId, "device-lan")
+        XCTAssertEqual(profile.targetLibraryId, "library-lan")
+        XCTAssertEqual(profile.tlsFingerprint, "abc123")
+        XCTAssertEqual(profile.accessKey, "hk_lan")
+    }
+}
+
 nonisolated final class RustTransportContractTests: XCTestCase {
     func testDecodesSuccessfulConnection() throws {
         let data = Data(

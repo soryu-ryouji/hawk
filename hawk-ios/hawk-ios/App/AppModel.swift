@@ -51,7 +51,7 @@ final class AppModel {
                     }
                 }
                 try Task.checkCancellation()
-                let saved = connections.upsert(profile)
+                let saved = connections.upsert(outcome.profile)
                 connections.setActive(saved.id)
 
                 self.connectStatus = "正在读取素材库…"

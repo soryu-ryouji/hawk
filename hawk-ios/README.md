@@ -37,7 +37,7 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 
 - V2 原生 LAN / WAN：统一经 `hawk-transport` 建立 iroh 端到端加密会话，Loopback 代理只接受 Bearer `session_token`；LAN/WAN 候选地址可自动回退
 - V2 配对载荷：`v=2`、`target_identity`、`target_device_id`、`target_library_id`、`access_key`、`lan_endpoints` 与可选 `wan.server_url`；长期 AccessKey 存 Keychain，不再使用 tenant-key / browser token / `/viewer/*`
-- 手工 LAN 可直连 LAN Web（地址 + AccessKey）；手工 WAN 需服务地址、目标身份、目标设备 ID 与 AccessKey。原生会话在切换、断开和初始化失败时经 C ABI 正确释放
+- 手工 LAN 使用 hawk-app 直连地址（默认 27375）+ AccessKey：HTTP 仅读取 `app/lan/connection-info` 的公开身份，随后统一走原生加密会话；手工 WAN 需服务地址、目标身份、目标设备 ID 与 AccessKey。原生会话在切换、断开和初始化失败时经 C ABI 正确释放
 - 扫码、剪贴板导入与手动填写；载荷版本或必填字段不符时明确提示
 - 连接阶段可视化（加密会话 → 索引就绪）与取消；失败回连接列表并展示服务端或原生传输错误
 
@@ -92,7 +92,7 @@ xcodebuild test -scheme hawk-ios -destination 'platform=iOS Simulator,name=iPhon
 本地冒烟（Debug 构建）可用环境变量预置连接与落点，跳过手动输入：
 
 ```bash
-SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111","kind":"lan","name":"测试素材库","url":"http://127.0.0.1:27372","accessKey":"<access-key>","targetIdentity":"","targetLibraryId":"","targetDeviceId":"","tlsFingerprint":""}' \
+SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111","kind":"lan","name":"测试素材库","url":"http://127.0.0.1:27375","accessKey":"<access-key>","targetIdentity":"","targetLibraryId":"","targetDeviceId":"","tlsFingerprint":""}' \
   xcrun simctl launch booted com.soryu-ryouji.hawk
 ```
 
@@ -107,7 +107,7 @@ SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111
 
 均在 `#if DEBUG` 内，Release 构建不含这些路径。真机冒烟仍需覆盖：
 
-1. 局域网：扫码经原生 iroh 连接，浏览缩略图、原图与 SSE；另用手工 LAN Web + AccessKey 验证直连路径
+1. 局域网：扫码经原生 iroh 连接，浏览缩略图、原图与 SSE；另用 `http://<IP>:27375` + AccessKey 验证公开配对信息解析与原生重连
 2. 广域网：扫码或填服务端地址 + target_identity + target_device_id + AccessKey，验证 WAN 连接与断开后重连
 3. 相册保存与分享：主 App 保存的是原图；Share Extension 分别验证 LAN/WAN 导入、同内容跳过与同名冲突报错
 4. 锁定视图：输入密码解锁、错误密码保留服务端提示、退出重进需重新解锁

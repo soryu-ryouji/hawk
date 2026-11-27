@@ -2,7 +2,7 @@ import Foundation
 
 /// 共享给分享扩展的目标（App Group UserDefaults）。
 /// 原生 LAN/WAN 都保存 rendezvous 地址与目标身份，由扩展独立建立加密会话；
-/// 没有 targetIdentity 的手工 LAN 才直接访问 LAN Web。
+/// 手工 LAN 的目标身份已在主 App 连接时解析并保存。
 nonisolated enum ShareTarget {
     static let appGroupID = "group.com.soryu-ryouji.hawk"
     static let storageKey = "shareTarget.v2"
@@ -18,7 +18,9 @@ nonisolated enum ShareTarget {
 
     static func save(profile: ConnectionProfile, libraryName: String) {
         let urls = (try? profile.candidateBaseURLs().map(\.absoluteString)) ?? []
-        guard !urls.isEmpty, !profile.accessKey.isEmpty else { return }
+        guard !urls.isEmpty, !profile.accessKey.isEmpty, !profile.targetIdentity.isEmpty else {
+            return
+        }
         let label = [profile.displayName, libraryName]
             .filter { !$0.isEmpty }
             .joined(separator: " · ")

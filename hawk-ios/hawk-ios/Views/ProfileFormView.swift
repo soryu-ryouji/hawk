@@ -32,7 +32,7 @@ struct ProfileFormView: View {
             Form {
                 Section {
                     TextField(
-                        kind == .lan ? "192.168.1.5:27372" : "https://hawk.example.com", text: $url
+                        kind == .lan ? "192.168.1.5:27375" : "https://hawk.example.com", text: $url
                     )
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
@@ -42,7 +42,9 @@ struct ProfileFormView: View {
                     Text("服务地址")
                 } footer: {
                     if kind == .lan {
-                        Text("填写桌面端 LAN Web 地址与 AccessKey；原生加密配对请直接扫码。")
+                        Text(
+                            "填写桌面端 hawk-app 直连地址（默认 27375）与 AccessKey。HTTP 仅用于读取公开配对信息，AccessKey 和素材均走加密通道。"
+                        )
                     } else {
                         Text("hawk-server 地址、目标身份与 AccessKey 均来自桌面端配对信息。")
                     }

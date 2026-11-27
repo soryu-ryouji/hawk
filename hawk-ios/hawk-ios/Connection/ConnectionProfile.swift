@@ -20,7 +20,7 @@ nonisolated enum ConnectionKind: String, Codable, Sendable {
 }
 
 /// 一条连接配置。V2 配对由 targetIdentity + accessKey 定位并认证目标；
-/// 没有 targetIdentity 的手工 LAN 配置直接访问 LAN Web API。
+/// 没有 targetIdentity 的手工 LAN 先通过 Peer 公开信息解析身份。
 nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable {
     var id: UUID
     var kind: ConnectionKind
@@ -67,6 +67,20 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
         return (try? baseURL())?.host ?? url
     }
 
+    /// 把 Peer 公开配对信息固化进连接，后续启动与分享扩展可直接使用原生通道。
+    func resolving(with info: LanConnectionInfo, at baseURL: URL) -> ConnectionProfile {
+        var resolved = self
+        resolved.url = baseURL.absoluteString
+        resolved.targetIdentity = info.targetIdentity
+        resolved.targetDeviceId = info.targetDeviceId ?? ""
+        resolved.targetLibraryId = info.targetLibraryId
+        resolved.tlsFingerprint = info.tlsFingerprint ?? ""
+        if resolved.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolved.name = info.libraryName
+        }
+        return resolved
+    }
+
     /// WAN 优先，失败后尝试配对载荷中的 LAN 候选地址。
     func candidateBaseURLs() throws -> [URL] {
         let candidates = ([url] + (urls ?? []))
@@ -101,7 +115,7 @@ nonisolated struct ConnectionProfile: Codable, Sendable, Identifiable, Hashable 
             !host.isEmpty
         else {
             throw ConnectionError.message(
-                "服务地址无效，请填写形如 192.168.1.5:27372 或 https://hawk.example.com 的地址")
+                "服务地址无效，请填写形如 192.168.1.5:27375 或 https://hawk.example.com 的地址")
         }
         components.query = nil
         components.fragment = nil

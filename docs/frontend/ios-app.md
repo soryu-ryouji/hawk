@@ -63,7 +63,9 @@ iPhone / iPad 原生客户端使用 SwiftUI 与 Swift 6。本文记录当前协�
 | -- | -- | -- |
 | 原生 LAN | rendezvous → iroh → daemon；UI → 本机 Loopback 代理 | 隧道内验证 AccessKey；Loopback 请求使用代理签发的短期 Bearer `session_token` |
 | 原生 WAN | hawk-server 编排 rendezvous → iroh 直连或 relay → daemon | 同上；server 不接触 AccessKey 或素材明文 |
-| 手工 LAN | App → LAN Web API | AccessKey Bearer；仅作为无配对信息时的兜底 |
+| 手工 LAN | App → Peer 控制面 `app/lan/connection-info` → iroh → daemon | HTTP 仅读取公开身份；AccessKey 只在加密隧道内出示 |
+
+不提供“HTTP + AccessKey 直接读取素材”的回退。LAN Web 只接受 HTTPS；Peer 的 HTTP 控制面只用于配对和 rendezvous，不能请求 `item/*`、`library/info` 等素材端点。
 
 原生库返回 `{ session_id, api_base, credential, role, target_device_id }` 或 `{ error }`。Swift 必须先处理错误响应，再要求成功字段完整。
 
@@ -128,7 +130,7 @@ iPhone / iPad 原生客户端使用 SwiftUI 与 Swift 6。本文记录当前协�
 Share Extension 与主 App 通过 App Group `group.com.soryu-ryouji.hawk` 共享 `shareTarget.v2`：候选地址、AccessKey、目标身份、目标设备 ID 和展示名。
 
 - 原生 LAN/WAN：扩展独立调用 `hawk-transport`，不能直接把 Peer 地址当素材 REST 地址，也不依赖主 App 的 Loopback 进程存活。
-- 手工 LAN：可直接访问 LAN Web。
+- 手工 LAN：先用 HTTP 读取公开配对信息并保存解析后的目标身份，再由扩展独立建立原生加密会话；不直接访问 LAN Web 或 Peer 素材 API。
 - 上传：`POST /api/v1/item/upload`，multipart 中重复 `categories` / `tags`，`skip_existing=true`，目标为库根。
 - 同内容已存在：响应 `skipped=true`，计为跳过。
 - 同名不同内容：daemon 返回 `FILE_EXISTS`，明确失败，不能静默算作重复成功。

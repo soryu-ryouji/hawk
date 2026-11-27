@@ -1,11 +1,11 @@
 import Foundation
 
-/// V2 原生 LAN/WAN 统一经 hawk-transport 的 Loopback 代理；手工 LAN 直连 LAN Web。
+/// V2 原生 LAN/WAN 统一经 hawk-transport；手工 LAN 的 HTTP 仅用于读取公开配对信息。
 nonisolated enum ConnectionLauncher {
     struct Outcome: Sendable {
         let api: APIClient
         let info: AppInfo
-        let label: String
+        let profile: ConnectionProfile
         let targetDeviceName: String?
         let targetLibraryName: String?
         let nativeSession: NativeTransportSession?
@@ -21,7 +21,7 @@ nonisolated enum ConnectionLauncher {
         }
         switch profile.kind {
         case .lan:
-            return try await launchLAN(profile, progress: progress)
+            return try await launchManualLANCandidates(profile, progress: progress)
         case .remote:
             throw ConnectionError.message("该连接缺少 target_identity，请重新配对")
         }
@@ -80,7 +80,7 @@ nonisolated enum ConnectionLauncher {
         let outcome = Outcome(
             api: api,
             info: info,
-            label: profile.displayName,
+            profile: profile,
             targetDeviceName: nil,
             targetLibraryName: profile.targetLibraryId.isEmpty ? nil : profile.targetLibraryId,
             nativeSession: nativeSession
@@ -98,29 +98,36 @@ nonisolated enum ConnectionLauncher {
         return directory.path
     }
 
-    private static func launchLAN(_ profile: ConnectionProfile, progress: Progress?) async throws
-        -> Outcome
-    {
-        let accessKey = profile.accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !accessKey.isEmpty else {
+    private static func launchManualLANCandidates(
+        _ profile: ConnectionProfile,
+        progress: Progress?
+    ) async throws -> Outcome {
+        guard !profile.accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ConnectionError.message("请填写局域网 AccessKey")
         }
-        progress?("正在验证局域网连接…")
         var lastError: (any Error)?
         for baseURL in try profile.candidateBaseURLs() {
+            let resolved: ConnectionProfile
             do {
-                let api = APIClient(
-                    baseURL: baseURL,
-                    credentials: SessionCredentials(token: accessKey))
-                let info: AppInfo = try await api.get("/api/v1/app/info")
-                guard info.hasLibrary else {
-                    throw ConnectionError.message("该服务没有打开的素材库，请在桌面端切换素材库后重试")
+                progress?("正在读取局域网公开配对信息…")
+                let info = try await connectionInfo(baseURL: baseURL)
+                guard info.protocol == LanConnectionInfo.currentProtocol else {
+                    throw ConnectionError.message("目标使用的局域网配对协议不受支持，请升级桌面端")
                 }
-                progress?("正在等待素材库就绪…")
-                try await waitUntilReady(api)
-                return Outcome(
-                    api: api, info: info, label: profile.displayName,
-                    targetDeviceName: nil, targetLibraryName: nil, nativeSession: nil)
+                guard !info.targetIdentity.isEmpty else {
+                    throw ConnectionError.message("目标没有提供有效的 target_identity")
+                }
+                resolved = profile.resolving(with: info, at: baseURL)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = ConnectionError.message(
+                    "无法从 \(baseURL.absoluteString) 读取配对信息。请确认使用 hawk-app 直连端口（默认 27375），不是 LAN Web 端口"
+                )
+                continue
+            }
+            do {
+                return try await launchNative(resolved, baseURL: baseURL, progress: progress)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -128,6 +135,19 @@ nonisolated enum ConnectionLauncher {
             }
         }
         throw lastError ?? ConnectionError.message("没有可用的局域网地址")
+    }
+
+    /// 初始索引期间 connection-info 暂不可用；它就绪后直接建立原生会话，无需先访问素材 API。
+    private static func connectionInfo(baseURL: URL) async throws -> LanConnectionInfo {
+        let api = APIClient(baseURL: baseURL, credentials: SessionCredentials(token: ""))
+        let deadline = Date().addingTimeInterval(30)
+        while true {
+            do {
+                return try await api.get("/api/v1/app/lan/connection-info")
+            } catch let error as APIError where error.isNotReady && Date() < deadline {
+                try await Task.sleep(nanoseconds: 400_000_000)
+            }
+        }
     }
 
     /// 初始索引构建中 daemon 只放行 app/startup；400ms 轮询到 ready。

@@ -54,7 +54,7 @@ nonisolated final class APIClient: @unchecked Sendable {
         self.streamSession = URLSession(configuration: streaming)
     }
 
-    /// 原生 Loopback 代理只接受 Bearer；手工 LAN 的 AccessKey 也使用同一请求头。
+    /// 素材 API 与原生 Loopback 代理统一使用 Bearer；公开配对请求不携带凭证。
     nonisolated static func authorize(_ request: inout URLRequest, credential: String) {
         guard !credential.isEmpty else { return }
         request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
