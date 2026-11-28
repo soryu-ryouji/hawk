@@ -1,4 +1,4 @@
-// 从旧 Rust 契约中移除广域网/加密相关端点与字段，生成纯局域网 OpenAPI 契约。
+// 从旧契约中移除广域网/加密相关端点与字段，生成纯局域网 OpenAPI 契约。
 // 用法：node tools/prune-openapi.mjs
 import fs from 'node:fs';
 import path from 'node:path';

@@ -4,7 +4,7 @@
 #
 # 用法: ./tools/build-app.ps1 [-Path <输出目录>] [--unpacked]
 #   --unpacked：只产出未打包目录（dist/win-unpacked），跳过 zip 压缩——install.ps1 的复用入口
-# 前置: 最新 Node.js 与 Rust 工具链（https://rustup.rs/）
+# 前置: 最新 Node.js 与 Go 工具链（https://go.dev/dl/）
 # 压缩级别（默认 5）: ELECTRON_BUILDER_COMPRESSION_LEVEL=9 ./tools/build-app.ps1   # 9=最小体积，3=最快
 
 $ErrorActionPreference = 'Stop'
@@ -31,9 +31,9 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $AppDir = Join-Path $RepoRoot 'hawk-app'
 $OutDir = if ($Path) { $Path } else { Join-Path $RepoRoot 'out' }
 
-foreach ($tool in @('node', 'npm', 'cargo')) {
+foreach ($tool in @('node', 'npm', 'go')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "未找到 $tool，请先安装最新的 Node.js 与 Rust 工具链（https://rustup.rs/）"
+        throw "未找到 $tool，请先安装最新的 Node.js 与 Go 工具链（https://go.dev/dl/）"
     }
 }
 

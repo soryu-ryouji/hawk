@@ -1,5 +1,5 @@
 # 单流水线：质量门禁 + 构建 + 发版。门禁与构建解耦，全部 t=0 并行起跑：
-# - 门禁 = rust（daemon/server 两腿 matrix）∥ app（lint/格式/单测）
+# - 门禁 = go（daemon）∥ app（lint/格式/单测）
 # - 构建 = linux ∥ windows ∥ macos（各自产出本平台产物）
 # - publish 汇流 job 统一 needs 门禁与全部构建：门禁失败或任一平台失败都不发布，
 #   「发布物永远来自通过测试的代码」的语义不变，但不再用串行等待换语义
@@ -10,7 +10,7 @@
 # 上又单独编了一遍输入完全相同的 daemon，已合并进这里。
 #
 # 触发与行为（通道判定集中在 jobs.classify，其余 job 只读它的 outputs，不各写一份前缀判断）：
-# - 门禁每次 push(main) / PR 都跑：rust + app ∥ linux 全链复现（build → OpenAPI 同步校验 → UI 自检），
+# - 门禁每次 push(main) / PR 都跑：go + app ∥ linux 全链复现（build → OpenAPI 同步校验 → UI 自检），
 #   约 4 分钟（纯文档/元数据改动不进本流水线，见 docs.yml）
 # - 出产物（classify.build=true）只有三种情况：
 #   push(main) 且提交首行以 release 开头 → 正式 Release（版本号唯一来源是 hawk-app/package.json，
@@ -296,26 +296,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Windows runner 上 Defender 实时扫描会让大 target 目录的编译/链接慢 2-3 倍；
-      # 把工作区（含 hawk-daemon/target）与 cargo 缓存排除掉（hosted runner 有管理员权限；
+      # Windows runner 上 Defender 实时扫描会拖慢 Go 构建与打包；
+      # 把工作区排除掉（hosted runner 有管理员权限；
       # 策略禁用时忽略，不影响构建）
       - name: Exclude build dirs from Defender
         shell: pwsh
         run: |
           try {
-            Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo" -ErrorAction Stop
-            Write-Host 'Defender 实时扫描已排除工作区与 cargo 缓存'
+            Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE -ErrorAction Stop
+            Write-Host 'Defender 实时扫描已排除工作区'
           } catch {
             Write-Host "Defender 排除失败（忽略）：$_"
           }
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # hawk-update：Windows 更新辅助程序（仅 win job 构建并进产物）
-          workspaces: hawk-update
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: hawk-daemon/go.mod
@@ -328,6 +320,21 @@ jobs:
           cache-dependency-path: hawk-app/package-lock.json
 
       - run: npm ci
+
+      - name: Validate update.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'resources/update.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
 
       - name: Cache electron & builder tools
         uses: actions/cache@v6
@@ -370,23 +377,20 @@ jobs:
           HAWK_SHA: ${{ github.sha }}
 
       # web/主进程构建与 Go daemon 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 Go 构建的耗时里
-      # （build-update.mjs 非 Windows 平台自跳过；当前仅 win job 需要）
       - name: Build web & native (parallel)
         shell: bash
         run: |
           t0=$(date +%s)
           el() { echo "[$1] $(( $(date +%s) - t0 ))s"; }
           node scripts/build-server.mjs & p1=$!
-          node scripts/build-update.mjs & p2=$!
-          npm run build & p3=$!
-          node scripts/build-electron.mjs & p4=$!
+          npm run build & p2=$!
+          node scripts/build-electron.mjs & p3=$!
           # 逐个 wait 传播后台失败（裸 wait 无论子任务成败都返回 0，
           # 曾导致 Windows 上 daemon 编译失败被吞、打包继续产出无 daemon 的 zip），
-          # 并打印各自完成时刻：Windows 的耗时构成（cargo / vite / esbuild）只有这里能看到
+          # 并打印各自完成时刻：Windows 的耗时构成（Go / vite / esbuild）只有这里能看到
           wait $p1; el daemon
-          wait $p2; el update
-          wait $p3; el web
-          wait $p4; el main
+          wait $p2; el web
+          wait $p3; el main
 
       - name: Pack
         # --publish never：禁用 electron-builder 自带发布（CI 下会隐式触发并索要 GH_TOKEN；

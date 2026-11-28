@@ -38,7 +38,7 @@ Electron 主进程
 | `electron/src/app-config.ts` | `~/.config/hawk/config.toml`（库路径、历史、apiPort、缓存父目录、lanPeers/lanTarget） |
 | `electron/src/resource-auth.ts` | 图片/SSE 等 `<img>` 直链的资源凭证 |
 | `electron/src/paths.ts` | 应用配置/日志/身份目录路径 |
-| `electron/src/updater.ts` | GitHub Releases 自动更新（hawk-update 接力安装） |
+| `electron/src/updater.ts` | GitHub Releases 自动更新（Windows PowerShell / macOS sh / Linux AppImage 接力安装） |
 
 IPC 契约单一定义在 `electron/src/ipc-contract.ts`，web 端 `shared/types.ts` re-export。
 
@@ -77,6 +77,14 @@ web/src/
 - 目标端确认：`LanPairRequestPrompt` 轮询本机 daemon 的待确认请求，调用 decision。
 - 设备管理：`SettingsLanDevices` 列出已配对设备与目标端签发的密钥，可调权限/删除/生成移动端二维码。
 
+## 应用自动更新
+
+- 检查/下载/校验都在 Electron 主进程完成；stable 比 semver，nightly 比构建 sha。
+- Windows：更新包（zip）校验通过后，应用在退出前启动随包分发的 `resources/update.ps1`。脚本等待旧进程与 daemon 退出，解包到 AppDir 同卷 staging 目录，改名替换应用目录并拉起新版本。脚本只依赖系统自带 PowerShell，不需要独立的更新 exe。
+- Windows 替换失败时会恢复旧目录并重新启动旧版本；日志在 `%TEMP%\hawk-update\install.log`，同时弹窗提示。
+- 更新脚本要求应用目录对当前用户可写；解压到 `Program Files` 等受保护目录时需要以管理员身份运行应用。
+- macOS：detached sh 脚本替换 `.app`；Linux：AppImage 原地替换后 `relaunch`。
+
 ## 打包与开发
 
 ```bash
@@ -85,7 +93,7 @@ npm ci
 npm run dev             # vite + electron + 本地 Go daemon
 npm run gen:types       # 先构建 hawk-daemon/hawk-daemon(.exe)
 npm run build
-npm run pack            # 前端 + Go daemon + hawk-update + electron-builder
+npm run pack            # 前端 + Go daemon + electron-builder
 ```
 
 Go 二进制由 `scripts/build-server.mjs` 按 RID 交叉编译到 `resources/hawk-daemon/`；`pack` 时经 electron-builder `extraResources` 进入安装包。

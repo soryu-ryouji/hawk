@@ -49,7 +49,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 
 0. 门禁并行：`go`（gofmt → vet → test）+ `app`（lint / 格式 / 单测）
 1. 构建同时起跑，不等门禁：
-   - `windows`：先过发版守卫（版本号取自 package.json，同名 tag 已存在则失败）→ web 与 daemon/updater 构建并行 → `hawk-windows-x64.zip` + 边车（mx=5 压缩）
+   - `windows`：先过发版守卫（版本号取自 package.json，同名 tag 已存在则失败）→ web 与 daemon 构建并行 → `hawk-windows-x64.zip` + 边车（mx=5 压缩）
    - `macos`：只产 Apple Silicon，`hawk-mac-arm64.zip` + 边车
    - `linux`：兼作全链复现门禁——Go daemon 构建 → OpenAPI 类型同步校验 → UI 端到端自检 → `hawk-linux-x64.AppImage` + 边车
 2. `publish` 汇流 job（ubuntu，门禁与三平台构建**全部成功**后才跑）：下载全部 Artifacts → 以 `tag_name: v2.5.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）；nightly 则轮转重建。任一检查/构建失败则不发布（全有或全无，不会出现只有部分平台产物的半成品 Release）
@@ -57,7 +57,7 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 **发布后验证**：
 
 - Release 资产齐全：上述 6 个文件（3 产物 + 3 边车；缺边车则存量客户端无法自动更新到该版本，只能手动下载）
-- Windows zip 内含 `resources/hawk-daemon/hawk-daemon.exe`（Windows 段 `extraResources` 与顶层追加合并；CI 的 `Verify packaged daemon` 会拦住缺失，Linux 产物同理检查 `dist/linux-unpacked`）
+- Windows zip 内含 `resources/hawk-daemon/hawk-daemon.exe` 与 `resources/update.ps1`（Windows 段 `extraResources` 与顶层追加合并；CI 的 `Verify packaged daemon` 会拦住 daemon 缺失，`npm run test:resources` 会拦住更新脚本缺失，Linux 产物同理检查 `dist/linux-unpacked`）
 - stable 通道：任一客户端 → 设置 → 更新 → 检查更新，应发现新版本并完成下载/安装
 - nightly 客户端：切 stable 通道检查，应能拿到本次发布
 

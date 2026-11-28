@@ -112,7 +112,6 @@ daemon 提供两个独立监听器：
 ```text
 hawk/
 ├── hawk-daemon/             ← Go 素材库 daemon
-├── hawk-update/             ← Rust Windows 更新辅助程序（桌面端更新安装接力，仅 Windows 产物携带）
 ├── hawk-app/                ← 桌面应用（Electron 壳 + Vue 前端）
 ├── hawk-browser-extension/  ← 浏览器插件（Chrome/Firefox，WXT）
 ├── hawk-ios/                ← iOS 原生客户端

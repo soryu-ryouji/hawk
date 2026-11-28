@@ -34,8 +34,7 @@ npm run hooks:install  # 手动启用版本化 Git hooks（npm install / npm ci 
 ```bash
 npm run test:unit     # Vitest 单测：viewLogic（SSE 决策/排序继承/选择）/importBatch（导入状态机）/layout（齐行布局）/format（显示格式化）+ itemCard/sidebarRows 组件渲染
 npm run test:mobile   # 移动端网页冒烟：临时库 + hawk-daemon 托管 web/dist + 无 preload 探针窗口断言全链路
-npm run test:update   # hawk-update.exe 端到端验证：等进程/覆盖/清理/坏包日志（需先在 hawk-update/ cargo build）
-npm run test:resources  # extraResources 平台隔离回归：hawk-update 只进 Windows 产物，mac/linux 只带 hawk-daemon
+npm run test:resources  # extraResources 平台隔离回归：update.ps1 只进 Windows 产物，mac/linux 只带 hawk-daemon
 node tools/ui-check.mjs   # UI 端到端自检：真实启动 electron，CDP 断言 DOM/交互/SSE 并截图
 node tools/dnd-test.mjs   # 拖拽端到端复现：真实浏览器 + 真实鼠标事件（多选素材拖入侧栏文件夹，断言移动与行高亮）
 ```
@@ -43,7 +42,7 @@ node tools/dnd-test.mjs   # 拖拽端到端复现：真实浏览器 + 真实鼠�
 ## 打包
 
 ```bash
-npm run pack      # 一条命令：build 前端 + go build 当前平台 hawk-daemon 与 cargo build hawk-update（Windows 更新辅助）单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
+npm run pack      # 一条命令：build 前端 + go build 当前平台 hawk-daemon + electron-builder 出包（dist/，Windows 为免安装 zip）
 npm run pack:dir  # 同上但 --dir：只出未打包目录（win-unpacked / hawk.app），跳过 zip 压缩（install 脚本与本地快速验证用）
 ```
 
