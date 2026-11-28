@@ -91,6 +91,7 @@ UDP 明文可被同网段伪造，因此不能作为授权依据；真正的授�
 - 主进程连接优先级：`lanConn` > 本地库；`kind` 区分 `local | lan`。
 - 切换时前端收到 `connection-changed`，执行统一的 abort 请求/SSE → 清 store → `GET /app/info` → 重注水。
 - 已配对设备保存在 `~/.config/hawk/config.toml` 的 `lanPeers`（含 URL 与 token，渲染层只拿脱敏 profile）。
+- 同一目标换网段/换 IP 后，源端先用已保存 AccessKey 探测 UDP 发现到的同一 `peer_id` 新地址；验证通过就只更新 URL，不重新生成 key、不要求目标端重复确认。只有 key 失效或地址不可达时才回退到完整配对。
 - 主进程每 10 秒对当前目标 `GET /app/info` 健康检查；失败后保持 `lanConn`/`lanTarget` 并进入恢复等待，继续每 10 秒探测；成功后自动重新注水，不静默回切本地库。只有用户显式“打开本地素材库”或忘记设备才清目标。
 - 目标端 `/api/v1/app/lan/clients` 按 peer key 最近活跃时间显示在线设备（30 秒窗口）。
 
