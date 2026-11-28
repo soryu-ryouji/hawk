@@ -32,7 +32,7 @@ hawk 不在素材文件和文件夹中写入数据，所有状态收敛在素材
 
 cache/<库标识>/thumbnails/
 ├── 512/<hash>.webp   # 网格
-└── 1024/<hash>.webp  # 检查器与广域网预览
+└── 1024/<hash>.webp  # 检查器与预览
 ```
 
 `<库标识>` = `<库文件夹名>_<库根路径SHA-256前16位>`。缓存父目录可在设置面板修改，迁移为整体搬迁；缓存可整体删除并由后台重建。调色板和宽高不是库外缓存，它们一起存入 `metadata.db`。
@@ -47,7 +47,7 @@ cache/<库标识>/thumbnails/
 | `trash/` | 否 | 回收站仅本机可恢复 |
 | 库外缩略图缓存 | 否 | 可重建 |
 
-`.hawk/.gitignore` 自动排除 `trash/`、`remote/` 和 `metadata.db`。部分网盘客户端不识别 `.gitignore`，仍需在网盘客户端中手动排除 SQLite 文件。
+`.hawk/.gitignore` 自动排除 `trash/` 和 `metadata.db`。部分网盘客户端不识别 `.gitignore`，仍需在网盘客户端中手动排除 SQLite 文件。
 
 ## SQLite 元数据
 
@@ -78,7 +78,7 @@ cache/<库标识>/thumbnails/
 - `palette`：JSON 数组，最多 10 色；`NULL` 表示未提炼，空数组是非图片负缓存。
 - 非图像的调色板写空数组负缓存，避免周期重试；暂时解码失败保持未计算。
 
-扫描、增量入库和周期维护复用同一 worker：单次解码后按需生成缩略图、调色板和宽高。结果经 JobSender 回到单写者流水线，按 500 条或 2 秒批量写 SQLite，并合并 `items.updated`。周期维护间隔由 `HAWK_MAINTENANCE_INTERVAL` 控制（默认 60s，0 关闭）。
+扫描、增量入库和周期维护复用同一 derive worker 池：单次解码后按需生成缩略图、调色板和宽高，结果回到 `writeMu` 串行写入 SQLite，并合并 `items.updated`。扫描落盘按 500 条一批；周期维护间隔由 `HAWK_MAINTENANCE_INTERVAL` 控制（默认 60s，0 关闭）。
 
 ## 重复图片管理
 

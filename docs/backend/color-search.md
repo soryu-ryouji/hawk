@@ -122,8 +122,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 
 ### 后端
 
-调色板功能现由 Rust 实现承载：`hawk-daemon/src/core/color.rs`（median-cut 提炼）、
-`hawk-daemon/src/core/color_math.rs`（hex/Lab/ΔE 纯函数）。
+调色板功能由 Go 实现承载：`hawk-daemon/internal/library/color.go`（median-cut 提炼 + hex/Lab/ΔE 纯函数）。
 
 ### 前端（hawk-app）
 
@@ -141,7 +140,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | `docs/backend/storage.md` | SQLite 权威库与调色板存储 |
 | `docs/backend/server-rest-api-v1.md` | palette 字段与 color 参数 |
 | `docs/backend/server-code-structure.md` | 新文件职责与流水线变化 |
-| `hawk-daemon` | `cargo test`：颜色纯函数（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色~100%、双色各半、全透明→空） |
+| `hawk-daemon` | `go test ./...`：颜色纯函数（hex/Lab/ΔE 已知向量）、median-cut 提炼（纯色→1 色~100%、双色各半、全透明→空） |
 | `tools/smoke.sh` | 新增断言：add 纯色 PNG → detail 返回 palette → `color` 检索命中 / 相近色命中 / 无关色不命中 |
 
 ## 备选方案与取舍
@@ -152,7 +151,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`。color 为小写 `#` 
 | 额外维护一份库外调色板镜像 | metadata.db 已是权威与启动来源，额外镜像只会增加失效与双写成本 |
 | RGB/HSV 距离 | RGB 感知不均匀；HSV 色相在低饱和度下不稳定（灰色会匹配到任意色相） |
 | 固定色相分桶 + 倒排索引 | 内存线性扫描已是毫秒级，无需索引结构；分桶还会把桶边界上的相近色错配 |
-| 手写 k-means/中位切分 | Rust 生态无成熟 Wu 量化器实现，手写 median-cut（v2），质量与 Wu 相当 |
+| 手写 k-means/中位切分 | Go 生态无成熟 Wu 量化器实现，手写 median-cut（v2），质量与 Wu 相当 |
 
 ## 实施状态
 

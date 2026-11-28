@@ -19,23 +19,17 @@ from urllib.request import Request, urlopen
 sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台默认非 UTF-8
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RUST_TARGET = {"win32": "x86_64-pc-windows-msvc", "darwin": "aarch64-apple-darwin", "linux": "x86_64-unknown-linux-gnu"}
 
 
 def find_server_bin():
     exe = "hawk-daemon.exe" if sys.platform == "win32" else "hawk-daemon"
-    triple = RUST_TARGET.get(sys.platform)
-    candidates = []
-    if triple:
-        candidates.append(os.path.join(REPO, "hawk-daemon", "target", triple, "release", exe))
-    candidates += [
-        os.path.join(REPO, "hawk-daemon", "target", "release", exe),
-        os.path.join(REPO, "hawk-daemon", "target", "debug", exe),
+    candidates = [
+        os.path.join(REPO, "hawk-daemon", exe),
+        os.path.join(REPO, "hawk-daemon", "bin", exe),
     ]
     existing = [c for c in candidates if os.path.exists(c)]
     if not existing:
-        raise SystemExit("未找到 hawk-daemon 构建产物，请先 cargo build --release")
-    # 同名产物可能同时存在（cargo build 与 build-server.mjs 输出位置不同），取最新修改的
+        raise SystemExit("未找到 hawk-daemon 构建产物，请先在 hawk-daemon/ 执行 go build -o hawk-daemon.exe .")
     return max(existing, key=os.path.getmtime)
 
 
@@ -98,6 +92,7 @@ class Server:
 
     def start(self, timeout_s=300):
         args = [self.bin, "local", self.lib_dir, "--port", str(self.port)]
+        args += ["--identity-dir", os.path.join(os.path.dirname(self.lib_dir), "identity")]
         if self.cache_parent:
             args += ["--cache-parent", self.cache_parent]
         self.proc = subprocess.Popen(

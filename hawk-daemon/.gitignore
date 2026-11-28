@@ -1,1 +1,8 @@
-target/
+# Go 构建产物
+/hawk-daemon
+/hawk-daemon.exe
+/bin/
+.DS_Store
+
+# 编辑器/旧 Rust 工具可能生成的目录
+/target/

@@ -1,124 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AccessConnectBody": {
-        "properties": {
-          "access_key": {
-            "description": "仅经本机 Loopback 代理送入目标加密隧道，不发送给 hawk-server。",
-            "type": "string"
-          },
-          "lan_url": {
-            "description": "LAN 配对记录中的目标地址；提供时直接走 LAN rendezvous，无需配置 hawk-server。",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_device_id": {
-            "type": "string"
-          },
-          "target_identity": {
-            "description": "配对时带外取得的目标 iroh 公钥；server 返回的其他身份一律拒绝。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "target_device_id",
-          "target_identity",
-          "access_key"
-        ],
-        "type": "object"
-      },
-      "AccessRendezvousBody": {
-        "properties": {
-          "source_endpoint_id": {
-            "type": "string"
-          },
-          "source_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "source_endpoint_id"
-        ],
-        "type": "object"
-      },
-      "AccessSessionBody": {
-        "properties": {
-          "access_key": {
-            "description": "只在客户端与目标 daemon 的加密隧道内提交，不经过 hawk-server。",
-            "type": "string"
-          }
-        },
-        "required": [
-          "access_key"
-        ],
-        "type": "object"
-      },
-      "AccessSessionDto": {
-        "properties": {
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          },
-          "session_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id",
-          "role"
-        ],
-        "type": "object"
-      },
-      "ActiveSessionDto": {
-        "properties": {
-          "proxy_port": {
-            "description": "会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>",
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role",
-            "description": "会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法）"
-          },
-          "session_id": {
-            "type": "string"
-          },
-          "session_token": {
-            "description": "会话代理临时凭证：仅以 Authorization Bearer 使用",
-            "type": "string"
-          },
-          "target_device_id": {
-            "type": "string"
-          },
-          "target_library_name": {
-            "type": "string"
-          },
-          "target_name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id",
-          "target_device_id",
-          "target_name",
-          "target_library_name",
-          "proxy_port",
-          "session_token",
-          "role"
-        ],
-        "type": "object"
-      },
       "AdminTokenResponse": {
         "description": "LocalIntegration Session 发现响应（data 为短期 importer token）",
         "properties": {
@@ -136,36 +18,10 @@
         "type": "object"
       },
       "AppConnectionDto": {
-        "description": "当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。\n本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。",
+        "description": "当前连接描述符：纯局域网版本只有本地素材库（mode=local）。",
         "properties": {
-          "api_base": {
-            "description": "仅 remote 有值：会话代理地址（http://127.0.0.1:<port>）",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "credential": {
-            "description": "仅 remote 有值：会话临时凭证",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "label": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "mode": {
-            "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
+            "description": "local（本地素材库）",
             "type": "string"
           },
           "role": {
@@ -182,14 +38,14 @@
       "AppInfo": {
         "properties": {
           "channel": {
-            "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan）",
+            "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer）",
             "type": "string"
           },
           "exec_path": {
             "type": "string"
           },
           "has_library": {
-            "description": "本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理）",
+            "description": "本地素材库是否就位（Go 版恒为 true）",
             "type": "boolean"
           },
           "lan": {
@@ -323,75 +179,14 @@
         ],
         "type": "object"
       },
-      "CreateKeyBody": {
-        "properties": {
-          "custom": {
-            "description": "自定义密钥（可空 = 程序生成 128 位随机串）",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "label": {
-            "description": "展示标签（如「手机插件」；可空）",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role",
-            "description": "viewer 只读，importer 允许导入；自定义 importer key 至少 12 字符"
-          }
-        },
-        "type": "object"
-      },
-      "CreateKeyDto": {
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "key": {
-            "description": "明文 key：只在本次响应出现，本地不存明文，也不发送给 hawk-server",
-            "type": "string"
-          },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_identity": {
-            "description": "配对时必须钉扎的目标 iroh 公钥",
-            "type": "string"
-          },
-          "target_library_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "key",
-          "target_identity"
-        ],
-        "type": "object"
-      },
       "CreateSessionBody": {
         "properties": {
           "mode": {
             "description": "direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用）",
             "type": "string"
-          },
-          "target_device_id": {
-            "type": "string"
           }
         },
-        "required": [
-          "target_device_id"
-        ],
+        "required": [],
         "type": "object"
       },
       "DuplicateEntryDto": {
@@ -467,119 +262,14 @@
         ],
         "type": "object"
       },
-      "Envelope_AccessSessionDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "role": {
-                "$ref": "#/components/schemas/Role"
-              },
-              "session_id": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "session_id",
-              "role"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_ActiveSessionDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "proxy_port": {
-                "description": "会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>",
-                "format": "int32",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "role": {
-                "$ref": "#/components/schemas/Role",
-                "description": "会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法）"
-              },
-              "session_id": {
-                "type": "string"
-              },
-              "session_token": {
-                "description": "会话代理临时凭证：仅以 Authorization Bearer 使用",
-                "type": "string"
-              },
-              "target_device_id": {
-                "type": "string"
-              },
-              "target_library_name": {
-                "type": "string"
-              },
-              "target_name": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "session_id",
-              "target_device_id",
-              "target_name",
-              "target_library_name",
-              "proxy_port",
-              "session_token",
-              "role"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
       "Envelope_AppConnectionDto": {
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
           "data": {
-            "description": "当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。\n本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。",
+            "description": "当前连接描述符：纯局域网版本只有本地素材库（mode=local）。",
             "properties": {
-              "api_base": {
-                "description": "仅 remote 有值：会话代理地址（http://127.0.0.1:<port>）",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "credential": {
-                "description": "仅 remote 有值：会话临时凭证",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "device_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "label": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "mode": {
-                "description": "local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库）",
+                "description": "local（本地素材库）",
                 "type": "string"
               },
               "role": {
@@ -608,14 +298,14 @@
           "data": {
             "properties": {
               "channel": {
-                "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan）",
+                "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer）",
                 "type": "string"
               },
               "exec_path": {
                 "type": "string"
               },
               "has_library": {
-                "description": "本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理）",
+                "description": "本地素材库是否就位（Go 版恒为 true）",
                 "type": "boolean"
               },
               "lan": {
@@ -722,51 +412,6 @@
               "hidden",
               "ignored",
               "missing"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_CreateKeyDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "key": {
-                "description": "明文 key：只在本次响应出现，本地不存明文，也不发送给 hawk-server",
-                "type": "string"
-              },
-              "target_device_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "target_identity": {
-                "description": "配对时必须钉扎的目标 iroh 公钥",
-                "type": "string"
-              },
-              "target_library_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "key",
-              "target_identity"
             ],
             "type": "object"
           },
@@ -1321,7 +966,7 @@
         "description": "统一成功信封；data 为空时省略该字段",
         "properties": {
           "data": {
-            "description": "目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。",
+            "description": "目标端公开的连接信息：只暴露展示元数据，不含任何密钥。",
             "properties": {
               "library_name": {
                 "type": "string"
@@ -1342,23 +987,8 @@
                 "minimum": 0,
                 "type": "integer"
               },
-              "target_device_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "target_identity": {
-                "type": "string"
-              },
               "target_library_id": {
                 "type": "string"
-              },
-              "tls_fingerprint": {
-                "type": [
-                  "string",
-                  "null"
-                ]
               }
             },
             "required": [
@@ -1367,7 +997,6 @@
               "name",
               "library_name",
               "peer_port",
-              "target_identity",
               "target_library_id"
             ],
             "type": "object"
@@ -1515,25 +1144,7 @@
                 "description": "pending / approved / denied / expired",
                 "type": "string"
               },
-              "target_device_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "target_identity": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
               "target_library_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "tls_fingerprint": {
                 "type": [
                   "string",
                   "null"
@@ -1666,25 +1277,8 @@
                 "minimum": 0,
                 "type": "integer"
               },
-              "target_device_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "target_identity": {
-                "description": "配对时钉扎的目标 iroh 公钥",
-                "type": "string"
-              },
               "target_library_id": {
                 "type": "string"
-              },
-              "tls_fingerprint": {
-                "description": "LAN Web 自签证书 SHA-256 指纹（HTTPS 监听首次启动后存在）",
-                "type": [
-                  "string",
-                  "null"
-                ]
               }
             },
             "required": [
@@ -1692,7 +1286,6 @@
               "port",
               "peer_port",
               "peer_id",
-              "target_identity",
               "target_library_id",
               "name",
               "library_name",
@@ -1700,31 +1293,6 @@
               "peer_keys",
               "active",
               "peer_active"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_LeaseDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "expires_in": {
-                "format": "int64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "expires_in"
             ],
             "type": "object"
           },
@@ -1846,9 +1414,6 @@
                     "description": "会话代理临时凭证：仅以 Authorization Bearer 使用",
                     "type": "string"
                   },
-                  "target_device_id": {
-                    "type": "string"
-                  },
                   "target_library_name": {
                     "type": "string"
                   },
@@ -1858,7 +1423,6 @@
                 },
                 "required": [
                   "session_id",
-                  "target_device_id",
                   "target_name",
                   "target_library_name",
                   "proxy_port",
@@ -1868,29 +1432,6 @@
                 "type": "object"
               }
             ]
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_PatchKeyDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "key": {
-                "$ref": "#/components/schemas/RemoteKeyDto"
-              }
-            },
-            "required": [
-              "key"
-            ],
-            "type": "object"
           },
           "status": {
             "type": "string"
@@ -1920,191 +1461,6 @@
             "required": [
               "dispatched",
               "removed"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_RemoteDeviceDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "allow_import": {
-                "type": "boolean"
-              },
-              "allow_remote": {
-                "type": "boolean"
-              },
-              "device_id": {
-                "type": "string"
-              },
-              "last_seen_at_ms": {
-                "format": "int64",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "library_name": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "online": {
-                "type": "boolean"
-              },
-              "platform": {
-                "type": "string"
-              },
-              "reachable": {
-                "description": "是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。\nNone = 无可达性数据（未心跳过）",
-                "type": [
-                  "boolean",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "device_id",
-              "name",
-              "platform",
-              "library_name",
-              "online",
-              "allow_remote",
-              "allow_import"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_RemoteDevicesDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "devices": {
-                "items": {
-                  "$ref": "#/components/schemas/RemoteDeviceDto"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "devices"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_RemoteDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "allow_import": {
-                "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
-                "type": "boolean"
-              },
-              "enabled": {
-                "type": "boolean"
-              },
-              "relay": {
-                "description": "使用中继（服务端提供时；消耗自建带宽，设备级开关）",
-                "type": "boolean"
-              },
-              "status": {
-                "$ref": "#/components/schemas/RemoteStatus",
-                "description": "运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因"
-              },
-              "tenant_key": {
-                "description": "服务端 tenant-key（池门禁凭证，hawk-server tenant add 生成）",
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "enabled",
-              "url",
-              "tenant_key",
-              "allow_import",
-              "relay",
-              "status"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_RemoteKeysDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "keys": {
-                "items": {
-                  "$ref": "#/components/schemas/RemoteKeyDto"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "keys"
-            ],
-            "type": "object"
-          },
-          "status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "Envelope_RotateDeviceDto": {
-        "description": "统一成功信封；data 为空时省略该字段",
-        "properties": {
-          "data": {
-            "properties": {
-              "endpoint_id": {
-                "description": "轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）",
-                "type": "string"
-              }
-            },
-            "required": [
-              "endpoint_id"
             ],
             "type": "object"
           },
@@ -3306,7 +2662,7 @@
       "LanAccessKeyDto": {
         "properties": {
           "access_key": {
-            "description": "完整访问密钥仅 admin 可读；设置面板负责打码展示与复制",
+            "description": "明文只在创建/配对成功时返回一次；列表接口为空字符串",
             "type": "string"
           },
           "created_at_ms": {
@@ -3413,7 +2769,7 @@
         "type": "object"
       },
       "LanConnectionInfoDto": {
-        "description": "目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。",
+        "description": "目标端公开的连接信息：只暴露展示元数据，不含任何密钥。",
         "properties": {
           "library_name": {
             "type": "string"
@@ -3434,23 +2790,8 @@
             "minimum": 0,
             "type": "integer"
           },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_identity": {
-            "type": "string"
-          },
           "target_library_id": {
             "type": "string"
-          },
-          "tls_fingerprint": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
@@ -3459,7 +2800,6 @@
           "name",
           "library_name",
           "peer_port",
-          "target_identity",
           "target_library_id"
         ],
         "type": "object"
@@ -3695,25 +3035,7 @@
             "description": "pending / approved / denied / expired",
             "type": "string"
           },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_identity": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "target_library_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "tls_fingerprint": {
             "type": [
               "string",
               "null"
@@ -3757,23 +3079,8 @@
           "role": {
             "$ref": "#/components/schemas/Role"
           },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_identity": {
-            "type": "string"
-          },
           "target_library_id": {
             "type": "string"
-          },
-          "tls_fingerprint": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "url": {
             "type": "string"
@@ -3786,7 +3093,6 @@
           "url",
           "role",
           "peer_key",
-          "target_identity",
           "target_library_id"
         ],
         "type": "object"
@@ -3806,23 +3112,8 @@
           "requires_pairing": {
             "type": "boolean"
           },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_identity": {
-            "type": "string"
-          },
           "target_library_id": {
             "type": "string"
-          },
-          "tls_fingerprint": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "url": {
             "type": "string"
@@ -3838,7 +3129,6 @@
           "url",
           "writable",
           "requires_pairing",
-          "target_identity",
           "target_library_id"
         ],
         "type": "object"
@@ -3875,23 +3165,8 @@
           "role": {
             "$ref": "#/components/schemas/Role"
           },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_identity": {
-            "type": "string"
-          },
           "target_library_id": {
             "type": "string"
-          },
-          "tls_fingerprint": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "urls": {
             "description": "源端候选局域网地址（http://ip:peer_port）",
@@ -3908,7 +3183,6 @@
           "urls",
           "peer_key",
           "role",
-          "target_identity",
           "target_library_id"
         ],
         "type": "object"
@@ -3969,25 +3243,8 @@
             "minimum": 0,
             "type": "integer"
           },
-          "target_device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "target_identity": {
-            "description": "配对时钉扎的目标 iroh 公钥",
-            "type": "string"
-          },
           "target_library_id": {
             "type": "string"
-          },
-          "tls_fingerprint": {
-            "description": "LAN Web 自签证书 SHA-256 指纹（HTTPS 监听首次启动后存在）",
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
@@ -3995,7 +3252,6 @@
           "port",
           "peer_port",
           "peer_id",
-          "target_identity",
           "target_library_id",
           "name",
           "library_name",
@@ -4003,19 +3259,6 @@
           "peer_keys",
           "active",
           "peer_active"
-        ],
-        "type": "object"
-      },
-      "LeaseDto": {
-        "properties": {
-          "expires_in": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "expires_in"
         ],
         "type": "object"
       },
@@ -4187,61 +3430,6 @@
         ],
         "type": "object"
       },
-      "PatchDeviceBody": {
-        "properties": {
-          "allow_remote": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "library_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "PatchKeyBody": {
-        "properties": {
-          "label": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "role": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/Role"
-              }
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "PatchKeyDto": {
-        "properties": {
-          "key": {
-            "$ref": "#/components/schemas/RemoteKeyDto"
-          }
-        },
-        "required": [
-          "key"
-        ],
-        "type": "object"
-      },
       "PutLanBody": {
         "properties": {
           "enabled": {
@@ -4322,37 +3510,6 @@
         ],
         "type": "object"
       },
-      "PutRemoteBody": {
-        "properties": {
-          "allow_import": {
-            "description": "允许广域网会话导入素材/新建文件夹；省略时按关闭处理",
-            "type": "boolean"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "relay": {
-            "description": "使用中继（服务端提供时）；省略时保留现值",
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "tenant_key": {
-            "description": "服务端 tenant-key",
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "enabled",
-          "url",
-          "tenant_key"
-        ],
-        "type": "object"
-      },
       "RefreshCacheRequest": {
         "properties": {
           "type": {
@@ -4391,207 +3548,6 @@
         ],
         "type": "object"
       },
-      "RemoteDeviceDto": {
-        "properties": {
-          "allow_import": {
-            "type": "boolean"
-          },
-          "allow_remote": {
-            "type": "boolean"
-          },
-          "device_id": {
-            "type": "string"
-          },
-          "last_seen_at_ms": {
-            "format": "int64",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "library_name": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "online": {
-            "type": "boolean"
-          },
-          "platform": {
-            "type": "string"
-          },
-          "reachable": {
-            "description": "是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。\nNone = 无可达性数据（未心跳过）",
-            "type": [
-              "boolean",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "device_id",
-          "name",
-          "platform",
-          "library_name",
-          "online",
-          "allow_remote",
-          "allow_import"
-        ],
-        "type": "object"
-      },
-      "RemoteDevicesDto": {
-        "properties": {
-          "devices": {
-            "items": {
-              "$ref": "#/components/schemas/RemoteDeviceDto"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "devices"
-        ],
-        "type": "object"
-      },
-      "RemoteDto": {
-        "properties": {
-          "allow_import": {
-            "description": "允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立）",
-            "type": "boolean"
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "relay": {
-            "description": "使用中继（服务端提供时；消耗自建带宽，设备级开关）",
-            "type": "boolean"
-          },
-          "status": {
-            "$ref": "#/components/schemas/RemoteStatus",
-            "description": "运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因"
-          },
-          "tenant_key": {
-            "description": "服务端 tenant-key（池门禁凭证，hawk-server tenant add 生成）",
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "enabled",
-          "url",
-          "tenant_key",
-          "allow_import",
-          "relay",
-          "status"
-        ],
-        "type": "object"
-      },
-      "RemoteKeyDto": {
-        "properties": {
-          "created_at_ms": {
-            "format": "int64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "prefix": {
-            "description": "key 前 4 字符（识别用；明文不存也不可得）",
-            "type": "string"
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          }
-        },
-        "required": [
-          "id",
-          "label",
-          "role",
-          "prefix",
-          "created_at_ms"
-        ],
-        "type": "object"
-      },
-      "RemoteKeysDto": {
-        "properties": {
-          "keys": {
-            "items": {
-              "$ref": "#/components/schemas/RemoteKeyDto"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "keys"
-        ],
-        "type": "object"
-      },
-      "RemoteSessionPayload": {
-        "properties": {
-          "session_id": {
-            "type": "string"
-          },
-          "state": {
-            "description": "connected / disconnected",
-            "type": "string"
-          },
-          "target_device_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id",
-          "target_device_id",
-          "state"
-        ],
-        "type": "object"
-      },
-      "RemoteState": {
-        "enum": [
-          "disabled",
-          "connecting",
-          "online",
-          "error"
-        ],
-        "type": "string"
-      },
-      "RemoteStatus": {
-        "properties": {
-          "device_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "server_url": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "state": {
-            "$ref": "#/components/schemas/RemoteState"
-          }
-        },
-        "required": [
-          "state"
-        ],
-        "type": "object"
-      },
       "RescanRequest": {
         "properties": {
           "path": {
@@ -4612,18 +3568,6 @@
           "admin"
         ],
         "type": "string"
-      },
-      "RotateDeviceDto": {
-        "properties": {
-          "endpoint_id": {
-            "description": "轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效）",
-            "type": "string"
-          }
-        },
-        "required": [
-          "endpoint_id"
-        ],
-        "type": "object"
       },
       "ScanInfo": {
         "properties": {
@@ -4747,14 +3691,6 @@
             "$ref": "#/components/schemas/LocksSnapshot",
             "description": "锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照"
           },
-          "remote.session": {
-            "$ref": "#/components/schemas/RemoteSessionPayload",
-            "description": "远程会话生命周期（connected/disconnected），app 断线回切依赖"
-          },
-          "remote.status": {
-            "$ref": "#/components/schemas/RemoteStatus",
-            "description": "信令状态变化（connecting/online/error），app 远程设置面板免轮询"
-          },
           "task.progress": {
             "$ref": "#/components/schemas/TaskProgress"
           }
@@ -4772,8 +3708,6 @@
           "library.updated",
           "global_filter.changed",
           "locks.changed",
-          "remote.session",
-          "remote.status",
           "lan.access.changed"
         ],
         "type": "object"
@@ -4996,17 +3930,8 @@
     }
   },
   "info": {
-    "contact": {
-      "email": "juha7kukkonen@gmail.com",
-      "name": "Juha Kukkonen"
-    },
-    "description": "Utoipa's axum bindings for seamless integration for the two",
-    "license": {
-      "identifier": "MIT OR Apache-2.0",
-      "name": "MIT OR Apache-2.0"
-    },
     "title": "hawk-daemon | v1",
-    "version": "1.0.0"
+    "version": "0.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -5025,7 +3950,7 @@
             "description": "OK"
           }
         },
-        "summary": "LocalIntegration 发现：浏览器插件零配置接入。\n返回 Loopback 限定的 importer Session，而不是进程 admin token。\n响应不带 CORS 头且 Host 限定环回；远程隧道端必须直接拒绝本端点。",
+        "summary": "LocalIntegration 发现：浏览器插件零配置接入。\n返回 Loopback 限定的 importer Session，而不是进程 admin token。\n响应不带 CORS 头且 Host 限定环回。",
         "tags": [
           "app"
         ]
@@ -5046,7 +3971,7 @@
             "description": "OK"
           }
         },
-        "summary": "当前连接（远程查看模式下同样可用：无库 daemon 只暴露远程管理面与会话代理）",
+        "summary": "当前连接",
         "tags": [
           "app"
         ]
@@ -6688,503 +5613,6 @@
         "summary": "解锁（任何有效 token，含只读 viewer）：校验密码发放票据，票据由各客户端独立持有",
         "tags": [
           "lock"
-        ]
-      }
-    },
-    "/api/v1/remote": {
-      "get": {
-        "operationId": "get_remote",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_RemoteDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "读取远程访问接入配置与运行状态（admin 限定；viewer 403，防止只读 token 看到接入信息）",
-        "tags": [
-          "remote"
-        ]
-      },
-      "put": {
-        "operationId": "put_remote",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PutRemoteBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_RemoteDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "写回应用级 remote.toml 并热重启信令（admin 限定）。\n接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/access-connect": {
-      "post": {
-        "operationId": "create_access_session",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AccessConnectBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_ActiveSessionDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "AccessKey 原生连接：LAN 使用目标地址，WAN 使用 hawk-server 编排；目标身份钉扎后在隧道内登录。",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/access-session": {
-      "post": {
-        "operationId": "authenticate_access_session",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AccessSessionBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_AccessSessionDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "AccessKey rendezvous 的隧道内登录；未认证隧道只能调用此端点。",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/device": {
-      "patch": {
-        "operationId": "patch_device",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchDeviceBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_RemoteDeviceDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "更新本机设备在服务端的信息：显示名 / 远程访问开关 / 库名（至少一项）",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/device/rotate": {
-      "post": {
-        "operationId": "rotate_device",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_RotateDeviceDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "证书轮换：重新生成自签证书，同步服务端指纹并落盘，信令热重启（旧证书会话失效）",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/devices": {
-      "get": {
-        "operationId": "list_devices",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_RemoteDevicesDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "拉取服务端设备列表（admin 限定）。本机设备与对端设备同列，app 据 online/allow_remote 展示",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/devices/{device_id}": {
-      "delete": {
-        "operationId": "delete_device",
-        "parameters": [
-          {
-            "description": "服务端设备 id",
-            "in": "path",
-            "name": "device_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessOnly"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "注销设备记录（TenantAdmin 鉴权）：转发服务端 DELETE /devices/{id}，其进行中会话一并取消。\n本机当前设备不可经此移除（会删掉自己的信令身份）；先关闭远程接入是唯一安全路径",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/keys": {
-      "get": {
-        "operationId": "list_keys",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_RemoteKeysDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "列出本机签发的访问密钥（admin 限定；不含明文——明文只在签发时返回一次）",
-        "tags": [
-          "remote"
-        ]
-      },
-      "post": {
-        "operationId": "create_key",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateKeyBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_CreateKeyDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "签发访问密钥（admin 限定）：本地保管验证子，只供加密隧道内的目标端认证",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/keys/{key_id}": {
-      "delete": {
-        "operationId": "delete_key",
-        "parameters": [
-          {
-            "description": "密钥 id",
-            "in": "path",
-            "name": "key_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessOnly"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "吊销访问密钥（admin 限定）：本地删除，目标 daemon 拒绝该 key 的后续会话",
-        "tags": [
-          "remote"
-        ]
-      },
-      "patch": {
-        "operationId": "patch_key",
-        "parameters": [
-          {
-            "description": "密钥 id",
-            "in": "path",
-            "name": "key_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchKeyBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_PatchKeyDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "更新访问密钥的标签/权限（admin 限定；权限收窄对后续会话立即生效）",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/lease": {
-      "post": {
-        "operationId": "renew_lease",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_LeaseDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "已认证隧道续期：延长目标 daemon 的会话租约，不改变原始角色。",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/remote/session": {
-      "delete": {
-        "operationId": "delete_session",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessOnly"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "断开当前远程会话（幂等）：通知服务端取消、断开隧道、关闭会话代理",
-        "tags": [
-          "remote"
-        ]
-      },
-      "get": {
-        "operationId": "get_session",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_Option_ActiveSessionDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "读取当前活动远程会话（无活动会话时 data 为 null）",
-        "tags": [
-          "remote"
-        ]
-      },
-      "post": {
-        "operationId": "create_session",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateSessionBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Envelope_ActiveSessionDto"
-                }
-              }
-            },
-            "description": "OK"
-          }
-        },
-        "summary": "建立到目标设备的远程会话：发起 → 轮询 ready → 候选依序连接 → 拉起会话代理。\n单活动会话模型：新会话自动顶替旧会话。返回代理连接信息（api_base + token + 展示名）",
-        "tags": [
-          "remote"
-        ]
-      }
-    },
-    "/api/v1/rendezvous": {
-      "post": {
-        "operationId": "create_access_rendezvous",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AccessRendezvousBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "summary": "原生 LAN AccessKey rendezvous：只编排 iroh，不传输 AccessKey 或素材明文。",
-        "tags": [
-          "app"
-        ]
-      }
-    },
-    "/api/v1/rendezvous/{session_id}": {
-      "delete": {
-        "operationId": "cancel_access_rendezvous",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "session_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "app"
-        ]
-      },
-      "get": {
-        "operationId": "get_access_rendezvous",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "session_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "app"
         ]
       }
     },

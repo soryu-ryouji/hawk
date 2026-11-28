@@ -1,0 +1,5866 @@
+{
+  "components": {
+    "schemas": {
+      "AdminTokenResponse": {
+        "description": "LocalIntegration Session 发现响应（data 为短期 importer token）",
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ],
+        "type": "object"
+      },
+      "AppConnectionDto": {
+        "description": "当前连接描述符：纯局域网版本只有本地素材库（mode=local）。",
+        "properties": {
+          "mode": {
+            "description": "local（本地素材库）",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "当前连接角色（本地库 admin；远端库为会话角色）"
+          }
+        },
+        "required": [
+          "mode",
+          "role"
+        ],
+        "type": "object"
+      },
+      "AppInfo": {
+        "properties": {
+          "channel": {
+            "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer）",
+            "type": "string"
+          },
+          "exec_path": {
+            "type": "string"
+          },
+          "has_library": {
+            "description": "本地素材库是否就位（Go 版恒为 true）",
+            "type": "boolean"
+          },
+          "lan": {
+            "$ref": "#/components/schemas/LanInfo"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "role": {
+            "description": "当前凭证的角色（viewer/importer/editor/admin）",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "platform",
+          "exec_path",
+          "role",
+          "channel",
+          "has_library",
+          "lan"
+        ],
+        "type": "object"
+      },
+      "AppSessionBody": {
+        "properties": {
+          "access_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_key"
+        ],
+        "type": "object"
+      },
+      "AppSessionDto": {
+        "properties": {
+          "channel": {
+            "type": "string"
+          },
+          "expires_in": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "role",
+          "channel",
+          "expires_in"
+        ],
+        "type": "object"
+      },
+      "CategoryCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CategoryNameRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CategoryUpdateRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "new_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "new_name"
+        ],
+        "type": "object"
+      },
+      "CleanupIndexResponse": {
+        "properties": {
+          "checked": {
+            "description": "检查的索引位置数（不含回收站）",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hidden": {
+            "description": "隐藏文件（路径任一段以 . 开头，如 .DS_Store、.stignore）",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ignored": {
+            "description": "ignore 规则命中或扩展名不在白名单内",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "missing": {
+            "description": "源文件已消失的残留（与 refresh_cache 的消失对账同款判定）",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "removed": {
+            "description": "清除的条目总数（= hidden + ignored + missing）",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checked",
+          "removed",
+          "hidden",
+          "ignored",
+          "missing"
+        ],
+        "type": "object"
+      },
+      "CreateSessionBody": {
+        "properties": {
+          "mode": {
+            "description": "direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用）",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "DuplicateEntryDto": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ItemDto"
+          }
+        },
+        "required": [
+          "item"
+        ],
+        "type": "object"
+      },
+      "DuplicateGroupDto": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/DuplicateEntryDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "description": "稳定组标识：内容 hash（item id）",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "DuplicateScanRequest": {
+        "properties": {
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "DuplicateScanResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/DuplicateGroupDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "description": "过滤后的总组数（分页前）",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "groups",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "Envelope_AppConnectionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "当前连接描述符：纯局域网版本只有本地素材库（mode=local）。",
+            "properties": {
+              "mode": {
+                "description": "local（本地素材库）",
+                "type": "string"
+              },
+              "role": {
+                "$ref": "#/components/schemas/Role",
+                "description": "当前连接角色（本地库 admin；远端库为会话角色）"
+              }
+            },
+            "required": [
+              "mode",
+              "role"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_AppInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "channel": {
+                "description": "当前请求进入 daemon 的通道（loopback/lan_web/lan_peer）",
+                "type": "string"
+              },
+              "exec_path": {
+                "type": "string"
+              },
+              "has_library": {
+                "description": "本地素材库是否就位（Go 版恒为 true）",
+                "type": "boolean"
+              },
+              "lan": {
+                "$ref": "#/components/schemas/LanInfo"
+              },
+              "platform": {
+                "type": "string"
+              },
+              "role": {
+                "description": "当前凭证的角色（viewer/importer/editor/admin）",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "version",
+              "platform",
+              "exec_path",
+              "role",
+              "channel",
+              "has_library",
+              "lan"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_AppSessionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "channel": {
+                "type": "string"
+              },
+              "expires_in": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "role": {
+                "$ref": "#/components/schemas/Role"
+              }
+            },
+            "required": [
+              "role",
+              "channel",
+              "expires_in"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_CleanupIndexResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "checked": {
+                "description": "检查的索引位置数（不含回收站）",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "hidden": {
+                "description": "隐藏文件（路径任一段以 . 开头，如 .DS_Store、.stignore）",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "ignored": {
+                "description": "ignore 规则命中或扩展名不在白名单内",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "missing": {
+                "description": "源文件已消失的残留（与 refresh_cache 的消失对账同款判定）",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "removed": {
+                "description": "清除的条目总数（= hidden + ignored + missing）",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "checked",
+              "removed",
+              "hidden",
+              "ignored",
+              "missing"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_DuplicateScanResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "groups": {
+                "items": {
+                  "$ref": "#/components/schemas/DuplicateGroupDto"
+                },
+                "type": "array"
+              },
+              "limit": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "offset": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "total": {
+                "description": "过滤后的总组数（分页前）",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "groups",
+              "total",
+              "offset",
+              "limit"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_FolderNode": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "children": {
+                "description": "子目录（自引用；no_recursion 生成 $ref 切断内联递归）",
+                "items": {
+                  "$ref": "#/components/schemas/FolderNode"
+                },
+                "type": "array"
+              },
+              "count": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "modification_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "name",
+              "children",
+              "modification_time",
+              "count"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_GlobalFilterSnapshot": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "categories": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "folders": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "folders",
+              "categories",
+              "tags"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_HashMap_String_ViewSortDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "additionalProperties": {
+              "properties": {
+                "order": {
+                  "type": "string"
+                },
+                "order_by": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "order_by",
+                "order"
+              ],
+              "type": "object"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemAddResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "already_existed": {
+                "type": "boolean"
+              },
+              "item": {
+                "$ref": "#/components/schemas/ItemDto"
+              },
+              "skipped": {
+                "description": "内容已存在且按 skip_existing 跳过：未写入文件、未追加路径（already_existed 旧语义仍保留：\n已写入并关联到既有条目）",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "item",
+              "already_existed",
+              "skipped"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemAggregateResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "common_categories": {
+                "description": "全部选中项的分类交集（排序稳定）",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "common_tags": {
+                "description": "全部选中项的标签交集（排序稳定）",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "common_tags",
+              "common_categories"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemBatchUpdateResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "conflicts": {
+                "description": "移动时因目标文件夹同名冲突而跳过的文件名（其余失败仍走 missing_ids；前端据此给出明确提示）",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "missing_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "updated",
+              "missing_ids",
+              "conflicts"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "API 的 Item 对象（snake_case）",
+            "properties": {
+              "annotation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "categories": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "ext": {
+                "type": "string"
+              },
+              "folders": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "height": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "modification_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "palette": {
+                "items": {
+                  "$ref": "#/components/schemas/PaletteColorDto"
+                },
+                "type": "array"
+              },
+              "path": {
+                "description": "本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径）",
+                "type": "string"
+              },
+              "paths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "size": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "star": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "width": {
+                "format": "int32",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "name",
+              "ext",
+              "width",
+              "height",
+              "size",
+              "tags",
+              "categories",
+              "paths",
+              "folders",
+              "star",
+              "modification_time",
+              "palette"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemListResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/ItemDto"
+                },
+                "type": "array"
+              },
+              "limit": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "offset": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total_size": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "items",
+              "total",
+              "total_size",
+              "offset",
+              "limit"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_ItemSkeletonResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/ItemSkeletonDto"
+                },
+                "type": "array"
+              },
+              "total_size": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "items",
+              "total_size"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanAccessKeyDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "access_key": {
+                "description": "完整访问密钥仅 admin 可读；设置面板负责打码展示与复制",
+                "type": "string"
+              },
+              "created_at_ms": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "library_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "peer_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "role": {
+                "$ref": "#/components/schemas/Role"
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "access_key",
+              "role",
+              "created_at_ms"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanClientsDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "clients": {
+                "items": {
+                  "$ref": "#/components/schemas/LanClientDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "clients"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanConnectionInfoDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "目标端公开的连接信息：只暴露展示元数据，不含任何密钥。",
+            "properties": {
+              "library_name": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "peer_id": {
+                "type": "string"
+              },
+              "peer_port": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "protocol": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "target_library_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "protocol",
+              "peer_id",
+              "name",
+              "library_name",
+              "peer_port",
+              "target_library_id"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanDeviceKeyDeletedDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "deleted": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "deleted"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairDecisionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "peer": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LanPairedPeerDto"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairRequestCreatedDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "expires_in_seconds": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "request_id",
+              "expires_in_seconds"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairRequestStatusDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "access_key": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "library_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "peer_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "protocol": {
+                "description": "桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。",
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "role": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Role"
+                  }
+                ]
+              },
+              "status": {
+                "description": "pending / approved / denied / expired",
+                "type": "string"
+              },
+              "target_library_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "protocol",
+              "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPairRequestsDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "requests": {
+                "items": {
+                  "$ref": "#/components/schemas/LanPairRequestDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "requests"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanPeersDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "peers": {
+                "items": {
+                  "$ref": "#/components/schemas/LanPeerDto"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "peers"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LanSettingsDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "active": {
+                "description": "网站监听状态",
+                "type": "boolean"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "keys": {
+                "items": {
+                  "$ref": "#/components/schemas/LanAccessKeyDto"
+                },
+                "type": "array"
+              },
+              "library_name": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "peer_active": {
+                "description": "hawk-app 直连监听状态",
+                "type": "boolean"
+              },
+              "peer_error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "peer_id": {
+                "type": "string"
+              },
+              "peer_keys": {
+                "items": {
+                  "$ref": "#/components/schemas/LanAccessKeyDto"
+                },
+                "type": "array"
+              },
+              "peer_port": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "port": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "target_library_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled",
+              "port",
+              "peer_port",
+              "peer_id",
+              "target_library_id",
+              "name",
+              "library_name",
+              "keys",
+              "peer_keys",
+              "active",
+              "peer_active"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LibraryInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "application_version": {
+                "type": "string"
+              },
+              "modification_time": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "scan": {
+                "$ref": "#/components/schemas/ScanInfo",
+                "description": "周期兜底扫描设置（.hawk/config.toml 的 [scan]）"
+              }
+            },
+            "required": [
+              "name",
+              "path",
+              "modification_time",
+              "application_version",
+              "scan"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_LocksSnapshot": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "description": "锁快照（API 响应/事件负载：仅名称，不含密码哈希）",
+            "properties": {
+              "categories": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "folders": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "folders",
+              "categories",
+              "tags"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_Option_ActiveSessionDto": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "properties": {
+                  "proxy_port": {
+                    "description": "会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>",
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "role": {
+                    "$ref": "#/components/schemas/Role",
+                    "description": "会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法）"
+                  },
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "session_token": {
+                    "description": "会话代理临时凭证：仅以 Authorization Bearer 使用",
+                    "type": "string"
+                  },
+                  "target_library_name": {
+                    "type": "string"
+                  },
+                  "target_name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "target_name",
+                  "target_library_name",
+                  "proxy_port",
+                  "session_token",
+                  "role"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_RefreshCacheResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "dispatched": {
+                "description": "实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计）",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "removed": {
+                "description": "消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛）",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "dispatched",
+              "removed"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_StartupInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "phase": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "processed": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string"
+              },
+              "total": {
+                "format": "int32",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_TaskStatus": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "config_error": {
+                "description": ".hawk/config.toml 解析错误（保留上次有效配置继续运行）；正常为 null",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "index": {
+                "$ref": "#/components/schemas/IndexBacklog"
+              },
+              "last_scan": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ScanStatsInfo",
+                    "description": "最近一轮全库扫描统计（未跑过为 null）"
+                  }
+                ]
+              },
+              "queue_overflow": {
+                "description": "索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位",
+                "type": "boolean"
+              },
+              "sse_lagged": {
+                "description": "SSE 订阅因消费落后被断开（lagged）的累计次数",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thumbnail": {
+                "$ref": "#/components/schemas/TaskBacklog"
+              }
+            },
+            "required": [
+              "thumbnail",
+              "index",
+              "queue_overflow",
+              "sse_lagged"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_UnlockResponse": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "properties": {
+              "unlock_token": {
+                "description": "解锁票据：后续请求经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带（img/SSE 通道）；\ndaemon 重启失效，前端丢弃即「锁定回去」。注意：不要把带 unlock 参数的图片 URL 分享给他人",
+                "type": "string"
+              }
+            },
+            "required": [
+              "unlock_token"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_Vec_TaxonInfo": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "items": {
+              "properties": {
+                "count": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "count"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Envelope_usize": {
+        "description": "统一成功信封；data 为空时省略该字段",
+        "properties": {
+          "data": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "FolderChangedPayload": {
+        "description": "reason 目前恒为 external，客户端应忽略取值（结构为将来预留）",
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "FolderCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parent_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "FolderNode": {
+        "properties": {
+          "children": {
+            "description": "子目录（自引用；no_recursion 生成 $ref 切断内联递归）",
+            "items": {
+              "$ref": "#/components/schemas/FolderNode"
+            },
+            "type": "array"
+          },
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "modification_time": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "children",
+          "modification_time",
+          "count"
+        ],
+        "type": "object"
+      },
+      "FolderPathRequest": {
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "FolderUpdateRequest": {
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "GlobalFilterPutRequest": {
+        "properties": {
+          "hidden": {
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "维度：folder / category / tag",
+            "type": "string"
+          },
+          "name": {
+            "description": "folder 为库内相对路径（如 \"posters/2024\"）；category/tag 为名称",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "hidden"
+        ],
+        "type": "object"
+      },
+      "GlobalFilterSnapshot": {
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders",
+          "categories",
+          "tags"
+        ],
+        "type": "object"
+      },
+      "IndexBacklog": {
+        "properties": {
+          "active": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "pending": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "total": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "pending",
+          "active"
+        ],
+        "type": "object"
+      },
+      "ItemAddRequest": {
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "img_base64": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skip_existing": {
+            "description": "内容已存在于库内（不含回收站）时跳过：不写文件、不追加路径，响应 skipped=true",
+            "type": "boolean"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "website": {
+            "description": "来源网页(收集场景:图片所在的页面地址),记录为 Item.url",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ItemAddResponse": {
+        "properties": {
+          "already_existed": {
+            "type": "boolean"
+          },
+          "item": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "skipped": {
+            "description": "内容已存在且按 skip_existing 跳过：未写入文件、未追加路径（already_existed 旧语义仍保留：\n已写入并关联到既有条目）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "item",
+          "already_existed",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "ItemAggregateRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "ItemAggregateResponse": {
+        "properties": {
+          "common_categories": {
+            "description": "全部选中项的分类交集（排序稳定）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "common_tags": {
+            "description": "全部选中项的标签交集（排序稳定）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "common_tags",
+          "common_categories"
+        ],
+        "type": "object"
+      },
+      "ItemBatchUpdateRequest": {
+        "properties": {
+          "add_categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "add_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "paths": {
+            "description": "与 ids 等长的可选位置限定（同内容多位置时按位置移动 folder_path；缺省或元素为 null 时取主位置）",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "remove_categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "remove_tags": {
+            "description": "并集移除（多选面板的「共有标签/分类 × 摘除」用）",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "star": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "ItemBatchUpdateResponse": {
+        "properties": {
+          "conflicts": {
+            "description": "移动时因目标文件夹同名冲突而跳过的文件名（其余失败仍走 missing_ids；前端据此给出明确提示）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "missing_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated",
+          "missing_ids",
+          "conflicts"
+        ],
+        "type": "object"
+      },
+      "ItemDto": {
+        "description": "API 的 Item 对象（snake_case）",
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ext": {
+            "type": "string"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "height": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "modification_time": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "palette": {
+            "items": {
+              "$ref": "#/components/schemas/PaletteColorDto"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "本条目对应的库内相对位置（同 id 内容多位置时按 path 区分条目；回收站视图为 .hawk/trash/ 实际路径）",
+            "type": "string"
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "star": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "width": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "name",
+          "ext",
+          "width",
+          "height",
+          "size",
+          "tags",
+          "categories",
+          "paths",
+          "folders",
+          "star",
+          "modification_time",
+          "palette"
+        ],
+        "type": "object"
+      },
+      "ItemIdPayload": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemIdRequest": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemListRequest": {
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "categories_match": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "color": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exclude_categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "exclude_folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "exclude_tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "ext": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folders_exact": {
+            "type": "boolean"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "in_trash": {
+            "type": "boolean"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "max_height": {
+            "description": "高度筛选（像素）：≤ 阈值，可与 min_height 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_width": {
+            "description": "宽度筛选（像素）：≤ 阈值，可与 min_width 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_height": {
+            "description": "高度筛选（像素）：≥ 阈值，可与 max_height 组成区间；与宽度条件独立",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_side_gte": {
+            "description": "分辨率档位筛选（短边 = min(width, height)，像素）：≥ 阈值，可与 min_side_lte 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_side_lte": {
+            "description": "分辨率档位筛选（短边 = min(width, height)，像素）：≤ 阈值，可与 min_side_gte 组成区间",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "min_width": {
+            "description": "宽度筛选（像素）：≥ 阈值，可与 max_width 组成区间；与高度条件独立",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "order": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "star": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "without_categories": {
+            "type": "boolean"
+          },
+          "without_tags": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "ItemListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemDto"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_size": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "total_size",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ItemRefreshThumbnailRequest": {
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemReplaceRequest": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "img_base64": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "img_base64"
+        ],
+        "type": "object"
+      },
+      "ItemSkeletonDto": {
+        "description": "网格骨架：虚拟布局所需的最低限度信息（ItemDto 的同序轻量投影）",
+        "properties": {
+          "height": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "description": "同 id（内容）多位置时按 path 区分条目",
+            "type": "string"
+          },
+          "size": {
+            "description": "该位置的字节数（位置级）：前端选择集大小聚合用（详情只覆盖视口窗口，承担不起全量聚合）",
+            "format": "int64",
+            "type": "integer"
+          },
+          "star": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "width": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "width",
+          "height",
+          "star",
+          "size"
+        ],
+        "type": "object"
+      },
+      "ItemSkeletonResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemSkeletonDto"
+            },
+            "type": "array"
+          },
+          "total_size": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_size"
+        ],
+        "type": "object"
+      },
+      "ItemUpdateRequest": {
+        "properties": {
+          "annotation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "folder_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "star": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ItemUploadForm": {
+        "description": "multipart 表单描述（仅用于 OpenAPI；实现为流式 Multipart 提取）",
+        "properties": {
+          "categories": {
+            "description": "分类（可重复出现多次；缺省不设置）",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "file": {
+            "description": "文件内容（必需；文件名只取末段防跨目录，扩展名决定类型）",
+            "format": "binary",
+            "type": "string"
+          },
+          "folder_path": {
+            "description": "目标文件夹（库内相对路径，缺省库根；不存在自动创建）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "文件名覆盖（不含扩展名；默认取 file 文件名）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skip_existing": {
+            "description": "内容已在库内（不含回收站）时跳过",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "tags": {
+            "description": "标签（可重复出现多次；缺省不设置）",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "type": "object"
+      },
+      "ItemsAddedPayload": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
+      "ItemsUpdatedPayload": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "LanAccessChangedPayload": {
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changed"
+        ],
+        "type": "object"
+      },
+      "LanAccessKeyDto": {
+        "properties": {
+          "access_key": {
+            "description": "明文只在创建/配对成功时返回一次；列表接口为空字符串",
+            "type": "string"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "access_key",
+          "role",
+          "created_at_ms"
+        ],
+        "type": "object"
+      },
+      "LanClientDto": {
+        "properties": {
+          "key_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_seen_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key_id",
+          "label",
+          "last_seen_ms",
+          "online",
+          "role"
+        ],
+        "type": "object"
+      },
+      "LanClientsDto": {
+        "properties": {
+          "clients": {
+            "items": {
+              "$ref": "#/components/schemas/LanClientDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "clients"
+        ],
+        "type": "object"
+      },
+      "LanConnectionInfoDto": {
+        "description": "目标端公开的连接信息：只暴露展示元数据，不含任何密钥。",
+        "properties": {
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "peer_id": {
+            "type": "string"
+          },
+          "peer_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "protocol": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target_library_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "peer_id",
+          "name",
+          "library_name",
+          "peer_port",
+          "target_library_id"
+        ],
+        "type": "object"
+      },
+      "LanDeviceKeyCreateBody": {
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "LanDeviceKeyDeletedDto": {
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "type": "object"
+      },
+      "LanDeviceKeyUpdateBody": {
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "type": "object"
+      },
+      "LanInfo": {
+        "properties": {
+          "active": {
+            "description": "网站端口监听状态",
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_active": {
+            "description": "hawk-app 直连端口监听状态",
+            "type": "boolean"
+          },
+          "peer_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "active",
+          "peer_active"
+        ],
+        "type": "object"
+      },
+      "LanPairDecisionBody": {
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "allow"
+        ],
+        "type": "object"
+      },
+      "LanPairDecisionDto": {
+        "properties": {
+          "peer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LanPairedPeerDto"
+              }
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestCreateBody": {
+        "properties": {
+          "client_name": {
+            "description": "源端设备名（仅用于目标端确认提示）",
+            "type": "string"
+          },
+          "reverse": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LanReversePeerDto",
+                "description": "源端回连 profile：有本地库时携带；无本地库查看方省略，表示单向配对。"
+              }
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role",
+            "description": "源端希望获得的角色；最终由目标端用户决定"
+          }
+        },
+        "required": [
+          "client_name"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestCreatedDto": {
+        "properties": {
+          "expires_in_seconds": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "expires_in_seconds"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestDto": {
+        "properties": {
+          "client_name": {
+            "type": "string"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "requested_role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "id",
+          "client_name",
+          "requested_role",
+          "created_at_ms"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestStatusDto": {
+        "properties": {
+          "access_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "protocol": {
+            "description": "桌面配对协议版本；客户端必须校验，避免与旧版本发生单向降级。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Role"
+              }
+            ]
+          },
+          "status": {
+            "description": "pending / approved / denied / expired",
+            "type": "string"
+          },
+          "target_library_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "protocol",
+          "status"
+        ],
+        "type": "object"
+      },
+      "LanPairRequestsDto": {
+        "properties": {
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/LanPairRequestDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "type": "object"
+      },
+      "LanPairedPeerDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "peer_key": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "target_library_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "library_name",
+          "url",
+          "role",
+          "peer_key",
+          "target_library_id"
+        ],
+        "type": "object"
+      },
+      "LanPeerDto": {
+        "description": "发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "requires_pairing": {
+            "type": "boolean"
+          },
+          "target_library_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "library_name",
+          "url",
+          "writable",
+          "requires_pairing",
+          "target_library_id"
+        ],
+        "type": "object"
+      },
+      "LanPeersDto": {
+        "properties": {
+          "peers": {
+            "items": {
+              "$ref": "#/components/schemas/LanPeerDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "peers"
+        ],
+        "type": "object"
+      },
+      "LanReversePeerDto": {
+        "description": "源端为反向连接提供的设备信息；peer_key 由源端为本机 daemon 新签发。",
+        "properties": {
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "peer_id": {
+            "type": "string"
+          },
+          "peer_key": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "target_library_id": {
+            "type": "string"
+          },
+          "urls": {
+            "description": "源端候选局域网地址（http://ip:peer_port）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "peer_id",
+          "name",
+          "library_name",
+          "urls",
+          "peer_key",
+          "role",
+          "target_library_id"
+        ],
+        "type": "object"
+      },
+      "LanSettingsDto": {
+        "properties": {
+          "active": {
+            "description": "网站监听状态",
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/LanAccessKeyDto"
+            },
+            "type": "array"
+          },
+          "library_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "peer_active": {
+            "description": "hawk-app 直连监听状态",
+            "type": "boolean"
+          },
+          "peer_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": "string"
+          },
+          "peer_keys": {
+            "items": {
+              "$ref": "#/components/schemas/LanAccessKeyDto"
+            },
+            "type": "array"
+          },
+          "peer_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target_library_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "port",
+          "peer_port",
+          "peer_id",
+          "target_library_id",
+          "name",
+          "library_name",
+          "keys",
+          "peer_keys",
+          "active",
+          "peer_active"
+        ],
+        "type": "object"
+      },
+      "LibraryInfo": {
+        "properties": {
+          "application_version": {
+            "type": "string"
+          },
+          "modification_time": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "scan": {
+            "$ref": "#/components/schemas/ScanInfo",
+            "description": "周期兜底扫描设置（.hawk/config.toml 的 [scan]）"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "modification_time",
+          "application_version",
+          "scan"
+        ],
+        "type": "object"
+      },
+      "LibraryRenameBody": {
+        "properties": {
+          "name": {
+            "description": "新显示名；空白清除自定义名（回退库目录名）",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "LockRemoveRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LockTarget"
+          },
+          {
+            "properties": {
+              "password": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "password"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LockSetRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LockTarget"
+          },
+          {
+            "properties": {
+              "old_password": {
+                "description": "已上锁条目修改密码时必须提供旧密码；首次设置省略",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "password": {
+                "description": "新密码（设置与修改共用）",
+                "type": "string"
+              }
+            },
+            "required": [
+              "password"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LockTarget": {
+        "properties": {
+          "dimension": {
+            "description": "维度：folder / category / tag",
+            "type": "string"
+          },
+          "name": {
+            "description": "folder 为库内相对路径（如 \"posters/2024\"）；category/tag 为名称",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dimension",
+          "name"
+        ],
+        "type": "object"
+      },
+      "LockUnlockRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/LockTarget"
+          },
+          {
+            "properties": {
+              "password": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "password"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "LocksSnapshot": {
+        "description": "锁快照（API 响应/事件负载：仅名称，不含密码哈希）",
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders",
+          "categories",
+          "tags"
+        ],
+        "type": "object"
+      },
+      "PaletteColorDto": {
+        "description": "API 的调色板颜色项",
+        "properties": {
+          "color": {
+            "description": "# 前缀小写 hex，如 \"#344441\"",
+            "type": "string"
+          },
+          "percentage": {
+            "description": "像素覆盖占比（0–100，1 位小数）",
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "percentage"
+        ],
+        "type": "object"
+      },
+      "PutLanBody": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/PutLanKey"
+            },
+            "type": "array"
+          },
+          "peer_keys": {
+            "items": {
+              "$ref": "#/components/schemas/PutLanKey"
+            },
+            "type": "array"
+          },
+          "peer_port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "port": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "port",
+          "peer_port"
+        ],
+        "type": "object"
+      },
+      "PutLanKey": {
+        "properties": {
+          "access_key": {
+            "type": "string"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "library_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "access_key"
+        ],
+        "type": "object"
+      },
+      "RefreshCacheRequest": {
+        "properties": {
+          "type": {
+            "description": "folder | category | tag | library",
+            "type": "string"
+          },
+          "value": {
+            "description": "folder/category/tag 的名称（folder 为目录相对路径，空串 = 库根）；library 时忽略",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RefreshCacheResponse": {
+        "properties": {
+          "dispatched": {
+            "description": "实际入队的修复任务数（in-flight 去重丢弃或源文件不在的不计）",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "removed": {
+            "description": "消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛）",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dispatched",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "RescanRequest": {
+        "properties": {
+          "path": {
+            "description": "只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库）",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Role": {
+        "enum": [
+          "viewer",
+          "importer",
+          "editor",
+          "admin"
+        ],
+        "type": "string"
+      },
+      "ScanInfo": {
+        "properties": {
+          "interval": {
+            "description": "重扫间隔（秒）",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "periodic": {
+            "description": "是否开启周期兜底重扫",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "periodic",
+          "interval"
+        ],
+        "type": "object"
+      },
+      "ScanSettingsBody": {
+        "properties": {
+          "interval": {
+            "description": "重扫间隔（秒，缺省沿用当前值；下限 60）",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "periodic": {
+            "description": "是否开启周期兜底重扫",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "periodic"
+        ],
+        "type": "object"
+      },
+      "ScanStatsInfo": {
+        "description": "最近一轮全库扫描统计",
+        "properties": {
+          "applied": {
+            "description": "本轮实际应用入库的位置数",
+            "format": "int32",
+            "type": "integer"
+          },
+          "dirty_dirs": {
+            "description": "快照对比判定为 dirty、深入枚举的目录数",
+            "format": "int32",
+            "type": "integer"
+          },
+          "duration_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "files": {
+            "description": "本轮枚举到的文件数",
+            "format": "int32",
+            "type": "integer"
+          },
+          "started_unix_ms": {
+            "description": "扫描开始时间（Unix 毫秒）",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "started_unix_ms",
+          "duration_ms",
+          "files",
+          "dirty_dirs",
+          "applied"
+        ],
+        "type": "object"
+      },
+      "SseEvents": {
+        "description": "SSE 事件载荷注册表：键为 `event:` 帧的事件名，值为 `data:` 帧 JSON 载荷的结构。\n与 core::taxonomy::ItemEvents 常量一一对应（契约测试双向比对）",
+        "properties": {
+          "folder.changed": {
+            "$ref": "#/components/schemas/FolderChangedPayload"
+          },
+          "global_filter.changed": {
+            "$ref": "#/components/schemas/GlobalFilterSnapshot",
+            "description": "全局列表隐藏集变更（含级联跟随与外部同步重载），负载为完整快照"
+          },
+          "item.added": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "item.removed": {
+            "$ref": "#/components/schemas/ItemIdPayload"
+          },
+          "item.restored": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "item.trashed": {
+            "$ref": "#/components/schemas/ItemIdPayload"
+          },
+          "item.updated": {
+            "$ref": "#/components/schemas/ItemDto"
+          },
+          "items.added": {
+            "$ref": "#/components/schemas/ItemsAddedPayload",
+            "description": "批量入库（扫描导入）合并事件，与单条 item.added 互斥；客户端按「有新增」信号重载骨架"
+          },
+          "items.updated": {
+            "$ref": "#/components/schemas/ItemsUpdatedPayload",
+            "description": "item.updated 的批量变体（调色板批量回写等）"
+          },
+          "lan.access.changed": {
+            "$ref": "#/components/schemas/LanAccessChangedPayload",
+            "description": "局域网访问权限变化；客户端收到后重新请求 app/info 刷新 viewerMode"
+          },
+          "library.updated": {
+            "$ref": "#/components/schemas/LibraryInfo",
+            "description": "改库显示名广播，负载为完整 LibraryInfo（含新显示名）"
+          },
+          "locks.changed": {
+            "$ref": "#/components/schemas/LocksSnapshot",
+            "description": "锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照"
+          },
+          "task.progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          }
+        },
+        "required": [
+          "item.added",
+          "items.added",
+          "item.updated",
+          "items.updated",
+          "item.trashed",
+          "item.restored",
+          "item.removed",
+          "folder.changed",
+          "task.progress",
+          "library.updated",
+          "global_filter.changed",
+          "locks.changed",
+          "lan.access.changed"
+        ],
+        "type": "object"
+      },
+      "StartupInfo": {
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "total": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "SuccessOnly": {
+        "description": "无 data 的成功响应：`{\"status\":\"success\"}`",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "TaskBacklog": {
+        "properties": {
+          "active": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "pending": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending",
+          "active"
+        ],
+        "type": "object"
+      },
+      "TaskProgress": {
+        "description": "后台任务进度快照(task.progress 事件与 app/status 端点共用)。\nphase/processed/total 仅 index 任务在扫描期间携带；非扫描期间省略（None）",
+        "properties": {
+          "active": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "pending": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "task": {
+            "type": "string"
+          },
+          "total": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "pending",
+          "active"
+        ],
+        "type": "object"
+      },
+      "TaskStatus": {
+        "properties": {
+          "config_error": {
+            "description": ".hawk/config.toml 解析错误（保留上次有效配置继续运行）；正常为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "index": {
+            "$ref": "#/components/schemas/IndexBacklog"
+          },
+          "last_scan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScanStatsInfo",
+                "description": "最近一轮全库扫描统计（未跑过为 null）"
+              }
+            ]
+          },
+          "queue_overflow": {
+            "description": "索引队列曾溢出（已触发兜底扫描）；下一轮扫描收尾后复位",
+            "type": "boolean"
+          },
+          "sse_lagged": {
+            "description": "SSE 订阅因消费落后被断开（lagged）的累计次数",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "thumbnail": {
+            "$ref": "#/components/schemas/TaskBacklog"
+          }
+        },
+        "required": [
+          "thumbnail",
+          "index",
+          "queue_overflow",
+          "sse_lagged"
+        ],
+        "type": "object"
+      },
+      "TaxonInfo": {
+        "properties": {
+          "count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "count"
+        ],
+        "type": "object"
+      },
+      "UnlockResponse": {
+        "properties": {
+          "unlock_token": {
+            "description": "解锁票据：后续请求经 `X-Hawk-Unlock` 头或 `?unlock=` 查询参数附带（img/SSE 通道）；\ndaemon 重启失效，前端丢弃即「锁定回去」。注意：不要把带 unlock 参数的图片 URL 分享给他人",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unlock_token"
+        ],
+        "type": "object"
+      },
+      "ViewPreferencePutRequest": {
+        "properties": {
+          "order": {
+            "type": "string"
+          },
+          "order_by": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "order_by",
+          "order"
+        ],
+        "type": "object"
+      },
+      "ViewSortDto": {
+        "properties": {
+          "order": {
+            "type": "string"
+          },
+          "order_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_by",
+          "order"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "hawk-daemon | v1",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/app/admin-token": {
+      "get": {
+        "operationId": "admin_token",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTokenResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "LocalIntegration 发现：浏览器插件零配置接入。\n返回 Loopback 限定的 importer Session，而不是进程 admin token。\n响应不带 CORS 头且 Host 限定环回。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/connection": {
+      "get": {
+        "operationId": "connection",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppConnectionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "当前连接",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/info": {
+      "get": {
+        "operationId": "info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "运行信息；role/channel 由鉴权中间件写入请求扩展。lan 为局域网监听实况\n（设置面板保存后轮询至此确认收敛/失败，热重绑无需重启 daemon）",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan": {
+      "get": {
+        "operationId": "get_lan",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanSettingsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "读取局域网配置与运行状态（admin 限定）；无库时返回禁用的网站配置及本机身份，供查看方配对。",
+        "tags": [
+          "app"
+        ]
+      },
+      "put": {
+        "operationId": "put_lan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutLanBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanSettingsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "写回 .hawk/config.toml 的 [web] 段并热重绑局域网监听（admin 限定）；绑定失败自动回滚旧配置并返回错误",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/clients": {
+      "get": {
+        "operationId": "list_lan_clients",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanClientsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "目标端查看当前通过 hawk-app 直连端口活跃的设备（admin 限定）。\n只返回授权列表内 key 的最近活跃时间，不返回 token。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/connection-info": {
+      "get": {
+        "operationId": "get_lan_connection_info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanConnectionInfoDto"
+                }
+              }
+            },
+            "description": "目标端连接信息"
+          }
+        },
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/device-keys": {
+      "post": {
+        "operationId": "create_lan_device_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanDeviceKeyCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanAccessKeyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "创建一把设备访问密钥（仅 peer_keys，不触碰网站访问密钥与网站开关）。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/device-keys/{key_id}": {
+      "delete": {
+        "operationId": "delete_lan_device_key",
+        "parameters": [
+          {
+            "description": "设备密钥 id",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanDeviceKeyDeletedDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除一把设备访问密钥（撤销该设备共享）。",
+        "tags": [
+          "app"
+        ]
+      },
+      "patch": {
+        "operationId": "update_lan_device_key",
+        "parameters": [
+          {
+            "description": "设备密钥 id",
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanDeviceKeyUpdateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanAccessKeyDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "调整一把设备访问密钥的读写权限。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair-requests": {
+      "get": {
+        "operationId": "list_lan_pair_requests",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairRequestsDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "目标端待处理配对请求列表（仅本机 admin 设置面板轮询）。",
+        "tags": [
+          "app"
+        ]
+      },
+      "post": {
+        "operationId": "create_lan_pair_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanPairRequestCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairRequestCreatedDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "源端发起自动配对请求（免 Bearer，仅 hawk-app 直连端口）。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair-requests/{request_id}": {
+      "get": {
+        "operationId": "get_lan_pair_request_status",
+        "parameters": [
+          {
+            "description": "配对请求 id",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairRequestStatusDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "源端轮询配对请求结果（免 Bearer；request_id 为随机不可猜 secret）。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/pair-requests/{request_id}/decision": {
+      "post": {
+        "operationId": "decide_lan_pair_request",
+        "parameters": [
+          {
+            "description": "配对请求 id",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanPairDecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPairDecisionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "目标端用户确认/拒绝配对请求（admin 限定）。允许时创建一把该设备专用的直连密钥。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/lan/peers": {
+      "get": {
+        "operationId": "discover_lan_peers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LanPeersDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "探测局域网内可配对的 hawk 设备（admin 限定；源端 app 经本机 daemon 调用）。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/session": {
+      "post": {
+        "operationId": "create_app_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppSessionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppSessionDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "LAN Web：AccessKey 换有期 Session，并以 HttpOnly/Secure Cookie 下发。",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/startup": {
+      "get": {
+        "operationId": "startup",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_StartupInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "启动状态：ready / starting（带进度）/ error（初始索引失败，message 为原因）",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/app/status": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_TaskStatus"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "后台任务积压：轮询型客户端用（SSE 客户端订阅 task.progress 事件，两者同一份快照）",
+        "tags": [
+          "app"
+        ]
+      }
+    },
+    "/api/v1/category/create": {
+      "post": {
+        "operationId": "category_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "创建分类（注册表写入由索引流水线执行）",
+        "tags": [
+          "category"
+        ]
+      }
+    },
+    "/api/v1/category/delete": {
+      "post": {
+        "operationId": "category_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryNameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除分类（级联清除全部 item 的分类赋值）",
+        "tags": [
+          "category"
+        ]
+      }
+    },
+    "/api/v1/category/list": {
+      "get": {
+        "operationId": "category_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_Vec_TaxonInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "分类列表 = 注册表 ∪ 全部 item 赋值并集；count 为库内（不含回收站）item 数",
+        "tags": [
+          "category"
+        ]
+      }
+    },
+    "/api/v1/category/update": {
+      "post": {
+        "operationId": "category_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "重命名分类（级联迁移全部 item 的分类赋值）",
+        "tags": [
+          "category"
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "operationId": "events",
+        "parameters": [
+          {
+            "description": "访问 token（EventSource 无法设置请求头）",
+            "in": "query",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "text/event-stream 长连接"
+          }
+        },
+        "summary": "SSE 事件订阅：素材库变更推送。帧格式 `event: <事件名>` + `data: <JSON 载荷>`；\n全部事件名与载荷结构见 SseEvents（键即事件名）。\n消费跟不上（lagged）或总线关闭即断开；重连后须以 item/skeleton + folder/list 全量对齐",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/v1/folder/create": {
+      "post": {
+        "operationId": "folder_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_FolderNode"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "新建目录（目标已存在报 FILE_EXISTS）；目录结构变化经 folder.changed 广播",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/delete": {
+      "post": {
+        "operationId": "folder_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除:整体移入 .hawk/trash/(保留目录结构)",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/list": {
+      "get": {
+        "operationId": "folder_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_FolderNode"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "完整文件夹树（目录结构缓存 + 实时计数合并；count 含祖先目录）",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/restore": {
+      "post": {
+        "operationId": "folder_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderPathRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "恢复：按原路径放回，被占用时报 FILE_EXISTS",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/folder/update": {
+      "post": {
+        "operationId": "folder_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_FolderNode"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "重命名/移动目录（禁止移入自身子目录；级联迁移经 DirMoveJob 由流水线执行）",
+        "tags": [
+          "folder"
+        ]
+      }
+    },
+    "/api/v1/global_filter": {
+      "put": {
+        "operationId": "global_filter_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlobalFilterPutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "标记/取消单个维度的全局列表隐藏（幂等；无变化时同样返回成功）",
+        "tags": [
+          "global_filter"
+        ]
+      }
+    },
+    "/api/v1/global_filter/list": {
+      "get": {
+        "operationId": "global_filter_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_GlobalFilterSnapshot"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全部隐藏项（文件夹为库内相对路径，子树整体隐藏）",
+        "tags": [
+          "global_filter"
+        ]
+      }
+    },
+    "/api/v1/item/add": {
+      "post": {
+        "operationId": "item_add",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAddRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemAddResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "路径导入 / base64 入库（二选一取内容）。目标已存在报 FILE_EXISTS；\nskip_existing 时内容已在库内则跳过（不写文件、不追加路径，skipped=true）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/aggregate": {
+      "post": {
+        "operationId": "item_aggregate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemAggregateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemAggregateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "description": "选择集含未解锁锁覆盖的 item（LOCKED）"
+          }
+        },
+        "summary": "选择集共有特性聚合（标签/分类交集）。多选面板的「共同标签/分类」数据源——\n前端详情缓存只覆盖视口窗口，选择集可达数万项，交集只能由服务端全量计算。\n任一 id 位于未解锁的锁覆盖内 → 403 LOCKED（正常流程拿不到被锁 id，锁状态变化后\n前端会收到 locks.changed 并重查）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/batch_update": {
+      "post": {
+        "operationId": "item_batch_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemBatchUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemBatchUpdateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "批量更新：标签/分类并集追加，评分/文件夹设置；不存在的 id 记入 missing_ids 不整体失败",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/count": {
+      "get": {
+        "operationId": "item_count",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_usize"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "库内 item 总数（不含回收站）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/delete": {
+      "post": {
+        "operationId": "item_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemIdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "移入回收站（保留目录结构，冲突加 ` (n)` 后缀）；不带 path 为卡片级操作（回收全部库内位置）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/detail": {
+      "get": {
+        "operationId": "item_detail",
+        "parameters": [
+          {
+            "description": "item id（内容 BLAKE3 哈希 hex）",
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "可选：库内相对位置（缺省为主位置）",
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemDto"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "description": "位置或内容位于未解锁的锁覆盖内（LOCKED）"
+          }
+        },
+        "summary": "单 item 详情（锁内投影）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/duplicates": {
+      "post": {
+        "operationId": "item_duplicates",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_DuplicateScanResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "description": "仅 admin 可执行重复扫描"
+          }
+        },
+        "summary": "重复图片分组扫描：同一内容 hash 的多个库内位置，分页按组切片",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/file": {
+      "get": {
+        "operationId": "item_file",
+        "parameters": [
+          {
+            "description": "item id（内容 BLAKE3 哈希 hex）",
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "可选：库内相对位置（缺省为主位置）",
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "原图二进制"
+          },
+          "403": {
+            "description": "内容位于未解锁的锁覆盖内（LOCKED）"
+          }
+        },
+        "summary": "主位置（优先库内）原图二进制：流式返回，Content-Type 按扩展名 mime_guess，Cache-Control immutable",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/list": {
+      "post": {
+        "operationId": "item_list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "description": "视图位于未解锁的锁定文件夹/分类/标签内（LOCKED）"
+          }
+        },
+        "summary": "分页查询：全过滤条件 AND 组合，主键同值按 id 打破平局，次序与 skeleton 逐位一致",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/refresh_thumbnail": {
+      "post": {
+        "operationId": "item_refresh_thumbnail",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemRefreshThumbnailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "强制重建缩略图（取可读主位置；完成后经 item.updated 通知前端重建 <img>）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/replace": {
+      "post": {
+        "operationId": "item_replace",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemReplaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "内容替换(item/replace):客户端编辑(旋转/裁切等)后的新内容提交存储层。\n内容必须可识别且**格式与文件扩展名一致**（扩展名与内容错位会破坏类型推断与预览）；\n哈希相同则幂等直接返回当前投影；写回保留原 mtime（修正性编辑不改变素材的时序位置）；\n`submit_upsert` 触发 id 漂移闭环（元数据继承迁移/事件/缩略图重建）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/restore": {
+      "post": {
+        "operationId": "item_restore",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemIdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "从回收站恢复（按原路径放回；同名冲突的位置跳过留在回收站，全部冲突才报 FILE_EXISTS）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/skeleton": {
+      "post": {
+        "operationId": "item_skeleton",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemSkeletonResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "description": "视图位于未解锁的锁定文件夹/分类/标签内（LOCKED）"
+          }
+        },
+        "summary": "骨架查询：与 list 同查询同排序，返回轻量骨架（虚拟网格布局依据）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/thumbnail": {
+      "get": {
+        "operationId": "item_thumbnail",
+        "parameters": [
+          {
+            "description": "item id（内容 BLAKE3 哈希 hex）",
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "缩略图边长：512（网格）或 1024（检查器/预览），缺省 1024",
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "指定尺寸的 WebP 缩略图"
+          },
+          "400": {
+            "description": "size 不是受支持的尺寸"
+          },
+          "403": {
+            "description": "内容位于未解锁的锁覆盖内（LOCKED）"
+          },
+          "404": {
+            "description": "缩略图生成中或源图不可解码"
+          }
+        },
+        "summary": "缩略图：固定 512/1024 两档 WebP 缓存，Cache-Control immutable。\n未命中时后台入队生成并返回 404，完成经 item.updated 通知客户端重试；\n不回源原图，避免低带宽下一张卡片下载整份原图，也避免 immutable 缓存钉住回退响应。",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/update": {
+      "post": {
+        "operationId": "item_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "元数据修改：改名/移动做真实文件操作后经流水线同步；tags/categories/star/annotation/url 直接写元数据",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/item/upload": {
+      "post": {
+        "operationId": "item_upload",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemUploadForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_ItemAddResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "multipart/form-data 上传：浏览器/iOS 分享扩展无文件路径可引用（拿到的是内容），\n经本端点以内容入库。字段：file（二进制，必需）/ folder_path / name（可选，默认取 file 文件名）/\nskip_existing（可选，内容已在库内时跳过）/ tags、categories（可选，可重复出现多次）。\n写权限：admin 恒可用；viewer 需 [web].writable（auth 中间件统一拦截）",
+        "tags": [
+          "item"
+        ]
+      }
+    },
+    "/api/v1/library/cleanup_index": {
+      "post": {
+        "operationId": "cleanup_index",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_CleanupIndexResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "索引体检：清除不该在索引里的条目——隐藏文件、ignore 规则命中或扩展名不在白名单内、源文件已删除的残留。\n只摘索引位置不动磁盘文件；移除经流水线单写者（notify_deleted → do_delete），事件广播后 UI 自动收敛。\n与 refresh_cache 的差异：refresh_cache 只对账源文件消失；本端点还清「文件还在但不该入库」的残留\n（早期版本入库的结果——增量扫描靠目录快照跳过 clean 目录，不会再触达它们，只能靠本入口收敛）。\n多路径素材只摘命中位置，其余位置保留时条目仍在。",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/info": {
+      "get": {
+        "operationId": "library_info",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LibraryInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "库信息：显示名取 config 的 name，缺省目录名",
+        "tags": [
+          "library"
+        ]
+      },
+      "patch": {
+        "operationId": "library_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRenameBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LibraryInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "改库显示名：写库内 .hawk/config.toml 的 name 键（toml_edit 保注释，保存即热更）；\n只读 viewer 在 auth 层被拒（非 GET 且不在查询白名单）",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/refresh_cache": {
+      "post": {
+        "operationId": "refresh_cache",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshCacheRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_RefreshCacheResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "按范围刷新派生缓存（补缺失模式）：对范围内全部 item 派发修复任务——\n补缺失宽高（0 × 0）+ 生成缺失尺寸缩略图 + 提炼缺失调色板，不重建已有文件。\n附带消失对账：范围内源文件已删除但索引残留的位置会被移除（watcher 漏事件的收敛入口）。\n用户遇到显示异常时的手动修复入口；异步执行立即返回，积压经 task.progress(thumbnail) 可见",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/reindex": {
+      "post": {
+        "operationId": "reindex",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全量重建索引：重算全部哈希，异步执行，立即返回",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/rescan": {
+      "post": {
+        "operationId": "rescan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "重新扫描：忽略目录快照强制遍历文件做复用判定（不读文件内容），收敛监听漏事件。\n带 path 时只遍历该子树（不做消失对账与快照替换，见 pipeline/scan.rs）。异步执行，立即返回",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/library/scan": {
+      "put": {
+        "operationId": "scan_settings_set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanSettingsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LibraryInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "周期兜底扫描设置：写库内 `.hawk/config.toml` 的 `[scan]`（toml_edit 保注释），保存即热生效\n（消费循环每 30s 检查一次配置）。返回更新后的库信息并广播 `library.updated`",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/v1/lock/list": {
+      "get": {
+        "operationId": "lock_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_LocksSnapshot"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全部锁（仅名称，不含密码哈希；folders 为库内相对路径）",
+        "tags": [
+          "lock"
+        ]
+      }
+    },
+    "/api/v1/lock/remove": {
+      "post": {
+        "operationId": "lock_remove",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LockRemoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "解除锁（admin 限定；需密码）。变更经 locks.changed 广播",
+        "tags": [
+          "lock"
+        ]
+      }
+    },
+    "/api/v1/lock/set": {
+      "post": {
+        "operationId": "lock_set",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LockSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "403": {
+            "description": "需要 admin 权限或旧密码错误（OLD_PASSWORD_REQUIRED）"
+          }
+        },
+        "summary": "设置/修改锁（admin 限定；已锁条目改密需旧密码）。变更经 locks.changed 广播",
+        "tags": [
+          "lock"
+        ]
+      }
+    },
+    "/api/v1/lock/unlock": {
+      "post": {
+        "operationId": "lock_unlock",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LockUnlockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_UnlockResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "description": "密码错误或锁不存在"
+          },
+          "429": {
+            "description": "失败次数过多，冷却中"
+          }
+        },
+        "summary": "解锁（任何有效 token，含只读 viewer）：校验密码发放票据，票据由各客户端独立持有",
+        "tags": [
+          "lock"
+        ]
+      }
+    },
+    "/api/v1/tag/create": {
+      "post": {
+        "operationId": "tag_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "创建标签（注册表写入由索引流水线执行）",
+        "tags": [
+          "tag"
+        ]
+      }
+    },
+    "/api/v1/tag/delete": {
+      "post": {
+        "operationId": "tag_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryNameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除标签（级联清除全部 item 的标签赋值）",
+        "tags": [
+          "tag"
+        ]
+      }
+    },
+    "/api/v1/tag/list": {
+      "get": {
+        "operationId": "tag_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_Vec_TaxonInfo"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "标签列表 = 注册表 ∪ 赋值并集；count 为库内（不含回收站）item 数",
+        "tags": [
+          "tag"
+        ]
+      }
+    },
+    "/api/v1/tag/update": {
+      "post": {
+        "operationId": "tag_update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "重命名标签（级联迁移全部 item 的标签赋值）",
+        "tags": [
+          "tag"
+        ]
+      }
+    },
+    "/api/v1/trash/clear": {
+      "post": {
+        "operationId": "trash_clear",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "清空回收站：先由流水线清理索引位置、元数据与缓存，再物理删除",
+        "tags": [
+          "trash"
+        ]
+      }
+    },
+    "/api/v1/view/preference": {
+      "delete": {
+        "operationId": "preference_delete",
+        "parameters": [
+          {
+            "description": "视图作用域：folder:<路径>（\"\" 为库根）/category:<名>/tag:<名>",
+            "in": "query",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "删除一条视图偏好（不存在则无动作）",
+        "tags": [
+          "view"
+        ]
+      },
+      "put": {
+        "operationId": "preference_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewPreferencePutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessOnly"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "写一条视图偏好（覆盖写；scope 与排序值经校验规范化）",
+        "tags": [
+          "view"
+        ]
+      }
+    },
+    "/api/v1/view/preferences": {
+      "get": {
+        "operationId": "preferences",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_HashMap_String_ViewSortDto"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "全部视图偏好（scope → 排序）",
+        "tags": [
+          "view"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "就绪：纯文本 ok"
+          },
+          "503": {
+            "description": "初始索引构建中"
+          }
+        },
+        "summary": "就绪探活：无需 token。初始索引完成前返回 503",
+        "tags": [
+          "app"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:27371/"
+    }
+  ]
+}

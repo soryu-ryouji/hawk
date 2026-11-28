@@ -21,7 +21,7 @@
 }
 ```
 
-错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（只读 viewer/远程写令牌访问未授权写端点，403；见 storage.md 的 `[web]` 与远程 `writable` 写权限配置）、`UNAUTHORIZED`（token 缺失或无效，401）、`NOT_READY`（初始索引构建中，503；唯一放行端点为 `app/startup`）
+错误码：`INVALID_PARAM`、`ITEM_NOT_FOUND`、`FOLDER_NOT_FOUND`、`FILE_EXISTS`、`UNSUPPORTED_FORMAT`、`CATEGORY_NOT_FOUND`、`CATEGORY_EXISTS`、`TAG_NOT_FOUND`、`INTERNAL`、`READ_ONLY`（viewer/importer 访问未授权写端点，403）、`UNAUTHORIZED`（token 缺失或无效，401）、`NOT_READY`（初始索引构建中，503；唯一放行端点为 `app/startup`）、`LOCKED`（未解锁锁覆盖，403）、`THROTTLED`（解锁失败冷却，429）
 
 ### ID 规范
 
@@ -33,7 +33,7 @@
 
 - 时间戳均为 Unix 毫秒
 - 分页参数：`offset`（默认 0）、`limit`（默认 50）
-- 客户端携带 `Accept-Encoding: gzip` 时，JSON/文本响应使用 gzip 压缩；图片与 SSE 不压缩。远程隧道与网页版代理原样转发 `Content-Encoding`
+- 客户端携带 `Accept-Encoding: gzip` 时，JSON/文本响应使用 gzip 压缩；图片与 SSE 不压缩
 - 桌面版默认监听 `27371` 端口（用户可在设置面板「网络 → 本地服务」配置；端口被占用时**不会**静默换端口——daemon 以退出码 4 + `PORT_IN_USE <port>` 退出，app 在启动屏询问换端口），所有请求需携带启动时下发的 token（`Authorization: Bearer <token>`）；SSE 与 `<img>` 直链（thumbnail、file）无法设置请求头，改用查询参数 `?token=`
 
 ## app
@@ -43,9 +43,9 @@
 | GET  | `/api/v1/app/info` | 获取应用信息 |
 | GET  | `/api/v1/app/startup` | 启动状态与索引构建进度（就绪网关唯一放行端点） |
 | GET  | `/api/v1/app/status` | 后台任务积压（缩略图队列 + 索引管道；SSE 的 `task.progress` 事件为同一快照的推送版） |
-| POST | `/api/v1/app/session` | LAN Web：AccessKey 换有期 Session，以 HttpOnly/Secure Cookie 下发 |
+| POST | `/api/v1/app/session` | LAN Web：AccessKey 换有期 Session，以 HttpOnly Cookie 下发（无 Secure） |
 | GET  | `/api/v1/app/admin-token` | 发现本机 LocalIntegration Session（免鉴权，仅限扩展类客户端） |
-| GET  | `/api/v1/app/connection` | 当前连接描述符（本地库 / 正在浏览的远端库），生态客户端跟随目标用（admin 限定） |
+| GET  | `/api/v1/app/connection` | 当前连接描述符（纯局域网版本只有本地库），生态客户端跟随目标用 |
 | GET  | `/api/v1/app/lan` | 读取局域网网站与 hawk-app 直连配置、本机身份及运行状态（admin 限定；无库返回禁用配置与身份） |
 | GET  | `/api/v1/app/lan/connection-info` | 目标端公开连接信息：本机身份、设备名、库名与直连端口（仅 Peer 端口免 Bearer；不含密钥） |
 | PUT  | `/api/v1/app/lan` | 写回 `[web]` 配置并热重绑局域网监听（admin 限定，失败自动回滚） |
@@ -158,42 +158,30 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 | platform  | string | `windows` / `macos` / `linux` |
 | exec_path | string | 后端可执行文件路径            |
 | role | string | 当前凭证角色：`viewer` / `importer` / `editor` / `admin` |
-| channel | string | 当前请求通道：`loopback` / `lan_web` / `lan_peer` / `wan`；前端据此判断远程低流量策略 |
-| has_library | boolean | 当前 daemon 是否打开本地素材库；false 为无库远程查看形态 |
+| channel | string | 当前请求通道：`loopback` / `lan_web` / `lan_peer` |
+| has_library | boolean | 当前 daemon 是否打开本地素材库（Go 版恒为 true） |
 | lan       | object | 局域网监听实况：`active`（是否在监听）、`port`（active 时存在）、`error`（绑定失败原因，如端口被占用）。配置读写走 `app/lan`（PUT 内置收敛等待），此字段供状态展示 |
 
 ### connection
 
 `GET /api/v1/app/connection`（admin 限定）
 
-当前连接描述符：本地 hawk 现在在看哪个素材库。浏览器插件用它把「跟随本地 hawk」落到具体目标——本地库时返回 `local`（调用方继续用自己的环回地址 + admin token），正在浏览远端库时返回会话代理地址与会话令牌，插件直接打该代理即可把素材写进远端库；无本地库且无远端会话时返回 `none`。远程查看模式（无库 daemon）下同样可用。
-
-连接角色由 `role` 表示：本地库为 admin；远端库取决于目标端授予的 AccessKey 角色与通道上限（LAN 直连最高 editor，WAN 最高 importer，目标 daemon 每请求二次执法）。
+当前连接描述符。纯局域网版本只有本地库形态：返回 `mode=local` 与当前角色，浏览器插件据此确认「跟随本地 hawk」。
+局域网浏览由桌面主进程直接把前端 API base 指向目标 daemon，不经过本机 daemon。
 
 #### 响应
 
 ```json
 {
   "status": "success",
-  "data": {
-    "mode": "remote",
-    "api_base": "http://127.0.0.1:57123",
-    "credential": "会话临时凭证",
-    "device_id": "d_aaba43017fff4888",
-    "label": "台式机 · 我的素材库",
-    "role": "editor"
-  }
+  "data": { "mode": "local", "role": "admin" }
 }
 ```
 
-| 字段     | 类型    | 说明                                                         |
-| -------- | ------- | ------------------------------------------------------------ |
-| mode     | string  | `local`（本地库）/ `remote`（正在浏览的远端库）/ `none`（未连接任何素材库） |
-| api_base | string? | 仅 remote：会话代理环回地址                                  |
-| credential | string? | 仅 remote：会话临时凭证（与 app 渲染进程同一把）             |
-| device_id| string? | 仅 remote：目标设备 id                                       |
-| label    | string? | 仅 remote：目标展示名（设备名 · 库名）                       |
-| role | string | 当前连接角色：viewer / importer / editor / admin                                             |
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| mode | string | `local`（本地素材库） |
+| role | string | 当前连接角色：viewer / importer / editor / admin |
 
 ### health
 
@@ -224,7 +212,7 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 
 `GET /api/v1/app/lan`
 
-读取局域网网站访问配置（`.hawk/config.toml` 的 `[web]` 段）与监听运行状态。**仅 admin 可用**：viewer 返回 403 `READ_ONLY`——响应含每把访问密钥的完整 token，只读 viewer 拿到可写密钥即提权。无本地库时返回 `enabled=false`、空密钥列表和空库标识，但仍提供本机 `target_identity`、`peer_id` 与直连端口，供远程查看页发现及配对。
+读取局域网配置与监听状态。**仅 admin 可用**；响应的密钥列表不回传明文（明文只在创建/配对成功时出现一次）。
 
 #### 响应
 
@@ -236,14 +224,13 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
     "port": 27372,
     "peer_port": 27375,
     "peer_id": "9f2c1a7b4e8d0356",
+    "target_library_id": "885c7a4601d7a6e0",
     "name": "studio-mac",
     "library_name": "我的素材库",
     "keys": [
-      { "id": "key_a1b2", "label": "我的手机", "access_key": "<access-key>", "role": "viewer", "created_at_ms": 1760000000000 }
+      { "id": "key_a1b2", "label": "我的手机", "access_key": "", "role": "viewer", "created_at_ms": 1760000000000 }
     ],
-    "peer_keys": [
-      { "id": "peer_c3d4", "label": "另一台 hawk-app", "access_key": "<peer-key>", "role": "viewer", "created_at_ms": 1760000000000 }
-    ],
+    "peer_keys": [ /* 与 keys 同源 */ ],
     "active": true,
     "peer_active": true,
     "peer_error": null
@@ -251,245 +238,36 @@ SSE 客户端建议直接订阅 `task.progress` 事件（同一快照的推送�
 }
 ```
 
-`active` / `peer_active` 为两个监听器的实况；`error` / `peer_error` 在绑定失败时携带原因。`peer_id`/`name`/`library_name` 是本机设备身份，用于源端生成反向配对 profile。
+`active` / `peer_active` 为两个监听器实况；`error` / `peer_error` 在绑定失败时携带原因。
 
 ---
 
 `PUT /api/v1/app/lan`
 
-写回 `[web]` 配置并热重绑局域网监听：daemon 权威写配置（toml_edit 就地改写 `[web] enabled/port`、`[[web.keys]]` 与 `[[web.peer_keys]]`，原子写）→ 唤醒 supervisor 重绑 → 等待本轮收敛后返回。绑定失败（端口占用等）**自动回滚旧配置**并返回错误，不重启进程、不断 SSE。仅 admin 可用。
+写回 `[web]` 的 `enabled/port/peer_port` 并热重绑监听。密钥不再随 `[web]` 表写回，统一走 `device-keys` 端点。仅 admin 可用。
 
 #### 请求
 
 ```json
-{
-  "enabled": true,
-  "port": 27372,
-  "peer_port": 27375,
-  "keys": [
-    { "id": "key_a1b2", "label": "我的手机", "access_key": "<access-key>", "role": "viewer", "created_at_ms": 1760000000000 }
-  ],
-  "peer_keys": [
-    { "id": "peer_c3d4", "label": "另一台 hawk-app", "access_key": "<peer-key>", "role": "viewer", "created_at_ms": 1760000000000 }
-  ]
-}
+{ "enabled": true, "port": 27372, "peer_port": 27375, "keys": [], "peer_keys": [] }
 ```
 
-校验（`INVALID_PARAM`）：`port` 与 `peer_port` 均须为 1–65535 且不能相同；`enabled=true` 时至少一把网站访问密钥；同类密钥最多 32 把，id/access_key 全局非空且不重复。网站端口只接受 `keys` 并托管网页；直连端口只接受 `peer_keys` 且不提供静态页面，网站关闭时仍独立监听。若目标端口被其它进程占用，daemon 会从该端口向后自动选择最近的可用端口并在响应中返回实际值，避免用户手动排障。密钥 `role=editor` 才允许上传/删除/修改等写操作，`viewer` 只读。响应同 GET（收敛后的最新状态）。
+校验：端口 1–65535 且不能相同；`enabled=true` 前至少存在一把访问密钥。
 
-### 局域网互联（不经 hawk-server）
+### 局域网互联
 
-daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，组播 `239.255.72.75` + 广播），只要 hawk-app 直连端口就绪就应答，不依赖网站开关或已存在的 peer key。公告只含设备名、库名、端口与写能力提示，**不含任何 token**。
+daemon 常驻 UDP 发现响应器（`0.0.0.0:27374`，广播），Peer 端口就绪即应答，不依赖网站开关或已有密钥。公告只含设备名、库名、端口与写能力提示，**不含任何 token**。
 
-桌面配对协议为 v3，支持双向与无本地库查看方的单向授权：
+- `GET /api/v1/app/lan/connection-info`：Peer 端口免鉴权公开信息 `{protocol:3,peer_id,name,library_name,peer_port,target_library_id}`。
+- `GET /api/v1/app/lan/peers`：admin 发起 UDP probe，返回同网段设备列表。
+- `POST /api/v1/app/lan/pair-requests`：源端创建配对请求；可携带 `reverse`（本机 peer_id/name/library_name/urls/peer_key/role/target_library_id），请求 id 随机、90 秒过期。
+- `GET /api/v1/app/lan/pair-requests`：目标端 admin 查看待确认列表。
+- `GET /api/v1/app/lan/pair-requests/{id}`：源端轮询结果，`protocol=3`；批准后返回目标 `access_key`、`peer_id`、`name`、`library_name`、`role`。
+- `POST /api/v1/app/lan/pair-requests/{id}/decision`：目标端批准/拒绝；批准时创建专用 AccessKey，双向请求返回 `peer`（源端回连 profile），单向请求 `peer=null`。
+- `GET /api/v1/app/lan/clients`：admin 查看当前活跃直连设备（key_id/label/last_seen_ms/online/role/peer_id/library_name/url），30 秒窗口内视为在线。
+- `POST/PATCH/DELETE /api/v1/app/lan/device-keys`：访问密钥的独立管理面；创建返回一次明文，列表不回传明文。
 
-- `POST /api/v1/app/lan/pair-requests`：源端创建请求；有本地库时携带 `reverse`（本机 peer_id/name/library_name/候选 urls/peer_key/role），无本地库查看方省略；请求 id 随机、90 秒过期。
-- `GET /api/v1/app/lan/pair-requests`：目标端本机 admin 查看待确认列表。
-- `GET /api/v1/app/lan/pair-requests/{request_id}`：源端轮询结果，响应含 `protocol=3`、`status` 与批准后的目标 token；旧协议客户端会被拒绝。
-- `POST /api/v1/app/lan/pair-requests/{request_id}/decision`：目标端批准/拒绝并选择 A 的读写权限；批准时动态创建该设备专用访问密钥。双向请求在响应 `peer` 中返回源端回连 profile，单向请求返回 `peer=null`。
-- `GET /api/v1/app/lan/clients`：目标端本机 admin 查看当前活跃直连设备（key_id、label、last_seen_ms、online、write，以及配对密钥持久化的 peer_id/library_name/url）；鉴权成功后按 peer key 记录最近活跃时间，30 秒窗口内视为在线。
-- POST /api/v1/app/lan/device-keys / PATCH / DELETE：设备访问密钥的独立管理面，只操作 [web].peer_keys，不要求存在网站访问密钥，也不会改变网站开关与 [web].keys。配对源端创建同名反向密钥、目标端审批创建访问密钥、设置面板切换权限/撤销设备均走这里。桌面配对创建的设备密钥会持久化可选的 `peer_id` / `library_name` / `url` 元数据，使服务提供方即使尚未加载对方回连 profile，也能显示对方计算机名、库名与直连地址。
-
-LAN 设备密钥与 `/remote/keys` 的创建、权限变更、删除均通过 SSE `lan.access.changed` 通知客户端；客户端重新读取 `app/info` 及两处设置页的 AccessKey 缓存。旧的一次性配对码端点已移除。
-
-## remote
-
-远程访问（接入自托管 hawk-server，见 docs/backend/remote-access.md）。**仅 admin 可用**：viewer（含可写）返回 403 `READ_ONLY`——响应含接入密钥与设备身份信息。
-
-| 方法 | 端点 | 说明 |
-| ---- | ---- | ---- |
-| GET | `/api/v1/remote` | 读取远程访问接入配置（应用级 `remote.toml`）与信令运行状态（admin 限定） |
-| PUT | `/api/v1/remote` | 写回应用级 `remote.toml` 并热重启信令（admin 限定） |
-| GET | `/api/v1/remote/devices` | 拉取服务端设备列表（admin 限定） |
-| DELETE | `/api/v1/remote/devices/{device_id}` | 注销设备记录（admin 限定；转发服务端，会话与 key 映射一并清理；本机当前设备不可移除） |
-| PATCH | `/api/v1/remote/device` | 更新本机设备信息（显示名/allow_remote/库名，admin 限定；allow_import 由目标设备配置上报，不经此端点修改） |
-| POST | `/api/v1/remote/device/rotate` | 证书轮换（重新生成自签证书并同步服务端，admin 限定） |
-| GET | `/api/v1/remote/session` | 读取当前活动远程会话（admin 限定，无会话 data 为 null） |
-| POST | `/api/v1/remote/session` | 建立到目标设备的远程会话并拉起会话代理（admin 限定） |
-| DELETE | `/api/v1/remote/session` | 断开当前远程会话（admin 限定，幂等） |
-| POST | `/api/v1/remote/access-connect` | AccessKey 原生连接：`lan_url` 存在时走目标 LAN rendezvous，否则走 hawk-server；target_identity 钉扎 + 隧道内登录 |
-| POST | `/api/v1/remote/access-session` | AccessKey rendezvous 的隧道内登录（未认证隧道仅此端点可用） |
-| POST | `/api/v1/remote/lease` | 已认证隧道续期，保持原角色并延长目标租约 |
-| POST | `/api/v1/rendezvous` | 原生 LAN AccessKey rendezvous，仅编排 iroh，不传输素材凭证 |
-| GET | `/api/v1/rendezvous/{session_id}` | 查询 rendezvous 状态与目标连接信息 |
-| DELETE | `/api/v1/rendezvous/{session_id}` | 取消 rendezvous 并关闭对应隧道 |
-| GET | `/api/v1/remote/keys` | 列出本机签发的访问密钥（hawk-app key，admin 限定；不含明文） |
-| POST | `/api/v1/remote/keys` | 签发访问密钥（admin 限定；明文只在响应中出现一次） |
-| PATCH | `/api/v1/remote/keys/{key_id}` | 更新访问密钥标签/权限（admin 限定） |
-| DELETE | `/api/v1/remote/keys/{key_id}` | 吊销访问密钥（admin 限定） |
-
-### remote
-
-`GET /api/v1/remote`
-
-读取应用级 `remote.toml`（`~/.config/hawk/remote.toml`；独立运行 daemon 时回退 `.hawk/remote.toml`）与 remote supervisor 的运行快照。配置跨素材库共享，切换库不丢失。
-
-#### 响应
-
-```json
-{
-  "status": "success",
-  "data": {
-    "enabled": true,
-    "url": "https://hawk.example.com",
-    "tenant_key": "hs_<tenant-key>",
-    "allow_import": false,
-    "status": {
-      "state": "online",
-      "server_url": "https://hawk.example.com",
-      "device_id": "d_42"
-    }
-  }
-}
-```
-
-`status.state`：`disabled`（未启用/配置不完整）、`connecting`（注册/重连中）、`online`（控制通道已连接）、`error`（致命错误，如 tenant-key 无效，`error` 字段携带服务端返回的原因）。
-
-`allow_import` 对应应用级远程配置的 `allow_import`：允许广域网写会话向当前库导入素材/新建文件夹，与 `[web]` 的局域网写权限独立；变更热生效，不重启信令。
-
----
-
-`PUT /api/v1/remote`
-
-写回应用级 `remote.toml` 并热重启信令：daemon 权威写配置（同 `app/lan` 模型）→ 唤醒 remote supervisor，连接参数变化才重启信令。接入是异步过程（注册/心跳/WSS 重连由 supervisor 驱动），进展经 GET 轮询。
-
-#### 请求
-
-```json
-{ "enabled": true, "url": "https://hawk.example.com", "tenant_key": "hs_<tenant-key>", "allow_import": false }
-```
-
-校验（`INVALID_PARAM`）：`enabled` 时 `url`/`tenant_key` 必填；`url` 须以 `http://` 或 `https://` 开头。`allow_import` 省略按 false。响应同 GET。
-
----
-
-`GET /api/v1/remote/devices`
-
-转发拉取 hawk-server 的设备列表（本机与对端同列），接入 key 不出本进程。未配置接入返回 400 `INVALID_PARAM`；服务端不可达/被拒返回 502 `REMOTE_UPSTREAM`。
-
-#### 响应
-
-```json
-{
-  "status": "success",
-  "data": {
-    "devices": [
-      {
-        "device_id": "d_42",
-        "name": "家里台式机",
-        "platform": "windows",
-        "library_name": "我的素材库",
-        "online": true,
-        "allow_remote": true,
-        "allow_import": false,
-        "last_seen_at_ms": 1750000000000
-      }
-    ]
-  }
-}
-```
-
----
-
-`POST /api/v1/remote/session`
-
-建立远程会话：发起 → 轮询 ready → 候选依序连接（单候选 5s）→ 拉起会话代理（QUIC 指纹钉扎端到端）。单活动会话模型：新会话自动顶替旧会话。会话状态错误（对方拒绝/不可达/超时/直连失败）返回 409 `REMOTE_SESSION_FAILED`，服务端不可达返回 502 `REMOTE_UPSTREAM`。
-
-#### 请求与响应
-
-```json
-// 请求（mode 缺省 direct；直连失败且用户确认后以 relay 另建，经服务端中继、带宽自担）
-{ "target_device_id": "d_42", "mode": "direct" }
-// 响应：app 连接描述符的原料（api_base = http://127.0.0.1:<proxy_port>）
-{
-  "status": "success",
-  "data": {
-    "session_id": "s_9",
-    "target_device_id": "d_42",
-    "target_name": "家里台式机",
-    "target_library_name": "我的素材库",
-    "proxy_port": 51234,
-    "session_token": "<会话代理 token>"
-  }
-}
-```
-
----
-
-`GET /api/v1/remote/session`
-
-读取当前活动会话（结构同 POST 响应的 data）；无活动会话时 data 为 null。
-
----
-
-`DELETE /api/v1/remote/session`
-
-断开当前会话（幂等）：通知服务端取消、断开隧道、关闭会话代理。返回 `{"status":"success"}`。
-
----
-
-`PATCH /api/v1/remote/device`
-
-更新本机设备在服务端的信息（转发服务端 `PATCH /devices/{self}`）：`{ "name": "新名字", "allow_remote": false, "library_name": "工作库" }`，至少提供一项。响应为更新后的设备对象（同 `remote/devices` 单条结构）。
-
----
-
-`POST /api/v1/remote/device/rotate`
-
-证书轮换：重新生成 QUIC 自签证书（device_id 不变），先同步服务端新指纹再落盘并热重启信令；旧证书的会话随即失效（TOFU 锚点更新）。响应 `{ "fingerprint": "<新指纹>" }`。
-
----
-
-`GET /api/v1/remote/keys`
-
-列出本机签发的访问密钥（ hawk-app key，供网页版/插件等外部查看者使用）。**不含明文**：明文只在签发响应中出现一次，本地只存 sha256 验证子与前缀预览。
-
-#### 响应
-
-```json
-{
-  "status": "success",
-  "data": {
-    "keys": [
-      {
-        "id": "k_8f3a…",
-        "label": "手机插件",
-        "read": true,
-        "write": true,
-        "prefix": "hk_a1",
-        "created_at_ms": 1750000000000
-      }
-    ]
-  }
-}
-```
-
----
-
-`POST /api/v1/remote/keys`
-
-签发访问密钥。`role` 为 viewer/importer；`custom` 省略时程序生成 `hk_` 前缀的 128 位随机串，自定义时纯读至少 4 字符、携带写权限至少 12 字符（`INVALID_PARAM`）。签发后向 server 全量推送本设备的 key 映射（`PUT /devices/{id}/keys`，best-effort）。
-
-#### 请求与响应
-
-```json
-// 请求
-{ "label": "手机插件", "role": "importer", "custom": null }
-// 响应：key 明文只在本次出现；synced=false 表示远程未接入/推送失败（下次接入自动重试）
-{ "status": "success", "data": { "id": "k_8f3a…", "key": "hk_a1b2…", "synced": true } }
-```
-
----
-
-`PATCH /api/v1/remote/keys/{key_id}`
-
-更新标签/权限：`{ "label": "新名", "role": "viewer" }`。权限收窄对后续会话立即生效。响应 `{ "key": <条目>, "synced": true }`。
-
----
-
-`DELETE /api/v1/remote/keys/{key_id}`
-
-吊销：本地删除并推送 server 移除映射，该 key 的后续会话请求被本机拒绝。响应 `{ "synced": true }`。
+权限变化广播 SSE `lan.access.changed`；客户端重拉 `app/lan`。
 
 ## library
 
@@ -936,7 +714,7 @@ palette 项：`{ "color": "#344441", "percentage": 3.1 }`——color 为 # 前�
 
 `POST /api/v1/item/add`
 
-向素材库添加新文件。`path`、`img_base64` 二者必须提供其一，作为文件内容来源；广域网受限写会话只接受 `img_base64`，携带 `path` 返回 403 `READ_ONLY`（防止远端读取服务器本机文件入库）；文件将写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
+向素材库添加新文件。`path`、`img_base64` 二者必须提供其一，作为文件内容来源；文件写入 `folder_path` 指定的真实目录（缺省为库根目录），随后由索引流水线完成哈希与缩略图。来源网页（图片所在的页面地址）经 `website` 传入并记录为 Item.url。
 
 **入库策略前置校验**（写盘前拒绝，避免落盘后又被入库判定剔除）：目标路径命中 `ignore` 规则返回 `INVALID_PARAM`；扩展名不在可见白名单（`.hawk/config.toml` 的 `extensions`）返回 `UNSUPPORTED_FORMAT`。`item/upload` 与 `item/update` 的改名/移动目标同样受此约束。
 
@@ -1127,7 +905,7 @@ multipart/form-data 上传新 item（web 端 / iOS 分享扩展用）：客户�
 
 `GET /api/v1/item/file?id=<hash>`
 
-返回原图文件二进制，Content-Type 按扩展名推断（无法识别时为 `application/octet-stream`）。本地/局域网预览浮层直接用它；广域网默认使用 1024 缩略图，仅在放大、保存、复制或编辑时请求原图。文件位置取 item 主位置（优先非回收站位置）；文件已缺失时返回 404。与缩略图同理带 `Cache-Control: immutable`。`<img>` 直链无法设置请求头，与 thumbnail 一样放行查询参数 `?token=`。
+返回原图文件二进制，Content-Type 按扩展名推断（无法识别时为 `application/octet-stream`）。本地/局域网预览浮层直接用它。文件位置取 item 主位置（优先非回收站位置）；文件已缺失时返回 404。与缩略图同理带 `Cache-Control: immutable`。`<img>` 直链无法设置请求头，与 thumbnail 一样放行查询参数 `?token=`。
 
 ### refresh_thumbnail
 
@@ -1151,7 +929,7 @@ multipart/form-data 上传新 item（web 端 / iOS 分享扩展用）：客户�
 
 `POST /api/v1/item/replace`
 
-替换已有素材的文件内容。面向**客户端编辑**场景（旋转、裁切等）：编辑计算（解码/变换/重编码）在客户端完成，本端点只做存储层的校验、哈希与写盘——server 不承接用户图片的编辑计算，远程部署时同样成立。
+替换已有素材的文件内容。面向**客户端编辑**场景（旋转、裁切等）：编辑计算（解码/变换/重编码）在客户端完成，本端点只做存储层的校验、哈希与写盘。
 
 内容哈希几乎必然变化 → **id 漂移**：素材参数（标签/评分/备注/分类/来源）按路径继承迁移，事件（`item.removed` 旧 id + `item.added` 新 id）与缩略图/调色板重建由索引流水线闭环（见「Item 对象」的 id 漂移说明）。响应即新 Item 对象（新 id），客户端应切换到新 id 继续引用。
 
@@ -1287,11 +1065,10 @@ Server-Sent Events 订阅素材库变更,前端据此增量刷新界面。`Event
 | `library.updated` | LibraryInfo 对象 | 库显示名变更（`PATCH library/info`）；负载为完整库信息，客户端就地替换 |
 | `global_filter.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 全局列表隐藏集变更（标记/取消、级联跟随、外部同步重载）；负载为完整快照，客户端就地替换并重查列表 |
 | `locks.changed` | `{ "folders": [...], "categories": [...], "tags": [...] }` | 锁集变更（设锁/解除/改密、级联跟随、外部同步重载）；负载为名称快照，客户端重拉锁标记并重查列表。锁覆盖内的素材不发 `item.*` 事件（保守过滤，已解锁客户端可能漏收，靠解锁后的重查兕底） |
-| `remote.session` | `{ "session_id": "s_9", "target_device_id": "d_42", "state": "connected" }` | 远程会话生命周期（connected/disconnected）：隧道建立或断开时推送，app 据此切换连接描述符与断线自动回切本地库 |
-| `remote.status` | `{ "state": "online", "server_url": "...", "device_id": "d_42" }` | 信令状态变化（disabled/connecting/online/error），远程设置面板免轮询；error 时负载带 `error` 原因 |
+| `lan.access.changed` | `{ "changed": true }` | 局域网访问密钥创建/权限变更/删除 |
 | `task.progress`   | `{ "task": "thumbnail", "pending": 236, "active": 4 }` | 后台任务积压变化(缩略图/调色板队列与索引管道;服务端 500ms 节流,积压倒零后补发一帧清零帧) |
 
-事件名与负载即持久契约(Rust 重写必须逐字兼容);后端以常量集中定义(`ItemEvents`),客户端不许凭代码反推。
+事件名与负载即持久契约；后端以常量集中定义（`internal/library/events.go`），客户端不许凭代码反推。
 
 ### 负载契约
 
