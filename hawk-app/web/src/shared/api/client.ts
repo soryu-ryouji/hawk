@@ -131,6 +131,8 @@ export async function request<T>(method: string, path: string, opts?: { body?: u
       method,
       headers: {
         Authorization: `Bearer ${credential}`,
+        // 浏览器（局域网 Web）Cookie 写请求的 CSRF 校验标记；Electron 本地环回不需要。
+        ...(!hasShell ? { 'X-Hawk-Client': 'web' } : {}),
         ...(unlockHeaderValue() ? { 'X-Hawk-Unlock': unlockHeaderValue()! } : {}),
         ...(opts?.body !== undefined && !raw ? { 'Content-Type': 'application/json' } : {}),
       },

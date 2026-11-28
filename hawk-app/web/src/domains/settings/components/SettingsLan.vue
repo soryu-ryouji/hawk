@@ -18,6 +18,8 @@ const addresses = ref<string[]>([]);
 const keyLabel = ref('');
 const keyWrite = ref(false);
 const notice = ref('');
+/** 新创建的密钥明文只在签发时出现一次，单独展示便于复制。 */
+const lastCreatedKey = ref<string | null>(null);
 const { copy: copyText } = useClipboard({ legacy: true });
 
 onMounted(async () => {
@@ -32,11 +34,14 @@ onMounted(async () => {
 
 const portValid = computed(() => lan.portValid);
 
-function addKey(): void {
-  lan.addKey(keyLabel.value, keyWrite.value ? 'editor' : 'viewer');
+async function addKey(): Promise<void> {
+  const key = await lan.addDeviceKey(keyLabel.value, keyWrite.value ? 'editor' : 'viewer');
+  if (key) {
+    lastCreatedKey.value = key.access_key;
+  }
   keyLabel.value = '';
   keyWrite.value = false;
-  error.value = null;
+  error.value = lan.error;
 }
 
 function removeKey(id: string): void {
@@ -92,8 +97,8 @@ defineExpose({ save, busy });
           <span class="field-label">访问地址列表</span>
           <ul class="addrs">
             <li v-for="ip in addresses" :key="ip">
-              <a :href="portValid ? `https://${ip}:${lan.port}` : undefined" target="_blank" rel="noreferrer">https://{{ ip }}:{{ lan.port }}</a>
-              <button class="icon-btn" :disabled="!portValid" title="复制地址" @click="copy(`https://${ip}:${lan.port}`)">
+              <a :href="portValid ? `http://${ip}:${lan.port}` : undefined" target="_blank" rel="noreferrer">http://{{ ip }}:{{ lan.port }}</a>
+              <button class="icon-btn" :disabled="!portValid" title="复制地址" @click="copy(`http://${ip}:${lan.port}`)">
                 <Icon name="copy" :size="13" />
               </button>
             </li>
@@ -111,6 +116,13 @@ defineExpose({ save, busy });
             </label>
             <button :disabled="lan.loading" @click="addKey">创建</button>
           </div>
+          <div v-if="lastCreatedKey" class="new-key">
+            <span class="new-key-label">新密钥（只显示一次）</span>
+            <code class="new-key-value">{{ lastCreatedKey }}</code>
+            <button class="icon-btn" title="复制完整密钥" @click="copy(lastCreatedKey)">
+              <Icon name="copy" :size="13" />
+            </button>
+          </div>
         </div>
 
         <div class="field column">
@@ -119,14 +131,11 @@ defineExpose({ save, busy });
             <div v-for="key in lan.keys" :key="key.id" class="key-row">
               <div class="key-main">
                 <div class="key-label">{{ key.label }}</div>
-                <div class="key-token">{{ maskedToken(key.access_key) }}</div>
+                <div class="key-token">{{ key.access_key ? maskedToken(key.access_key) : '明文只在创建时显示' }}</div>
               </div>
               <span class="perm read">读</span>
               <span v-if="key.role === 'editor'" class="perm write">写</span>
               <div class="key-actions">
-                <button class="icon-btn" title="复制完整密钥" @click="copy(key.access_key)">
-                  <Icon name="copy" :size="13" />
-                </button>
                 <button class="icon-btn" title="删除访问密钥" @click="removeKey(key.id)">
                   <Icon name="trash" :size="13" />
                 </button>
@@ -174,6 +183,30 @@ defineExpose({ save, busy });
 
 .key-section {
   gap: 8px;
+}
+
+.new-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.new-key-label {
+  flex: none;
+  color: var(--fg-1);
+  font-size: 11px;
+}
+
+.new-key-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
 }
 
 .key-create {

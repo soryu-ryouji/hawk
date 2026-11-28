@@ -9,24 +9,21 @@ import { shell } from '@/shared/lib/platform';
 import { useContextMenu } from '@/shared/composables/useContextMenu';
 import { useLibraryStore } from '@/domains/library';
 import { renameLibrary } from '@/domains/library';
-import { useConnectionLabel, useRemoteStore } from '@/domains/remote';
+import { useConnectionLabel } from '@/shared/connection';
 import { useLanStore } from '@/domains/lan';
 import Icon from '@/shared/ui/Icon.vue';
 import PromptDialog from '@/shared/ui/PromptDialog.vue';
-import type { LanPeerProfile, LibraryHistoryItem, MenuItem, RemoteDevice } from '@/shared/types';
+import type { LanPeerProfile, LibraryHistoryItem, MenuItem } from '@/shared/types';
 
 const store = useLibraryStore();
 const menu = useContextMenu();
-const remoteStore = useRemoteStore();
 const lanStore = useLanStore();
 const connection = useConnectionLabel();
 
 const open = ref(false);
 const current = ref<string | null>(null);
 const libraries = ref<LibraryHistoryItem[]>([]);
-/** 远程素材库（服务端池内其他设备；仅远程接入在线时拉取） */
-const peers = ref<RemoteDevice[]>([]);
-/** 已配对的局域网素材库（不经服务器） */
+/** 已配对的局域网素材库 */
 const lanPeers = ref<LanPeerProfile[]>([]);
 const triggerRef = ref<HTMLElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
@@ -68,24 +65,8 @@ async function loadPanelData(): Promise<void> {
     } catch {
       lanPeers.value = [];
     }
-    const status = await shell.remoteStatus();
-    if (seq !== loadSeq) {
-      return;
-    }
-    if (!status.enabled || status.status.state !== 'online') {
-      peers.value = [];
-      return;
-    }
-    // 本机设备不在其列
-    const { devices } = await shell.remoteDevices();
-    if (seq !== loadSeq) {
-      return;
-    }
-    peers.value = devices.filter((d) => d.device_id !== status.status.device_id);
   } catch {
-    if (seq === loadSeq) {
-      peers.value = [];
-    }
+    // 历史库读取失败不拖塌浮层。
   }
 }
 
@@ -127,11 +108,9 @@ function unbindOutside(): void {
 /** 当前远端浏览的写能力（徽标悬停提示；只读/仅导入/可读写对应 store 的两道门禁） */
 const remoteMode = computed(() => (store.viewerMode ? '只读' : store.limitedWrite ? '仅导入' : '可读写'));
 
-/** 触发器悬停提示：远端/局域网浏览时给来源、设备名与写能力（来源区分落在本按钮上） */
+/** 触发器悬停提示：局域网浏览时给来源、设备名与写能力。 */
 const triggerTitle = computed(() =>
-  connection.isPeer.value
-    ? `${connection.isLan.value ? '局域网直连' : '远程浏览'}：${connection.label.value}（${remoteMode.value}）· 点击切换素材库`
-    : `${store.library?.path ?? ''}（点击切换素材库）`,
+  connection.isPeer.value ? `局域网直连：${connection.label.value}（${remoteMode.value}）· 点击切换素材库` : `${store.library?.path ?? ''}（点击切换素材库）`,
 );
 
 /** 断开远程会话回本地库：徽标取代了原顶栏标识，断开入口收进浮层顶部（同点当前本地库的效果） */
@@ -195,18 +174,6 @@ async function connectLan(peer: LanPeerProfile): Promise<void> {
   if (lanStore.error) {
     store.showToast(lanStore.error);
     lanStore.error = null;
-  }
-}
-
-async function connectRemote(device: RemoteDevice): Promise<void> {
-  if (!device.online || !device.allow_remote || device.device_id === connection.deviceId.value) {
-    return;
-  }
-  close();
-  await remoteStore.connect(device.device_id);
-  if (remoteStore.error) {
-    store.showToast(remoteStore.error);
-    remoteStore.error = null;
   }
 }
 
@@ -277,8 +244,8 @@ onBeforeUnmount(() => {
   <button ref="triggerRef" class="library-name" :class="{ open }" :title="triggerTitle" @click="open = !open" @dblclick.stop>
     <Icon name="library" />
     <span class="lib-text">{{ store.library?.name ?? 'hawk' }}</span>
-    <!-- 远程浏览标识：远端库与本地库在视觉上必须可区分（安全与认知底线），悬停提示带写能力 -->
-    <span v-if="connection.isPeer.value" class="badge">{{ connection.isLan.value ? '局域网' : '远程' }}</span>
+    <!-- 局域网浏览标识：远端库与本地库在视觉上必须可区分，悬停提示带写能力 -->
+    <span v-if="connection.isPeer.value" class="badge">局域网</span>
     <Icon name="chevronDown" :size="12" class="lib-chev" />
     <Teleport to="body">
       <div v-if="open" ref="panelRef" class="lib-panel" :style="{ left: pos.x + 'px', top: pos.y + 'px', width: pos.width + 'px' }">
@@ -286,7 +253,7 @@ onBeforeUnmount(() => {
         <template v-if="connection.isPeer.value">
           <button type="button" class="lib-item" :title="`当前浏览：${connection.label.value}（${remoteMode}）`" @click="disconnectRemote">
             <span class="check" />
-            <span class="label">断开{{ connection.isLan.value ? '局域网连接' : '远程' }} · 回到我的库</span>
+            <span class="label">断开局域网连接 · 回到我的库</span>
             <Icon name="close" :size="12" />
           </button>
           <div class="separator" />
@@ -319,27 +286,6 @@ onBeforeUnmount(() => {
             <span class="check">{{ connection.isLan.value && peer.id === connection.peerId.value ? '✓' : '' }}</span>
             <span class="label">{{ peer.name }}（{{ peer.library_name }}）{{ lanStore.connectingId === peer.id ? ' 连接中…' : '' }}</span>
             <span class="badge">局域网</span>
-          </button>
-        </template>
-        <!-- 远程素材库：池内其他设备，一键切换浏览（「远程」徽标区分本地历史） -->
-        <template v-if="peers.length > 0">
-          <div class="separator" />
-          <button
-            v-for="device in peers"
-            :key="device.device_id"
-            type="button"
-            class="lib-item"
-            :class="{
-              selected: device.device_id === connection.deviceId.value,
-              disabled: !device.online || !device.allow_remote || device.device_id === connection.deviceId.value,
-            }"
-            :title="`${device.name} · ${device.library_name} · ${device.platform}${device.online ? (device.allow_remote ? '' : ' · 已关闭访问') : ' · 离线'}`"
-            @click="connectRemote(device)"
-          >
-            <span class="check">{{ device.device_id === connection.deviceId.value ? '✓' : '' }}</span>
-            <span class="dot" :class="{ online: device.online }" />
-            <span class="label">{{ device.name }}（{{ device.library_name }}）{{ remoteStore.connectingId === device.device_id ? ' 连接中…' : '' }}</span>
-            <span class="badge">远程</span>
           </button>
         </template>
         <div class="separator" />

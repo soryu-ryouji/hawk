@@ -57,15 +57,13 @@ writeFileSync(path.join(lib, 'green.png'), png([0, 255, 0]));
 writeFileSync(path.join(lib, 'blue.png'), png([0, 0, 255]));
 
 const exeName = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
-const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
-const targetDir = path.join(root, '..', 'hawk-daemon', 'target');
 const serverBin = [
-  ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release', exeName)] : []),
-  path.join(targetDir, 'release', exeName),
-  path.join(targetDir, 'debug', exeName),
+  path.join(root, '..', 'hawk-daemon', exeName),
+  path.join(root, '..', 'hawk-daemon', 'bin', exeName),
+  path.join(root, 'resources', 'hawk-daemon', exeName),
 ].find((p) => existsSync(p));
-if (!serverBin) throw new Error('未找到 hawk-daemon 构建产物，请先 cargo build --release');
-const server = spawn(serverBin, ['local', lib, '--port', String(port)], {
+if (!serverBin) throw new Error('未找到 hawk-daemon 构建产物，请先在 hawk-daemon/ 执行 go build -o hawk-daemon.exe .');
+const server = spawn(serverBin, ['local', lib, '--port', String(port), '--identity-dir', path.join(root, 'tools', '.tmp', 'dnd-identity'), '--cache-parent', path.join(root, 'tools', '.tmp', 'dnd-cache')], {
   env: { ...process.env, HAWK_ADMIN_TOKEN: token },
   stdio: 'ignore',
 });

@@ -6,7 +6,7 @@ import { app, dialog } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createTray, createWindow, loadMainPage, setQuitting, showMainWindow } from './window';
-import { openLibraryAt, startRemoteViewer, stopServer } from './server';
+import { openLibraryAt, stopServer } from './server';
 import { readConfig } from './app-config';
 import { registerIpc } from './ipc';
 import { registerUpdaterIpc } from './updater';
@@ -32,17 +32,6 @@ app.whenReady().then(async () => {
 
   const config = readConfig();
   const libPath = config.libraryPath;
-  if (config.remoteViewer) {
-    // 远程查看模式记忆：无库 daemon 直接拉起（无本地素材目录）
-    try {
-      const server = await startRemoteViewer();
-      loadMainPage({ address: server.address, admin_token: server.admin_token });
-    } catch (error) {
-      dialog.showErrorBox('hawk-daemon 启动失败', String(error));
-      app.quit();
-    }
-    return;
-  }
   if (!libPath || !fs.existsSync(libPath)) {
     loadMainPage(); // 素材库未配置或已失效：进应用内引导页（无连接参数）
     return;

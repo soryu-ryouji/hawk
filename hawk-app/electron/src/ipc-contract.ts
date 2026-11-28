@@ -5,7 +5,6 @@
 export const IPC = {
   // ---- 渲染进程 → 主进程（ipcRenderer.invoke / ipcMain.handle） ----
   selectLibrary: 'hawk:select-library',
-  openRemoteViewer: 'hawk:open-remote-viewer',
   listLibraries: 'hawk:list-libraries',
   openLibrary: 'hawk:open-library',
   openLibraryFolder: 'hawk:open-library-folder',
@@ -34,19 +33,8 @@ export const IPC = {
   winMinimize: 'hawk:win-minimize',
   winMaximizeToggle: 'hawk:win-maximize-toggle',
   winClose: 'hawk:win-close',
-  remoteGetConnection: 'hawk:remote-get-connection',
-  remoteStatus: 'hawk:remote-status',
-  remotePutConfig: 'hawk:remote-put-config',
-  remoteDevices: 'hawk:remote-devices',
-  remotePatchDevice: 'hawk:remote-patch-device',
-  remoteDeleteDevice: 'hawk:remote-delete-device',
-  remoteRotate: 'hawk:remote-rotate',
-  remoteConnect: 'hawk:remote-connect',
-  remoteDisconnect: 'hawk:remote-disconnect',
-  remoteKeys: 'hawk:remote-keys',
-  remoteCreateKey: 'hawk:remote-create-key',
-  remotePatchKey: 'hawk:remote-patch-key',
-  remoteDeleteKey: 'hawk:remote-delete-key',
+  getConnection: 'hawk:get-connection',
+  disconnectConnection: 'hawk:disconnect-connection',
   lanDiscover: 'hawk:lan-discover',
   lanPair: 'hawk:lan-pair',
   lanConnect: 'hawk:lan-connect',
@@ -137,21 +125,19 @@ export interface ApiPortInfo {
   range: readonly [number, number];
 }
 
-/** 连接形态：local=本机库；remote=经 hawk-server 的广域网远端；lan=局域网直连的另一台 hawk-app */
-export type ConnectionKind = 'local' | 'remote' | 'lan';
+/** 连接形态：local=本机库；lan=局域网直连的另一台 hawk-app */
+export type ConnectionKind = 'local' | 'lan';
 export type AccessRole = 'viewer' | 'importer' | 'editor' | 'admin';
 
-/** 连接描述符：前端唯一面对的连接语义（api_base + credential + 展示名），本地库/远端库同构 */
+/** 连接描述符：前端唯一面对的连接语义（api_base + credential + 展示名）。 */
 export interface ConnectionDescriptor {
   api_base: string;
   credential: string;
-  /** 「我的库」| 远端设备名 */
+  /** 「我的库」| 局域网设备名（库名） */
   label: string;
-  /** 非本机连接（remote/lan）；保留布尔字段给既有展示逻辑，细分来源用 kind */
+  /** 非本机连接（lan） */
   remote: boolean;
   kind: ConnectionKind;
-  /** 当前浏览的远端设备 id（kind=remote 时存在；换库下拉打勾依据） */
-  device_id?: string;
   /** 当前浏览的局域网设备 id（kind=lan 时存在） */
   peer_id?: string;
 }
@@ -162,23 +148,21 @@ export interface LanPeer {
   /** 设备主机名 */
   name: string;
   library_name: string;
-  /** http://<局域网 IP>:<web.port> */
+  /** http://<局域网 IP>:<peer_port> */
   url: string;
   /** 目标设备是否允许局域网写操作 */
   writable: boolean;
   requires_pairing: boolean;
-  target_identity: string;
-  target_device_id?: string | null;
   target_library_id: string;
-  tls_fingerprint?: string | null;
 }
 
 /** 目标端待确认的自动配对请求（仅展示字段，无访问凭证） */
 export interface LanPairRequest {
   id: string;
   client_name: string;
-  requested_role: AccessRole;
+  role: AccessRole;
   created_at_ms: number;
+  expires_at_ms: number;
 }
 
 /** 当前活跃的局域网直连设备（目标端展示用；不含 token） */
@@ -204,16 +188,13 @@ export interface LanAccessKey {
   url?: string | null;
 }
 
-/** 本机 LAN 配置（主进程经 Loopback admin 读取，与当前浏览的远程库无关） */
+/** 本机 LAN 配置（主进程经 Loopback admin 读取） */
 export interface LanSettings {
   enabled: boolean;
   port: number;
   peer_port: number;
   peer_id: string;
-  target_identity: string;
-  target_device_id?: string | null;
   target_library_id: string;
-  tls_fingerprint?: string | null;
   name: string;
   library_name: string;
   keys: LanAccessKey[];
@@ -232,79 +213,6 @@ export interface LanPeerProfile {
   writable: boolean;
   /** 最近成功连接时间（Unix ms；仅展示排序用） */
   last_connected_at_ms: number;
-  target_identity: string;
-  target_device_id?: string | null;
-  target_library_id: string;
-  tls_fingerprint?: string | null;
-}
-
-/** 远程访问接入配置（读写 daemon /remote 的载荷；应用级，跨素材库共享） */
-export interface RemoteConfig {
-  enabled: boolean;
-  url: string;
-  /** 服务端 tenant-key（池门禁凭证，hawk-server tenant add 生成） */
-  tenant_key: string;
-  /** 允许广域网会话导入素材/新建文件夹（与 [web] 局域网写权限独立） */
-  allow_import: boolean;
-  /** 使用中继（服务端提供时；消耗自建带宽，设备级开关，默认关闭） */
-  relay: boolean;
-}
-
-/** 信令运行状态（daemon /remote 的 status 子对象，含 relay 等运行配置回显） */
-export interface RemoteStatus {
-  state: 'disabled' | 'connecting' | 'online' | 'error';
-  server_url?: string;
-  device_id?: string;
-  error?: string;
-}
-
-/** daemon /remote 的完整响应（配置 + 运行状态） */
-export interface RemoteDto extends RemoteConfig {
-  status: RemoteStatus;
-}
-
-/** 服务端设备（daemon /remote/devices 单条） */
-export interface RemoteDevice {
-  device_id: string;
-  name: string;
-  platform: string;
-  library_name: string;
-  online: boolean;
-  allow_remote: boolean;
-  allow_import: boolean;
-  /** 是否有直连候选（UPnP 映射或全局 IPv6）；false = 直连必失败只能中继；缺省 = 无数据 */
-  reachable?: boolean;
-  last_seen_at_ms?: number;
-}
-
-/** 远程会话建立结果（daemon /remote/session 响应） */
-export interface RemoteSessionDto {
-  session_id: string;
-  target_device_id: string;
-  target_name: string;
-  target_library_name: string;
-  proxy_port: number;
-  session_token: string;
-  role: AccessRole;
-}
-
-/** 访问密钥条目（daemon /remote/keys 单条；不含明文——明文只在签发响应出现一次） */
-export interface RemoteKeyEntry {
-  id: string;
-  label: string;
-  role: AccessRole;
-  /** key 前 4 字符（列表识别用） */
-  prefix: string;
-  created_at_ms: number;
-}
-
-/** 签发访问密钥的返回（明文 key 只在本次出现） */
-export interface RemoteKeyCreated {
-  id: string;
-  key: string;
-  target_identity: string;
-  target_device_id?: string;
-  target_library_id?: string;
 }
 
 /** server 索引进度事件负载（total=0 表示不定态） */
@@ -319,8 +227,6 @@ export interface HawkShell {
   platform: string;
   /** 更换素材库：弹目录选择框并拉起新 server；就绪经 onServerStarted 通知 */
   selectLibrary(): Promise<boolean>;
-  /** 没有本地素材库时进入远程查看模式：拉起无库 daemon（不创建本地目录，不弹目录选择框） */
-  openRemoteViewer(): Promise<boolean>;
   /** 本机打开过的素材库历史与当前库路径 */
   listLibraries(): Promise<{ current: string | null; libraries: LibraryHistoryItem[] }>;
   /** 打开历史素材库（仅限历史记录内的路径） */
@@ -397,34 +303,11 @@ export interface HawkShell {
   onServerProgress(cb: (progress: ServerProgress) => void): () => void;
   /** 订阅最大化状态变化（含 Aero Snap 等系统途径），返回退订函数 */
   onWindowMaximized(cb: (maximized: boolean) => void): () => void;
-  /** 当前活动连接描述符（本地库 / 远程会话代理 / 局域网直连）；server 未就绪返回 null */
-  remoteGetConnection(): Promise<ConnectionDescriptor | null>;
-  /** 远程接入配置与信令运行状态（daemon /remote） */
-  remoteStatus(): Promise<RemoteDto>;
-  /** 写回应用级远程配置并热重启信令 */
-  remotePutConfig(config: RemoteConfig): Promise<RemoteDto>;
-  /** 服务端设备列表 */
-  remoteDevices(): Promise<{ devices: RemoteDevice[] }>;
-  /** 更新本机设备信息（显示名/allow_remote/库名） */
-  remotePatchDevice(patch: { name?: string; allow_remote?: boolean; library_name?: string }): Promise<RemoteDevice>;
-  /** 注销服务端设备记录（本机当前设备由 daemon 侧拒绝）；其会话与 key 映射一并清理 */
-  remoteDeleteDevice(deviceId: string): Promise<void>;
-  /** 证书轮换（旧证书会话失效） */
-  remoteRotate(): Promise<{ endpoint_id: string }>;
-  /** 建立远程会话并切换连接（返回新连接描述符）；失败抛错（message 直接展示）。
-   *  传输路径（直连/打洞/中继）由 iroh 自治，两端静态开关决定中继可用性 */
-  remoteConnect(targetDeviceId: string): Promise<ConnectionDescriptor>;
-  /** 断开远程会话并回切本地库（幂等） */
-  remoteDisconnect(): Promise<ConnectionDescriptor | null>;
-  /** 本机签发的访问密钥列表（不含明文） */
-  remoteKeys(): Promise<{ keys: RemoteKeyEntry[] }>;
-  /** 签发访问密钥（custom 省略 = 程序生成；明文只在返回值里出现一次） */
-  remoteCreateKey(input: { label?: string; role: AccessRole; custom?: string }): Promise<RemoteKeyCreated>;
-  /** 更新访问密钥标签/权限 */
-  remotePatchKey(id: string, patch: { label?: string; role?: AccessRole }): Promise<{ key: RemoteKeyEntry }>;
-  /** 吊销访问密钥 */
-  remoteDeleteKey(id: string): Promise<void>;
-  /** 读取本机 LAN 配置；主进程始终使用 Loopback admin，不受当前 WAN/LAN 浏览连接影响 */
+  /** 当前活动连接描述符（本地库 / 局域网直连）；server 未就绪返回 null */
+  getConnection(): Promise<ConnectionDescriptor | null>;
+  /** 断开当前局域网连接并回切本地库（幂等） */
+  disconnectConnection(): Promise<ConnectionDescriptor | null>;
+  /** 读取本机 LAN 配置；主进程始终使用 Loopback admin，不受当前浏览连接影响 */
   lanGetSettings(): Promise<LanSettings>;
   /** 探测同网段可配对的 hawk 设备（经本机 daemon 的 UDP 发现） */
   lanDiscover(): Promise<{ peers: LanPeer[] }>;
@@ -446,7 +329,7 @@ export interface HawkShell {
   lanClients(): Promise<{ clients: LanClient[] }>;
   /** 允许/拒绝自动配对请求，并决定只读或读写 */
   lanDecidePairRequest(requestId: string, body: { allow: boolean; role: AccessRole }): Promise<{ status: string }>;
-  /** 订阅连接变更（切换本地/远程库、断线自动回切都会推送），返回退订函数。
-   *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 remoteGetConnection 拉取兜底 */
+  /** 订阅连接变更（切换本地/局域网、断线自动回切都会推送），返回退订函数。
+   *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 getConnection 拉取兜底 */
   onConnectionChanged(cb: (conn: ConnectionDescriptor) => void): () => void;
 }

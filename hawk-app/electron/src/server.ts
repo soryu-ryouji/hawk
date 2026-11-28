@@ -6,11 +6,11 @@ import net from 'node:net';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { APP_DIR, DAEMON_LOG_FILE, REMOTE_CONFIG_FILE } from './paths';
+import { APP_DIR, DAEMON_IDENTITY_DIR, DAEMON_LOG_FILE } from './paths';
 import { getMainWindow } from './window';
-import { API_PORT_RANGE, getApiPort, getLanTarget, getLibraryRoot, getRemoteTarget, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
+import { API_PORT_RANGE, getApiPort, getLanTarget, getLibraryRoot, readConfig, setApiPort, setLibraryRoot, writeConfig } from './app-config';
 import { IPC, PORT_IN_USE, type ServerConn, type ServerFailure } from './ipc-contract';
-import { onServerReady, onServerStopped, restoreLanSession, restoreRemoteSession } from './remote';
+import { onServerReady, onServerStopped, restoreLanSession } from './connections';
 import { setResourceAuth } from './resource-auth';
 
 const isDev = !app.isPackaged;
@@ -47,36 +47,23 @@ function resolveServerCommand(): { command: string; args: string[] } {
   if (process.env.HAWK_DAEMON_EXE) {
     return { command: process.env.HAWK_DAEMON_EXE, args: [] };
   }
+  const exe = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
   if (isDev) {
-    // 开发态：直接运行 Rust 后端二进制（release 优先；后端开发迭代的 debug 构建亦可）
-    const exe = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
-    const RUST_TARGET: Record<string, string> = {
-      'win32-x64': 'x86_64-pc-windows-msvc',
-      'darwin-arm64': 'aarch64-apple-darwin',
-      'darwin-x64': 'x86_64-apple-darwin',
-      'linux-x64': 'x86_64-unknown-linux-gnu',
-    };
-    const targetDir = path.join(APP_DIR, '..', 'hawk-daemon', 'target');
-    // 兼容两种 cargo 产物位置：本机直建 target/release 与 --target 交叉建 target/<triple>/release。
-    // 多个产物并存时按 mtime 取最新（与 scripts/gen-types.mjs 同策略）——固定优先级会
-    // 在交叉产物过期时静默用旧 daemon，与 gen-types 选中的二进制版本不一致
+    // 开发态：Go 构建产物（hawk-daemon/hawk-daemon(.exe)）；兼容旧目录里的临时产物
     const candidates = [
-      ...(RUST_TARGET[`${process.platform}-${process.arch}`] ? [path.join(targetDir, RUST_TARGET[`${process.platform}-${process.arch}`], 'release')] : []),
-      path.join(targetDir, 'release'),
-      path.join(targetDir, 'debug'),
+      path.join(APP_DIR, '..', 'hawk-daemon', exe),
+      path.join(APP_DIR, '..', 'hawk-daemon', 'bin', exe),
+      // CI 先跑 build-server 把二进制放进 resources，再跑 UI 自检
+      path.join(APP_DIR, 'resources', 'hawk-daemon', exe),
     ];
-    const existing = candidates
-      .map((dir) => path.join(dir, exe))
-      .filter((bin) => fs.existsSync(bin))
-      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    const existing = candidates.filter((bin) => fs.existsSync(bin)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
     if (existing.length > 0) {
       return { command: existing[0], args: [] };
     }
-    throw new Error('未找到 hawk-daemon 构建产物，请先 cargo build --release（hawk-daemon/）');
+    throw new Error('未找到 hawk-daemon 构建产物，请先在 hawk-daemon/ 执行 go build -o hawk-daemon.exe .');
   }
-  // 打包态：extraResources 携带的 Rust 二进制（cargo build --release，见 scripts/build-server.mjs）
-  const bin = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
-  return { command: path.join(process.resourcesPath, 'hawk-daemon', bin), args: [] };
+  // 打包态：extraResources 携带的 Go 二进制（见 scripts/build-server.mjs）
+  return { command: path.join(process.resourcesPath, 'hawk-daemon', exe), args: [] };
 }
 
 /** 本机 daemon 的监听地址：端口取自用户配置（config.toml apiPort，默认 27371）。
@@ -128,17 +115,7 @@ async function notifyReady(): Promise<void> {
   if (!conn) {
     return;
   }
-  if (getRemoteTarget()) {
-    // 启动屏先切文案：恢复可能耗时（信令接入/拨号），期间没有索引进度可报，
-    // 不能停在上一轮的扫描文案上
-    getMainWindow()?.webContents.send(IPC.serverProgress, { phase: 'restore-remote', processed: 0, total: 0 });
-    if (await restoreRemoteSession()) {
-      return;
-    }
-    if (startedConn !== conn) {
-      return;
-    }
-  } else if (getLanTarget()) {
+  if (getLanTarget()) {
     // 局域网直连不依赖服务器：上一轮浏览另一台 hawk-app 时优先恢复同一目标。
     getMainWindow()?.webContents.send(IPC.serverProgress, { phase: 'restore-lan', processed: 0, total: 0 });
     if (await restoreLanSession()) {
@@ -159,23 +136,22 @@ async function notifyReady(): Promise<void> {
  *   hawk:server-progress（starting 阶段进度）→ hawk:server-started（就绪，含地址与 admin_token）→ hawk:server-error（失败原因）。
  * spawn 失败、异常退出（stopServer 除外）、停滞 120s 超时就 hawk:server-error。
  */
-function startServer(libPath: string | null, address: string, admin_token: string): ServerHandle {
+function startServer(libPath: string, address: string, admin_token: string): ServerHandle {
   lastFailure = null; // 新的一次拉起：清掉上一轮失败（页面挂载时的拉取兜底不应看到旧错）
   const { command, args } = resolveServerCommand();
   // 全局缓存父目录（设置面板「存储」配置；未配置用系统默认）
   const cacheParent = readConfig().cacheParent;
   const spawnArgs = [
     ...args,
-    // 本地库与无库远程查看是两个显式子命令；远程配置与设备身份固定在应用级目录
-    ...(libPath ? ['local', libPath] : ['remote']),
+    'local',
+    libPath,
     '--port',
     String(new URL(address).port),
     '--web-dist',
     webDistDir(),
     ...(cacheParent ? ['--cache-parent', cacheParent] : []),
-    // 远程接入配置跨素材库共享：固定指向应用级 remote.toml（身份目录由其同级派生）
-    '--remote-config',
-    REMOTE_CONFIG_FILE,
+    '--identity-dir',
+    DAEMON_IDENTITY_DIR,
   ];
   // 闭包级标志：有意停止（换库/应用设置重启）时抑制 exit 广播——旧子进程终止可能晚于
   // 新 server 的拉起，全局标志会被新一轮复位，造成误报异常退出
@@ -355,7 +331,7 @@ async function switchLibrary(libPath: string, address: string, admin_token: stri
   await stopServerAndWait();
   // 记住当前库并维护历史（最近使用在前、去重、上限 10）：换库下拉经 hawk:list-libraries 直达
   const history = [libPath, ...(readConfig().libraryHistory ?? []).filter((p) => p !== libPath)].slice(0, 10);
-  writeConfig({ libraryPath: libPath, libraryHistory: history, remoteViewer: false });
+  writeConfig({ libraryPath: libPath, libraryHistory: history });
   setLibraryRoot(libPath);
   return startServer(libPath, address, admin_token);
 }
@@ -367,26 +343,11 @@ export async function openLibraryAt(libPath: string): Promise<ServerHandle> {
   return server;
 }
 
-/** 远程查看模式：拉起无库 daemon（仅远程管理面与会话代理），不创建任何本地目录。
- *  就绪后前端进远程查看屏（配置服务端/选设备）；冷启动模式记忆为 remoteViewer */
-export async function startRemoteViewer(): Promise<ServerHandle> {
-  const admin_token = crypto.randomBytes(32).toString('hex');
-  getMainWindow()?.webContents.send(IPC.serverRestarting);
-  startedConn = null;
-  await stopServerAndWait();
-  writeConfig({ remoteViewer: true });
-  setLibraryRoot(null);
-  server = startServer(null, apiAddress(), admin_token);
-  return server;
-}
-
-/** 按当前模式重启 daemon（本地库 → 同库；远程查看 → 无库形态）。设置面板与端口重试共用 */
+/** 按当前库重启 daemon（设置面板与端口重试共用）。 */
 export async function restartCurrent(): Promise<void> {
   const libRoot = getLibraryRoot();
   if (libRoot) {
     await openLibraryAt(libRoot);
-  } else {
-    await startRemoteViewer();
   }
 }
 

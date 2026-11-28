@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { shell } from '@/shared/lib/platform';
 import { errorText } from '@/shared/lib/storeUtil';
 import { useLanStore } from '@/domains/lan';
-import { useConnectionLabel } from '@/domains/remote';
+import { useConnectionLabel } from '@/shared/connection';
 import Icon from '@/shared/ui/Icon.vue';
 import PairingQrDialog from './PairingQrDialog.vue';
 import { encodePairingPayload, lanPairingPayload } from '../pairing';
@@ -204,11 +204,10 @@ async function confirmPermission(): Promise<void> {
     const urls = addresses.value.map((addr) => 'http://' + addr + ':' + lan.peerPort);
     pairing.value = {
       title: mode === 'qr' ? '移动端局域网授权' : '局域网连接密钥',
-      payload: encodePairingPayload(lanPairingPayload(urls, key.access_key, lan.targetIdentity, lan.targetLibraryId, lan.targetDeviceId, lan.tlsFingerprint)),
+      payload: encodePairingPayload(lanPairingPayload(urls, key.access_key, lan.targetLibraryId)),
       details: [
         { label: '目标地址（任选其一）', value: urls.join('\n') },
         { label: '访问密钥', value: key.access_key },
-        { label: '目标身份', value: lan.targetIdentity },
       ],
       note:
         mode === 'qr'

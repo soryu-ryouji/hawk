@@ -11,7 +11,7 @@ import { useDragImport } from '@/domains/import';
 import { useLayout } from '@/shared/composables/useLayout';
 import { useBoot } from './boot';
 import { usePanelResize } from './panelResize';
-import { initConnectionLabel } from '@/domains/remote';
+import { initConnectionLabel } from '@/shared/connection';
 import { startupAutoCheck } from '@/domains/settings';
 import { hasShell, shell } from '@/shared/lib/platform';
 import { Sidebar } from '@/domains/taxonomy';
@@ -21,7 +21,6 @@ import { PreviewOverlay } from '@/domains/preview';
 import { ImageEditDialog } from '@/domains/preview';
 import ContextMenu from '@/shared/ui/ContextMenu.vue';
 import SetupScreen from './screens/SetupScreen.vue';
-import RemoteScreen from './screens/RemoteScreen.vue';
 import ConnectScreen from './screens/ConnectScreen.vue';
 import StartingScreen from './screens/StartingScreen.vue';
 import { LanPairRequestPrompt, SettingsDialog } from '@/domains/settings';
@@ -111,7 +110,6 @@ useDragImport();
       @quit="quitApp"
     />
     <SetupScreen v-else-if="phase === 'setup'" @selected="phase = 'starting'" />
-    <RemoteScreen v-else-if="phase === 'remote'" />
     <ConnectScreen v-else-if="phase === 'connect'" @connect="onConnected" />
   </div>
 

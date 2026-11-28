@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { useWindowSize } from '@vueuse/core';
 import { api } from '@/shared/api/endpoints';
 import { canCopyImageToClipboard, copyImageToClipboard } from '@/shared/lib/clipboard';
@@ -37,16 +37,11 @@ const indexText = computed(() => {
   return i >= 0 ? `${i + 1} / ${store.total}` : '';
 });
 
-// 本地/LAN 保持原图预览；广域网默认 1024 WebP，放大后才由 originalUrl 请求原图
+// 局域网直连：预览直接用原图。
 function displayUrl(id: string): string {
-  return store.remoteTransport ? api.thumbnailUrl(id, 1024) : api.fileUrl(id);
+  return api.fileUrl(id);
 }
 const imageUrl = computed(() => displayUrl(props.item.id));
-const originalUrl = computed(() => api.fileUrl(props.item.id));
-const previewLoaded = ref(false);
-const previewFailed = ref(false);
-const originalLoaded = ref(false);
-const originalFailed = ref(false);
 
 /** 复制图片本体到剪贴板（右键菜单与 Ctrl/Cmd+C 共用，实现见 clipboard.ts） */
 async function copyImage() {
@@ -129,23 +124,7 @@ const {
   onGestureClick,
 } = gestures;
 
-const loadingText = computed(() => {
-  if (!store.remoteTransport) {
-    return '';
-  }
-  if (scale.value > 1) {
-    if (originalLoaded.value) {
-      return '';
-    }
-    return originalFailed.value ? '原图加载失败' : '正在加载原图…';
-  }
-  if (previewLoaded.value) {
-    return '';
-  }
-  return previewFailed.value ? '预览暂不可用，等待重试…' : '正在加载预览…';
-});
-
-// 预加载相邻展示图：本地/LAN 为原图，广域网只预载压缩预览，避免三张原图占满链路
+// 预加载相邻展示图。
 function preloadNeighbors() {
   for (const step of [1, -1] as const) {
     const key = preview.previewNavId(step);
@@ -188,36 +167,9 @@ watch(
   () => {
     // 切图复位：手势状态机清零（手指通常已抬起，兜底防泄漏）+ 相邻预加载 + 加载状态
     gestures.reset();
-    previewLoaded.value = false;
-    previewFailed.value = false;
-    originalLoaded.value = false;
-    originalFailed.value = false;
     preloadNeighbors();
   },
 );
-
-// 缩略图生成完成经 item.updated 写入新 Item 引用：此前 404 的 <img> 已卸载，这里重新挂载重试
-watch(
-  () => props.item,
-  () => {
-    if (previewFailed.value) {
-      previewFailed.value = false;
-      previewLoaded.value = false;
-    }
-    if (originalFailed.value) {
-      originalFailed.value = false;
-      originalLoaded.value = false;
-    }
-  },
-);
-
-// 返回翻页模式后再次放大：重新挂载此前失败的原图，同时保留压缩图作为加载底图
-watch(scale, (current, previous) => {
-  if (current > 1 && previous <= 1) {
-    originalLoaded.value = false;
-    originalFailed.value = false;
-  }
-});
 
 /** 平移模式图像显示区域命中测试：基准 90vw/90vh object-fit: contain，transform 以元素中心为原点 */
 function pointInImage(px: number, py: number): boolean {
@@ -252,42 +204,20 @@ function pointInImage(px: number, py: number): boolean {
         @dblclick="onDblClick"
         @click="onGestureClick"
       ></div>
-      <!-- 缩放>1：单图平移视觉层。广域网原图加载期间保留压缩图，避免黑屏 -->
+      <!-- 缩放>1：单图平移视觉层 -->
       <div v-if="scale > 1" class="zoom-layer">
-        <img v-if="store.remoteTransport && !originalLoaded" class="image" :src="imageUrl" :alt="item.name" :style="imageStyle" draggable="false" />
-        <img
-          v-if="!originalFailed"
-          class="image"
-          :class="{ pending: store.remoteTransport && !originalLoaded }"
-          :src="originalUrl"
-          :alt="item.name"
-          :style="imageStyle"
-          draggable="false"
-          @load="originalLoaded = true"
-          @error="originalFailed = true"
-        />
+        <img class="image" :src="imageUrl" :alt="item.name" :style="imageStyle" draggable="false" />
       </div>
       <!-- 缩放=1：carousel 视觉层（手势层不位移，内层轨道跟手，iOS 相册式拖动邻图可见） -->
       <div v-else class="swipe-track">
         <div class="track-row" :class="{ 'track-anim': swipeAnim || pullAnim }" :style="trackStyle">
           <img v-if="prevUrl" class="track-img" :src="prevUrl" :key="`p-${prevKey}`" alt="上一张" draggable="false" />
           <div v-else class="track-img track-slot" />
-          <img
-            v-if="!previewFailed"
-            class="track-img"
-            :src="imageUrl"
-            :key="item.id"
-            :alt="item.name"
-            draggable="false"
-            @load="previewLoaded = true"
-            @error="previewFailed = true"
-          />
-          <div v-else class="track-img track-slot" />
+          <img class="track-img" :src="imageUrl" :key="item.id" :alt="item.name" draggable="false" />
           <img v-if="nextUrl" class="track-img" :src="nextUrl" :key="`n-${nextKey}`" alt="下一张" draggable="false" />
           <div v-else class="track-img track-slot" />
         </div>
       </div>
-      <div v-if="loadingText" class="load-status" role="status">{{ loadingText }}</div>
       <!-- 底部中间：序号 + 左右切换（Eagle 式） -->
       <div class="pager">
         <button class="page-btn" title="上一个 (←)" @click.stop="emit('navigate', -1)">‹</button>

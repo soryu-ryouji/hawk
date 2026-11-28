@@ -89,14 +89,12 @@ function resolveServer() {
   if (process.env.HAWK_DAEMON_EXE) {
     return { command: process.env.HAWK_DAEMON_EXE, args: [] };
   }
-  // 与 electron/server.mjs resolveServerCommand 同优先级：本机 target/release → target/<triple>/release → debug
+  // Go 构建产物：hawk-daemon/hawk-daemon(.exe)
   const exe = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
-  const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
-  const targetDir = path.resolve(root, '..', 'hawk-daemon', 'target');
   const candidates = [
-    ...(RUST_TARGET ? [path.join(targetDir, RUST_TARGET, 'release', exe)] : []),
-    path.join(targetDir, 'release', exe),
-    path.join(targetDir, 'debug', exe),
+    path.resolve(root, '..', 'hawk-daemon', exe),
+    path.resolve(root, '..', 'hawk-daemon', 'bin', exe),
+    path.resolve(root, 'resources', 'hawk-daemon', exe),
   ];
   const bin = candidates.find((p) => fs.existsSync(p));
   return bin ? { command: bin, args: [] } : null;
@@ -159,7 +157,19 @@ try {
   const port = await probeFreePort();
   server = spawn(
     serverCmd.command,
-    [...serverCmd.args, 'local', libDir, '--port', String(port), '--web-dist', path.join(root, 'web', 'dist')],
+    [
+      ...serverCmd.args,
+      'local',
+      libDir,
+      '--port',
+      String(port),
+      '--web-dist',
+      path.join(root, 'web', 'dist'),
+      '--identity-dir',
+      path.join(tmpDir, 'identity'),
+      '--cache-parent',
+      path.join(tmpDir, 'cache'),
+    ],
     { env: { ...process.env, HAWK_ADMIN_TOKEN: token }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
   );
   let serverErr = '';

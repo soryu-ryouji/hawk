@@ -6,7 +6,7 @@
 
 ```bash
 npm install            # 首次（electron 二进制镜像已配在 .npmrc）
-cargo build --release --manifest-path ../hawk-daemon/Cargo.toml   # 后端二进制（Electron 开发态直接运行它）
+(cd ../hawk-daemon && go build -o hawk-daemon.exe .)   # 后端二进制（Electron 开发态直接运行它）
 npm run gen:types      # 从 hawk-daemon 的 OpenAPI schema 生成 TS 类型（web/src/shared/api/schema.d.ts）
 npm run dev            # vite + electron 一键起（server 由 electron 拉起）
 npm run dev:web        # 只起前端；配合 VITE_HAWK_API / VITE_HAWK_ADMIN_TOKEN 可纯浏览器调试
@@ -22,11 +22,11 @@ npm run hooks:install  # 手动启用版本化 Git hooks（npm install / npm ci 
 提交时按暂存文件类型检查：
 
 - 暂存 `web/src` 或 `electron/src` 下的 TS/Vue/CSS：执行 `npm run format:check`
-- 暂存 `hawk-daemon` 或 `hawk-server` 下的 `.rs`：执行 `cargo fmt --check`
+- 暂存 `hawk-daemon` 下的 `.go`：执行 `gofmt -l .`（CI 同款）
 
 检查失败会阻止提交。紧急情况下可用 `git commit --no-verify` 跳过本地 hook，但 CI 门禁仍会执行相同检查。
 
-开发态后端二进制取 `hawk-daemon/target/` 下的构建产物（本机 `release` 优先，其次 `--target` 交叉产物与 `debug`）；
+开发态后端二进制取 `hawk-daemon/hawk-daemon(.exe)`；
 `HAWK_DAEMON_EXE` 环境变量可指向任意二进制覆盖。
 
 ## 测试
@@ -43,11 +43,11 @@ node tools/dnd-test.mjs   # 拖拽端到端复现：真实浏览器 + 真实鼠�
 ## 打包
 
 ```bash
-npm run pack      # 一条命令：build 前端 + cargo build 当前平台 hawk-daemon 与 hawk-update（Windows 更新辅助）单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
+npm run pack      # 一条命令：build 前端 + go build 当前平台 hawk-daemon 与 cargo build hawk-update（Windows 更新辅助）单文件 + electron-builder 出包（dist/，Windows 为免安装 zip）
 npm run pack:dir  # 同上但 --dir：只出未打包目录（win-unpacked / hawk.app），跳过 zip 压缩（install 脚本与本地快速验证用）
 ```
 
-交叉编译其他平台的 server：`node scripts/build-server.mjs <RID>`（win-x64 / osx-arm64 / linux-x64，别名映射 rust target），再单独执行 `node scripts/pack.mjs`。（macOS 只发布 Apple Silicon，不做 Intel 包。）
+交叉编译其他平台的 server：`node scripts/build-server.mjs <RID>`（win-x64 / osx-arm64 / osx-x64 / linux-x64，内部映射 GOOS/GOARCH），再单独执行 `node scripts/pack.mjs`。（macOS 只发布 Apple Silicon，不做 Intel 包。）
 
 国内网络首次 npm install（electron 包二进制）与 pack（electron-builder 下载）需镜像；install.sh/install.ps1 已内置默认，手动构建时自行设置（下载过的会进缓存，之后不再需要）：
 

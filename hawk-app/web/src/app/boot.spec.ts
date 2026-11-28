@@ -13,7 +13,6 @@ const env = vi.hoisted(() => ({
   errorCb: null as null | ((e: { message: string; code?: string; port?: number }) => void),
   pullError: null as null | { message: string; code?: string; port?: number },
   clearStoredCredential: vi.fn(),
-  remoteKeys: vi.fn(() => Promise.resolve({ keys: [] })),
   lanSettingsLoad: vi.fn(() => Promise.resolve()),
   connectEvents: vi.fn((..._args: unknown[]) => vi.fn()),
 }));
@@ -64,8 +63,7 @@ vi.mock('@/shared/lib/platform', () => ({
     onServerStarted: () => () => {},
     getServerConn: () => Promise.resolve(null),
     getServerError: () => Promise.resolve(env.pullError),
-    remoteGetConnection: () => Promise.resolve(null),
-    remoteKeys: env.remoteKeys,
+    getConnection: () => Promise.resolve(null),
     onConnectionChanged: () => () => {},
     quitApp: () => {},
   },
@@ -102,7 +100,6 @@ beforeEach(() => {
   env.errorCb = null;
   env.pullError = null;
   env.clearStoredCredential.mockClear();
-  env.remoteKeys.mockClear();
   env.lanSettingsLoad.mockClear();
   env.connectEvents.mockClear();
   for (const fn of Object.values(apiMocks)) fn.mockClear();
@@ -180,7 +177,7 @@ describe('启动相位机', () => {
     expect(boot.phase.value).toBe('ready');
   });
 
-  it('lan.access.changed：同步刷新远程与 LAN 设置页的统一 AccessKey 缓存', async () => {
+  it('lan.access.changed：刷新 LAN 设置页的 AccessKey 缓存', async () => {
     const boot = mountBoot();
     await boot.runBoot();
     expect(boot.phase.value).toBe('ready');
@@ -189,16 +186,6 @@ describe('启动相位机', () => {
     handlers.onLanAccessChanged();
     await flush();
 
-    expect(env.remoteKeys).toHaveBeenCalledTimes(1);
     expect(env.lanSettingsLoad).toHaveBeenCalledWith(true);
-  });
-
-  it('远程查看模式（has_library=false）：转远程查看屏，不拉库数据', async () => {
-    apiMocks.appInfo.mockImplementation(() => Promise.resolve({ role: 'admin', channel: 'loopback', has_library: false }));
-    const boot = mountBoot();
-    await boot.runBoot();
-    expect(boot.phase.value).toBe('remote');
-    expect(apiMocks.libraryInfo).not.toHaveBeenCalled(); // 库端点不可用（NO_LIBRARY）
-    expect(env.connectEvents).not.toHaveBeenCalled();
   });
 });

@@ -13,35 +13,13 @@ import type {
   LanPairRequest,
   LanPeer,
   LanPeerProfile,
-  RemoteConfig,
-  RemoteStatus,
-  RemoteDto,
-  RemoteDevice,
-  RemoteSessionDto,
-  RemoteKeyEntry,
-  RemoteKeyCreated,
   ServerFailure,
   ApiPortInfo,
 } from '../../../electron/src/ipc-contract';
 
 // IPC 契约类型从 electron/src/ipc-contract.ts 单一定义处 re-export（三处对齐改一处）
 export type { LibraryHistoryItem, UpdateChannel, CloseAction, UpdateInfo, UpdateProgress };
-export type {
-  ConnectionDescriptor,
-  ConnectionKind,
-  AccessRole,
-  LanClient,
-  LanPairRequest,
-  LanPeer,
-  LanPeerProfile,
-  RemoteConfig,
-  RemoteStatus,
-  RemoteDto,
-  RemoteDevice,
-  RemoteSessionDto,
-  RemoteKeyEntry,
-  RemoteKeyCreated,
-};
+export type { ConnectionDescriptor, ConnectionKind, AccessRole, LanClient, LanPairRequest, LanPeer, LanPeerProfile };
 export type { ServerFailure, ApiPortInfo };
 export { UPDATE_CANCELLED, PORT_IN_USE } from '../../../electron/src/ipc-contract';
 

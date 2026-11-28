@@ -4,7 +4,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useLanStore } from '@/domains/lan';
 import { useLanSettingsStore } from '../lanSettings';
-import { ipcMessage, useConnectionLabel } from '@/domains/remote';
+import { ipcMessage, useConnectionLabel } from '@/shared/connection';
 import { shell } from '@/shared/lib/platform';
 import Icon from '@/shared/ui/Icon.vue';
 import type { LanClient, LanPeer, LanPeerProfile } from '@/shared/types';
@@ -122,10 +122,7 @@ async function submitManualPair(): Promise<void> {
     url,
     writable: true,
     requires_pairing: true,
-    target_identity: '',
-    target_device_id: null,
     target_library_id: '',
-    tls_fingerprint: null,
   };
   openPairPermission(peer);
 }

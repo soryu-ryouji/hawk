@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设置面板壳：左侧导航 + 右侧分区（子组件）的两栏结构（窄屏折叠为顶部横向页签）。
-// 分区实现各自独立：SettingsAppearance（外观，实时生效）/ 网络分区内再分三个标签页
-// （本机服务 / 局域网访问 / 远程访问）/ SettingsStorage / SettingsUpdate（仅 Electron）/
+// 分区实现各自独立：SettingsAppearance（外观，实时生效）/ 网络分区内再分两个标签页
+// （局域网访问 / 本机高级设置）/ SettingsStorage / SettingsUpdate（仅 Electron）/
 // SettingsConnection（连接，仅局域网 web 端）。外层分区与网络内标签都用 v-show 保活：
 // LAN 编辑中字段、发现结果与更新下载进度在切换后不丢。
 // 交互要点：
@@ -22,7 +22,6 @@ import SettingsLan from './SettingsLan.vue';
 import SettingsLanConnect from './SettingsLanConnect.vue';
 import SettingsLanDevices from './SettingsLanDevices.vue';
 import SettingsAdvanced from './SettingsAdvanced.vue';
-import SettingsRemote from './SettingsRemote.vue';
 import SettingsStorage from './SettingsStorage.vue';
 import SettingsUpdate from './SettingsUpdate.vue';
 import SettingsConnection from './SettingsConnection.vue';
@@ -32,12 +31,11 @@ const emit = defineEmits<{ close: []; logout: [] }>();
 /** 当前分区：外观 / 隐藏项 / 网络 / 存储 / 更新 / 连接（局域网 web 端，含 token 注销） */
 const section = ref<'appearance' | 'hiding' | 'network' | 'storage' | 'update' | 'connection'>('appearance');
 
-/** 网络分区内的二级标签：局域网访问 / 远程访问 / 高级（端口等低频配置放最右侧） */
-type NetworkTab = 'lan-access' | 'remote' | 'advanced';
+/** 网络分区内的二级标签：局域网访问 / 高级（端口等低频配置放最右侧） */
+type NetworkTab = 'lan-access' | 'advanced';
 const networkTab = ref<NetworkTab>('lan-access');
 const networkTabs = computed<{ id: NetworkTab; label: string }[]>(() => [
   { id: 'lan-access', label: '局域网访问' },
-  { id: 'remote', label: '远程访问' },
   { id: 'advanced', label: '高级' },
 ]);
 const visibleNetworkTabs = computed(() => networkTabs.value);
@@ -58,12 +56,9 @@ const isAdmin = computed(() => store.role === 'admin');
 /** 可保存标签共用 footer 保存入口。 */
 const showLanSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'lan-access');
 const showAdvancedSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'advanced');
-const showRemoteSave = computed(() => hasShell && isAdmin.value && section.value === 'network' && networkTab.value === 'remote');
 
 /** 「网络 → 局域网访问 → 局域网网站访问」块实例（v-show 保活，footer 保存按钮委托其 save） */
 const lanPane = ref<InstanceType<typeof SettingsLan> | null>(null);
-/** 「远程访问」块实例：footer 保存委托其 save */
-const remotePane = ref<InstanceType<typeof SettingsRemote> | null>(null);
 /** 「高级」块实例：本地 API 端口与局域网端口统一保存 */
 const advancedPane = ref<InstanceType<typeof SettingsAdvanced> | null>(null);
 /** footer 按钮禁用：对应分区加载/保存中 */
@@ -72,13 +67,6 @@ function lanBusy(): boolean {
 }
 const advancedBusy = computed(() => advancedPane.value?.busy ?? false);
 const advancedDirty = computed(() => advancedPane.value?.dirty ?? false);
-function remoteBusy(): boolean {
-  return remotePane.value?.busy() ?? false;
-}
-
-async function saveRemote(): Promise<void> {
-  await remotePane.value?.save();
-}
 
 onMounted(() => {
   document.body.classList.add('dialog-open');
@@ -191,9 +179,6 @@ async function saveAdvanced(): Promise<void> {
                 <SettingsLan ref="lanPane" v-model:error="error" embedded />
               </template>
             </div>
-            <div v-show="networkTab === 'remote'" class="tab-content" role="tabpanel">
-              <SettingsRemote ref="remotePane" v-model:error="error" embedded />
-            </div>
             <div v-show="networkTab === 'advanced'" class="tab-content" role="tabpanel">
               <SettingsAdvanced ref="advancedPane" />
             </div>
@@ -205,12 +190,9 @@ async function saveAdvanced(): Promise<void> {
 
         <div v-if="error" class="dialog-error">{{ error }}</div>
 
-        <footer v-if="showLanSave || showRemoteSave || showAdvancedSave" class="actions">
+        <footer v-if="showLanSave || showAdvancedSave" class="actions">
           <button v-if="showAdvancedSave" class="primary" :disabled="advancedBusy || !advancedDirty" @click="saveAdvanced">
             {{ advancedBusy ? '保存中…' : '保存' }}
-          </button>
-          <button v-else-if="showRemoteSave" class="primary" :disabled="remoteBusy()" @click="saveRemote">
-            {{ remoteBusy() ? '保存中…' : '保存' }}
           </button>
           <button v-else class="primary" :disabled="lanBusy()" @click="saveLan">
             {{ lanBusy() ? '保存中…' : '保存' }}

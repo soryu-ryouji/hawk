@@ -1,7 +1,6 @@
 // 启动相位机与 SSE 桥（装配层）：phase 状态机、runBoot 编排（拉数据 + 连 SSE）、
 // server 重启监听、浏览器路径轮询接线。从 App.vue 抽出，App 只做相位分发与模板。
-// 相位：starting（等 server 就绪）→ ready（主界面）；旁路 setup（未配置库）/ connect（token 门页）/
-// remote（远程查看模式：本地无库，配置/选设备）/ error。
+// 相位：starting（等 server 就绪）→ ready（主界面）；旁路 setup（未配置库）/ connect（token 门页）/ error。
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { initApi, apiConfig, clearStoredCredential, ApiError } from '@/shared/api/client';
 import { api } from '@/shared/api/endpoints';
@@ -11,10 +10,9 @@ import { useStartup, type ServerFailure } from './startup';
 import { useLibraryStore } from '@/domains/library';
 import { useTaxonomyStore } from '@/domains/taxonomy';
 import { usePreviewStore } from '@/domains/preview';
-import { useRemoteStore } from '@/domains/remote';
 import { useLanSettingsStore } from '@/domains/settings';
 
-export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'remote' | 'error';
+export type BootPhase = 'starting' | 'ready' | 'setup' | 'connect' | 'error';
 
 export function useBoot() {
   const phase = ref<BootPhase>('starting');
@@ -31,7 +29,6 @@ export function useBoot() {
     const store = useLibraryStore();
     const taxonomy = useTaxonomyStore();
     const preview = usePreviewStore();
-    const remote = useRemoteStore();
     const lanSettings = useLanSettingsStore();
     try {
       // 换库/断开远程/应用设置重启复用本入口：先清上一库的预览/编辑浮层会话状态（跨 store 会话
@@ -42,14 +39,7 @@ export function useBoot() {
       if (!hasShell) {
         await api.appSession(apiConfig().credential);
       }
-      // 远程查看模式（本地无库）：库端点不可用，进远程查看屏（配置服务端/选设备）；
-      // 连上远程库后连接描述符切换会重新进本流程（此时 api 指向远程库，has_library=true）
       const info = await api.appInfo();
-      if (!info.has_library) {
-        store.library = null; // 清掉上一库的标题残留（远程查看屏不展示库数据）
-        phase.value = 'remote';
-        return;
-      }
       // 分类维度先行：主 store init 的 restoreView 校验依赖 taxonomy 数据（validators 注入，保持 store 间 DAG）
       await taxonomy.refreshAll();
       await store.init(
@@ -76,9 +66,8 @@ export function useBoot() {
         onLocksChanged: (locks) => store.applyEvent('locks.changed', locks),
         onLanAccessChanged: () => {
           void store.refreshAccess();
-          // AccessKey 在远程与 LAN 设置页共用；仅本机 admin 可读取两份管理面缓存。
+          // AccessKey 设置页由本机 admin 读取。
           if (hasShell && store.role === 'admin') {
-            void remote.refreshKeys();
             void lanSettings.load(true);
           }
         },

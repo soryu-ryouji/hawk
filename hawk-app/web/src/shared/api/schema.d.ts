@@ -14,7 +14,7 @@ export interface paths {
         /**
          * LocalIntegration 发现：浏览器插件零配置接入。
          *     返回 Loopback 限定的 importer Session，而不是进程 admin token。
-         *     响应不带 CORS 头且 Host 限定环回；远程隧道端必须直接拒绝本端点。
+         *     响应不带 CORS 头且 Host 限定环回。
          */
         get: operations["admin_token"];
         put?: never;
@@ -32,7 +32,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 当前连接（远程查看模式下同样可用：无库 daemon 只暴露远程管理面与会话代理） */
+        /** 当前连接 */
         get: operations["connection"];
         put?: never;
         post?: never;
@@ -964,240 +964,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/remote": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 读取远程访问接入配置与运行状态（admin 限定；viewer 403，防止只读 token 看到接入信息） */
-        get: operations["get_remote"];
-        /**
-         * 写回应用级 remote.toml 并热重启信令（admin 限定）。
-         *     接入是异步过程（注册/重连由 supervisor 驱动），本端点写完配置即返回，进展经 GET 轮询状态
-         */
-        put: operations["put_remote"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/access-connect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** AccessKey 原生连接：LAN 使用目标地址，WAN 使用 hawk-server 编排；目标身份钉扎后在隧道内登录。 */
-        post: operations["create_access_session"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/access-session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** AccessKey rendezvous 的隧道内登录；未认证隧道只能调用此端点。 */
-        post: operations["authenticate_access_session"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/device": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** 更新本机设备在服务端的信息：显示名 / 远程访问开关 / 库名（至少一项） */
-        patch: operations["patch_device"];
-        trace?: never;
-    };
-    "/api/v1/remote/device/rotate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 证书轮换：重新生成自签证书，同步服务端指纹并落盘，信令热重启（旧证书会话失效） */
-        post: operations["rotate_device"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/devices": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 拉取服务端设备列表（admin 限定）。本机设备与对端设备同列，app 据 online/allow_remote 展示 */
-        get: operations["list_devices"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/devices/{device_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * 注销设备记录（TenantAdmin 鉴权）：转发服务端 DELETE /devices/{id}，其进行中会话一并取消。
-         *     本机当前设备不可经此移除（会删掉自己的信令身份）；先关闭远程接入是唯一安全路径
-         */
-        delete: operations["delete_device"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/keys": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 列出本机签发的访问密钥（admin 限定；不含明文——明文只在签发时返回一次） */
-        get: operations["list_keys"];
-        put?: never;
-        /** 签发访问密钥（admin 限定）：本地保管验证子，只供加密隧道内的目标端认证 */
-        post: operations["create_key"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/keys/{key_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** 吊销访问密钥（admin 限定）：本地删除，目标 daemon 拒绝该 key 的后续会话 */
-        delete: operations["delete_key"];
-        options?: never;
-        head?: never;
-        /** 更新访问密钥的标签/权限（admin 限定；权限收窄对后续会话立即生效） */
-        patch: operations["patch_key"];
-        trace?: never;
-    };
-    "/api/v1/remote/lease": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 已认证隧道续期：延长目标 daemon 的会话租约，不改变原始角色。 */
-        post: operations["renew_lease"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/remote/session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 读取当前活动远程会话（无活动会话时 data 为 null） */
-        get: operations["get_session"];
-        put?: never;
-        /**
-         * 建立到目标设备的远程会话：发起 → 轮询 ready → 候选依序连接 → 拉起会话代理。
-         *     单活动会话模型：新会话自动顶替旧会话。返回代理连接信息（api_base + token + 展示名）
-         */
-        post: operations["create_session"];
-        /** 断开当前远程会话（幂等）：通知服务端取消、断开隧道、关闭会话代理 */
-        delete: operations["delete_session"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/rendezvous": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 原生 LAN AccessKey rendezvous：只编排 iroh，不传输 AccessKey 或素材明文。 */
-        post: operations["create_access_rendezvous"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/rendezvous/{session_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_access_rendezvous"];
-        put?: never;
-        post?: never;
-        delete: operations["cancel_access_rendezvous"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/tag/create": {
         parameters: {
             query?: never;
@@ -1339,69 +1105,23 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        AccessConnectBody: {
-            /** @description 仅经本机 Loopback 代理送入目标加密隧道，不发送给 hawk-server。 */
-            access_key: string;
-            /** @description LAN 配对记录中的目标地址；提供时直接走 LAN rendezvous，无需配置 hawk-server。 */
-            lan_url?: string | null;
-            target_device_id: string;
-            /** @description 配对时带外取得的目标 iroh 公钥；server 返回的其他身份一律拒绝。 */
-            target_identity: string;
-        };
-        AccessRendezvousBody: {
-            source_endpoint_id: string;
-            source_name?: string | null;
-            target_device_id?: string | null;
-        };
-        AccessSessionBody: {
-            /** @description 只在客户端与目标 daemon 的加密隧道内提交，不经过 hawk-server。 */
-            access_key: string;
-        };
-        AccessSessionDto: {
-            role: components["schemas"]["Role"];
-            session_id: string;
-        };
-        ActiveSessionDto: {
-            /**
-             * Format: int32
-             * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
-             */
-            proxy_port: number;
-            /** @description 会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法） */
-            role: components["schemas"]["Role"];
-            session_id: string;
-            /** @description 会话代理临时凭证：仅以 Authorization Bearer 使用 */
-            session_token: string;
-            target_device_id: string;
-            target_library_name: string;
-            target_name: string;
-        };
         /** @description LocalIntegration Session 发现响应（data 为短期 importer token） */
         AdminTokenResponse: {
             data: string;
             status: string;
         };
-        /**
-         * @description 当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。
-         *     本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。
-         */
+        /** @description 当前连接描述符：纯局域网版本只有本地素材库（mode=local）。 */
         AppConnectionDto: {
-            /** @description 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>） */
-            api_base?: string | null;
-            /** @description 仅 remote 有值：会话临时凭证 */
-            credential?: string | null;
-            device_id?: string | null;
-            label?: string | null;
-            /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
+            /** @description local（本地素材库） */
             mode: string;
             /** @description 当前连接角色（本地库 admin；远端库为会话角色） */
             role: components["schemas"]["Role"];
         };
         AppInfo: {
-            /** @description 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan） */
+            /** @description 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer） */
             channel: string;
             exec_path: string;
-            /** @description 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理） */
+            /** @description 本地素材库是否就位（Go 版恒为 true） */
             has_library: boolean;
             lan: components["schemas"]["LanInfo"];
             platform: string;
@@ -1440,27 +1160,9 @@ export interface components {
             /** @description 清除的条目总数（= hidden + ignored + missing） */
             removed: number;
         };
-        CreateKeyBody: {
-            /** @description 自定义密钥（可空 = 程序生成 128 位随机串） */
-            custom?: string | null;
-            /** @description 展示标签（如「手机插件」；可空） */
-            label?: string | null;
-            /** @description viewer 只读，importer 允许导入；自定义 importer key 至少 12 字符 */
-            role?: components["schemas"]["Role"];
-        };
-        CreateKeyDto: {
-            id: string;
-            /** @description 明文 key：只在本次响应出现，本地不存明文，也不发送给 hawk-server */
-            key: string;
-            target_device_id?: string | null;
-            /** @description 配对时必须钉扎的目标 iroh 公钥 */
-            target_identity: string;
-            target_library_id?: string | null;
-        };
         CreateSessionBody: {
             /** @description direct（默认，直连候选）/ relay（服务端中继，直连失败且用户确认后使用） */
             mode?: string;
-            target_device_id: string;
         };
         DuplicateEntryDto: {
             item: components["schemas"]["ItemDto"];
@@ -1486,46 +1188,10 @@ export interface components {
             total: number;
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_AccessSessionDto: {
-            data?: {
-                role: components["schemas"]["Role"];
-                session_id: string;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_ActiveSessionDto: {
-            data?: {
-                /**
-                 * Format: int32
-                 * @description 会话代理端口（环回）：app 连接描述符的 api_base = http://127.0.0.1:<port>
-                 */
-                proxy_port: number;
-                /** @description 会话角色：viewer 只读，importer 允许导入（目标设备仍逐请求执法） */
-                role: components["schemas"]["Role"];
-                session_id: string;
-                /** @description 会话代理临时凭证：仅以 Authorization Bearer 使用 */
-                session_token: string;
-                target_device_id: string;
-                target_library_name: string;
-                target_name: string;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_AppConnectionDto: {
-            /**
-             * @description 当前连接描述符：给本机生态客户端（浏览器插件）解析「本地 hawk 现在在看哪个库」。
-             *     本地库 → 调用方继续用自己的 admin 地址；远端库 → 会话代理环回地址 + 会话令牌。
-             */
+            /** @description 当前连接描述符：纯局域网版本只有本地素材库（mode=local）。 */
             data?: {
-                /** @description 仅 remote 有值：会话代理地址（http://127.0.0.1:<port>） */
-                api_base?: string | null;
-                /** @description 仅 remote 有值：会话临时凭证 */
-                credential?: string | null;
-                device_id?: string | null;
-                label?: string | null;
-                /** @description local（本地素材库）/ remote（远端素材库，经会话代理）/ none（未连接任何素材库） */
+                /** @description local（本地素材库） */
                 mode: string;
                 /** @description 当前连接角色（本地库 admin；远端库为会话角色） */
                 role: components["schemas"]["Role"];
@@ -1535,10 +1201,10 @@ export interface components {
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_AppInfo: {
             data?: {
-                /** @description 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer/wan） */
+                /** @description 当前请求进入 daemon 的通道（loopback/lan_web/lan_peer） */
                 channel: string;
                 exec_path: string;
-                /** @description 本地素材库是否就位（false = 远程查看模式：库端点不可用，仅远程管理面/会话代理） */
+                /** @description 本地素材库是否就位（Go 版恒为 true） */
                 has_library: boolean;
                 lan: components["schemas"]["LanInfo"];
                 platform: string;
@@ -1571,19 +1237,6 @@ export interface components {
                 missing: number;
                 /** @description 清除的条目总数（= hidden + ignored + missing） */
                 removed: number;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_CreateKeyDto: {
-            data?: {
-                id: string;
-                /** @description 明文 key：只在本次响应出现，本地不存明文，也不发送给 hawk-server */
-                key: string;
-                target_device_id?: string | null;
-                /** @description 配对时必须钉扎的目标 iroh 公钥 */
-                target_identity: string;
-                target_library_id?: string | null;
             };
             status: string;
         };
@@ -1742,7 +1395,7 @@ export interface components {
         };
         /** @description 统一成功信封；data 为空时省略该字段 */
         Envelope_LanConnectionInfoDto: {
-            /** @description 目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。 */
+            /** @description 目标端公开的连接信息：只暴露展示元数据，不含任何密钥。 */
             data?: {
                 library_name: string;
                 name: string;
@@ -1751,10 +1404,7 @@ export interface components {
                 peer_port: number;
                 /** Format: int32 */
                 protocol: number;
-                target_device_id?: string | null;
-                target_identity: string;
                 target_library_id: string;
-                tls_fingerprint?: string | null;
             };
             status: string;
         };
@@ -1797,10 +1447,7 @@ export interface components {
                 role?: null | components["schemas"]["Role"];
                 /** @description pending / approved / denied / expired */
                 status: string;
-                target_device_id?: string | null;
-                target_identity?: string | null;
                 target_library_id?: string | null;
-                tls_fingerprint?: string | null;
             };
             status: string;
         };
@@ -1837,20 +1484,7 @@ export interface components {
                 peer_port: number;
                 /** Format: int32 */
                 port: number;
-                target_device_id?: string | null;
-                /** @description 配对时钉扎的目标 iroh 公钥 */
-                target_identity: string;
                 target_library_id: string;
-                /** @description LAN Web 自签证书 SHA-256 指纹（HTTPS 监听首次启动后存在） */
-                tls_fingerprint?: string | null;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_LeaseDto: {
-            data?: {
-                /** Format: int64 */
-                expires_in: number;
             };
             status: string;
         };
@@ -1890,16 +1524,8 @@ export interface components {
                 session_id: string;
                 /** @description 会话代理临时凭证：仅以 Authorization Bearer 使用 */
                 session_token: string;
-                target_device_id: string;
                 target_library_name: string;
                 target_name: string;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_PatchKeyDto: {
-            data?: {
-                key: components["schemas"]["RemoteKeyDto"];
             };
             status: string;
         };
@@ -1910,64 +1536,6 @@ export interface components {
                 dispatched: number;
                 /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
                 removed: number;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_RemoteDeviceDto: {
-            data?: {
-                allow_import: boolean;
-                allow_remote: boolean;
-                device_id: string;
-                /** Format: int64 */
-                last_seen_at_ms?: number | null;
-                library_name: string;
-                name: string;
-                online: boolean;
-                platform: string;
-                /**
-                 * @description 是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。
-                 *     None = 无可达性数据（未心跳过）
-                 */
-                reachable?: boolean | null;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_RemoteDevicesDto: {
-            data?: {
-                devices: components["schemas"]["RemoteDeviceDto"][];
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_RemoteDto: {
-            data?: {
-                /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
-                allow_import: boolean;
-                enabled: boolean;
-                /** @description 使用中继（服务端提供时；消耗自建带宽，设备级开关） */
-                relay: boolean;
-                /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
-                status: components["schemas"]["RemoteStatus"];
-                /** @description 服务端 tenant-key（池门禁凭证，hawk-server tenant add 生成） */
-                tenant_key: string;
-                url: string;
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_RemoteKeysDto: {
-            data?: {
-                keys: components["schemas"]["RemoteKeyDto"][];
-            };
-            status: string;
-        };
-        /** @description 统一成功信封；data 为空时省略该字段 */
-        Envelope_RotateDeviceDto: {
-            data?: {
-                /** @description 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效） */
-                endpoint_id: string;
             };
             status: string;
         };
@@ -2293,7 +1861,7 @@ export interface components {
             changed: boolean;
         };
         LanAccessKeyDto: {
-            /** @description 完整访问密钥仅 admin 可读；设置面板负责打码展示与复制 */
+            /** @description 明文只在创建/配对成功时返回一次；列表接口为空字符串 */
             access_key: string;
             /** Format: int64 */
             created_at_ms: number;
@@ -2318,7 +1886,7 @@ export interface components {
         LanClientsDto: {
             clients: components["schemas"]["LanClientDto"][];
         };
-        /** @description 目标端公开的连接信息：只暴露用于 iroh 身份钉扎的公钥与展示元数据，不含任何密钥。 */
+        /** @description 目标端公开的连接信息：只暴露展示元数据，不含任何密钥。 */
         LanConnectionInfoDto: {
             library_name: string;
             name: string;
@@ -2327,10 +1895,7 @@ export interface components {
             peer_port: number;
             /** Format: int32 */
             protocol: number;
-            target_device_id?: string | null;
-            target_identity: string;
             target_library_id: string;
-            tls_fingerprint?: string | null;
         };
         LanDeviceKeyCreateBody: {
             label: string;
@@ -2394,10 +1959,7 @@ export interface components {
             role?: null | components["schemas"]["Role"];
             /** @description pending / approved / denied / expired */
             status: string;
-            target_device_id?: string | null;
-            target_identity?: string | null;
             target_library_id?: string | null;
-            tls_fingerprint?: string | null;
         };
         LanPairRequestsDto: {
             requests: components["schemas"]["LanPairRequestDto"][];
@@ -2408,10 +1970,7 @@ export interface components {
             name: string;
             peer_key: string;
             role: components["schemas"]["Role"];
-            target_device_id?: string | null;
-            target_identity: string;
             target_library_id: string;
-            tls_fingerprint?: string | null;
             url: string;
         };
         /** @description 发现到的局域网 hawk 设备（不回传 token；配对成功后才保存在源端连接配置中）。 */
@@ -2420,10 +1979,7 @@ export interface components {
             library_name: string;
             name: string;
             requires_pairing: boolean;
-            target_device_id?: string | null;
-            target_identity: string;
             target_library_id: string;
-            tls_fingerprint?: string | null;
             url: string;
             writable: boolean;
         };
@@ -2437,10 +1993,7 @@ export interface components {
             peer_id: string;
             peer_key: string;
             role: components["schemas"]["Role"];
-            target_device_id?: string | null;
-            target_identity: string;
             target_library_id: string;
-            tls_fingerprint?: string | null;
             /** @description 源端候选局域网地址（http://ip:peer_port） */
             urls: string[];
         };
@@ -2461,16 +2014,7 @@ export interface components {
             peer_port: number;
             /** Format: int32 */
             port: number;
-            target_device_id?: string | null;
-            /** @description 配对时钉扎的目标 iroh 公钥 */
-            target_identity: string;
             target_library_id: string;
-            /** @description LAN Web 自签证书 SHA-256 指纹（HTTPS 监听首次启动后存在） */
-            tls_fingerprint?: string | null;
-        };
-        LeaseDto: {
-            /** Format: int64 */
-            expires_in: number;
         };
         LibraryInfo: {
             application_version: string;
@@ -2519,18 +2063,6 @@ export interface components {
              */
             percentage: number;
         };
-        PatchDeviceBody: {
-            allow_remote?: boolean | null;
-            library_name?: string | null;
-            name?: string | null;
-        };
-        PatchKeyBody: {
-            label?: string | null;
-            role?: null | components["schemas"]["Role"];
-        };
-        PatchKeyDto: {
-            key: components["schemas"]["RemoteKeyDto"];
-        };
         PutLanBody: {
             enabled: boolean;
             keys?: components["schemas"]["PutLanKey"][];
@@ -2551,16 +2083,6 @@ export interface components {
             role?: components["schemas"]["Role"];
             url?: string | null;
         };
-        PutRemoteBody: {
-            /** @description 允许广域网会话导入素材/新建文件夹；省略时按关闭处理 */
-            allow_import?: boolean;
-            enabled: boolean;
-            /** @description 使用中继（服务端提供时）；省略时保留现值 */
-            relay?: boolean | null;
-            /** @description 服务端 tenant-key */
-            tenant_key: string;
-            url: string;
-        };
         RefreshCacheRequest: {
             /** @description folder | category | tag | library */
             type: string;
@@ -2573,73 +2095,12 @@ export interface components {
             /** @description 消失对账移除的失效位置数（源文件已删但索引残留的卡片，经 SSE 推送收敛） */
             removed: number;
         };
-        RemoteDeviceDto: {
-            allow_import: boolean;
-            allow_remote: boolean;
-            device_id: string;
-            /** Format: int64 */
-            last_seen_at_ms?: number | null;
-            library_name: string;
-            name: string;
-            online: boolean;
-            platform: string;
-            /**
-             * @description 是否有直连候选（UPnP 映射或全局 IPv6）；false 时直连必失败只能中继。
-             *     None = 无可达性数据（未心跳过）
-             */
-            reachable?: boolean | null;
-        };
-        RemoteDevicesDto: {
-            devices: components["schemas"]["RemoteDeviceDto"][];
-        };
-        RemoteDto: {
-            /** @description 允许广域网会话导入素材/新建文件夹（与 [web] 的局域网写权限独立） */
-            allow_import: boolean;
-            enabled: boolean;
-            /** @description 使用中继（服务端提供时；消耗自建带宽，设备级开关） */
-            relay: boolean;
-            /** @description 运行状态（信令实况）：connecting=接入中，online=控制通道已连接，error=致命错误原因 */
-            status: components["schemas"]["RemoteStatus"];
-            /** @description 服务端 tenant-key（池门禁凭证，hawk-server tenant add 生成） */
-            tenant_key: string;
-            url: string;
-        };
-        RemoteKeyDto: {
-            /** Format: int64 */
-            created_at_ms: number;
-            id: string;
-            label: string;
-            /** @description key 前 4 字符（识别用；明文不存也不可得） */
-            prefix: string;
-            role: components["schemas"]["Role"];
-        };
-        RemoteKeysDto: {
-            keys: components["schemas"]["RemoteKeyDto"][];
-        };
-        RemoteSessionPayload: {
-            session_id: string;
-            /** @description connected / disconnected */
-            state: string;
-            target_device_id: string;
-        };
-        /** @enum {string} */
-        RemoteState: "disabled" | "connecting" | "online" | "error";
-        RemoteStatus: {
-            device_id?: string | null;
-            error?: string | null;
-            server_url?: string | null;
-            state: components["schemas"]["RemoteState"];
-        };
         RescanRequest: {
             /** @description 只重扫该子目录（库内相对路径，含子目录；空/缺省 = 整库） */
             path?: string | null;
         };
         /** @enum {string} */
         Role: "viewer" | "importer" | "editor" | "admin";
-        RotateDeviceDto: {
-            /** @description 轮换后的新证书指纹（TOFU 锚点，旧证书会话随即失效） */
-            endpoint_id: string;
-        };
         ScanInfo: {
             /**
              * Format: int64
@@ -2706,10 +2167,6 @@ export interface components {
             "library.updated": components["schemas"]["LibraryInfo"];
             /** @description 锁集变更（设锁/解除/改密、级联跟随、外部同步重载），负载为名称快照 */
             "locks.changed": components["schemas"]["LocksSnapshot"];
-            /** @description 远程会话生命周期（connected/disconnected），app 断线回切依赖 */
-            "remote.session": components["schemas"]["RemoteSessionPayload"];
-            /** @description 信令状态变化（connecting/online/error），app 远程设置面板免轮询 */
-            "remote.status": components["schemas"]["RemoteStatus"];
             "task.progress": components["schemas"]["TaskProgress"];
         };
         StartupInfo: {
@@ -4169,425 +3626,6 @@ export interface operations {
             };
             /** @description 失败次数过多，冷却中 */
             429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_remote: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_RemoteDto"];
-                };
-            };
-        };
-    };
-    put_remote: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PutRemoteBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_RemoteDto"];
-                };
-            };
-        };
-    };
-    create_access_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccessConnectBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_ActiveSessionDto"];
-                };
-            };
-        };
-    };
-    authenticate_access_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccessSessionBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_AccessSessionDto"];
-                };
-            };
-        };
-    };
-    patch_device: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PatchDeviceBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_RemoteDeviceDto"];
-                };
-            };
-        };
-    };
-    rotate_device: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_RotateDeviceDto"];
-                };
-            };
-        };
-    };
-    list_devices: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_RemoteDevicesDto"];
-                };
-            };
-        };
-    };
-    delete_device: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 服务端设备 id */
-                device_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuccessOnly"];
-                };
-            };
-        };
-    };
-    list_keys: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_RemoteKeysDto"];
-                };
-            };
-        };
-    };
-    create_key: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateKeyBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_CreateKeyDto"];
-                };
-            };
-        };
-    };
-    delete_key: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 密钥 id */
-                key_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuccessOnly"];
-                };
-            };
-        };
-    };
-    patch_key: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 密钥 id */
-                key_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PatchKeyBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_PatchKeyDto"];
-                };
-            };
-        };
-    };
-    renew_lease: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_LeaseDto"];
-                };
-            };
-        };
-    };
-    get_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_Option_ActiveSessionDto"];
-                };
-            };
-        };
-    };
-    create_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateSessionBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Envelope_ActiveSessionDto"];
-                };
-            };
-        };
-    };
-    delete_session: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuccessOnly"];
-                };
-            };
-        };
-    };
-    create_access_rendezvous: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AccessRendezvousBody"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_access_rendezvous: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    cancel_access_rendezvous: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
                 headers: {
                     [name: string]: unknown;
                 };

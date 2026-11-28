@@ -70,7 +70,6 @@ const LABELS: Record<string, string> = {
   sync: '正在同步素材信息…',
   migrate: '正在迁移缓存…',
   // 主进程在 daemon 就绪后恢复上次浏览的远端库（server.ts 的 notifyReady）：走 launch 屏而非空页
-  'restore-remote': '正在恢复远程素材库…',
   'restore-lan': '正在连接局域网素材库…',
   done: '即将完成…',
 };

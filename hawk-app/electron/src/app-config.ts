@@ -9,10 +9,6 @@ import type { CloseAction, LanPeerProfile, LibraryHistoryItem, UpdateChannel } f
 interface AppConfig {
   libraryPath?: string;
   libraryHistory?: string[];
-  /** 冷启动模式记忆：true = 远程查看模式（无本地库，daemon 以无库形态启动）；开本地库时复位 */
-  remoteViewer?: boolean;
-  /** 上次浏览的远端设备 id：冷启动 daemon 就绪后尝试恢复会话；显式断开/切回本地库时清除 */
-  remoteTarget?: string;
   /** 已配对的局域网 hawk-app（token 只在本文件，渲染层只会拿到不含 token 的 profile） */
   lanPeers?: StoredLanPeer[];
   /** 上次浏览的局域网设备 id：冷启动 daemon 就绪后直接恢复直连；显式断开/切回本地库时清除 */
@@ -142,30 +138,16 @@ export function setApiPort(port: number): void {
   writeConfig({ apiPort: port });
 }
 
-/** 上次浏览的远端设备 id（null = 上次浏览的是本地库）；恢复失败不清除，下次启动再试 */
-export function getRemoteTarget(): string | null {
-  return readConfig().remoteTarget ?? null;
-}
-
-/** 记住/忘记上次浏览的远端设备：建立会话成功时记住，用户显式断开或切回本地库时忘记 */
-export function setRemoteTarget(deviceId: string | null): void {
-  writeConfig({ remoteTarget: deviceId ?? undefined });
-}
-
 /** 已配对局域网设备（最近连接在前；只返回展示字段，token 不出主进程） */
 export function listLanPeers(): LanPeerProfile[] {
   return storedLanPeers()
-    .map(({ id, name, library_name, url, writable, last_connected_at_ms, target_identity, target_device_id, target_library_id, tls_fingerprint }) => ({
+    .map(({ id, name, library_name, url, writable, last_connected_at_ms }) => ({
       id,
       name,
       library_name,
       url,
       writable,
       last_connected_at_ms,
-      target_identity,
-      target_device_id,
-      target_library_id,
-      tls_fingerprint,
     }))
     .sort((a, b) => b.last_connected_at_ms - a.last_connected_at_ms);
 }

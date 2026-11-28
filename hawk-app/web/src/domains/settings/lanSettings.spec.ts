@@ -20,7 +20,6 @@ const dto = {
   port: 27372,
   peer_port: 27375,
   peer_id: 'peer_local',
-  target_identity: 'ep_local',
   target_library_id: 'lib_local',
   name: '本机',
   library_name: '本机库',

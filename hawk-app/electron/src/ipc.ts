@@ -4,23 +4,12 @@ import { app, clipboard, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getMainWindow, setQuitting } from './window';
-import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction, setLanTarget, setRemoteTarget } from './app-config';
-import { openLibraryAt, startRemoteViewer, pickLibrary, getStartedConn, getServerFailure, restartCurrent, retryServerPort } from './server';
+import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, setCloseAction, setLanTarget } from './app-config';
+import { openLibraryAt, pickLibrary, getStartedConn, getServerFailure, restartCurrent, retryServerPort } from './server';
 import { API_PORT_RANGE, getApiPort, setApiPort } from './app-config';
 import {
   currentDescriptor,
-  remoteConnect,
-  remoteCreateKey,
-  remoteDeleteDevice,
-  remoteDeleteKey,
-  remoteDevices,
-  remoteDisconnect,
-  remoteKeys,
-  remotePatchDevice,
-  remotePatchKey,
-  remotePutConfig,
-  remoteRotate,
-  remoteStatus,
+  disconnectCurrent,
   lanDiscover,
   lanPair,
   lanConnect,
@@ -32,8 +21,8 @@ import {
   lanClients,
   lanGetSettings,
   lanDecidePairRequest,
-} from './remote';
-import type { LanPeer, RemoteConfig } from './ipc-contract';
+} from './connections';
+import type { LanPeer } from './ipc-contract';
 import { changeCacheParent, currentCacheParent } from './cache';
 import { lanAddresses } from './lan';
 import { IPC } from './ipc-contract';
@@ -75,8 +64,7 @@ export function registerIpc(): void {
     if (!selected) {
       return false;
     }
-    // 用户显式选本地库：忘记上次的远端/局域网目标，下次启动不再自动恢复浏览会话
-    setRemoteTarget(null);
+    // 用户显式选本地库：忘记上次的局域网目标，下次启动不再自动恢复浏览会话
     setLanTarget(null);
     try {
       // 端口/token 即选即生成；页面切应用内启动屏，就绪经 hawk:server-started 通知
@@ -89,17 +77,6 @@ export function registerIpc(): void {
     }
   });
 
-  ipcMain.handle(IPC.openRemoteViewer, async (): Promise<boolean> => {
-    try {
-      // 远程查看模式：拉起无库 daemon（不创建任何本地目录）；就绪经 hawk:server-started 通知
-      await startRemoteViewer();
-      return true;
-    } catch (error) {
-      dialog.showErrorBox('hawk-daemon 启动失败', String(error instanceof Error ? error.message : error));
-      return false;
-    }
-  });
-
   ipcMain.handle(IPC.listLibraries, () => listLibraries());
 
   ipcMain.handle(IPC.openLibrary, async (_event, libPath: unknown): Promise<boolean> => {
@@ -107,8 +84,7 @@ export function registerIpc(): void {
     if (typeof libPath !== 'string' || !listLibraries().libraries.some((l) => l.path === libPath)) {
       return false;
     }
-    // 同 selectLibrary：切到本地库即忘记上次的远端/局域网目标
-    setRemoteTarget(null);
+    // 同 selectLibrary：切到本地库即忘记上次的局域网目标
     setLanTarget(null);
     try {
       await openLibraryAt(libPath);
@@ -209,21 +185,9 @@ export function registerIpc(): void {
     }
   });
 
-  // ---- 远程访问：连接描述符与管理面（daemon REST 经主进程转发，见 remote.ts） ----
-  ipcMain.handle(IPC.remoteGetConnection, () => currentDescriptor());
-  ipcMain.handle(IPC.remoteStatus, () => remoteStatus());
-  ipcMain.handle(IPC.remotePutConfig, (_event, config: RemoteConfig) => remotePutConfig(config));
-  ipcMain.handle(IPC.remoteDevices, () => remoteDevices());
-  ipcMain.handle(IPC.remotePatchDevice, (_event, patch: { name?: string; allow_remote?: boolean; library_name?: string }) => remotePatchDevice(patch));
-  ipcMain.handle(IPC.remoteDeleteDevice, (_event, deviceId: unknown) => {
-    if (typeof deviceId !== 'string' || !deviceId) {
-      throw new Error('非法设备 id');
-    }
-    return remoteDeleteDevice(deviceId);
-  });
-  ipcMain.handle(IPC.remoteRotate, () => remoteRotate());
-  ipcMain.handle(IPC.remoteConnect, (_event, targetDeviceId: string) => remoteConnect(targetDeviceId));
-  ipcMain.handle(IPC.remoteDisconnect, () => remoteDisconnect());
+  // ---- 连接描述符（本地库 / 局域网直连） ----
+  ipcMain.handle(IPC.getConnection, () => currentDescriptor());
+  ipcMain.handle(IPC.disconnectConnection, () => disconnectCurrent());
   // ---- 局域网互联：发现/配对/连接经本机 daemon + 目标 LAN 端点；token 只在主进程 ----
   ipcMain.handle(IPC.lanGetSettings, () => lanGetSettings());
   ipcMain.handle(IPC.lanDiscover, () => lanDiscover());
@@ -263,22 +227,6 @@ export function registerIpc(): void {
       return lanForget(peerId);
     }
     return Promise.resolve();
-  });
-
-  // 访问密钥管理（透传 daemon；id 只接受字符串）
-  ipcMain.handle(IPC.remoteKeys, () => remoteKeys());
-  ipcMain.handle(IPC.remoteCreateKey, (_event, input: { label?: string; role: 'viewer' | 'importer'; custom?: string }) => remoteCreateKey(input));
-  ipcMain.handle(IPC.remotePatchKey, (_event, id: unknown, patch: { label?: string; role?: 'viewer' | 'importer' }) => {
-    if (typeof id !== 'string' || !id) {
-      throw new Error('非法密钥 id');
-    }
-    return remotePatchKey(id, patch);
-  });
-  ipcMain.handle(IPC.remoteDeleteKey, (_event, id: unknown) => {
-    if (typeof id !== 'string' || !id) {
-      throw new Error('非法密钥 id');
-    }
-    return remoteDeleteKey(id);
   });
 }
 

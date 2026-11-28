@@ -1,5 +1,5 @@
-// 从运行中的 hawk-daemon（Rust 版）拉取 OpenAPI schema，生成 TS 类型到 web/src/shared/api/schema.d.ts。
-// 用法：npm run gen:types（需先构建 Rust 后端：cargo build --release，或 debug 亦可）
+// 从运行中的 hawk-daemon（Go 版）拉取 OpenAPI schema，生成 TS 类型到 web/src/shared/api/schema.d.ts。
+// 用法：npm run gen:types（需先在 hawk-daemon/ 执行 go build -o hawk-daemon.exe .）
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,29 +8,26 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = path.join(root, 'tools', '.tmp');
 const lib = path.join(tmp, 'gen-types-lib');
+const identity = path.join(tmp, 'gen-types-identity');
+const cache = path.join(tmp, 'gen-types-cache');
 const port = 27397;
 const exe = process.platform === 'win32' ? 'hawk-daemon.exe' : 'hawk-daemon';
-const RUST_TARGET = { 'win32-x64': 'x86_64-pc-windows-msvc', 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-gnu' }[`${process.platform}-${process.arch}`];
 const candidates = [
-  // 本机直建与 --target 交叉建两种产物位置
-  ...(RUST_TARGET ? [path.join(root, '..', 'hawk-daemon', 'target', RUST_TARGET, 'release', exe)] : []),
-  path.join(root, '..', 'hawk-daemon', 'target', 'release', exe),
-  path.join(root, '..', 'hawk-daemon', 'target', 'debug', exe),
+  path.join(root, '..', 'hawk-daemon', exe),
+  path.join(root, '..', 'hawk-daemon', 'bin', exe),
+  path.join(root, 'resources', 'hawk-daemon', exe),
 ];
-// 本机直建与 --target 交叉建两种产物位置可能同时存在（版本不一），取 mtime 最新者——
-// 固定优先级会在交叉产物过期时静默用旧 schema 生成类型
-const bin = candidates
-  .filter((p) => fs.existsSync(p))
-  .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+const bin = candidates.filter((p) => fs.existsSync(p))[0];
 if (!bin) {
-  console.error('未找到 hawk-daemon 构建产物，请先 cargo build（release 或 debug）');
+  console.error('未找到 hawk-daemon 构建产物，请先在 hawk-daemon/ 执行 go build -o hawk-daemon.exe .');
   process.exit(1);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
 fs.mkdirSync(lib, { recursive: true });
+fs.mkdirSync(identity, { recursive: true });
 
-const server = spawn(bin, ['local', lib, '--port', String(port)], {
+const server = spawn(bin, ['local', lib, '--port', String(port), '--identity-dir', identity, '--cache-parent', cache], {
   env: { ...process.env, HAWK_ADMIN_TOKEN: 'gen-types' },
   stdio: 'ignore',
 });
@@ -42,7 +39,9 @@ try {
     try {
       const res = await fetch(`${base}/health`);
       if (res.ok) break;
-    } catch { /* 未就绪 */ }
+    } catch {
+      /* 未就绪 */
+    }
     if (Date.now() > deadline) throw new Error('hawk-daemon 启动超时');
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -57,7 +56,6 @@ try {
   execFileSync(process.execPath, [cli, schemaFile, '-o', out]);
   console.log(`已生成 ${out}`);
 } finally {
-  // Windows 上 SQLite/可执行文件句柄在 kill 后仍需一个退出周期才能释放；等待后再删临时库
   if (server.exitCode === null && server.signalCode === null) {
     const exited = new Promise((resolve) => server.once('exit', resolve));
     server.kill();

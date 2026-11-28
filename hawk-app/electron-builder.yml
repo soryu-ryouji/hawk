@@ -1,5 +1,5 @@
-# electron-builder 配置。npm run pack 会先执行 build:server（scripts/build-server.mjs，cargo build --release）
-# 产出当前平台的 hawk-daemon 二进制（Rust）。
+# electron-builder 配置。npm run pack 会先执行 build:server（scripts/build-server.mjs，go build）
+# 产出当前平台的 hawk-daemon 二进制（Go）。
 appId: com.hawk.app
 productName: hawk
 # 产物名统一「产品-平台-架构」后缀（与 mac 的 hawk-mac-<arch>.zip 对齐，不带版本号）：
@@ -19,7 +19,7 @@ files:
   # 打包前写入的构建标识（git sha，主进程自动更新比较 nightly 新旧用；见 scripts/stamp-build.mjs）
   - build-info.json
 extraResources:
-  # 各平台 hawk-daemon 二进制（cargo build --release，见 scripts/build-server.mjs）。
+  # 各平台 hawk-daemon 二进制（go build，见 scripts/build-server.mjs）。
   # 平台段（win）的 extraResources 与本段追加合并，不覆盖——不要在 win 段重复列 daemon
   - from: resources/hawk-daemon
     to: hawk-daemon

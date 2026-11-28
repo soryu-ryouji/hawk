@@ -43,7 +43,7 @@ const cardStyle = computed(() =>
     : { '--meta-h': `${CARD_META_H}px`, '--card-border': `${CARD_BORDER}px` },
 );
 
-// 网格固定 512 档：避免 120–280px 卡片在广域网下载 1024 图；检查器/预览仍可用 1024
+// 网格固定 512 档：控制缓存与解码开销；检查器/预览仍可用 1024
 const thumbSrc = computed(() => api.thumbnailUrl(props.item.id, 512));
 
 /**

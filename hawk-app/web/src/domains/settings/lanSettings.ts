@@ -29,9 +29,6 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
   const active = ref(false);
   const peerActive = ref(false);
   const peerError = ref<string | null>(null);
-  const targetIdentity = ref('');
-  const tlsFingerprint = ref<string | undefined>(undefined);
-  const targetDeviceId = ref<string | undefined>(undefined);
   const targetLibraryId = ref('');
 
   const portValid = computed(() => validPort(port.value));
@@ -51,9 +48,6 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     active: boolean;
     peer_active: boolean;
     peer_error?: string | null;
-    target_identity: string;
-    tls_fingerprint?: string | null;
-    target_device_id?: string | null;
     target_library_id: string;
   }): void {
     enabled.value = dto.enabled;
@@ -65,9 +59,6 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     active.value = dto.active;
     peerActive.value = dto.peer_active;
     peerError.value = dto.peer_error ?? null;
-    targetIdentity.value = dto.target_identity;
-    tlsFingerprint.value = dto.tls_fingerprint ?? undefined;
-    targetDeviceId.value = dto.target_device_id ?? undefined;
     targetLibraryId.value = dto.target_library_id;
   }
 
@@ -113,6 +104,7 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     try {
       const key = await api.createLanDeviceKey({ label, role });
       peerKeys.value.unshift(key);
+      keys.value.unshift(key);
       return key;
     } catch (e) {
       error.value = '创建设备密钥失败：' + errorText(e);
@@ -181,9 +173,12 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
       error.value = '网站端口与 hawk-app 直连端口不能相同';
       return false;
     }
-    // First enable: auto-create a read-only key so the listener starts immediately.
+    // 首次启用：先在服务端创建一把只读密钥，监听器才会真正启动。
     if (enabled.value && keys.value.length === 0) {
-      addKey('\u7f51\u7ad9\u8bbf\u95ee\u5bc6\u94a5', 'viewer');
+      const created = await addDeviceKey('局域网访问', 'viewer');
+      if (!created) {
+        return false;
+      }
     }
     saving.value = true;
     error.value = null;
@@ -193,8 +188,8 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
           enabled: enabled.value,
           port: Number(port.value.trim()),
           peer_port: Number(peerPort.value.trim()),
-          keys: keys.value,
-          peer_keys: peerKeys.value,
+          keys: [],
+          peer_keys: [],
         }),
       );
       loaded.value = true;
@@ -220,9 +215,6 @@ export const useLanSettingsStore = defineStore('lanSettings', () => {
     active,
     peerActive,
     peerError,
-    targetIdentity,
-    tlsFingerprint,
-    targetDeviceId,
     targetLibraryId,
     portValid,
     peerPortValid,

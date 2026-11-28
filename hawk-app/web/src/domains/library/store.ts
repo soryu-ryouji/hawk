@@ -269,15 +269,12 @@ export const useLibraryStore = defineStore('library', () => {
   const editLocked = computed(() => viewerMode.value || limitedWrite.value);
   /** 当前连接角色（app/info.role），设置面板的 admin 限定分区据此门禁。 */
   const role = ref<'viewer' | 'importer' | 'editor' | 'admin'>('admin');
-  /** 当前请求是否经 WAN（app/info.channel）：只据此降低预览流量。 */
-  const remoteTransport = ref(false);
 
-  /** app/info 的权限与传输快照就地应用：密钥权限热更新时无需重新 boot。 */
+  /** app/info 的权限快照就地应用：密钥权限热更新时无需重新 boot。 */
   function applyAccessInfo(info: Pick<AppInfo, 'role' | 'channel'>): void {
     role.value = info.role;
     viewerMode.value = info.role === 'viewer';
     limitedWrite.value = info.role === 'importer';
-    remoteTransport.value = info.channel === 'wan';
   }
 
   /** 重新读取当前角色与通道（SSE lan.access.changed 触发）。 */
@@ -709,7 +706,6 @@ export const useLibraryStore = defineStore('library', () => {
     limitedWrite,
     editLocked,
     role,
-    remoteTransport,
     refreshAccess,
     viewPrefs,
     lockedView,
