@@ -34,12 +34,11 @@ win:
   # 绿色软件：zip 解压即用，免安装。相比 portable（NSIS 单文件）无 32 位启动壳，产物全 64 位，构建也不依赖 GitHub 下载 NSIS 工具链
   target: zip
   artifactName: ${productName}-windows-${arch}.${ext}
-  # 平台级 extraResources 与顶层追加合并非覆盖，只写增量：Windows 更新辅助程序
-  # （hawk-update/，替代 PowerShell 脚本的安装接力，见 scripts/build-update.mjs）。
-  # daemon 来自顶层，重复列会导致同一目标被并发复制（EBUSY）
+  # 平台级 extraResources 与顶层追加合并非覆盖，只写增量：Windows 更新接力脚本。
+  # 脚本由系统 PowerShell 执行，不需要编译产物；daemon 来自顶层，重复列会导致同一目标被并发复制（EBUSY）
   extraResources:
-    - from: resources/hawk-update
-      to: hawk-update
+    - from: resources/update.ps1
+      to: update.ps1
 # AppImage 运行时工具集：默认 0.0.0 是动态链接 libfuse.so.2 的老 runtime，Fedora 44 / Ubuntu 24.04+
 # 等只带 libfuse3 的发行版启动即报 "dlopen(): error loading libfuse.so.2"；1.0.3（Runtime 20251108）
 # 为静态 runtime，不依赖该库（仍走内核 FUSE 挂载；userns 不可用时 AppRun 自动补 --no-sandbox）。

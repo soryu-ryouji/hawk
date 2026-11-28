@@ -151,7 +151,7 @@ try {
   seedLibrary(libDir);
   const serverCmd = resolveServer();
   if (!serverCmd) {
-    throw new Error('未找到 hawk-daemon 构建产物（先 cargo build --release，或设置 HAWK_DAEMON_EXE）');
+    throw new Error('未找到 hawk-daemon 构建产物（先 go build -o hawk-daemon(.exe)，或设置 HAWK_DAEMON_EXE）');
   }
   const token = crypto.randomBytes(32).toString('hex');
   const port = await probeFreePort();

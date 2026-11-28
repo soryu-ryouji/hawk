@@ -1,6 +1,6 @@
 // 拖拽功能端到端复现：真实浏览器（系统 Edge）+ 真实鼠标事件。
 // 场景：多选两张素材 → 拖到侧栏文件夹 → 断言移动生效；过程中断言行高亮出现（证明 dragover MIME 检查通过）。
-// 用法：node tools/dnd-test.mjs（需先 cargo build --release + npm run build；临时库与进程自动清理）
+// 用法：node tools/dnd-test.mjs（需先构建 hawk-daemon + npm run build；临时库与进程自动清理）
 import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';

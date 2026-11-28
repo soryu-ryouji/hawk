@@ -1,7 +1,8 @@
 node_modules/
 web/dist/
 dist/
-resources/
+resources/*
+!resources/update.ps1
 tools/.tmp/
 
 # Electron 主进程/preload 的 esbuild 产物（electron/src 的 TS 源码构建生成）

@@ -1,6 +1,6 @@
 // 应用更新（GitHub Releases：stable = latest 正式版比 semver；nightly = 滚动预发布比构建 sha）。
 // 检查/比较/下载/校验在本进程完成（无自建服务），安装由平台接力：
-// Windows hawk-update.exe 辅助程序 / macOS detached sh 脚本 / Linux AppImage 原地替换 + relaunch。
+// Windows resources/update.ps1 / macOS detached sh 脚本 / Linux AppImage 原地替换 + relaunch。
 import { app, ipcMain } from 'electron';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -264,7 +264,7 @@ export function registerUpdaterIpc(): void {
     downloadAbort?.abort();
   });
 
-  /** 重启并安装已校验的更新：成功后本进程退出（IPC 不再返回），由更新辅助程序接力（Windows）
+  /** 重启并安装已校验的更新：成功后本进程退出（IPC 不再返回），由 PowerShell（Windows）
    *  或平台替换脚本接力（macOS/Linux） */
   ipcMain.handle(IPC.updateInstall, (): void => {
     if (!verifiedFile || !fs.existsSync(verifiedFile)) {
@@ -315,28 +315,48 @@ open ${shQuote(bundle)}
   spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref();
 }
 
-/** Windows 绿色版更新：复制辅助程序（resources/hawk-update/hawk-update.exe，实现见仓库根
- *  hawk-update/）到更新临时目录后启动，由它等旧进程退出 → 解压 zip → 覆盖应用目录 → 拉起新实例。
- *  temp 副本运行：更新会覆盖应用目录内的 hawk-update.exe，运行中的自身无法被覆盖。
- *  全过程写更新目录 install.log，失败非零退出——不静默，留现场 */
+/** Windows 绿色版更新：退出前启动 resources/update.ps1，由 PowerShell 等旧进程退出 →
+ *  解包 zip → 替换应用目录 → 拉起新实例。脚本只依赖系统自带 PowerShell，不再携带独立 exe。
+ *  脚本先 Set-Location %TEMP%，避免当前目录位于 AppDir 内导致目录无法重命名。
+ *  全过程写 %TEMP%\hawk-update\install.log，失败弹窗并尽量回滚。 */
 function installWindowsUpdate(zip: string): void {
   const appDir = path.dirname(process.execPath);
-  const dir = path.dirname(zip);
-  const updaterSrc = path.join(process.resourcesPath, 'hawk-update', 'hawk-update.exe');
-  if (!fs.existsSync(updaterSrc)) {
-    throw new Error('更新辅助程序缺失，请到 GitHub 手动下载更新');
+  const script = app.isPackaged ? path.join(process.resourcesPath, 'update.ps1') : path.join(APP_DIR, 'resources', 'update.ps1');
+  if (!fs.existsSync(script)) {
+    throw new Error('更新脚本缺失，请到 GitHub 手动下载更新');
   }
-  // 同名旧副本是上次运行残留；删除失败（被占用）则改用带 pid 的名字
-  let runCopy = path.join(dir, 'hawk-update.exe');
-  try {
-    fs.rmSync(runCopy, { force: true });
-  } catch {
-    runCopy = path.join(dir, `hawk-update-${process.pid}.exe`);
-  }
-  fs.copyFileSync(updaterSrc, runCopy);
-  spawn(runCopy, ['--pid', String(process.pid), '--zip', zip, '--app', appDir], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  }).unref();
+  const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+  const bundledPowerShell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const powerShell = fs.existsSync(bundledPowerShell) ? bundledPowerShell : 'powershell.exe';
+  const child = spawn(
+    powerShell,
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-WindowStyle',
+      'Hidden',
+      '-File',
+      script,
+      '-WaitPid',
+      String(process.pid),
+      '-Zip',
+      zip,
+      '-AppDir',
+      appDir,
+      '-Exe',
+      path.basename(process.execPath),
+    ],
+    {
+      cwd: path.dirname(zip),
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    },
+  );
+  child.on('error', (error) => {
+    console.error('[updater] PowerShell 启动失败', error);
+  });
+  child.unref();
 }

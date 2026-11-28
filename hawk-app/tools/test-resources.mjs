@@ -1,7 +1,7 @@
 // extraResources 平台隔离回归验证：npm run test:resources
 // 直接调用 electron-builder 的配置解析（getFileMatchers，即打包时决定复制哪些文件的真实代码路径），
-// 断言 hawk-update 只进 Windows 产物、mac/linux 只带 hawk-daemon。
-// 背景：平台级 extraResources 与顶层是追加合并非覆盖，靠「hawk-update 只写在 win.extraResources」隔离，
+// 断言 update.ps1 只进 Windows 产物、mac/linux 只带 hawk-daemon。
+// 背景：平台级 extraResources 与顶层是追加合并非覆盖，靠「update.ps1 只写在 win.extraResources」隔离，
 // 若将来有人把它误挪到顶层，此脚本立即报警。
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -30,11 +30,11 @@ for (const platform of ['win', 'mac', 'linux']) {
   const srcs = matchers.map((m) => path.basename(m.from)).sort();
   if (platform === 'win') {
     assert(srcs.includes('hawk-daemon'), `win: 携带 hawk-daemon`);
-    assert(srcs.includes('hawk-update'), `win: 携带 hawk-update`);
+    assert(srcs.includes('update.ps1'), `win: 携带 update.ps1`);
   } else {
     assert(
       srcs.length === 1 && srcs[0] === 'hawk-daemon',
-      `${platform}: 只携带 hawk-daemon，不带 hawk-update（实际：${srcs.join(', ') || '无'}）`,
+      `${platform}: 只携带 hawk-daemon，不带 update.ps1（实际：${srcs.join(', ') || '无'}）`,
     );
   }
 }
