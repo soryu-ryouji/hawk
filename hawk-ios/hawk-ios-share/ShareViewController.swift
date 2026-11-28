@@ -37,7 +37,7 @@ final class ShareViewController: UIViewController {
         guard !isFinishing else { return }
         isFinishing = true
         Task { @MainActor in
-            await model.cleanup()
+            model.cleanup()
             extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
         }
     }

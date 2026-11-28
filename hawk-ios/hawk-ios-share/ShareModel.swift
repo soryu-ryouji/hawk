@@ -35,7 +35,6 @@ final class ShareModel {
     var selectedTags: Set<String> = []
 
     private var client: ShareAPIClient?
-    private var nativeSession: NativeTransportSession?
 
     private static let maxImages = 20
 
@@ -46,11 +45,10 @@ final class ShareModel {
             }
             targetLabel = target.label
             let connected = try await Self.connect(target)
-            client = connected.client
-            nativeSession = connected.session
+            client = connected
 
-            async let categoriesTask = connected.client.categories()
-            async let tagsTask = connected.client.tags()
+            async let categoriesTask = connected.categories()
+            async let tagsTask = connected.tags()
             categories = ((try? await categoriesTask) ?? []).sorted()
             tags = ((try? await tagsTask) ?? []).sorted()
 
@@ -99,61 +97,32 @@ final class ShareModel {
         return true
     }
 
-    func cleanup() async {
+    func cleanup() {
         for image in images {
             image.cleanup()
         }
         images = []
         client = nil
-        await nativeSession?.waitForClose()
-        nativeSession = nil
-    }
-
-    private struct Connected: Sendable {
-        let client: ShareAPIClient
-        let session: NativeTransportSession?
     }
 
     nonisolated private static func connect(_ target: ShareTargetStore.Target) async throws
-        -> Connected
+        -> ShareAPIClient
     {
-        guard !target.targetIdentity.isEmpty else {
-            throw ShareSetupError(message: "连接缺少目标身份，请先在 hawk App 里重新连接素材库")
+        guard !target.accessKey.isEmpty else {
+            throw ShareSetupError(message: "连接缺少 AccessKey，请先在 hawk App 里重新连接素材库")
         }
         var lastError: Error = ShareSetupError(message: "素材库地址不可用")
         for raw in target.urls {
             guard let base = normalizedURL(raw) else { continue }
-            var session: NativeTransportSession?
+            let client = ShareAPIClient(baseURL: base, token: target.accessKey)
             do {
-                let connection = try await RustTransport.connect(
-                    configDir: transportDirectory(),
-                    serverUrl: base.absoluteString,
-                    targetDeviceId: target.targetDeviceId,
-                    targetIdentity: target.targetIdentity,
-                    accessKey: target.accessKey
-                )
-                guard let proxyURL = URL(string: connection.apiBase) else {
-                    throw ShareSetupError(message: "原生代理地址无效")
-                }
-                let nativeSession = NativeTransportSession(connection: connection)
-                session = nativeSession
-                let client = ShareAPIClient(baseURL: proxyURL, token: connection.credential)
                 _ = try await client.libraryName()
-                return Connected(client: client, session: session)
+                return client
             } catch {
-                session?.close()
                 lastError = error
             }
         }
         throw lastError
-    }
-
-    nonisolated private static func transportDirectory() throws -> String {
-        let root = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let directory = root.appendingPathComponent("hawk/share-transport", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.path
     }
 
     nonisolated private static func normalizedURL(_ raw: String) -> URL? {
@@ -162,7 +131,10 @@ final class ShareModel {
         if !value.contains("://") {
             value = "http://\(value)"
         }
-        return URL(string: value)
+        guard let url = URL(string: value), url.scheme?.lowercased() == "http" else {
+            return nil
+        }
+        return url
     }
 
     private static func message(for error: Error) -> String {
@@ -185,7 +157,7 @@ final class ShareModel {
             return image.message
         }
         if let urlError = error as? URLError {
-            return "无法连接素材库（\(urlError.localizedDescription)）：确认目标设备在线且网络可用"
+            return "无法连接素材库（\(urlError.localizedDescription)）：确认目标设备在线且与本机处于同一局域网"
         }
         return error.localizedDescription
     }

@@ -13,14 +13,14 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 | -- | -- |
 | 工程 / target / scheme | `hawk-ios.xcodeproj` / `hawk-ios` + `hawk-ios-share` / 同名 scheme（已共享，进仓库） |
 | 源码目录 | `hawk-ios/hawk-ios/`（主 App）与 `hawk-ios/hawk-ios-share/`（Share Extension），均为 `PBXFileSystemSynchronizedRootGroup`：新增/重命名文件直接改磁盘，不用改 `project.pbxproj` |
-| App Group | `group.com.soryu-ryouji.hawk`（主 App 写当前库的配对信息，分享扩展只读并独立建立加密会话）；需付费开发者账号 |
+| App Group | `group.com.soryu-ryouji.hawk`（主 App 写当前库的地址与 AccessKey，分享扩展只读并直连 daemon HTTP API）；需付费开发者账号 |
 | 部署目标 | iOS 26.0 / iPadOS 26.0（Foundation Models 文本能力 26.0，图片理解 27.0，按 `#available` 分支） |
 | 设备 | iPhone + iPad 单 target（`TARGETED_DEVICE_FAMILY = "1,2"`） |
 | Bundle ID | `com.soryu-ryouji.hawk` |
 | Swift | Swift 6 语言模式；`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`、`SWIFT_APPROACHABLE_CONCURRENCY = YES` |
 | Info.plist | 由构建设置生成（`GENERATE_INFOPLIST_FILE = YES`），键走 `INFOPLIST_KEY_*`，不落文件 |
 | 平台 | 仅 `iphoneos iphonesimulator`（不构建 macOS / visionOS） |
-| 原生依赖 | `hawk-transport` 静态 `HawkTransport.xcframework`（主 App / Share Extension 共用源码接口，各自持有独立会话）；GRDB 计划在 M2 引入 |
+| 原生依赖 | 无第三方原生依赖，纯 URLSession HTTP；GRDB 计划在 M2 引入 |
 
 新增 Info.plist 键时改 target 的 Build Settings（`INFOPLIST_KEY_<Key>`），不要改成物理 plist 文件。当前配置了：
 
@@ -35,11 +35,11 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 
 ### 连接
 
-- V2 原生 LAN / WAN：统一经 `hawk-transport` 建立 iroh 端到端加密会话，Loopback 代理只接受 Bearer `session_token`；LAN/WAN 候选地址可自动回退
-- V2 配对载荷：`v=2`、`target_identity`、`target_device_id`、`target_library_id`、`access_key`、`lan_endpoints` 与可选 `wan.server_url`；长期 AccessKey 存 Keychain，不再使用 tenant-key / browser token / `/viewer/*`
-- 手工 LAN 使用 hawk-app 直连地址（默认 27375）+ AccessKey：HTTP 仅读取 `app/lan/connection-info` 的公开身份，随后统一走原生加密会话；手工 WAN 需服务地址、目标身份、目标设备 ID 与 AccessKey。原生会话在切换、断开和初始化失败时经 C ABI 正确释放
+- 纯局域网直连：候选地址依次读取 `/api/v1/app/lan/connection-info`，校验 `protocol=3` 后用 AccessKey 直接访问 daemon HTTP API（默认端口 27375）
+- V3 配对载荷：`v=3`、可选 `target_library_id`、`access_key` 与 `lan_endpoints`；AccessKey 存 Keychain
+- 手动填写局域网地址（默认 27375）+ AccessKey；首个候选失败后自动尝试其余地址
 - 扫码、剪贴板导入与手动填写；载荷版本或必填字段不符时明确提示
-- 连接阶段可视化（加密会话 → 索引就绪）与取消；失败回连接列表并展示服务端或原生传输错误
+- 连接阶段可视化（读取连接信息 → 索引就绪）与取消；失败回连接列表并展示服务端错误
 
 ### 浏览
 
@@ -48,9 +48,9 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 - 在线首屏不建索引：库信息 + 隐藏集 + 锁集到了就进主界面，`item/list` 首页与 `item/skeleton` 并发，分类/标签与计数后台补齐
 - 齐行网格 + `LazyVStack` 懒渲染；滚动位置按视图记忆（切走再回来仍在原处）
 - 全屏预览（相册式手势）：横向翻页跟手（首尾页橡皮筋）、双击/双指缩放、放大后单指平移（越界回弹）、未放大时下拉关闭；卡片到预览的缩放转场；保存到相册、系统分享、素材信息
-- 相册分享到素材库（Share Extension）：照片 App → 分享 → hawk → 选分类/标签（均可多选、可不选）→ 经独立原生加密会话存入 LAN/WAN 素材库；HEIC 自动转 PNG（无损，JPEG/PNG 原样不重编码），最多 20 张，串行上传带进度；同内容重复跳过，同名不同内容明确报错，缺导入权限/凭证失效/网络不通都有提示
+- 相册分享到素材库（Share Extension）：照片 App → 分享 → hawk → 选分类/标签（均可多选、可不选）→ 按当前连接的地址与 AccessKey 直连 daemon 存入素材库；HEIC 自动转 PNG（无损，JPEG/PNG 原样不重编码），最多 20 张，串行上传带进度；同内容重复跳过，同名不同内容明确报错，缺导入权限/凭证失效/网络不通都有提示
 - 搜索（名称/备注）、排序、筛选（评分、短边像素区间、调色板颜色）、下拉刷新
-- 排序偏好按视图（文件夹/分类/标签 scope）存服务端 `.hawk/view.toml`，与桌面端同步；viewer/importer 与 WAN 通道不写回
+- 排序偏好按视图（文件夹/分类/标签 scope）存服务端 `.hawk/view.toml`，与桌面端同步；viewer/importer 不写回
 
 ### 锁与实时性
 
@@ -66,16 +66,12 @@ iPhone / iPad 原生客户端（SwiftUI）。设计文档见 [../docs/frontend/i
 - Foundation Models 自然语言查询、Vision 图像理解（M3）
 - 写回（标签/备注）（M4）
 
-协议回归测试已就位：`hawk-iosTests` 覆盖 V2 LAN/WAN 配对、Bearer/URL 凭证边界、查询 DTO、扫描间隔与原生传输响应。
+协议回归测试已就位：`hawk-iosTests` 覆盖 V3 局域网配对、Bearer/URL 凭证边界、查询 DTO、扫描间隔与连接信息解析。
 
 ## 开发与自检
 
 ```bash
-# 在仓库根执行：首次或 hawk-transport 改动后生成静态 XCFramework
-rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-tools/build-mobile-transport.sh ios
-
-# 以下在 hawk-ios/ 目录执行
+# 在 hawk-ios/ 目录执行
 # 格式化（提交前本地跑；配置在 .swift-format）
 xcrun swift-format format --in-place --recursive hawk-ios
 xcrun swift-format lint --strict --recursive hawk-ios
@@ -87,12 +83,10 @@ xcodebuild -scheme hawk-ios -destination 'generic/platform=iOS Simulator' build
 xcodebuild test -scheme hawk-ios -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-`hawk-ios/Frameworks/` 是可重建的本地产物，不入库；Xcode clean 不会替 Rust 库重编译，修改 `hawk-transport` 或其 Rust 依赖后必须重跑脚本。`libc` 暂锁定 `0.2.189`，因为后续版本将 iroh 的 `netdev/netwatch` 所需 XNU 声明限制为 macOS，导致 iOS 编译失败。
-
 本地冒烟（Debug 构建）可用环境变量预置连接与落点，跳过手动输入：
 
 ```bash
-SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111","kind":"lan","name":"测试素材库","url":"http://127.0.0.1:27375","accessKey":"<access-key>","targetIdentity":"","targetLibraryId":"","targetDeviceId":"","tlsFingerprint":""}' \
+SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111","kind":"lan","name":"测试素材库","url":"http://127.0.0.1:27375","accessKey":"<access-key>"}' \
   xcrun simctl launch booted com.soryu-ryouji.hawk
 ```
 
@@ -107,11 +101,10 @@ SIMCTL_CHILD_HAWK_IOS_DEBUG_PROFILE='{"id":"11111111-1111-1111-1111-111111111111
 
 均在 `#if DEBUG` 内，Release 构建不含这些路径。真机冒烟仍需覆盖：
 
-1. 局域网：扫码经原生 iroh 连接，浏览缩略图、原图与 SSE；另用 `http://<IP>:27375` + AccessKey 验证公开配对信息解析与原生重连
-2. 广域网：扫码或填服务端地址 + target_identity + target_device_id + AccessKey，验证 WAN 连接与断开后重连
-3. 相册保存与分享：主 App 保存的是原图；Share Extension 分别验证 LAN/WAN 导入、同内容跳过与同名冲突报错
-4. 锁定视图：输入密码解锁、错误密码保留服务端提示、退出重进需重新解锁
-5. 权限与前台：运行中降级 AccessKey 后界面角色更新；切后台再回来，列表、锁集和隐藏集刷新且不白屏
+1. 局域网：扫码或手填 `http://<IP>:27375` + AccessKey，浏览缩略图、原图与 SSE；验证错误 AccessKey、daemon 未启动与多候选地址回退
+2. 相册保存与分享：主 App 保存的是原图；Share Extension 验证局域网导入、同内容跳过与同名冲突报错
+3. 锁定视图：输入密码解锁、错误密码保留服务端提示、退出重进需重新解锁
+4. 权限与前台：运行中降级 AccessKey 后界面角色更新；切后台再回来，列表、锁集和隐藏集刷新且不白屏
 
 `ATS` 保持默认（不加 `NSAllowsArbitraryLoads`）。局域网请填 IP 字面量（如 `192.168.1.5:27375`）；若将来用 `.local` 主机名或 mDNS 发现，需要另行补 `NSAppTransportSecurity` / `NSBonjourServices`。
 
@@ -132,10 +125,9 @@ hawk-ios/hawk-ios/
 ├── Connection/
 │   ├── ConnectionProfile.swift
 │   ├── ConnectionStore.swift
-│   ├── ConnectionLauncher.swift  V2 原生候选连接、手工 LAN 与启动等待
-│   ├── RustTransport.swift  C ABI 响应解码与原生会话生命周期
+│   ├── ConnectionLauncher.swift  局域网候选连接、协议校验与启动等待
 │   ├── KeychainStore.swift
-│   ├── ShareTarget.swift  分享给扩展的当前库配对信息
+│   ├── ShareTarget.swift  分享给扩展的当前库地址与 AccessKey
 │   └── PairingPayload.swift
 ├── Library/
 │   ├── LibraryContext.swift 会话级共享状态：库信息/分类树/计数/锁/隐藏集/排序偏好/SSE
@@ -158,6 +150,6 @@ hawk-ios/hawk-ios/
     ├── FilterSheet.swift / SettingsView.swift / ConnectView.swift / ProfileFormView.swift / QRScannerView.swift
     └── Components.swift     共享组件（标记、提示条、筛选 chip、计数、锁图标）
 
-hawk-ios/hawk-ios-share/    Share Extension：独立原生会话、分类/标签与 multipart 导入
-hawk-ios/hawk-iosTests/     V2 配对与网络契约回归测试
+hawk-ios/hawk-ios-share/    Share Extension：局域网直连、分类/标签与 multipart 导入
+hawk-ios/hawk-iosTests/     V3 配对与网络契约回归测试
 ```

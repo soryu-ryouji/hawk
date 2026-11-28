@@ -14,7 +14,7 @@ nonisolated struct APIError: LocalizedError, Sendable, Equatable {
     var isOffline: Bool { status == 0 }
 }
 
-/// 当前请求的 Bearer 凭证：LAN 为 AccessKey，原生代理为短期 session_token。
+/// 当前请求的 Bearer 凭证：局域网直连使用 AccessKey。
 nonisolated struct SessionCredentials: Sendable {
     private let token: String
 
@@ -54,7 +54,7 @@ nonisolated final class APIClient: @unchecked Sendable {
         self.streamSession = URLSession(configuration: streaming)
     }
 
-    /// 素材 API 与原生 Loopback 代理统一使用 Bearer；公开配对请求不携带凭证。
+    /// 素材 API 请求统一使用 Bearer；公开连接信息请求不携带凭证。
     nonisolated static func authorize(_ request: inout URLRequest, credential: String) {
         guard !credential.isEmpty else { return }
         request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
@@ -142,7 +142,7 @@ nonisolated final class APIClient: @unchecked Sendable {
 
     // MARK: - Event stream
 
-    /// SSE 订阅请求：Bearer 鉴权，不在 URL 中携带 AccessKey 或 session_token。
+    /// SSE 订阅请求：Bearer 鉴权，不在 URL 中携带 AccessKey。
     func eventRequest() -> URLRequest? {
         guard
             let url = makeURL(
@@ -259,13 +259,11 @@ nonisolated final class APIClient: @unchecked Sendable {
         case .notConnectedToInternet:
             return "设备当前没有网络连接"
         case .timedOut:
-            return "连接素材库超时，请检查服务地址与网络"
+            return "连接素材库超时，请检查局域网地址与网络"
         case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
             return "无法连接素材库服务：请确认地址、端口，以及系统设置中的本地网络权限"
         case .appTransportSecurityRequiresSecureConnection:
-            return "系统阻止了明文 HTTP 连接：局域网请填写 IP 地址，广域网请使用 https"
-        case .secureConnectionFailed, .serverCertificateUntrusted:
-            return "服务端证书校验失败，请检查 HTTPS 配置"
+            return "系统阻止了明文 HTTP 连接：请在局域网内使用 IP 地址直连"
         default:
             return "无法连接素材库服务（\(error.localizedDescription)）"
         }

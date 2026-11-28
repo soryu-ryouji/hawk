@@ -16,12 +16,8 @@ struct SettingsView: View {
             Form {
                 Section {
                     LabeledContent("素材库", value: context.library?.name ?? context.title)
-                    LabeledContent(
-                        "连接方式", value: context.isRemote ? "广域网（hawk-server）" : "局域网直连")
+                    LabeledContent("连接方式", value: "局域网直连")
                     LabeledContent("访问级别", value: context.accessLabel)
-                    if let device = context.targetDeviceName, !device.isEmpty, context.isRemote {
-                        LabeledContent("目标设备", value: device)
-                    }
                     LabeledContent("服务地址", value: context.profile.url)
                     LabeledContent(
                         "素材数量",

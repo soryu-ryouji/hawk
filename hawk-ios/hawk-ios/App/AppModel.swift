@@ -36,7 +36,6 @@ final class AppModel {
     func connect(_ profile: ConnectionProfile) {
         connectTask?.cancel()
         context?.stopEvents()
-        teardownNativeSession()
         context = nil
         lastError = nil
         connectStatus = "正在连接 \(profile.displayName)…"
@@ -58,17 +57,14 @@ final class AppModel {
                 let context = LibraryContext(
                     api: outcome.api,
                     profile: saved,
-                    info: outcome.info,
-                    targetDeviceName: outcome.targetDeviceName,
-                    targetLibraryName: outcome.targetLibraryName,
-                    nativeSession: outcome.nativeSession
+                    info: outcome.info
                 )
                 try await context.bootstrap()
                 try Task.checkCancellation()
                 self.context = context
                 self.connectStatus = nil
                 phase = .ready
-                // 分享扩展读 App Group，独立建立到当前库的原生加密会话。
+                // 分享扩展读 App Group，按同一地址与 AccessKey 直连 daemon。
                 ShareTarget.save(profile: saved, libraryName: context.library?.name ?? "")
             } catch is CancellationError {
                 return
@@ -95,7 +91,6 @@ final class AppModel {
     func disconnect() {
         connectTask?.cancel()
         context?.stopEvents()
-        teardownNativeSession()
         context = nil
         connectStatus = nil
         phase = .connect
@@ -105,16 +100,10 @@ final class AppModel {
     func showConnectScreen() {
         connectTask?.cancel()
         context?.stopEvents()
-        teardownNativeSession()
         context = nil
         connectStatus = nil
         phase = .connect
         ShareTarget.clear()
-    }
-
-    /// 显式断开/切换时关闭原生代理与 rendezvous；手工 LAN 没有原生会话。
-    private func teardownNativeSession() {
-        context?.nativeSession?.close()
     }
 
     func deleteProfile(_ profile: ConnectionProfile) {

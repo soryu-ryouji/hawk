@@ -22,18 +22,16 @@ nonisolated struct LanInfo: Decodable, Sendable {
     let peerError: String?
 }
 
-/// Peer 控制面公开的配对信息；HTTP 只读取这些非秘密字段，AccessKey 不进入该请求。
+/// 目标 daemon 公开的局域网连接信息，只包含连接所需字段。
 nonisolated struct LanConnectionInfo: Decodable, Sendable {
     static let currentProtocol = 3
 
     let `protocol`: Int
+    let peerId: String
     let name: String
     let libraryName: String
     let peerPort: Int
-    let targetIdentity: String
-    let targetDeviceId: String?
     let targetLibraryId: String
-    let tlsFingerprint: String?
 }
 
 nonisolated struct StartupInfo: Decodable, Sendable {

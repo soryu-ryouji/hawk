@@ -1,24 +1,21 @@
 import Foundation
 
 /// 共享给分享扩展的目标（App Group UserDefaults）。
-/// 原生 LAN/WAN 都保存 rendezvous 地址与目标身份，由扩展独立建立加密会话；
-/// 手工 LAN 的目标身份已在主 App 连接时解析并保存。
+/// 扩展按候选地址与 AccessKey 直接访问 daemon 的局域网 HTTP API。
 nonisolated enum ShareTarget {
     static let appGroupID = "group.com.soryu-ryouji.hawk"
-    static let storageKey = "shareTarget.v2"
+    static let storageKey = "shareTarget.v3"
 
     struct Value: Codable, Sendable {
         var urls: [String]
         var accessKey: String
-        var targetIdentity: String
-        var targetDeviceId: String
         /// 展示名：连接名 · 素材库名
         var label: String
     }
 
     static func save(profile: ConnectionProfile, libraryName: String) {
         let urls = (try? profile.candidateBaseURLs().map(\.absoluteString)) ?? []
-        guard !urls.isEmpty, !profile.accessKey.isEmpty, !profile.targetIdentity.isEmpty else {
+        guard !urls.isEmpty, !profile.accessKey.isEmpty else {
             return
         }
         let label = [profile.displayName, libraryName]
@@ -27,8 +24,6 @@ nonisolated enum ShareTarget {
         let value = Value(
             urls: urls,
             accessKey: profile.accessKey,
-            targetIdentity: profile.targetIdentity,
-            targetDeviceId: profile.targetDeviceId,
             label: label
         )
         guard let data = try? JSONEncoder().encode(value) else { return }

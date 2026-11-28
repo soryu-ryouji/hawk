@@ -2,66 +2,44 @@ import SwiftUI
 
 struct ProfileFormView: View {
     @Environment(\.dismiss) private var dismiss
-    let kind: ConnectionKind
     let existing: ConnectionProfile?
     let onSave: (ConnectionProfile) -> Void
 
     @State private var name: String
     @State private var url: String
     @State private var accessKey: String
-    @State private var targetIdentity: String
-    @State private var targetDeviceId: String
     @State private var error: String?
 
     init(
-        kind: ConnectionKind, existing: ConnectionProfile?,
+        existing: ConnectionProfile?,
         onSave: @escaping (ConnectionProfile) -> Void
     ) {
-        self.kind = kind
         self.existing = existing
         self.onSave = onSave
         _name = State(initialValue: existing?.name ?? "")
         _url = State(initialValue: existing?.url ?? "")
         _accessKey = State(initialValue: existing?.accessKey ?? "")
-        _targetIdentity = State(initialValue: existing?.targetIdentity ?? "")
-        _targetDeviceId = State(initialValue: existing?.targetDeviceId ?? "")
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField(
-                        kind == .lan ? "192.168.1.5:27375" : "https://hawk.example.com", text: $url
-                    )
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
+                    TextField("192.168.1.5:27375", text: $url)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                     TextField("显示名称（可选）", text: $name)
                 } header: {
-                    Text("服务地址")
+                    Text("局域网地址")
                 } footer: {
-                    if kind == .lan {
-                        Text(
-                            "填写桌面端 hawk-app 直连地址（默认 27375）与 AccessKey。HTTP 仅用于读取公开配对信息，AccessKey 和素材均走加密通道。"
-                        )
-                    } else {
-                        Text("hawk-server 地址、目标身份与 AccessKey 均来自桌面端配对信息。")
-                    }
+                    Text("填写桌面端 hawk-app 的局域网直连地址（默认端口 27375）与 AccessKey。")
                 }
 
                 Section("访问凭证") {
                     SecureField("AccessKey（hk_…）", text: $accessKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    if kind == .remote {
-                        SecureField("target_identity（目标 iroh 公钥）", text: $targetIdentity)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        SecureField("target_device_id（目标设备 ID）", text: $targetDeviceId)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                    }
                 }
 
                 if let error {
@@ -74,7 +52,7 @@ struct ProfileFormView: View {
             }
             .scrollContentBackground(.hidden)
             .background(HawkTheme.bg0)
-            .navigationTitle(existing == nil ? "添加\(kind.title)连接" : "编辑连接")
+            .navigationTitle(existing == nil ? "添加局域网连接" : "编辑连接")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -89,24 +67,16 @@ struct ProfileFormView: View {
     }
 
     private var canSave: Bool {
-        guard !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            !accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return false }
-        if kind == .remote {
-            return !targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        return true
+        !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func save() {
-        var profile = existing ?? ConnectionProfile(kind: kind, url: "")
-        profile.kind = kind
+        var profile = existing ?? ConnectionProfile(kind: .lan, url: "")
+        profile.kind = .lan
         profile.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         profile.url = url.trimmingCharacters(in: .whitespacesAndNewlines)
         profile.accessKey = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        profile.targetIdentity = targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
-        profile.targetDeviceId = targetDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
         if var components = URLComponents(string: profile.url) {
             components.query = nil
             components.fragment = nil

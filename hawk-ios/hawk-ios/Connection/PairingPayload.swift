@@ -1,30 +1,15 @@
 import Foundation
 
-/// V2 统一配对：AccessKey + target_identity + LAN/WAN endpoints，不携带 tenant key。
+/// V3 局域网配对：AccessKey + 至少一个 HTTP endpoint，不携带任何目标身份。
 nonisolated struct PairingPayload: Decodable, Sendable {
-    struct Wan: Decodable, Sendable {
-        let serverUrl: String
-
-        enum CodingKeys: String, CodingKey {
-            case serverUrl = "server_url"
-        }
-    }
-
     let v: Int
     let targetLibraryId: String?
-    let targetDeviceId: String?
-    let targetIdentity: String
-    let tlsFingerprint: String?
-    let accessKey: String
-    let lanEndpoints: [String]
-    let wan: Wan?
+    let accessKey: String?
+    let lanEndpoints: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case v, wan
+        case v
         case targetLibraryId = "target_library_id"
-        case targetDeviceId = "target_device_id"
-        case targetIdentity = "target_identity"
-        case tlsFingerprint = "tls_fingerprint"
         case accessKey = "access_key"
         case lanEndpoints = "lan_endpoints"
     }
@@ -39,43 +24,26 @@ nonisolated struct PairingPayload: Decodable, Sendable {
         } catch {
             throw ConnectionError.message("这不是 hawk 的配对二维码")
         }
-        guard payload.v == 2 else {
+        guard payload.v == 3 else {
             throw ConnectionError.message("二维码版本不支持，请升级 hawk iOS 客户端")
         }
         return payload
     }
 
     func profile() throws -> ConnectionProfile {
-        let identity = targetIdentity.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = accessKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !identity.isEmpty, !key.isEmpty else {
-            throw ConnectionError.message("配对二维码缺少目标身份或 AccessKey")
+        let key = accessKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !key.isEmpty else {
+            throw ConnectionError.message("配对二维码缺少 AccessKey")
         }
         let candidates =
-            lanEndpoints
+            (lanEndpoints ?? [])
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         var seen = Set<String>()
         let unique = candidates.filter { seen.insert($0.lowercased()).inserted }
-        let serverUrl = wan?.serverUrl.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let kind: ConnectionKind = serverUrl.isEmpty ? .lan : .remote
-        let url = serverUrl.isEmpty ? unique.first ?? "" : serverUrl
-        guard !url.isEmpty else {
-            throw ConnectionError.message("配对二维码缺少访问地址")
+        guard let url = unique.first else {
+            throw ConnectionError.message("配对二维码缺少局域网地址")
         }
-        let deviceID = targetDeviceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if kind == .remote && deviceID.isEmpty {
-            throw ConnectionError.message("广域网配对二维码缺少 target_device_id")
-        }
-        return ConnectionProfile(
-            kind: kind,
-            url: url,
-            urls: unique,
-            accessKey: key,
-            targetIdentity: identity,
-            targetLibraryId: targetLibraryId ?? "",
-            targetDeviceId: deviceID,
-            tlsFingerprint: tlsFingerprint ?? ""
-        )
+        return ConnectionProfile(kind: .lan, url: url, urls: unique, accessKey: key)
     }
 }

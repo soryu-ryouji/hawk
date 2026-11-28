@@ -118,7 +118,7 @@ struct BrowseScreen: View {
                 }
             } footer: {
                 Text(
-                    "\(context.title)\n\(context.isRemote ? "广域网" : "局域网直连") · \(context.accessLabel)"
+                    "\(context.title)\n局域网直连 · \(context.accessLabel)"
                 )
                 .font(.caption)
                 .foregroundStyle(HawkTheme.fg1)

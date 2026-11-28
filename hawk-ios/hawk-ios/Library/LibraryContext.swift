@@ -18,10 +18,7 @@ final class LibraryContext {
     let api: APIClient
     let profile: ConnectionProfile
     private(set) var info: AppInfo
-    let targetDeviceName: String?
-    let targetLibraryName: String?
     let tickets: UnlockTicketStore
-    let nativeSession: NativeTransportSession?
 
     private(set) var library: LibraryInfo?
     private(set) var folders: FolderNode?
@@ -51,23 +48,15 @@ final class LibraryContext {
     private var eventsTask: Task<Void, Never>?
     private var backgrounded = false
 
-    init(
-        api: APIClient, profile: ConnectionProfile, info: AppInfo,
-        targetDeviceName: String?, targetLibraryName: String?,
-        nativeSession: NativeTransportSession?
-    ) {
+    init(api: APIClient, profile: ConnectionProfile, info: AppInfo) {
         self.api = api
         self.profile = profile
         self.info = info
-        self.targetDeviceName = targetDeviceName
-        self.targetLibraryName = targetLibraryName
-        self.nativeSession = nativeSession
         self.tickets = api.tickets
     }
 
-    var isRemote: Bool { info.channel == "wan" }
     var canWrite: Bool {
-        (info.role == "editor" || info.role == "admin") && info.channel != "wan"
+        info.role == "editor" || info.role == "admin"
     }
 
     var accessLabel: String {
@@ -80,11 +69,7 @@ final class LibraryContext {
     }
 
     var title: String {
-        let libraryName = library?.name ?? targetLibraryName ?? "素材库"
-        if let target = targetDeviceName, !target.isEmpty, isRemote {
-            return "\(target) · \(libraryName)"
-        }
-        return libraryName
+        library?.name ?? "素材库"
     }
 
     var scanningLabel: String? {

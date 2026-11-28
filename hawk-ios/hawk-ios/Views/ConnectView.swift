@@ -43,15 +43,10 @@ struct ConnectView: View {
                         Label("从剪贴板导入配对信息", systemImage: "doc.on.clipboard")
                     }
 
-                    Menu {
-                        Button("局域网连接", systemImage: "wifi") {
-                            formTarget = ProfileFormTarget(kind: .lan, profile: nil)
-                        }
-                        Button("广域网连接", systemImage: "globe") {
-                            formTarget = ProfileFormTarget(kind: .remote, profile: nil)
-                        }
+                    Button {
+                        formTarget = ProfileFormTarget(profile: nil)
                     } label: {
-                        Label("手动填写地址与凭证", systemImage: "square.and.pencil")
+                        Label("手动填写局域网地址", systemImage: "square.and.pencil")
                     }
                 } footer: {
                     Text("桌面端「设置 → 局域网」可生成配对二维码，扫码即可完成连接。")
@@ -77,8 +72,7 @@ struct ConnectView: View {
                                     Label("删除", systemImage: "trash")
                                 }
                                 Button {
-                                    formTarget = ProfileFormTarget(
-                                        kind: profile.kind, profile: profile)
+                                    formTarget = ProfileFormTarget(profile: profile)
                                 } label: {
                                     Label("编辑", systemImage: "pencil")
                                 }
@@ -104,7 +98,7 @@ struct ConnectView: View {
                 }
             }
             .sheet(item: $formTarget) { target in
-                ProfileFormView(kind: target.kind, existing: target.profile) { profile in
+                ProfileFormView(existing: target.profile) { profile in
                     app.saveAndConnect(profile)
                 }
             }
@@ -141,7 +135,7 @@ struct ConnectView: View {
                         .foregroundStyle(HawkTheme.fg1)
                 }
             }
-            Text("连接同一局域网内的桌面端，或经自托管 hawk-server 远程查看。")
+            Text("连接同一局域网内的桌面端素材库。")
                 .font(.footnote)
                 .foregroundStyle(HawkTheme.fg1)
                 .fixedSize(horizontal: false, vertical: true)
@@ -168,7 +162,6 @@ struct ConnectView: View {
 
 private struct ProfileFormTarget: Identifiable {
     let id = UUID()
-    let kind: ConnectionKind
     let profile: ConnectionProfile?
 }
 
@@ -180,7 +173,7 @@ private struct ProfileRow: View {
     var body: some View {
         Button(action: connect) {
             HStack(spacing: 12) {
-                Image(systemName: profile.kind == .lan ? "wifi" : "globe")
+                Image(systemName: "wifi")
                     .font(.body)
                     .foregroundStyle(HawkTheme.accent)
                     .frame(width: 34, height: 34)

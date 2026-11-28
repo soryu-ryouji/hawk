@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// 远程图片：缩略图/原图都走 ImageStore 缓存与降采样。
+/// 网络图片：缩略图/原图都走 ImageStore 缓存与降采样。
 /// 新入库素材的缩略图由后台异步生成：首次 404 时短暂重试，避免网格留下永久占位。
-struct RemoteImage: View {
+struct NetworkImage: View {
     let url: URL?
     var sessionToken: String = ""
     var mediaRevision: Int = 0
@@ -74,9 +74,9 @@ struct ItemCard: View {
     var onCopyName: () -> Void = {}
 
     private var thumbnail: some View {
-        // 用透明度隐藏而不是把 RemoteImage 移出层级：否则回场时视图重建会重新走一遍
+        // 用透明度隐藏而不是把 NetworkImage 移出层级：否则回场时视图重建会重新走一遍
         // 「占位 → 加载 → 显示」，落位瞬间会闪一下
-        RemoteImage(
+        NetworkImage(
             url: thumbnailURL, sessionToken: sessionToken, mediaRevision: mediaRevision
         )
         .opacity(thumbHidden ? 0 : 1)
@@ -119,7 +119,7 @@ struct ItemCard: View {
                 Divider()
                 Button("复制名称", systemImage: "doc.on.doc", action: onCopyName)
             } preview: {
-                RemoteImage(
+                NetworkImage(
                     url: thumbnailURL, sessionToken: sessionToken, mediaRevision: mediaRevision
                 )
                 .frame(width: min(cell.width * 1.6, 320), height: min(cell.height * 1.6, 320))
