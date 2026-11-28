@@ -21,7 +21,7 @@ done
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/out}"
 
 for tool in node npm; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "未找到 $tool，请先安装最新的 Node.js（https://nodejs.org/）"; exit 1; }
+  command -v "$tool" >/dev/null 2>&1 || { echo "未找到 ${tool}，请先安装最新的 Node.js（https://nodejs.org/）"; exit 1; }
 done
 
 cd "$EXT_DIR"

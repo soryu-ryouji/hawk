@@ -25,7 +25,7 @@ done
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/out}"
 
 for tool in node npm go; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "未找到 $tool，请先安装最新的 Node.js 与 Go 工具链（https://go.dev/dl/）"; exit 1; }
+  command -v "$tool" >/dev/null 2>&1 || { echo "未找到 ${tool}，请先安装最新的 Node.js 与 Go 工具链（https://go.dev/dl/）"; exit 1; }
 done
 
 # Electron 包（npm install）与 electron-builder（pack）的二进制下载默认走 npmmirror（国内网络；
