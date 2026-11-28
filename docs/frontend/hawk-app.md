@@ -25,7 +25,7 @@ Electron 主进程
 渲染进程收到 `connection-changed` 后统一执行：abort 请求/SSE → 清 store → `GET /app/info` → 重注水。
 当前连接只有 `local | lan` 两种 `kind`。
 
-已配对局域网设备保存在 `~/.config/hawk/config.toml` 的 `lanPeers`（含 URL 与 token）；`lanTarget` 记录上次浏览目标，冷启动 daemon 就绪后尝试恢复。主进程每 5 秒对当前目标 `GET /app/info`，连续两次失败回切本地库。
+已配对局域网设备保存在 `~/.config/hawk/config.toml` 的 `lanPeers`（含 URL 与 token）；`lanTarget` 记录上次浏览目标，冷启动 daemon 就绪后尝试恢复。主进程每 10 秒对当前目标 `GET /app/info`；失败后保持目标并进入恢复等待界面（继续每 10 秒探测），恢复成功后自动重新注水，不静默回切本地库。只有显式“打开本地素材库”或忘记设备才清目标。
 
 ## 主进程模块
 
@@ -46,7 +46,7 @@ IPC 契约单一定义在 `electron/src/ipc-contract.ts`，web 端 `shared/types
 
 ```text
 web/src/
-├── app/           启动相位机、App 壳、标题栏、启动/引导/门页
+├── app/           启动相位机、App 壳、标题栏、启动/引导/门页/断线恢复
 ├── domains/
 │   ├── library/   网格、检查器、筛选、查询、SSE 应用
 │   ├── taxonomy/  文件夹/分类/标签侧栏与库名下拉
