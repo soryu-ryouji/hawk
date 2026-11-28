@@ -1,6 +1,5 @@
-// hawk daemon REST 客户端：本机 LocalIntegration 或本机 hawk 的加密会话代理。
+// hawk daemon REST 客户端：只连接本机 daemon。
 // 请求一律从 background 发起（配合 host_permissions，不受页面 CORS 限制）。
-// 公网 viewer 已删除，远程保存统一经本机 hawk，不再由插件直接登录 hawk-server。
 import { getSettings } from './settings';
 import { discoverLocalBase, resetLocalBase } from './local-discovery';
 
@@ -103,31 +102,21 @@ async function discoverToken(serverUrl: string): Promise<string> {
   }
 }
 
-/** 当前目标：本地库，或本地 hawk 正在浏览的远端库（跟随它的会话代理） */
+/** 当前目标：本机 daemon 与 admin/integration token。 */
 export interface ResolvedTarget {
-  kind: 'local' | 'remote';
   base: string;
   token: string;
-  writable: boolean;
-  label: string;
 }
 
 /** daemon 的当前连接描述符（GET /api/v1/app/connection，admin 鉴权） */
 interface AppConnection {
-  mode: 'local' | 'remote' | 'none';
-  api_base?: string;
-  credential?: string;
-  device_id?: string;
-  label?: string;
+  mode: 'local' | 'none';
   role: 'viewer' | 'importer' | 'editor' | 'admin';
 }
 
 /**
- * 本地模式的目标解析：跟随本地 hawk 当前浏览的库——
- * 本地库直连本地 daemon；正在浏览远端库时用会话代理地址 + 会话令牌（与 app 渲染进程同一条通道，
- * 远端是否可写由目标设备的「允许广域网保存素材」决定，app/connection 的 writable 即该结论）。
- * 本地 daemon 的端口由 app 决定（默认 27371，自动选择限 27371–27400），插件按同一段探活；
- * 高级选项里的端口覆盖优先（见 local-discovery.ts）。
+ * 目标解析：本机 daemon。端口由 app 决定（默认 27371，自动选择限 27371–27400），
+ * 插件按同一段探活；高级选项里的端口覆盖优先（见 local-discovery.ts）。
  */
 export async function resolveLocalTarget(): Promise<ResolvedTarget> {
   const s = await getSettings();
@@ -137,19 +126,10 @@ export async function resolveLocalTarget(): Promise<ResolvedTarget> {
     method: 'GET',
     token: adminToken,
   });
-  if (conn.mode === 'remote' && conn.api_base && conn.credential) {
-    return {
-      kind: 'remote',
-      base: conn.api_base,
-      token: conn.credential,
-      writable: conn.role !== 'viewer',
-      label: conn.label ?? '',
-    };
-  }
   if (conn.mode !== 'local') {
     throw new Error('本地 hawk 未连接任何素材库');
   }
-  return { kind: 'local', base, token: adminToken, writable: true, label: '' };
+  return { base, token: adminToken };
 }
 
 /** 高级选项里的端口（留空/非法 → 不用覆盖，走自动发现） */
@@ -158,29 +138,12 @@ function parsePort(value: string): number | undefined {
   return value.trim() !== '' && Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
 }
 
-interface RequestOptions {
-  /** 写请求：本地 hawk 正在浏览一个不可写的远端库时提前给出可读错误（否则只是裸 403） */
-  write?: boolean;
-}
-
-async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  opts: RequestOptions = {},
-): Promise<T> {
-  const settings = await getSettings();
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const target = await resolveLocalTarget();
-  if (opts.write && !target.writable) {
-    throw new Error(
-      `本地 hawk 正在浏览的远端库「${target.label || target.base}」未开启远程写入` +
-        '（在目标设备 hawk 设置 → 远程 → 允许广域网保存素材 打开）',
-    );
-  }
   try {
     return await call<T>(target.base, path, { method, token: target.token, body });
   } catch (e) {
-    // 自动发现的 token 失效（app 重启）或远端会话已换（重连后新代理端口）→ 重新解析重试一次
+    // 自动发现的 token 失效（app 重启）→ 重新解析重试一次
     if (e instanceof HttpError && e.status === 401) {
       discovered = null;
       resetLocalBase(); // app 重启可能换了端口，重试时重新探活
@@ -191,7 +154,7 @@ async function request<T>(
   }
 }
 
-/** 连接检查：返回素材库信息（远程模式会确保目标会话已建立） */
+/** 连接检查：返回素材库信息 */
 export function fetchLibraryInfo() {
   return request<LibraryInfo>('GET', '/api/v1/library/info');
 }
@@ -203,7 +166,7 @@ export function fetchFolderList() {
 
 /** 新建文件夹（parent_path 传 null 表示根目录） */
 export function createFolder(name: string) {
-  return request('POST', '/api/v1/folder/create', { name, parent_path: null }, { write: true });
+  return request('POST', '/api/v1/folder/create', { name, parent_path: null });
 }
 
 // 收集来源网页对应 hawk 的 Item.url 字段（与 Eagle 的 website 参数同义）：
@@ -219,6 +182,5 @@ export function addItemByBase64(imgBase64: string, website?: string, folderPath?
       ...(website ? { website } : {}),
       ...(folderPath ? { folder_path: folderPath } : {}),
     },
-    { write: true },
   );
 }

@@ -24,14 +24,7 @@ async function refreshStatus() {
   setStatus('检查连接中…', 'wait');
   try {
     const info = await fetchLibraryInfo();
-    const target = await resolveLocalTarget();
-    if (target.kind === 'remote') {
-      setStatus(
-        target.writable ? `已连接 · ${target.label || info.name}` : `只读 · ${target.label || info.name}`,
-        target.writable ? 'ok' : 'warn',
-      );
-      return;
-    }
+    await resolveLocalTarget();
     setStatus(`已连接 · ${info.name}`, 'ok');
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -52,7 +45,6 @@ async function init() {
 saveBtn.addEventListener('click', async () => {
   try {
     settings = await saveSettings({
-      mode: 'local',
       localPort: localPortInput.value,
       localToken: localTokenInput.value,
     });
