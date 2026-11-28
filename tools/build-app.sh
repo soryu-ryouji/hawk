@@ -6,7 +6,7 @@
 # 用法: ./tools/build-app.sh [--path <输出目录>] [--unpacked]
 #   --unpacked：只产出未打包目录（mac 为 dist/mac*/hawk.app，Linux 为 dist/linux-unpacked），
 #               跳过 zip/AppImage 压缩——install.sh 的复用入口
-# 前置: 最新 Node.js 与 Rust 工具链（https://rustup.rs/）
+# 前置: 最新 Node.js 与 Go 工具链（https://go.dev/dl/）
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,8 +24,8 @@ while [ $# -gt 0 ]; do
 done
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/out}"
 
-for tool in node npm cargo; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "未找到 $tool，请先安装最新的 Node.js 与 Rust 工具链（https://rustup.rs/）"; exit 1; }
+for tool in node npm go; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "未找到 $tool，请先安装最新的 Node.js 与 Go 工具链（https://go.dev/dl/）"; exit 1; }
 done
 
 # Electron 包（npm install）与 electron-builder（pack）的二进制下载默认走 npmmirror（国内网络；

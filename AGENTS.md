@@ -11,19 +11,22 @@
 
 - 更新了功能之后，需要同步更新对应的文档
 
-- API 契约的三段式生成链：端点定义与 `#[utoipa::path]`/DTO 上的文档注释是单一来源，任何改动（包括只改注释）后必须重新固化两份产物，缺一不可：
-  1. `cd hawk-daemon && cargo run -- openapi > openapi.json`
-  2. `cd hawk-app && npm run gen:types`（依赖 hawk-daemon 的构建产物，先 `cargo build`）
-  守护：daemon 契约测试 `openapi_json_in_sync` 校验 openapi.json 与代码同步；CI 重跑 gen:types 并 diff 检查 schema.d.ts 同步。漏跑任一步即测试/CI 失败。
+- API 契约的单一来源是 `hawk-daemon/openapi.json`（Go handler 与 DTO 按它实现），任何改动后必须重新固化两份产物，缺一不可：
+  1. 编辑 `hawk-daemon/openapi.json`
+  2. `node tools/sync-openapi.mjs`（同步到 `internal/api/openapi.json`，`go:embed` 使用）
+  3. `cd hawk-daemon && go test ./...`（`TestEmbeddedOpenAPIMatchesRepository` 校验同步）
+  4. `cd hawk-app && npm run gen:types`（拉起 Go daemon 读取 `/openapi/v1.json` 生成 `schema.d.ts`）
+  守护：Go 契约测试与 CI 重跑 gen:types + diff 检查。漏跑任一步即测试/CI 失败。
 
 ## 提交前自检（本地对齐 CI 门禁）
 
 生成或修改代码后，提交前必须先在本地跑完改动范围对应的检查、全绿再提交。命令与 `.github/workflows/ci.yml` 的质量门禁逐条对应，本地漏跑任何一条，CI 检查 job 即失败，整条构建/发布链被跳过：
 
-- 改动 `hawk-daemon` / `hawk-server`（Rust，在对应 crate 目录执行）：
-  1. `cargo fmt`（写入式格式化，直接执行，不要留给 CI 的 `--check` 报错）
-  2. `cargo clippy --all-targets -- -D warnings`
-  3. `cargo test`
+- 改动 `hawk-daemon`（Go，在 `hawk-daemon` 目录执行）：
+  1. `gofmt -w .`（写入式格式化）
+  2. `go vet ./...`
+  3. `go test ./... -count=1`
+  4. 需要二进制时 `go build -o hawk-daemon.exe .`
 - 改动 `hawk-app`（web / electron）：
   1. `npm run format`（写入式格式化）
   2. `npm run lint`
@@ -34,13 +37,13 @@
   2. `xcrun swift-format lint --strict --recursive hawk-ios`
   3. `xcodebuild -scheme hawk-ios -destination 'generic/platform=iOS Simulator' build`
   4. `xcodebuild test -scheme hawk-ios -destination 'platform=iOS Simulator,name=iPhone 17'`（测试 target 就位后）
-  5. 涉及连接/网络时补真机冒烟：局域网直连 + 广域网查看各跑通一次（模拟器无法验证本地网络权限与后台恢复）
+  5. 涉及连接/网络时补真机冒烟：局域网直连（二维码 + 地址密钥各一次；模拟器无法验证本地网络权限与后台恢复）
   iOS 构建暂不进 CI（需 macOS runner 与签名），但本地必须全绿再提交
 - 改动 `hawk-android`（Android 原生客户端，在 `hawk-android` 目录执行，`JAVA_HOME` 指向 Android Studio 自带 JBR）：
   1. `./gradlew :app:assembleDebug`
   2. `./gradlew :app:lintDebug`（0 error）
   3. `./gradlew :app:testDebugUnitTest`
-  4. 涉及连接/网络时补模拟器或真机冒烟：局域网直连 + 广域网查看各跑通一次（模拟器可验证局域网；广域网需 hawk-server）
+  4. 涉及连接/网络时补模拟器或真机冒烟：局域网直连（二维码 + 地址密钥各一次）
   Android 构建暂不进 CI（需 Android SDK 与签名），但本地必须全绿再提交
 - 改动 `README.md` / `docs/` / `AGENTS.md`：仓库根 `python3 tools/check-docs.py`（相对链接检查）
 - 涉及 API 契约（含只改注释）：另执行上文三段式生成链，重新固化两份产物

@@ -40,7 +40,11 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 
 ### 前后端解耦
 
-后端是独立的 Rust 服务，前端只通过 REST API 通信。桌面版用 Electron 壳拉起后端进程；同一套后端未来可直接部署为多人使用的服务器版本。
+后端是独立的 Go 服务，前端只通过 REST API 通信。桌面版用 Electron 壳拉起后端进程；同一套后端可在局域网内被桌面、手机、浏览器插件直接访问。
+
+### 局域网优先
+
+hawk 只面向局域网：桌面端之间、手机与桌面端之间都直接走明文 HTTP + 访问密钥，不需要服务器、账号或证书。需要跨网段时，用户可以自行用 Tailscale 等组网工具把设备放进同一虚拟局域网。
 
 ## 文档
 
@@ -58,23 +62,15 @@ hawk 不会将你的素材"导入"到某个专有仓库中。你的文件始终�
 
 **后端（hawk-daemon/）**
 
-- [hawk-daemon](docs/backend/server-rust.md)：实现细节、调试与压测方法
+- [hawk-daemon](docs/backend/server-go.md)：Go 实现、调试与压测方法
 - [hawk-daemon 代码导读](docs/backend/server-code-structure.md)：逐文件职责与关键流程串联
 - [REST API V1](docs/backend/server-rest-api-v1.md)：接口定义
-- [权限与凭证设计](docs/backend/access-control.md)：Capability、角色、通道上限与凭证职责
-- [权限与传输架构 V2](docs/backend/access-control-v2.md)：统一身份/Session、target_identity、原生 LAN/WAN 全加密与 server 数据面零信任（实施中）
+- [权限与凭证设计](docs/backend/access-control.md)：Capability、角色与局域网访问密钥
 - [Category 虚拟分类维度](docs/backend/category.md)：三维组织模型、注册表与批量迁移
 - [颜色检索](docs/backend/color-search.md)：调色板提炼与 ΔE 颜色匹配
 - [内容重复扫描](docs/backend/duplicates.md)：按内容 hash 聚合同一文件的多个位置
 - [存储设计](docs/backend/storage.md)：`.hawk/` 目录结构、SQLite、同步边界、索引与缓存
-
-**远程访问（hawk-server/）**
-
-- [hawk-server 使用指南](docs/backend/hawk-server.md)：启动配置、接口与凭据、网页版/插件接入、运维与排查
-- [远程访问设计](docs/backend/remote-access.md)：Tenant/Device 控制面、密文中继、受限广域网写、连接模型与安全模型
-- [远程访问部署](docs/backend/remote-deployment.md)：编译输出、nginx 反代与 TLS
-- [远程访问协议](docs/backend/remote-protocol.md)：设备/心跳/会话/中继的接口契约
-- [局域网 hawk-app 互联](docs/backend/lan-interconnect.md)：UDP 发现、双向配对、在线状态、连接模型与安全边界
+- [局域网 hawk-app 互联](docs/backend/lan-interconnect.md)：UDP 发现、双向配对、在线状态与连接模型
 
 ## 许可证
 

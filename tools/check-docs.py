@@ -2,8 +2,8 @@
 """文档链接检查：仓库内 Markdown 的相对链接必须能解析到真实文件。
 
 用法：python3 tools/check-docs.py
-CI：rust job 执行。外链（http/https/mailto）与纯锚点（#…）跳过；
-仓库间引用（指向 hawk-server 等兄弟仓库）按约定写成文字描述而非链接，因此不在此放行。
+CI：app job 执行。外链（http/https/mailto）与纯锚点（#…）跳过；
+跨仓库引用按约定写成文字描述而非链接，因此不在此放行。
 """
 
 import re

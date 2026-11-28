@@ -1,6 +1,6 @@
 # 发布流程
 
-hawk 的桌面端发布全部由 CI（[ci.yml](../.github/workflows/ci.yml)）驱动，双通道分发：**stable**（正式 `v*` Release）与 **nightly**（main 分支滚动预发布）。门禁（`rust` / `app`）与三平台构建在流水线里**并行**跑（`classify` 先花几秒判定本次要不要出产物、走哪条通道），由 `publish` 汇流 job 统一收口：任何一项失败都不发布，发布物永远来自通过测试的代码。客户端内置自动更新（见 [hawk-app 设计 → 应用自动更新](frontend/hawk-app.md)），发布即对存量用户可见。
+hawk 的桌面端发布全部由 CI（[ci.yml](../.github/workflows/ci.yml)）驱动，双通道分发：**stable**（正式 `v*` Release）与 **nightly**（main 分支滚动预发布）。门禁（`go` / `app`）与三平台构建在流水线里**并行**跑（`classify` 先花几秒判定本次要不要出产物、走哪条通道），由 `publish` 汇流 job 统一收口：任何一项失败都不发布，发布物永远来自通过测试的代码。客户端内置自动更新（见 [hawk-app 设计 → 应用自动更新](frontend/hawk-app.md)），发布即对存量用户可见。
 
 ## 触发条件一览
 
@@ -8,7 +8,7 @@ hawk 的桌面端发布全部由 CI（[ci.yml](../.github/workflows/ci.yml)）�
 | ---- | ---- |
 | push main 且提交首行以 `release` 开头 | 构建全平台产物（Windows / macOS arm64 / Linux）+ sha256 边车，创建 tag + **正式 Release**（tag 版本号取自 `hawk-app/package.json`；发布动作 = 一次 push） |
 | push main 且提交首行是 conventional 的 `feat` / `fix`（`feat:` / `feat(app):` / `fix!:` 等；`feature:` / `fixup!` 不算） | 删除并重建 `nightly` Release（prerelease），滚动覆盖 |
-| push main 且提交首行是其他前缀（`docs` / `chore` / `refactor` / `test` / `ci` …） | 只跑门禁（`rust` / `app` + `linux` 全链复现），不上传 Artifacts、不建/改 Release |
+| push main 且提交首行是其他前缀（`docs` / `chore` / `refactor` / `test` / `ci` …） | 只跑门禁（`go` / `app` + `linux` 全链复现），不上传 Artifacts、不建/改 Release |
 | PR（任意分支） | 只跑门禁，不产出发版产物 |
 | `workflow_dispatch`，`publish=none`（默认） | 只构建上传 Artifacts，**不**创建/修改任何 Release |
 | `workflow_dispatch`，`publish=nightly` / `stable` | 等价于对应的 push 触发（补发、重跑用） |
@@ -25,14 +25,14 @@ hawk 的桌面端发布全部由 CI（[ci.yml](../.github/workflows/ci.yml)）�
 - **nightly 版本覆写**：CI 构建时经 `--config.extraMetadata.version` 覆写为 `0.0.0-nightly.<sha7>`——只改打进 asar 的 package.json，**不改仓库文件**。作用：元数据不冒充稳定版；nightly 用户切 stable 通道检查时 `0.0.0` 低于任何正式版，可随时切回
 - **开发态不追加 dev 后缀**：package.json 始终保持「下一个发布版本」（改后缀发版前要记得改回，易忘）；开发/无 git 构建由 `build-info.json` 的 `sha='dev'` 识别，设置面板显示「开发版」
 - **自动更新新旧判定与版本号的关系**：stable 通道比 semver（tag vs `app.getVersion()`）；nightly 通道**不走版本号**，比 Release body 末尾的 `<!-- hawk-nightly-sha: <sha> -->` 注释与本机构建 sha（Release 的 `target_commitish` 是分支名，不可用作比较）
-- **crate 版本**：`hawk-daemon` / `hawk-server` 各自独立版本，与 app 版本无绑定关系；需要同步 bump 时用 `tools/bump.mjs` 的 `--daemon` / `--server`
+- **daemon 版本**：Go 二进制不单独维护版本号，设置面板与契约使用 app 的构建版本。
 
 ## 发布正式版
 
 一次 push 即发版：
 
 ```bash
-# 1. bump 版本（package.json 与 package-lock.json 一起改；需要同步 crate 版本时加 --daemon / --server）
+# 1. bump 版本（package.json 与 package-lock.json 一起改）
 node tools/bump.mjs 2.5.0
 
 # 2. 提交并推送。release 前缀 = 发版指令，提交信息去掉首行即发布说明正文
@@ -47,11 +47,11 @@ git push   # ← 到这里就结束了，CI 自动建 tag + Release + 全平台�
 
 **push 后 CI 自动接管**（门禁与三平台构建并行起跑，publish 收口）：
 
-0. 门禁并行：`rust`（daemon / server 两腿 matrix：fmt → clippy → test）+ `app`（lint / 格式 / 单测）
+0. 门禁并行：`go`（gofmt → vet → test）+ `app`（lint / 格式 / 单测）
 1. 构建同时起跑，不等门禁：
-   - `windows`：先过发版守卫（版本号取自 package.json，同名 tag 已存在则失败）→ web 与 cargo 并行 → `hawk-windows-x64.zip` + 边车（mx=5 压缩）
+   - `windows`：先过发版守卫（版本号取自 package.json，同名 tag 已存在则失败）→ web 与 daemon/updater 构建并行 → `hawk-windows-x64.zip` + 边车（mx=5 压缩）
    - `macos`：只产 Apple Silicon，`hawk-mac-arm64.zip` + 边车
-   - `linux`：兼作全链复现门禁——daemon release 构建 → OpenAPI 类型同步校验 → UI 端到端自检 → `hawk-linux-x64.AppImage` + 边车
+   - `linux`：兼作全链复现门禁——Go daemon 构建 → OpenAPI 类型同步校验 → UI 端到端自检 → `hawk-linux-x64.AppImage` + 边车
 2. `publish` 汇流 job（ubuntu，门禁与三平台构建**全部成功**后才跑）：下载全部 Artifacts → 以 `tag_name: v2.5.0` 在当前 commit 上创建 tag + Release（发布说明取提交信息正文）；nightly 则轮转重建。任一检查/构建失败则不发布（全有或全无，不会出现只有部分平台产物的半成品 Release）
 
 **发布后验证**：

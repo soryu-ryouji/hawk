@@ -4,7 +4,7 @@
 # （AppImage 同时归置到仓库根目录的 out/）。
 #
 # 用法: ./tools/install.sh（仓库根目录或任意位置执行均可）
-# 前置: 最新 Node.js 与 Rust 工具链（https://rustup.rs/）
+# 前置: 最新 Node.js 与 Go 工具链（https://go.dev/dl/）
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

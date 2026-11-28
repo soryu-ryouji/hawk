@@ -112,36 +112,35 @@ jobs:
 
   # ---- 质量门禁（不挡构建，由 publish 兜底）----
 
-  rust:
+  go:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        # daemon 与 server 各有独立 target 目录（server 的互操作测试把 daemon 当 dev-dep 又编一遍），
-        # 拆两腿并行：门禁墙钟 2.8 → ~1.8 min，缓存也从一份 2.4GB 拆成两份 ~1.2GB，
-        # 更不容易撞 GitHub 10GB 仓库缓存限额（超限会 LRU 淘汰，导致缓存反复失效）
-        crate: [hawk-daemon, hawk-server]
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
         with:
-          workspaces: ${{ matrix.crate }}
-          # 默认缓存 key 只含 job id，matrix 两腿会互相覆盖成同一个 key（各自存自己的 target，
-          # 每次落盘都让对方失效）——shared-key 把 crate 名拼进 key
-          shared-key: ${{ matrix.crate }}
+          go-version-file: hawk-daemon/go.mod
+          cache-dependency-path: hawk-daemon/go.sum
 
-      - run: cargo fmt --check
-        working-directory: ${{ matrix.crate }}
+      # gofmt 是写入式；CI 只检查不修改
+      - name: gofmt check
+        working-directory: hawk-daemon
+        run: test -z "$(gofmt -l .)"
 
-      - run: cargo clippy --all-targets -- -D warnings
-        working-directory: ${{ matrix.crate }}
+      - name: go vet
+        working-directory: hawk-daemon
+        run: go vet ./...
 
-      - run: cargo test
-        working-directory: ${{ matrix.crate }}
+      - name: go test
+        working-directory: hawk-daemon
+        run: go test ./... -count=1
+
+      - name: HTTP smoke
+        working-directory: hawk-daemon
+        run: |
+          go build -o hawk-daemon .
+          bash ../tools/smoke.sh
 
   app:
     runs-on: ubuntu-latest
@@ -185,11 +184,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
         with:
-          workspaces: hawk-daemon
+          go-version-file: hawk-daemon/go.mod
+          cache-dependency-path: hawk-daemon/go.sum
 
       - uses: actions/setup-node@v7
         with:
@@ -225,7 +223,7 @@ jobs:
         env:
           HAWK_SHA: ${{ github.sha }}
 
-      # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
+      # web/主进程构建与 Go daemon 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 Go 构建的耗时里
       - name: Build web & daemon (parallel)
         run: |
           t0=$(date +%s)
@@ -316,9 +314,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # hawk-update：Windows 更新辅助程序（仅 win job 构建并进产物）
-          workspaces: |
-            hawk-daemon
-            hawk-update
+          workspaces: hawk-update
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: hawk-daemon/go.mod
+          cache-dependency-path: hawk-daemon/go.sum
 
       - uses: actions/setup-node@v7
         with:
@@ -368,7 +369,7 @@ jobs:
         env:
           HAWK_SHA: ${{ github.sha }}
 
-      # web/主进程构建与 cargo 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 cargo 的耗时里
+      # web/主进程构建与 Go daemon 无共享状态，并行跑：vite/vue-tsc/esbuild 藏进 Go 构建的耗时里
       # （build-update.mjs 非 Windows 平台自跳过；当前仅 win job 需要）
       - name: Build web & native (parallel)
         shell: bash
@@ -437,11 +438,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
         with:
-          workspaces: hawk-daemon
+          go-version-file: hawk-daemon/go.mod
+          cache-dependency-path: hawk-daemon/go.sum
 
       - name: Cache electron & builder tools
         uses: actions/cache@v6
@@ -503,7 +503,7 @@ jobs:
   # 「建 Release」只有一个执行者，无并发竞争；失败语义是全有或全无（任一检查/构建失败都不发布，
   # 不会出现只有部分平台产物的半成品 Release）
   publish:
-    needs: [classify, rust, app, linux, windows, macos]
+    needs: [classify, go, app, linux, windows, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

@@ -4,7 +4,7 @@
 # 用法: ./tools/install.ps1 [-Path <输出目录>]（--path / --path= 写法亦可）
 #   ./tools/install.ps1                      # → <仓库>/out/
 #   ./tools/install.ps1 -Path D:/Tools/hawk  # → D:/Tools/hawk（就地可运行）
-# 前置: 最新 Node.js 与 Rust 工具链（https://rustup.rs/）
+# 前置: 最新 Node.js 与 Go 工具链（https://go.dev/dl/）
 
 $ErrorActionPreference = 'Stop'
 
