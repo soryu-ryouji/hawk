@@ -57,6 +57,7 @@ const shell: HawkShell = {
   onServerProgress: (cb) => subscribe(IPC.serverProgress, cb),
   onWindowMaximized: (cb) => subscribe(IPC.winMaximized, cb),
   getConnection: () => ipcRenderer.invoke(IPC.getConnection),
+  getConnectionState: () => ipcRenderer.invoke(IPC.connectionStateGet),
   disconnectConnection: () => ipcRenderer.invoke(IPC.disconnectConnection),
   lanGetSettings: () => ipcRenderer.invoke(IPC.lanGetSettings),
   lanDiscover: () => ipcRenderer.invoke(IPC.lanDiscover),
@@ -70,6 +71,8 @@ const shell: HawkShell = {
   lanClients: () => ipcRenderer.invoke(IPC.lanClients),
   lanDecidePairRequest: (requestId, body) => ipcRenderer.invoke(IPC.lanDecidePairRequest, requestId, cloneForIpc(body)),
   onConnectionChanged: (cb) => subscribe(IPC.connectionChanged, cb),
+  onConnectionLost: (cb) => subscribe(IPC.connectionLost, cb),
+  onConnectionRestored: (cb) => subscribe(IPC.connectionRestored, cb),
 };
 
 contextBridge.exposeInMainWorld('hawkShell', shell);

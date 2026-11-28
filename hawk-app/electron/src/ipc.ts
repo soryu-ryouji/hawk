@@ -8,6 +8,7 @@ import { getCloseAction, getLibraryRoot, listLibraries, removeLibraryHistory, se
 import { openLibraryAt, pickLibrary, getStartedConn, getServerFailure, restartCurrent, retryServerPort } from './server';
 import { API_PORT_RANGE, getApiPort, setApiPort } from './app-config';
 import {
+  connectionState,
   currentDescriptor,
   disconnectCurrent,
   lanDiscover,
@@ -187,6 +188,7 @@ export function registerIpc(): void {
 
   // ---- 连接描述符（本地库 / 局域网直连） ----
   ipcMain.handle(IPC.getConnection, () => currentDescriptor());
+  ipcMain.handle(IPC.connectionStateGet, () => connectionState());
   ipcMain.handle(IPC.disconnectConnection, () => disconnectCurrent());
   // ---- 局域网互联：发现/配对/连接经本机 daemon + 目标 LAN 端点；token 只在主进程 ----
   ipcMain.handle(IPC.lanGetSettings, () => lanGetSettings());

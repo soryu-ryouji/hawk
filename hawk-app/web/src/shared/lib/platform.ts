@@ -61,6 +61,7 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   onServerProgress: () => () => {},
   onWindowMaximized: () => () => {},
   getConnection: async () => null,
+  getConnectionState: async () => ({ reconnecting: false, label: null }),
   disconnectConnection: async () => null,
   lanGetSettings: async () => ({
     enabled: false,
@@ -86,6 +87,8 @@ const noopShell: NonNullable<Window['hawkShell']> = {
   lanClients: async () => ({ clients: [] }),
   lanDecidePairRequest: async () => ({ status: 'expired' }),
   onConnectionChanged: () => () => {},
+  onConnectionLost: () => () => {},
+  onConnectionRestored: () => () => {},
 };
 
 /** 类型化 shell 通道：Electron 走 preload 注入，浏览器走 no-op 壳 */

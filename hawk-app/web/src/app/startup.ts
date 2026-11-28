@@ -87,7 +87,7 @@ export function useStartup() {
     // server 重启会换新地址/token（轮询端口即变）：先重配连接再计就绪。
     // 事件与拉取双通道去重：onServerStarted 只发一次，页面（重）加载晚于就绪时会丢，
     // 故挂载时同时经 getConnection 拉取——同连接只 boot 一次。
-    // 局域网切换（connection-changed）与断线回切走同一条重配路径：连接描述符即「一个 api base + 一个 token」
+    // 局域网显式切换（connection-changed）走同一条重配路径：连接描述符即「一个 api base + 一个 token」
     let bootedKey: string | null = null;
     const onConn = (conn: { address?: string; api_base?: string; admin_token?: string; credential?: string }) => {
       const api = conn.api_base ?? conn.address;
@@ -112,10 +112,27 @@ export function useStartup() {
         failed.value = e.message;
       }
     });
-    void shell.getConnection().then((conn) => {
-      if (conn) {
-        onConn(conn);
+    void shell.getConnection().then(async (conn) => {
+      if (!conn) {
+        return;
       }
+      const api = conn.api_base;
+      const credential = conn.credential;
+      if (!api || !credential) {
+        return;
+      }
+      try {
+        // 页面在断线恢复等待期间重载：只配置 API，不触发 boot；恢复后由
+        // connection-restored 事件重新拉数据。
+        const state = await shell.getConnectionState();
+        if (state.reconnecting) {
+          configureApi({ api, credential });
+          return;
+        }
+      } catch {
+        // 状态查询失败按正常连接处理。
+      }
+      onConn(conn);
     });
   });
   onUnmounted(() => stopPolling());

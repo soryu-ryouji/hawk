@@ -34,6 +34,7 @@ export const IPC = {
   winMaximizeToggle: 'hawk:win-maximize-toggle',
   winClose: 'hawk:win-close',
   getConnection: 'hawk:get-connection',
+  connectionStateGet: 'hawk:connection-state-get',
   disconnectConnection: 'hawk:disconnect-connection',
   lanDiscover: 'hawk:lan-discover',
   lanPair: 'hawk:lan-pair',
@@ -56,6 +57,8 @@ export const IPC = {
   serverError: 'hawk:server-error',
   updateProgress: 'hawk:update-progress',
   connectionChanged: 'hawk:connection-changed',
+  connectionLost: 'hawk:connection-lost',
+  connectionRestored: 'hawk:connection-restored',
 } as const;
 
 /** 素材库历史条目（主进程记录，最近使用在前） */
@@ -128,6 +131,18 @@ export interface ApiPortInfo {
 /** 连接形态：local=本机库；lan=局域网直连的另一台 hawk-app */
 export type ConnectionKind = 'local' | 'lan';
 export type AccessRole = 'viewer' | 'importer' | 'editor' | 'admin';
+
+/** 局域网连接断开/恢复通知（仅展示字段；token 仍只在主进程）。 */
+export interface ConnectionNotice {
+  label: string;
+  peer_id?: string;
+}
+
+/** 连接健康状态：reconnecting=true 时保留目标并每 10s 探测，不回切本地库。 */
+export interface ConnectionState {
+  reconnecting: boolean;
+  label: string | null;
+}
 
 /** 连接描述符：前端唯一面对的连接语义（api_base + credential + 展示名）。 */
 export interface ConnectionDescriptor {
@@ -305,6 +320,8 @@ export interface HawkShell {
   onWindowMaximized(cb: (maximized: boolean) => void): () => void;
   /** 当前活动连接描述符（本地库 / 局域网直连）；server 未就绪返回 null */
   getConnection(): Promise<ConnectionDescriptor | null>;
+  /** 当前局域网连接是否处于恢复等待（页面加载晚于断线/恢复事件的兜底） */
+  getConnectionState(): Promise<ConnectionState>;
   /** 断开当前局域网连接并回切本地库（幂等） */
   disconnectConnection(): Promise<ConnectionDescriptor | null>;
   /** 读取本机 LAN 配置；主进程始终使用 Loopback admin，不受当前浏览连接影响 */
@@ -329,7 +346,11 @@ export interface HawkShell {
   lanClients(): Promise<{ clients: LanClient[] }>;
   /** 允许/拒绝自动配对请求，并决定只读或读写 */
   lanDecidePairRequest(requestId: string, body: { allow: boolean; role: AccessRole }): Promise<{ status: string }>;
-  /** 订阅连接变更（切换本地/局域网、断线自动回切都会推送），返回退订函数。
+  /** 订阅连接变更（显式切换本地/局域网时推送），返回退订函数。
    *  事件与拉取双通道去重同 onServerStarted 惯例：页面晚加载时经 getConnection 拉取兜底 */
   onConnectionChanged(cb: (conn: ConnectionDescriptor) => void): () => void;
+  /** 订阅局域网连接断开（保留目标，进入恢复等待），返回退订函数 */
+  onConnectionLost(cb: (notice: ConnectionNotice) => void): () => void;
+  /** 订阅局域网连接恢复（重新加载目标库），返回退订函数 */
+  onConnectionRestored(cb: (notice: ConnectionNotice) => void): () => void;
 }

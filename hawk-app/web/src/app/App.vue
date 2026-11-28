@@ -23,6 +23,7 @@ import ContextMenu from '@/shared/ui/ContextMenu.vue';
 import SetupScreen from './screens/SetupScreen.vue';
 import ConnectScreen from './screens/ConnectScreen.vue';
 import StartingScreen from './screens/StartingScreen.vue';
+import RecoveryScreen from './screens/RecoveryScreen.vue';
 import { LanPairRequestPrompt, SettingsDialog } from '@/domains/settings';
 import { ImportDuplicateDialog } from '@/domains/import';
 
@@ -30,7 +31,7 @@ const store = useLibraryStore();
 const importer = useImporterStore();
 const preview = usePreviewStore();
 const { narrow, touch } = useLayout();
-const { phase, bootError, bootFailure, progress, runBoot } = useBoot();
+const { phase, bootError, bootFailure, progress, recoveryLabel, runBoot } = useBoot();
 const { sidebarWidth, inspectorWidth, dragSide, startResize } = usePanelResize();
 initConnectionLabel();
 // 窄屏下侧栏为抽屉式：进入窄屏默认收起（抽屉关闭），回宽屏恢复双栏
@@ -109,6 +110,7 @@ useDragImport();
       :failure="phase === 'error' ? bootFailure : null"
       @quit="quitApp"
     />
+    <RecoveryScreen v-else-if="phase === 'reconnecting'" :label="recoveryLabel" @local="phase = 'setup'" @quit="quitApp" />
     <SetupScreen v-else-if="phase === 'setup'" @selected="phase = 'starting'" />
     <ConnectScreen v-else-if="phase === 'connect'" @connect="onConnected" />
   </div>

@@ -11,6 +11,9 @@ const env = vi.hoisted(() => ({
   initOk: true,
   restartCb: null as null | (() => void),
   errorCb: null as null | ((e: { message: string; code?: string; port?: number }) => void),
+  lostCb: null as null | ((n: { label: string; peer_id?: string }) => void),
+  restoredCb: null as null | ((n: { label: string; peer_id?: string }) => void),
+  connectionState: { reconnecting: false, label: null as string | null },
   pullError: null as null | { message: string; code?: string; port?: number },
   clearStoredCredential: vi.fn(),
   lanSettingsLoad: vi.fn(() => Promise.resolve()),
@@ -64,7 +67,16 @@ vi.mock('@/shared/lib/platform', () => ({
     getServerConn: () => Promise.resolve(null),
     getServerError: () => Promise.resolve(env.pullError),
     getConnection: () => Promise.resolve(null),
+    getConnectionState: () => Promise.resolve(env.connectionState),
     onConnectionChanged: () => () => {},
+    onConnectionLost: (cb: (n: { label: string; peer_id?: string }) => void) => {
+      env.lostCb = cb;
+      return () => {};
+    },
+    onConnectionRestored: (cb: (n: { label: string; peer_id?: string }) => void) => {
+      env.restoredCb = cb;
+      return () => {};
+    },
     quitApp: () => {},
   },
 }));
@@ -98,6 +110,9 @@ beforeEach(() => {
   env.initOk = true;
   env.restartCb = null;
   env.errorCb = null;
+  env.lostCb = null;
+  env.restoredCb = null;
+  env.connectionState = { reconnecting: false, label: null };
   env.pullError = null;
   env.clearStoredCredential.mockClear();
   env.lanSettingsLoad.mockClear();
@@ -163,6 +178,29 @@ describe('启动相位机', () => {
     boot.phase.value = 'ready';
     env.restartCb!();
     expect(boot.phase.value).toBe('starting');
+  });
+
+  it('局域网断线：进入恢复等待；恢复后重新 boot 回主界面', async () => {
+    const boot = mountBoot();
+    await boot.runBoot();
+    expect(boot.phase.value).toBe('ready');
+
+    env.lostCb?.({ label: '客厅的库' });
+    expect(boot.phase.value).toBe('reconnecting');
+    expect(boot.recoveryLabel.value).toBe('客厅的库');
+
+    env.restoredCb?.({ label: '客厅的库' });
+    await flush();
+    expect(boot.phase.value).toBe('ready');
+    expect(env.connectEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it('页面加载时已在恢复等待：直接进入恢复界面', async () => {
+    env.connectionState = { reconnecting: true, label: '书房' };
+    const boot = mountBoot();
+    await flush();
+    expect(boot.phase.value).toBe('reconnecting');
+    expect(boot.recoveryLabel.value).toBe('书房');
   });
 
   it('浏览器路径：就绪即轮询 → boot 编排 → 连接 SSE → ready', async () => {

@@ -11,6 +11,8 @@ import {
   IPC,
   type AccessRole,
   type ConnectionDescriptor,
+  type ConnectionNotice,
+  type ConnectionState,
   type LanAccessKey,
   type LanClient,
   type LanPairRequest,
@@ -21,6 +23,9 @@ import {
 
 let lanConn: ConnectionDescriptor | null = null;
 let restoring = false;
+/** 局域网断开后保持目标并每 10s 探测；只有用户显式切本地/忘记设备才清 target。 */
+let lanReconnecting = false;
+const LAN_MONITOR_INTERVAL_MS = 10_000;
 
 function localDescriptor(): ConnectionDescriptor | null {
   const conn = getStartedConn();
@@ -30,6 +35,19 @@ function localDescriptor(): ConnectionDescriptor | null {
 /** 当前活动连接描述符：局域网直连优先，其次本地库。 */
 export function currentDescriptor(): ConnectionDescriptor | null {
   return lanConn ?? (restoring ? null : localDescriptor());
+}
+
+/** 局域网连接健康状态：页面晚于事件加载时用它恢复恢复等待界面。 */
+export function connectionState(): ConnectionState {
+  return { reconnecting: lanReconnecting, label: lanConn?.label ?? null };
+}
+
+function emitConnectionNotice(channel: string): void {
+  if (!lanConn) {
+    return;
+  }
+  const notice: ConnectionNotice = { label: lanConn.label, peer_id: lanConn.peer_id };
+  getMainWindow()?.webContents.send(channel, notice);
 }
 
 function emitConnection(descriptor: ConnectionDescriptor): void {
@@ -42,6 +60,7 @@ function switchToLocal(): void {
     return;
   }
   lanConn = null;
+  setLanTarget(null);
   stopLanMonitor();
   const local = localDescriptor();
   if (local) {
@@ -54,7 +73,8 @@ export function onServerReady(): void {
 }
 
 export function onServerStopped(): void {
-  switchToLocal();
+  // 局域网直连不依赖本地 daemon；本地 daemon 重启/停止时保持当前目标，
+  // 避免把正在浏览的局域网素材库静默切回本地。
 }
 
 // ---------- daemon REST（本地环回，admin token） ----------
@@ -377,14 +397,43 @@ async function connectLanPeer(peerId: string): Promise<ConnectionDescriptor> {
 // ---------- 局域网连接健康检查 ----------
 
 let lanMonitorTimer: ReturnType<typeof setInterval> | null = null;
-let lanMonitorFailures = 0;
+let lanMonitorBusy = false;
 
 function stopLanMonitor(): void {
   if (lanMonitorTimer) {
     clearInterval(lanMonitorTimer);
     lanMonitorTimer = null;
   }
-  lanMonitorFailures = 0;
+  lanMonitorBusy = false;
+  lanReconnecting = false;
+}
+
+async function checkLan(profile: NonNullable<ReturnType<typeof getStoredLanPeer>>): Promise<void> {
+  if (lanMonitorBusy || lanConn?.peer_id !== profile.id) {
+    return;
+  }
+  lanMonitorBusy = true;
+  try {
+    await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
+    if (lanConn?.peer_id !== profile.id) {
+      return;
+    }
+    if (lanReconnecting) {
+      lanReconnecting = false;
+      upsertLanPeer({ ...profile, last_connected_at_ms: Date.now() });
+      emitConnectionNotice(IPC.connectionRestored);
+    }
+  } catch {
+    if (lanConn?.peer_id !== profile.id) {
+      return;
+    }
+    if (!lanReconnecting) {
+      lanReconnecting = true;
+      emitConnectionNotice(IPC.connectionLost);
+    }
+  } finally {
+    lanMonitorBusy = false;
+  }
 }
 
 function startLanMonitor(profile: ReturnType<typeof getStoredLanPeer>): void {
@@ -392,20 +441,10 @@ function startLanMonitor(profile: ReturnType<typeof getStoredLanPeer>): void {
   if (!profile) {
     return;
   }
+  // 固定每 10s 检查；断线后保留目标继续重试，直到成功或用户显式切回本地。
   lanMonitorTimer = setInterval(() => {
-    void (async () => {
-      try {
-        await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
-        lanMonitorFailures = 0;
-      } catch {
-        lanMonitorFailures += 1;
-        if (lanMonitorFailures >= 2 && lanConn?.peer_id === profile.id) {
-          setLanTarget(null);
-          switchToLocal();
-        }
-      }
-    })();
-  }, 5000);
+    void checkLan(profile);
+  }, LAN_MONITOR_INTERVAL_MS);
 }
 
 export async function restoreLanSession(): Promise<ConnectionDescriptor | null> {
