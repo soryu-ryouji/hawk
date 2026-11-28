@@ -267,10 +267,35 @@ export async function lanForget(peerId: string): Promise<void> {
 }
 
 export async function lanPair(input: { peer: LanPeer; writable: boolean; reverseWritable: boolean }): Promise<ConnectionDescriptor> {
+  const base = normalizeLanURL(input.peer.url);
+
+  // 同一目标换网段后重新点击“配对”时，先用已保存的 AccessKey 探测新地址：
+  // 目标仍认可该 key 就直接更新 URL 连接，不再生成新 key、不再让目标端重复确认。
+  if (!input.reverseWritable) {
+    const existing = getStoredLanPeer(input.peer.id);
+    if (existing && existing.writable === input.writable) {
+      try {
+        const info = await directCall<TargetAppInfo>(base, '/api/v1/app/info', existing.peer_key);
+        if (info.has_library && (info.role === 'editor') === input.writable) {
+          upsertLanPeer({
+            ...existing,
+            name: input.peer.name,
+            library_name: input.peer.library_name,
+            url: base,
+            writable: info.role === 'editor',
+            last_connected_at_ms: Date.now(),
+          });
+          return connectLanPeer(existing.id);
+        }
+      } catch {
+        // key 失效或新地址不可用：回退到完整配对流程。
+      }
+    }
+  }
+
   const reverse = await addReversePeerKey(input.peer, input.reverseWritable);
   let approved = false;
   try {
-    const base = normalizeLanURL(input.peer.url);
     const created = await directCall<{ request_id: string; expires_in_seconds: number }>(base, '/api/v1/app/lan/pair-requests', '', 'POST', {
       client_name: os.hostname(),
       role: input.writable ? 'editor' : 'viewer',
@@ -331,6 +356,49 @@ export async function lanPair(input: { peer: LanPeer; writable: boolean; reverse
 }
 
 export async function lanConnect(peerId: string): Promise<ConnectionDescriptor> {
+  const profile = getStoredLanPeer(peerId);
+  if (!profile) {
+    throw new Error('局域网设备记录不存在，请重新配对');
+  }
+
+  // 先探原地址；成功就保持原连接流程。
+  try {
+    const info = await directCall<TargetAppInfo>(profile.url, '/api/v1/app/info', profile.peer_key);
+    upsertLanPeer({ ...profile, writable: info.role === 'editor', last_connected_at_ms: Date.now() });
+    return connectLanPeer(peerId);
+  } catch {
+    // 换局域网后目标 IP 可能变化：用 UDP 发现同一 peer id 的新地址，
+    // 只在新地址通过已保存 AccessKey 验证后才更新配置，不触发重新配对/确认。
+  }
+
+  const peers = await lanDiscover()
+    .then((result) => result.peers)
+    .catch(() => []);
+  for (const peer of peers) {
+    if (peer.id !== peerId) {
+      continue;
+    }
+    const base = normalizeLanURL(peer.url);
+    try {
+      const info = await directCall<TargetAppInfo>(base, '/api/v1/app/info', profile.peer_key);
+      if (!info.has_library) {
+        continue;
+      }
+      upsertLanPeer({
+        ...profile,
+        name: peer.name,
+        library_name: peer.library_name,
+        url: base,
+        writable: info.role === 'editor',
+        last_connected_at_ms: Date.now(),
+      });
+      return connectLanPeer(peerId);
+    } catch {
+      // 候选地址不可用或 key 已失效；继续尝试其他候选。
+    }
+  }
+
+  // 没有发现可用新地址：保留旧目标进入恢复等待，不重新弹配对。
   return connectLanPeer(peerId);
 }
 
