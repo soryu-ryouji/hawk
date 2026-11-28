@@ -31,11 +31,11 @@ class ApiException(
 
 /**
  * hawk REST 客户端：所有响应都是 `{ status, data, error }` 信封。
- * 媒体请求复用同一 Session Cookie，不在 URL 中携带长期凭证。
+ * 每个请求都带 `Authorization: Bearer <access_key>`（含缩略图与原图）。
  */
 class ApiClient(
     val baseUrl: HttpUrl,
-    val token: String,
+    val accessKey: String,
     private val client: OkHttpClient = defaultClient(),
 ) {
     private val json = HawkJson
@@ -61,15 +61,6 @@ class ApiClient(
     suspend inline fun <reified Body, reified T> post(path: String, body: Body): T =
         post(path, HawkJson.encodeToString(serializer<Body>(), body), serializer<T>())
 
-    suspend fun delete(path: String) {
-        val data = perform("DELETE", path, emptyList(), null)
-        if (data.isBlank()) return
-        val envelope = runCatching {
-            json.decodeFromString(ApiEnvelope.serializer(String.serializer()), data)
-        }.getOrNull() ?: return
-        if (envelope.status == "error") throw envelopeError(envelope.error, 200)
-    }
-
     fun thumbnailUrl(id: String): String = mediaUrl("/api/v1/item/thumbnail", id)
 
     fun fileUrl(id: String): String = mediaUrl("/api/v1/item/file", id)
@@ -79,7 +70,7 @@ class ApiClient(
         val request = Request.Builder()
             .url(fileUrl(id))
             .header("Accept", "*/*")
-            .header("Cookie", "hawk_session=$token")
+            .header("Authorization", "Bearer $accessKey")
             .build()
         return withContext(Dispatchers.IO) {
             try {
@@ -132,8 +123,8 @@ class ApiClient(
             .url(url)
             .header("Accept", "application/json")
             .method(method, body)
-        if (token.isNotEmpty()) {
-            builder.header("Authorization", "Bearer $token")
+        if (accessKey.isNotEmpty()) {
+            builder.header("Authorization", "Bearer $accessKey")
         }
         val request = builder.build()
         return withContext(Dispatchers.IO) {

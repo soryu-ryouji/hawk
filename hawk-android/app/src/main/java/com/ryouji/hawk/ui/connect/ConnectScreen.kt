@@ -26,7 +26,6 @@ import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
@@ -49,7 +48,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,7 +55,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ryouji.hawk.AppViewModel
 import com.ryouji.hawk.data.connection.ConnectionException
-import com.ryouji.hawk.data.connection.ConnectionKind
 import com.ryouji.hawk.data.connection.ConnectionProfile
 import com.ryouji.hawk.data.connection.PairingPayload
 import com.ryouji.hawk.ui.HawkMark
@@ -130,14 +127,13 @@ fun ConnectScreen(viewModel: AppViewModel) {
                 ConnectionActions(
                     onScan = { showScanner = true },
                     onPaste = ::importClipboard,
-                    onLan = { formTarget = ProfileFormTarget(ConnectionKind.Lan, null) },
-                    onRemote = { formTarget = ProfileFormTarget(ConnectionKind.Remote, null) },
+                    onLan = { formTarget = ProfileFormTarget(null) },
                 )
                 ProfileList(
                     profiles = bookmark.profiles,
                     activeId = bookmark.activeId,
                     onConnect = viewModel::connect,
-                    onEdit = { formTarget = ProfileFormTarget(it.kind, it) },
+                    onEdit = { formTarget = ProfileFormTarget(it) },
                     onDelete = viewModel::deleteProfile,
                 )
             }
@@ -146,7 +142,6 @@ fun ConnectScreen(viewModel: AppViewModel) {
 
     formTarget?.let { target ->
         ProfileFormDialog(
-            kind = target.kind,
             existing = target.profile,
             onDismiss = { formTarget = null },
             onSave = { profile ->
@@ -182,7 +177,6 @@ fun ConnectScreen(viewModel: AppViewModel) {
 }
 
 private data class ProfileFormTarget(
-    val kind: ConnectionKind,
     val profile: ConnectionProfile?,
 )
 
@@ -207,7 +201,7 @@ private fun Header() {
             }
         }
         Text(
-            text = "连接同一局域网内的桌面端，或经自托管 hawk-server 远程查看。当前客户端为只读浏览。",
+            text = "连接同一局域网内的桌面端，也就是目标端「局域网网站访问」的地址。当前客户端为只读浏览。",
             color = HawkColors.Fg1,
             fontSize = 12.sp,
         )
@@ -219,7 +213,6 @@ private fun ConnectionActions(
     onScan: () -> Unit,
     onPaste: () -> Unit,
     onLan: () -> Unit,
-    onRemote: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
@@ -240,28 +233,17 @@ private fun ConnectionActions(
             Spacer(modifier = Modifier.width(8.dp))
             Text("从剪贴板导入配对信息")
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(
-                onClick = onLan,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-            ) {
-                Icon(Icons.Outlined.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("局域网")
-            }
-            OutlinedButton(
-                onClick = onRemote,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(10.dp),
-            ) {
-                Icon(Icons.Outlined.Public, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("广域网")
-            }
+        OutlinedButton(
+            onClick = onLan,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+        ) {
+            Icon(Icons.Outlined.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("手动填写局域网地址与访问密钥")
         }
         Text(
-            text = "桌面端生成二维码后直接扫码连接；也可以手动填写地址与凭证。",
+            text = "桌面端生成二维码后直接扫码连接；也可以手动填写地址与访问密钥。",
             color = HawkColors.Fg1,
             fontSize = 11.sp,
         )
@@ -285,8 +267,8 @@ private fun ProfileList(
         )
         if (profiles.isEmpty()) {
             Text(
-                text = "还没有连接。局域网连接需要桌面端「设置 → 局域网」里的地址和 token；" +
-                    "广域网连接需要服务器地址、tenant-key 与 hawk-app key。",
+                text = "还没有连接。局域网连接需要桌面端「设置 → 局域网网站访问」里的地址与访问密钥；" +
+                    "访问密钥的明文只在创建时显示。",
                 color = HawkColors.Fg1,
                 fontSize = 12.sp,
                 modifier = Modifier
@@ -339,7 +321,7 @@ private fun ProfileRow(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = iconFor(profile.kind),
+                    imageVector = Icons.Outlined.Wifi,
                     contentDescription = null,
                     tint = HawkColors.Accent,
                     modifier = Modifier.size(16.dp),
@@ -425,8 +407,6 @@ private fun ProfileRow(
     }
 }
 
-private fun iconFor(kind: ConnectionKind): ImageVector =
-    if (kind == ConnectionKind.Lan) Icons.Outlined.Wifi else Icons.Outlined.Public
 
 @Composable
 fun ErrorBanner(message: String, onDismiss: (() -> Unit)? = null) {

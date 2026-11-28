@@ -10,8 +10,6 @@
 .DS_Store
 /build
 /captures
-.externalNativeBuild
-.cxx
 local.properties
 
 # 本地冒烟产物（Android 模拟器联调）

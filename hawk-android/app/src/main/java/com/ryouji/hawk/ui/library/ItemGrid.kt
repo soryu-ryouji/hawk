@@ -110,7 +110,7 @@ fun ItemGrid(
                                 cell = cell,
                                 detail = state.details[cell.item.key],
                                 thumbnailUrl = store.api.thumbnailUrl(cell.item.id),
-                                sessionToken = store.api.token,
+                                accessKey = store.api.accessKey,
                                 onClick = { onOpen(cell.index) },
                             )
                         }
@@ -158,7 +158,7 @@ private fun ItemCard(
     cell: GridLayout.Cell,
     detail: Item?,
     thumbnailUrl: String?,
-    sessionToken: String,
+    accessKey: String,
     onClick: () -> Unit,
 ) {
     val title = displayTitle(cell.item, detail)
@@ -173,7 +173,7 @@ private fun ItemCard(
         Box(modifier = Modifier.width(cell.width.dp).height(cell.height.dp)) {
             ThumbnailImage(
                 url = thumbnailUrl,
-                sessionToken = sessionToken,
+                accessKey = accessKey,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
@@ -221,7 +221,7 @@ private fun ItemCard(
 @Composable
 fun ThumbnailImage(
     url: String?,
-    sessionToken: String = "",
+    accessKey: String = "",
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     maxPixelSize: Int? = null,
@@ -250,8 +250,8 @@ fun ThumbnailImage(
         ImageRequest.Builder(context)
             .data(requestUrl)
             .apply {
-                if (sessionToken.isNotEmpty()) {
-                    httpHeaders(NetworkHeaders.Builder().add("Cookie", "hawk_session=$sessionToken").build())
+                if (accessKey.isNotEmpty()) {
+                    httpHeaders(NetworkHeaders.Builder().add("Authorization", "Bearer $accessKey").build())
                 }
             }
             .crossfade(true)

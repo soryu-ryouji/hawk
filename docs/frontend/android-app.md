@@ -1,14 +1,14 @@
 # hawk Android 客户端设计
 
-> 当前实现：公网网页版和 `/viewer/*` 已删除。Android 已通过 `hawk-transport` 接入共享 Rust iroh 传输层，V2 配对载荷统一 AccessKey + target_identity + LAN/WAN endpoints；UI 经 Loopback 代理访问，LAN/WAN 素材均端到端加密。原生库构建见 `tools/build-mobile-transport.sh`。目标见 [access-control-v2.md](../backend/access-control-v2.md)。
+> 当前实现：纯局域网直连 daemon 的 peer 端口（默认 27375），`Authorization: Bearer <access_key>` 访问 `/api/v1/*`。配对载荷为 V3：`{v:3, target_library_id?, access_key, lan_endpoints[]}`。不再有 hawk-server、iroh 传输层与隧道代理。权限模型见 [access-control.md](../backend/access-control.md)。
 
-Android 手机 / 平板原生客户端。约束来源：[architecture.md](../architecture.md)（前后端解耦）、[server-rest-api-v1.md](../backend/server-rest-api-v1.md)（素材库接口）、[remote-protocol.md](../backend/remote-protocol.md)（广域网契约）、[iOS 客户端设计](ios-app.md)（同一套连接与首屏策略）。
+Android 手机 / 平板原生客户端。约束来源：[architecture.md](../architecture.md)（前后端解耦）、[server-rest-api-v1.md](../backend/server-rest-api-v1.md)（素材库接口）、[iOS 客户端设计](ios-app.md)（同一套连接与首屏策略）。
 
 ## 目标与非目标
 
 **目标**
 
-- 在 Android 手机 / 平板上原生浏览素材库：局域网直连 daemon，广域网经自托管 hawk-server 查看面
+- 在 Android 手机 / 平板上原生浏览素材库：同一局域网内直连 daemon
 - 与 iOS M1 相同的只读主链路：连接管理、扫码配对、在线首屏、齐行网格、全屏预览、搜索/筛选、侧栏
 - 复用同一套 HTTP 契约，不链接 hawk 的 AGPL 代码
 
@@ -41,29 +41,26 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 
 ## 连接形态
 
-与 iOS 完全一致：
-
 | 形态 | 数据通路 | 鉴权 |
 | -- | -- | -- |
-| 局域网直连 | App → `http://<局域网IP>:<peer_port>` → daemon | `[web].peer_keys` 中对应读/写权限的直连密钥（网站关闭也可用） |
-| 广域网经查看面 | App → `https://<server>` `/viewer/gate` → `/viewer/login` → `bt`，其余 `/api/v1/*` 由服务端隧道代理 | tenant-key + hawk-app key 换 `bt` |
+| 局域网直连 | App → `http://<局域网IP>:<peer_port>` → daemon | 目标端「局域网网站访问」创建的访问密钥（`Authorization: Bearer`） |
 
 约定：
 
-1. 局域网明文 HTTP 通过 `android:usesCleartextTraffic="true"` 放行（Android 9+ 默认禁明文）；广域网必须 `https`
+1. 局域网明文 HTTP 通过 `android:usesCleartextTraffic="true"` 放行（Android 9+ 默认禁明文）
 2. App 退到后台后连接被挂起，回前台由 `LifecycleResumeEffect` 触发节流刷新；不申请后台服务
 3. 模拟器联调用 `adb reverse tcp:<port> tcp:<port>`，App 填 `http://127.0.0.1:<port>`
 
 ## 鉴权与配对
 
-- 配对载荷与 iOS 相同：
-  - 局域网 `{ "v": 1, "kind": "lan", "urls": ["..."], "token": "..." }`
-  - 广域网 `{ "v": 1, "kind": "remote", "url": "...", "tenant_key": "...", "key": "..." }`
-- `v` 不等于 1 时提示升级，不静默失败
-- 扫码（CameraX + ZXing）为主路径，手动输入地址 + token 兜底；局域网支持直接粘贴带 `?token=` 的查看器地址
+- 配对载荷（V3，与 iOS 及桌面端 `pairing.ts` 一致）：
+  - `{ "v": 3, "target_library_id": "...", "access_key": "hk_...", "lan_endpoints": ["http://192.168.1.5:27375"] }`
+  - 字段都可选，但 `access_key` 与至少一个 `lan_endpoints` 必填；多个地址按顺序逐个尝试
+- `v` 不等于 3 时提示升级，不静默失败
+- 扫码（CameraX + ZXing）为主路径，手动输入地址 + 访问密钥兜底
 - 凭证存应用私有 SharedPreferences（`ConnectionStore`），`allowBackup=false` 且 `dataExtractionRules` / `fullBackupContent` 排除全部应用数据，凭证不离开设备
-  - 与 iOS Keychain 的差异：未做 Keystore 加密。Android 应用沙箱已隔离其他应用，备份通道也已关闭；Root 设备上的读取风险与桌面端 token 文件同级，暂不引入 EncryptedSharedPreferences（库已废弃、增加 Tink 依赖）
-- `bt` 只在内存持有，进程重启后重新走 `gate`/`login`；401/过期时展示错误，由用户「重新连接」
+  - 与 iOS Keychain 的差异：未做 Keystore 加密。Android 应用沙箱已隔离其他应用，备份通道也已关闭；Root 设备上的读取风险与桌面端密钥文件同级，暂不引入 EncryptedSharedPreferences（库已废弃、增加 Tink 依赖）
+- 访问密钥明文只在桌面端创建时显示；断开连接只做本地清理，不再请求 `/api/v1/remote/session`
 
 ## 在线首屏（不依赖本地索引）
 
@@ -75,7 +72,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 
 ## 界面结构
 
-- **连接页**（对齐 iOS 默认习惯）：扫码是主入口（整行 prominent 按钮 + 顶栏扫码图标），其次是「从剪贴板导入配对信息」，最后才是手填局域网/广域网；已保存连接列表支持点击直连、编辑、删除；内容在平板上居中限制 620dp
+- **连接页**（对齐 iOS 默认习惯）：扫码是主入口（整行 prominent 按钮 + 顶栏扫码图标），其次是「从剪贴板导入配对信息」，最后是手填局域网地址与访问密钥；已保存连接列表支持点击直连、编辑、删除；内容在平板上居中限制 620dp
 - **手机主界面**：底部 `NavigationBar` 两 Tab——「素材」网格、「浏览」完整分类树；素材页顶栏保留标题/更多/排序与筛选，浏览页顶栏可直接打开连接信息
 - **平板主界面**：
   - 横屏：常驻 300dp 侧栏 + 内容区，符合 Apple 分栏心智
@@ -99,9 +96,8 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 | 能力 | 状态 | 说明 |
 | ---- | ---- | ---- |
 | 工程与主题 | ✅ | 深色主题、启动/连接中/主界面状态机 |
-| 局域网直连 + token 验证 | ✅ | 应用私有存储记忆、启动自动连接、失败回连接列表 |
-| 广域网查看面 | ✅ | `gate` → `login` 换 `bt` → `viewer/session`；`bt` 绑定单设备 |
-| 扫码 / 手动配对 | ✅ | CameraX + ZXing；配对载荷版本校验 |
+| 局域网直连 + 访问密钥验证 | ✅ | 应用私有存储记忆、启动自动连接、失败回连接列表 |
+| 扫码 / 手动配对 | ✅ | CameraX + ZXing；V3 配对载荷版本校验 |
 | 在线首屏 | ✅ | 库信息+隐藏集后立即进主界面；首页与骨架并发 |
 | 齐行网格 + 分页详情 | ✅ | 骨架 + `item/list` 窗口分页 + `LazyColumn`；缩略图尺寸可调 |
 | 全屏预览 | ✅ | 双指/双击缩放、拖动、左右切换、下拉关闭 |
@@ -129,10 +125,10 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 | 阶段 | 交付物 | 验收标准 | 状态 |
 | ---- | ------ | -------- | ---- |
 | M0 工程就位 | Gradle 工程、Compose 骨架、网络层、连接存储 | 模拟器可运行；局域网连上 daemon 拿到 `app/info` | ✅ |
-| M1 只读浏览 | 连接管理、扫码、齐行网格、预览/保存、搜索筛选、侧栏 | 1000+ 素材滚动不卡顿；广域网扫码到出图 ≤ 3s | 🟡 核心完成，1000+ 性能待压测 |
+| M1 只读浏览 | 连接管理、扫码、齐行网格、预览/保存、搜索筛选、侧栏 | 1000+ 素材滚动不卡顿；扫码到出图 ≤ 3s | 🟡 核心完成，1000+ 性能待压测 |
 | M2 本地索引 + 系统集成 | Room/SQLite 索引与增量同步、离线浏览、系统搜索索引 | 飞行模式可浏览与搜索 | ⬜ |
 | M3 端上 AI | 自然语言检索 / 标签候选（按设备能力降级） | 无 AI 能力的机型功能完整 | ⬜ |
-| M4 写回与直连评估 | 写回确认流（受 WAN importer 能力约束）；iroh-ffi 直连评估 | — | ⬜ |
+| M4 写回与自动发现 | 写回确认流；局域网 daemon 自动发现 | — | ⬜ |
 
 ## 对仓库其他部分的改动
 
@@ -148,8 +144,7 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 
 | 风险 | 影响 | 应对 |
 | ---- | ---- | ---- |
-| 明文 HTTP + 凭证落盘 | 同网段嗅探 / Root 设备读取 | 仅局域网允许明文；备份通道关闭；广域网强制 https；后续可加 Keystore |
-| 广域网隧道带宽 | 自托管服务器流量成本 | 缩略图优先、预览才取原图、Coil 磁盘缓存 |
+| 明文 HTTP + 凭证落盘 | 同网段嗅探 / Root 设备读取 | 仅局域网访问；备份通道关闭；后续可加 Keystore |
 | 无统一端上 AI 能力 | M3 功能无法与 iOS 对齐 | 按设备能力检测降级；优先做「查询参数生成」这类可降级能力 |
 | 大库性能未压测 | 万级素材首屏/滚动 | 与 iOS 同一套骨架 + 窗口分页；M2 做本地索引 |
 | 厂商 ROM 后台限制 | 回前台重连延迟 | 只做前台刷新，不申请保活；错误可重试 |
@@ -168,4 +163,3 @@ Android 手机 / 平板原生客户端。约束来源：[architecture.md](../arc
 - [iOS 客户端设计](ios-app.md)
 - [hawk-app 设计](hawk-app.md)（桌面端与 web 查看器的交互语义）
 - [REST API V1](../backend/server-rest-api-v1.md)
-- [远程访问设计](../backend/remote-access.md) / [远程访问协议](../backend/remote-protocol.md)

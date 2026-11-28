@@ -173,7 +173,7 @@ fun PreviewScreen(store: LibraryStore, startIndex: Int, onClose: () -> Unit) {
             PreviewPage(
                 item = item,
                 fileUrl = store.api.fileUrl(item.id),
-                sessionToken = store.api.token,
+                accessKey = store.api.accessKey,
                 isCurrent = page == currentPage,
                 onScaleChanged = { liveScale = it },
                 onClose = onClose,
@@ -285,7 +285,7 @@ private fun RoundIconButton(
 private fun PreviewPage(
     item: SkeletonItem,
     fileUrl: String,
-    sessionToken: String,
+    accessKey: String,
     isCurrent: Boolean,
     onScaleChanged: (Float) -> Unit,
     onClose: () -> Unit,
@@ -365,7 +365,7 @@ private fun PreviewPage(
             ) {
                 ThumbnailImage(
                     url = fileUrl,
-                    sessionToken = sessionToken,
+                    accessKey = accessKey,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit,
                     maxPixelSize = 4096,

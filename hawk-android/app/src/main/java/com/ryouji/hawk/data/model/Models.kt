@@ -126,28 +126,6 @@ data class ItemSkeletonResponse(
     @SerialName("total_size") val totalSize: Long = 0,
 )
 
-@Serializable
-data class GateResponse(
-    @SerialName("gate_token") val gateToken: String,
-    @SerialName("expires_in") val expiresIn: Int = 0,
-)
-
-@Serializable
-data class LoginResponse(
-    @SerialName("browser_token") val browserToken: String,
-    val role: String,
-    @SerialName("device_id") val deviceId: String,
-)
-
-@Serializable
-data class ViewerSession(
-    @SerialName("session_token") val sessionToken: String,
-    val role: String,
-    @SerialName("target_device_id") val targetDeviceId: String,
-    @SerialName("target_name") val targetName: String = "",
-    @SerialName("target_library_name") val targetLibraryName: String = "",
-)
-
 // MARK: - 请求
 
 @Serializable
@@ -172,21 +150,6 @@ data class ItemListRequest(
     val order: String = "desc",
     val offset: Int? = null,
     val limit: Int? = null,
-)
-
-@Serializable
-data class GateRequest(@SerialName("tenant_key") val tenantKey: String)
-
-@Serializable
-data class LoginRequest(
-    @SerialName("gate_token") val gateToken: String,
-    val key: String,
-)
-
-@Serializable
-data class OpenSessionRequest(
-    @SerialName("target_device_id") val targetDeviceId: String,
-    val role: String = "viewer",
 )
 
 // MARK: - 本地浏览状态

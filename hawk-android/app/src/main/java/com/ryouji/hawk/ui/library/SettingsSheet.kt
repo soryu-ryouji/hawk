@@ -70,13 +70,7 @@ fun SettingsSheet(
                 SettingsSection("当前连接") {
                     SettingsInfoRow("素材库", state.library?.name ?: session.label)
                     SettingsDivider()
-                    SettingsInfoRow("连接方式", if (session.isRemote) "广域网" else "局域网直连")
-                    SettingsDivider()
                     SettingsInfoRow("访问级别", session.accessLabel)
-                    session.targetDeviceName?.takeIf { it.isNotBlank() }?.let {
-                        SettingsDivider()
-                        SettingsInfoRow("目标设备", it)
-                    }
                     SettingsDivider()
                     SettingsInfoRow("服务地址", session.profile.url)
                     SettingsDivider()

@@ -225,7 +225,7 @@ private fun SidebarHeader(session: LibrarySession, state: LibraryUiState) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${if (session.isRemote) "远程" else "局域网"} · ${session.accessLabel}",
+                text = "局域网 · ${session.accessLabel}",
                 color = HawkColors.Fg1,
                 fontSize = 10.sp,
                 maxLines = 1,

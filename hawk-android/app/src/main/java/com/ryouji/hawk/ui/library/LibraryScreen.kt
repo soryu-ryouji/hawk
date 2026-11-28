@@ -32,7 +32,6 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -408,9 +407,6 @@ private fun LibraryPane(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (session.isRemote) {
-                RemoteBanner(label = session.label, onDisconnect = onDisconnect)
-            }
             SearchRow(
                 value = state.searchText,
                 onValueChange = store::setSearchText,
@@ -661,41 +657,6 @@ private fun MoreMenu(
         DropdownMenuItem(
             text = { Text("断开连接", color = HawkColors.Danger, fontSize = 13.sp) },
             onClick = onDisconnect,
-        )
-    }
-}
-
-@Composable
-private fun RemoteBanner(label: String, onDisconnect: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(HawkColors.Bg1)
-            .padding(horizontal = 12.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
-    ) {
-        Icon(
-            Icons.Outlined.Public,
-            contentDescription = null,
-            tint = HawkColors.Fg1,
-            modifier = Modifier.size(12.dp),
-        )
-        Text(
-            text = "当前浏览：$label",
-            color = HawkColors.Fg1,
-            fontSize = 11.sp,
-            maxLines = 1,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = "×",
-            color = HawkColors.Fg1,
-            fontSize = 15.sp,
-            modifier = Modifier
-                .clip(CircleShape)
-                .clickable(onClick = onDisconnect)
-                .padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
 }

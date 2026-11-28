@@ -25,35 +25,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.ryouji.hawk.data.connection.ConnectionKind
 import com.ryouji.hawk.data.connection.ConnectionProfile
 import com.ryouji.hawk.ui.theme.HawkColors
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileFormDialog(
-    kind: ConnectionKind,
     existing: ConnectionProfile?,
     onDismiss: () -> Unit,
     onSave: (ConnectionProfile) -> Unit,
 ) {
     var name by remember { mutableStateOf(existing?.name.orEmpty()) }
     var url by remember { mutableStateOf(existing?.url.orEmpty()) }
-    var token by remember { mutableStateOf(existing?.token.orEmpty()) }
-    var targetIdentity by remember { mutableStateOf(existing?.targetIdentity.orEmpty()) }
-    var appKey by remember { mutableStateOf(existing?.appKey.orEmpty()) }
+    var accessKey by remember { mutableStateOf(existing?.accessKey.orEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    val canSave = url.trim().isNotEmpty() && when (kind) {
-        ConnectionKind.Lan -> token.trim().isNotEmpty()
-        ConnectionKind.Remote -> targetIdentity.trim().isNotEmpty() && appKey.trim().isNotEmpty()
-    }
+    val canSave = url.trim().isNotEmpty() && accessKey.trim().isNotEmpty()
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -65,7 +56,7 @@ fun ProfileFormDialog(
                 TopAppBar(
                     title = {
                         Text(
-                            text = if (existing == null) "添加${kind.title}连接" else "编辑连接",
+                            text = if (existing == null) "添加局域网连接" else "编辑连接",
                             color = HawkColors.Fg0,
                             fontSize = 16.sp,
                         )
@@ -78,7 +69,7 @@ fun ProfileFormDialog(
                     actions = {
                         TextButton(onClick = {
                             error = null
-                            val saved = buildProfile(kind, existing, name, url, token, targetIdentity, appKey)
+                            val saved = buildProfile(existing, name, url, accessKey)
                             try {
                                 saved.baseUrl()
                             } catch (exception: Exception) {
@@ -106,13 +97,7 @@ fun ProfileFormDialog(
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    placeholder = {
-                        Text(
-                            if (kind == ConnectionKind.Lan) "192.168.1.5:27372"
-                            else "https://hawk.example.com",
-                            color = HawkColors.Fg1,
-                        )
-                    },
+                    placeholder = { Text("192.168.1.5:27375", color = HawkColors.Fg1) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,
@@ -128,37 +113,24 @@ fun ProfileFormDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    text = if (kind == ConnectionKind.Lan) {
-                        "桌面端：设置 → 局域网 → 开启网页访问，复制监听地址与访问 token。"
-                    } else {
-                        "hawk-server 的部署地址；target_identity 与 AccessKey 来自配对信息。"
-                    },
+                    text = "桌面端：设置 → 局域网网站访问 → 创建访问密钥；密钥明文只在创建时显示。",
                     color = HawkColors.Fg1,
                     fontSize = 11.sp,
                 )
 
-                Text("访问凭证", color = HawkColors.Fg1, fontSize = 12.sp)
-                if (kind == ConnectionKind.Lan) {
-                    SecretField(
-                        value = token,
-                        onValueChange = { token = it },
-                        placeholder = "访问 token",
+                Text("访问密钥", color = HawkColors.Fg1, fontSize = 12.sp)
+                OutlinedTextField(
+                    value = accessKey,
+                    onValueChange = { accessKey = it },
+                    placeholder = { Text("hk_…", color = HawkColors.Fg1) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Done,
-                    )
-                } else {
-                    SecretField(
-                        value = targetIdentity,
-                        onValueChange = { targetIdentity = it },
-                        placeholder = "target_identity（目标 iroh 公钥）",
-                        imeAction = ImeAction.Next,
-                    )
-                    SecretField(
-                        value = appKey,
-                        onValueChange = { appKey = it },
-                        placeholder = "AccessKey（hk_…）",
-                        imeAction = ImeAction.Done,
-                    )
-                }
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
 
                 error?.let {
                     Text(
@@ -176,55 +148,16 @@ fun ProfileFormDialog(
     }
 }
 
-@Composable
-private fun SecretField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    imeAction: ImeAction,
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        placeholder = { Text(placeholder, color = HawkColors.Fg1) },
-        singleLine = true,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(
-            keyboardType = KeyboardType.Password,
-            imeAction = imeAction,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    )
-}
-
 private fun buildProfile(
-    kind: ConnectionKind,
     existing: ConnectionProfile?,
     name: String,
     url: String,
-    token: String,
-    targetIdentity: String,
-    appKey: String,
+    accessKey: String,
 ): ConnectionProfile {
-    var urlText = url.trim()
-    var accessToken = token.trim()
-    // 兼容直接粘贴局域网查看器地址（http://ip:port/?token=...）：token 缺省时从查询参数补。
-    if (kind == ConnectionKind.Lan && accessToken.isEmpty()) {
-        accessToken = urlText.toHttpUrlOrNull()?.queryParameter("token").orEmpty()
-    }
-    urlText.toHttpUrlOrNull()?.let { parsed ->
-        urlText = parsed.newBuilder().query(null).fragment(null).build().toString()
-    }
-    val base = existing ?: ConnectionProfile(kind = kind, url = urlText)
+    val base = existing ?: ConnectionProfile(url = url.trim())
     return base.copy(
-        kind = kind,
         name = name.trim(),
-        url = urlText,
-        token = accessToken,
-        targetIdentity = targetIdentity.trim(),
-        appKey = appKey.trim(),
+        url = url.trim(),
+        accessKey = accessKey.trim(),
     )
 }
-
-/** 让调用方知道 Compose 默认的可视化转换（避免未使用导入告警）。 */
-private val defaultTransformation: VisualTransformation = VisualTransformation.None

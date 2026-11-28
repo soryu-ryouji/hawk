@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.ryouji.hawk.data.connection.ConnectionKind
 import com.ryouji.hawk.data.connection.ConnectionLauncher
 import com.ryouji.hawk.data.connection.ConnectionProfile
 import com.ryouji.hawk.data.connection.ConnectionStore
@@ -35,12 +34,8 @@ class LibrarySession(
     val profile: ConnectionProfile,
     val label: String,
     val role: String,
-    val targetDeviceName: String?,
-    val targetLibraryName: String?,
     val store: LibraryStore,
 ) {
-    val isRemote: Boolean get() = profile.kind == ConnectionKind.Remote
-
     val accessLabel: String
         get() = when (role) {
             "admin" -> "完全访问"
@@ -84,7 +79,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connect(profile: ConnectionProfile) {
         connectJob?.cancel()
-        teardownRemoteSession()
         sessionScope?.cancel()
         sessionScope = null
         _state.value = AppUiState(AppPhase.Connecting("正在连接 ${profile.displayName}…"))
@@ -92,7 +86,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         connectJob = viewModelScope.launch {
             var scope: CoroutineScope? = null
             try {
-                val outcome = ConnectionLauncher.launch(getApplication<Application>(), profile)
+                val outcome = ConnectionLauncher.launch(profile)
                 ensureActive()
                 val saved = connections.upsert(profile)
                 connections.setActive(saved.id)
@@ -103,16 +97,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 store.bootstrap()
                 ensureActive()
 
-                val label = outcome.targetLibraryName?.takeIf { it.isNotBlank() }?.let {
-                    "${outcome.label} · $it"
-                } ?: store.state.value.library?.name ?: outcome.label
                 val session = LibrarySession(
                     api = outcome.api,
                     profile = saved,
-                    label = label,
+                    label = store.state.value.library?.name ?: outcome.label,
                     role = outcome.info.role,
-                    targetDeviceName = outcome.targetDeviceName,
-                    targetLibraryName = outcome.targetLibraryName,
                     store = store,
                 )
                 _state.value = AppUiState(AppPhase.Ready, session, null)
@@ -139,7 +128,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnect() {
         connectJob?.cancel()
-        teardownRemoteSession()
         sessionScope?.cancel()
         sessionScope = null
         _state.value = AppUiState(AppPhase.Connect, null, null)
@@ -178,15 +166,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }.getOrNull() ?: return
         val saved = connections.upsert(profile)
         connections.setActive(saved.id)
-    }
-
-    /** 显式断开/切换时通知服务端注销查看会话（best-effort；失败不阻塞 UI）。 */
-    private fun teardownRemoteSession() {
-        val session = _state.value.session ?: return
-        if (!session.isRemote) return
-        viewModelScope.launch {
-            runCatching { session.api.delete("/api/v1/remote/session") }
-        }
     }
 
     private fun errorMessage(error: Throwable): String =

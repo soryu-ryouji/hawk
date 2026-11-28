@@ -9,28 +9,21 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 @Serializable
 enum class ConnectionKind(val title: String, val defaultScheme: String) {
     @SerialName("lan") Lan("局域网", "http"),
-    @SerialName("remote") Remote("广域网", "https"),
 }
 
 class ConnectionException(message: String) : Exception(message)
 
-/** 一条连接配置。局域网用 url + token；广域网用 url + tenantKey + appKey。 */
+/** 一条局域网直连配置：daemon 的 peer 端口地址 + 访问密钥。 */
 @Serializable
 data class ConnectionProfile(
     val id: String = UUID.randomUUID().toString(),
-    val kind: ConnectionKind,
+    val kind: ConnectionKind = ConnectionKind.Lan,
     val name: String = "",
     val url: String,
     /** 同一目标的候选地址；二维码可一次下发多个局域网地址。 */
     val urls: List<String> = emptyList(),
-    val token: String = "",
-    val tenantKey: String = "",
-    val appKey: String = "",
-    /** V2 统一配对：目标 iroh 公钥与库身份；不进入旧 viewer 登录。 */
-    val targetIdentity: String = "",
-    val targetLibraryId: String = "",
-    val targetDeviceId: String = "",
-    val tlsFingerprint: String = "",
+    /** 目标端「局域网网站访问」里创建的访问密钥，明文只在创建时显示。 */
+    val accessKey: String = "",
 ) {
     val displayName: String
         get() {
@@ -58,12 +51,7 @@ data class ConnectionProfile(
         if (raw.isEmpty()) throw ConnectionException("请填写服务地址")
         if (!raw.contains("://")) raw = "${kind.defaultScheme}://$raw"
         val parsed = raw.toHttpUrlOrNull()
-            ?: throw ConnectionException(
-                "服务地址无效，请填写形如 192.168.1.5:27372 或 https://hawk.example.com 的地址"
-            )
-        if (parsed.scheme != "http" && parsed.scheme != "https") {
-            throw ConnectionException("服务地址只支持 http 或 https")
-        }
+            ?: throw ConnectionException("服务地址无效，请填写形如 192.168.1.5:27375 的地址")
         val builder = parsed.newBuilder().query(null).fragment(null)
         if (!parsed.encodedPath.endsWith("/")) builder.addPathSegment("")
         return builder.build()

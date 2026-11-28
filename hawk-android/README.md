@@ -26,10 +26,9 @@ Android 原生客户端（Kotlin + Jetpack Compose）。设计文档见 [../docs
 ## 已实现（M1 只读浏览）
 
 - 连接管理
-  - 局域网直连：地址 + 访问 token，验证通过后记住；启动自动连接上次使用的连接
-  - 广域网：`/viewer/gate` → `/viewer/login` 换 `bt`，再按 `bt` 绑定的设备打开查看会话；后续 `/api/v1/*` 由 hawk-server 隧道代理
-  - 扫码导入配对载荷（`v/kind/url/token/tenant_key/key`）与手动输入；版本不符提示升级
-  - 连接增删改、重新连接、切换连接、断开
+  - 纯局域网直连：daemon 的 peer 端口地址 + 访问密钥（`Authorization: Bearer <access_key>`），验证通过后记住；启动自动连接上次使用的连接
+  - 扫码导入 V3 配对载荷（`{v:3, target_library_id?, access_key, lan_endpoints[]}`）与手动输入；版本不符提示升级
+  - 连接增删改、重新连接、切换连接、断开（断开只做本地清理）
 - 浏览
   - 在线首屏不建索引：库信息 + 全局隐藏集到位即进主界面；`item/list` 首页与 `item/skeleton` 并发，分类/标签与计数后台补齐
   - 齐行网格（算法与 web `layout.ts` 一致）+ `LazyColumn` 行级懒渲染；骨架与窗口分页详情分离
@@ -46,7 +45,7 @@ Android 原生客户端（Kotlin + Jetpack Compose）。设计文档见 [../docs
 - 本地索引（Room/SQLite）与离线浏览、SSE 增量同步（M2）
 - App Intents 对应能力（App Actions / 系统搜索）、Glance 小组件（M2 评估）
 - 端上 AI（M3 评估，Android 侧暂无与 Apple 智能对等且全机型可用的统一能力）
-- 写回（标签/备注）与设备内 iroh 直连（M4）
+- 写回（标签/备注）、自动发现局域网 daemon（M4）
 - 锁视图解锁 UI（当前锁定的文件夹/分类/标签展示服务端 403 message）
 - 仪器化 UI 测试（当前只有 JVM 单测）
 
@@ -87,18 +86,18 @@ adb shell am start -n com.ryouji.hawk/.MainActivity
 Debug 构建支持从应用外部私有目录读取一条连接，免去手点表单（`BuildConfig.DEBUG` 限定，Release 不含该路径）：
 
 ```bash
-# 1) 起一个测试库 daemon（token 走环境变量）
+# 1) 起一个测试库 daemon（admin token 走环境变量）
 HAWK_ADMIN_TOKEN=smoke-token ../hawk-daemon/target/debug/hawk-daemon.exe \
   local /path/to/test-library --port 27372
 
 # 2) 模拟器内访问宿主机端口
 adb reverse tcp:27372 tcp:27372
 
-# 3) 写好连接（kind 为 lan / remote；remote 用 tenantKey + appKey）
+# 3) 写好连接（kind 仅 lan；accessKey 为目标端创建的访问密钥）
 adb shell pm clear com.ryouji.hawk
 adb shell mkdir -p /sdcard/Android/data/com.ryouji.hawk/files
 mkdir -p .smoke
-printf '{"kind":"lan","url":"http://127.0.0.1:27372","token":"smoke-token"}' \
+printf '{"kind":"lan","url":"http://127.0.0.1:27372","accessKey":"smoke-token"}' \
   > .smoke/profile.json
 adb push .smoke/profile.json /sdcard/Android/data/com.ryouji.hawk/files/hawk_profile.json
 
@@ -108,10 +107,9 @@ adb shell am start -n com.ryouji.hawk/.MainActivity
 
 真机冒烟仍需覆盖：
 
-1. 局域网：桌面端开 `[web]`，App 手填/扫码导入局域网地址 + token，浏览缩略图与预览
-2. 广域网：填服务端地址 + tenant-key + hawk-app key，进入绑定的在线设备
-3. 相册保存：保存原图，确认是原图而非 1024 缩略图（API 26–28 还需确认权限弹窗）
-4. 回前台：切后台再回来，列表刷新且不白屏
+1. 局域网：桌面端「局域网网站访问」创建访问密钥后，App 手填/扫码导入地址 + 访问密钥，浏览缩略图与预览
+2. 相册保存：保存原图，确认是原图而非 1024 缩略图（API 26–28 还需确认权限弹窗）
+3. 回前台：切后台再回来，列表刷新且不白屏
 
 ## 源码结构
 
